@@ -22,9 +22,9 @@ export type GoalsActionState = {
   preview?: {
     source: "ai" | "heuristic";
     goalType: string;
-    durationDays: number;
-    targetDeltaKg: number;
-    targetWeightKg: number;
+    durationDays: number | null;
+    targetDeltaKg: number | null;
+    targetWeightKg: number | null;
     dailyCalorieDelta: number;
     proteinTargetG: number;
     hydrationTargetL: number;

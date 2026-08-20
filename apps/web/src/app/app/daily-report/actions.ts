@@ -462,11 +462,16 @@ export async function saveDailyReportAction(
   const reportAt = reportDate && !Number.isNaN(reportDate.getTime()) ? reportDate.toISOString() : new Date().toISOString();
   const reportedWeightRaw = formData.get("reported_weight_kg")?.toString().trim() ?? "";
   const inferredWeightFromText = reportText ? extractReportedWeightFromText(reportText) : null;
-  const reportedWeightKg = reportedWeightRaw
-    ? toNumber(reportedWeightRaw, NaN)
-    : inferredWeightFromText;
+  const enteredReportedWeightKg = reportedWeightRaw ? toNumber(reportedWeightRaw, NaN) : null;
+  const reportedWeightKg = enteredReportedWeightKg ?? inferredWeightFromText;
 
-  if (reportedWeightRaw && (!Number.isFinite(reportedWeightKg) || reportedWeightKg < 20 || reportedWeightKg > 400)) {
+  if (
+    reportedWeightRaw &&
+    (enteredReportedWeightKg === null ||
+      !Number.isFinite(enteredReportedWeightKg) ||
+      enteredReportedWeightKg < 20 ||
+      enteredReportedWeightKg > 400)
+  ) {
     return { error: "Reported weight must be between 20 and 400 kg." };
   }
 

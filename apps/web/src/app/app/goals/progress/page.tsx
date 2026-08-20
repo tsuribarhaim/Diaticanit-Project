@@ -152,10 +152,12 @@ export default async function GoalsProgressPage() {
         actualVsExpectedKg = actualWeightNowKg - expectedWeightTodayKg;
       }
 
-      const totalPlannedDelta = targetWeight - inferredStartWeightKg;
-      const actualDeltaFromInferredStart = actualWeightNowKg - inferredStartWeightKg;
-      if (Math.abs(totalPlannedDelta) > 0.0001) {
-        targetProgressPercent = (actualDeltaFromInferredStart / totalPlannedDelta) * 100;
+      if (inferredStartWeightKg !== null) {
+        const totalPlannedDelta = targetWeight - inferredStartWeightKg;
+        const actualDeltaFromInferredStart = actualWeightNowKg - inferredStartWeightKg;
+        if (Math.abs(totalPlannedDelta) > 0.0001) {
+          targetProgressPercent = (actualDeltaFromInferredStart / totalPlannedDelta) * 100;
+        }
       }
     }
   }
