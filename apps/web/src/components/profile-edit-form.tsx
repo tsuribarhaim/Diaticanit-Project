@@ -49,6 +49,7 @@ type ProfileEditFormProps = {
     preferred_language: "en" | "he";
     allergies: string[];
     ai_extraction_consent: boolean;
+    profile_updated_at?: string | null;
   };
   locale: AppLocale;
 };
@@ -84,6 +85,11 @@ type ProfileEditDraft = {
   preferred_language: "en" | "he";
   allergies: string;
   accept_ai_extraction: boolean;
+};
+
+type PersistedProfileEditDraft = {
+  profileUpdatedAt: string | null;
+  draft: ProfileEditDraft;
 };
 
 function calculateAge(dateOfBirth: string): number | null {
@@ -214,6 +220,13 @@ function isValidDraft(value: unknown): value is ProfileEditDraft {
   );
 }
 
+function isPersistedDraft(value: unknown): value is PersistedProfileEditDraft {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<PersistedProfileEditDraft>;
+  const hasValidVersion = candidate.profileUpdatedAt === null || typeof candidate.profileUpdatedAt === "string";
+  return hasValidVersion && isValidDraft(candidate.draft);
+}
+
 function SaveButton({ locale, canSubmit }: { locale: AppLocale; canSubmit: boolean }) {
   const { pending } = useFormStatus();
 
@@ -235,6 +248,7 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
   const [consentError, setConsentError] = useState<string | null>(null);
   const [draft, setDraft] = useState<ProfileEditDraft>(() => {
     const initialDraft = createInitialDraft(defaults);
+    const currentProfileUpdatedAt = defaults.profile_updated_at ?? null;
 
     if (typeof window === "undefined") {
       return initialDraft;
@@ -249,12 +263,15 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
         return initialDraft;
       }
 
-      const merged = {
-        ...initialDraft,
-        ...parsed,
-      };
+      if (isPersistedDraft(parsed)) {
+        if (parsed.profileUpdatedAt !== currentProfileUpdatedAt) {
+          return initialDraft;
+        }
 
-      return isValidDraft(merged) ? merged : initialDraft;
+        return parsed.draft;
+      }
+
+      return initialDraft;
     } catch {
       // Ignore invalid or blocked storage reads.
       return initialDraft;
@@ -262,17 +279,25 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
   });
 
   useEffect(() => {
+    const payload: PersistedProfileEditDraft = {
+      profileUpdatedAt: defaults.profile_updated_at ?? null,
+      draft,
+    };
     try {
-      window.sessionStorage.setItem(PROFILE_EDIT_DRAFT_KEY, JSON.stringify(draft));
+      window.sessionStorage.setItem(PROFILE_EDIT_DRAFT_KEY, JSON.stringify(payload));
     } catch {
       // Ignore blocked storage writes.
     }
-  }, [draft]);
+  }, [draft, defaults.profile_updated_at]);
 
   const persistDraft = (next: ProfileEditDraft) => {
     setDraft(next);
+    const payload: PersistedProfileEditDraft = {
+      profileUpdatedAt: defaults.profile_updated_at ?? null,
+      draft: next,
+    };
     try {
-      window.sessionStorage.setItem(PROFILE_EDIT_DRAFT_KEY, JSON.stringify(next));
+      window.sessionStorage.setItem(PROFILE_EDIT_DRAFT_KEY, JSON.stringify(payload));
     } catch {
       // Ignore blocked storage writes.
     }
