@@ -8,6 +8,7 @@ import {
   type AuthActionState,
 } from "@/app/auth/actions";
 import { AuthSubmitButton } from "@/components/auth-submit-button";
+import { EnvironmentBadge } from "@/components/environment-badge";
 import { tr, type AppLocale } from "@/lib/locale";
 
 const initialState: AuthActionState = {};
@@ -16,10 +17,12 @@ export function SignInForm({
   locale,
   nextPath,
   recentEmails,
+  environmentBadgeLabel,
 }: {
   locale: AppLocale;
   nextPath: string;
   recentEmails: string[];
+  environmentBadgeLabel: string | null;
 }) {
   const [state, formAction] = useActionState(signInAction, initialState);
   const [email, setEmail] = useState("");
@@ -35,6 +38,11 @@ export function SignInForm({
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-50 px-6 py-16">
       <section className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
+        {environmentBadgeLabel ? (
+          <div className="mb-3 flex justify-end">
+            <EnvironmentBadge label={environmentBadgeLabel} />
+          </div>
+        ) : null}
         <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "Sign in", "כניסה")}</h1>
         <p className="mt-2 text-sm text-slate-600">
           {tr(locale, "Continue to your secure health workspace.", "המשיכו למרחב הבריאות המאובטח שלכם.")}

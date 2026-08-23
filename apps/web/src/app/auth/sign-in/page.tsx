@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 
 import { SignInForm } from "@/components/sign-in-form";
+import { getEnvironmentBadgeLabel } from "@/lib/environment-badge";
 import { normalizeLocale } from "@/lib/locale";
 
 const RECENT_SIGNIN_EMAILS_COOKIE = "phc_recent_signin_emails";
@@ -35,6 +36,14 @@ export default async function SignInPage({
   const locale = normalizeLocale(cookieStore.get(LOCALE_COOKIE)?.value);
   const recentEmails = parseRecentEmailsCookie(cookieStore.get(RECENT_SIGNIN_EMAILS_COOKIE)?.value);
   const nextPath = sanitizeNextPath(resolvedSearchParams.next);
+  const environmentBadgeLabel = getEnvironmentBadgeLabel();
 
-  return <SignInForm locale={locale} nextPath={nextPath} recentEmails={recentEmails} />;
+  return (
+    <SignInForm
+      locale={locale}
+      nextPath={nextPath}
+      recentEmails={recentEmails}
+      environmentBadgeLabel={environmentBadgeLabel}
+    />
+  );
 }

@@ -17,9 +17,9 @@ export default async function ProfileEditPage() {
   }
 
   const { data: profile, error } = await supabase
-    .from("user_profile")
+    .from("user_profile_enriched")
     .select(
-      "age, gender, height_cm, weight_kg, activity_level, allergies, medical_conditions",
+      "first_name, last_name, date_of_birth, biological_sex, height_cm, weight_kg, activity_level, preferred_language, exercise_modalities, exercise_frequency_days_per_week, exercise_duration_minutes, nutritional_goal, pregnancy_lactation_status, has_medical_conditions, medical_conditions_details, has_regular_medications, regular_medications_details, hot_climate_or_heavy_sweating, habits, dietary_preference, additional_information, allergies, calculated_age_years, bmi",
     )
     .eq("user_id", user.id)
     .maybeSingle();
@@ -29,13 +29,7 @@ export default async function ProfileEditPage() {
   }
 
   const locale = normalizeLocale(
-    (
-      await supabase
-        .from("user_profile")
-        .select("preferred_language")
-        .eq("user_id", user.id)
-        .maybeSingle()
-    ).data?.preferred_language,
+    profile.preferred_language,
   );
 
   const { data: aiConsentRow } = await supabase
@@ -48,7 +42,27 @@ export default async function ProfileEditPage() {
     Boolean(aiConsentRow?.accepted_at) && !aiConsentRow?.revoked_at;
 
   const formDefaults = {
-    ...profile,
+    first_name: profile.first_name ?? "",
+    last_name: profile.last_name ?? "",
+    date_of_birth: profile.date_of_birth ?? "",
+    biological_sex: profile.biological_sex ?? "male",
+    height_cm: profile.height_cm ?? 170,
+    weight_kg: profile.weight_kg ?? 70,
+    activity_level: profile.activity_level ?? "moderate",
+    exercise_modalities: profile.exercise_modalities ?? [],
+    exercise_frequency_days_per_week: profile.exercise_frequency_days_per_week ?? 0,
+    exercise_duration_minutes: profile.exercise_duration_minutes ?? 0,
+    nutritional_goal: profile.nutritional_goal ?? "maintenance",
+    pregnancy_lactation_status: profile.pregnancy_lactation_status ?? "none",
+    has_medical_conditions: Boolean(profile.has_medical_conditions),
+    medical_conditions_details: profile.medical_conditions_details ?? "",
+    has_regular_medications: Boolean(profile.has_regular_medications),
+    regular_medications_details: profile.regular_medications_details ?? "",
+    hot_climate_or_heavy_sweating: Boolean(profile.hot_climate_or_heavy_sweating),
+    habits: profile.habits ?? [],
+    dietary_preference: profile.dietary_preference ?? "standard",
+    additional_information: profile.additional_information ?? "",
+    allergies: profile.allergies ?? [],
     preferred_language: locale,
     ai_extraction_consent: hasAiExtractionConsent,
   };

@@ -8,20 +8,42 @@ import {
   saveOnboardingProfileAction,
   type OnboardingActionState,
 } from "@/app/app/onboarding/actions";
-import { activityLevelOptions } from "@/lib/profile";
+import {
+  activityLevelOptions,
+  dietaryPreferenceOptions,
+  exerciseModalityOptions,
+  habitOptions,
+  nutritionalGoalOptions,
+} from "@/lib/profile";
 import type { AppLocale } from "@/lib/locale";
-import { formatActivityLevel, tr } from "@/lib/locale";
+import { formatActivityLevel, formatNumberForLocale, tr } from "@/lib/locale";
 
 type OnboardingProfileFormProps = {
   defaults?: {
-    age?: number;
-    gender?: string;
+    first_name?: string;
+    last_name?: string;
+    date_of_birth?: string;
+    biological_sex?: "male" | "female";
     height_cm?: number;
     weight_kg?: number;
     activity_level?: (typeof activityLevelOptions)[number];
     preferred_language?: "en" | "he";
+    exercise_modalities?: string[];
+    exercise_frequency_days_per_week?: number;
+    exercise_duration_minutes?: number;
+    nutritional_goal?: (typeof nutritionalGoalOptions)[number];
+    pregnancy_lactation_status?: "none" | "pregnant" | "lactating";
+    has_medical_conditions?: boolean;
+    medical_conditions_details?: string;
+    has_regular_medications?: boolean;
+    regular_medications_details?: string;
+    hot_climate_or_heavy_sweating?: boolean;
+    habits?: string[];
+    dietary_preference?: (typeof dietaryPreferenceOptions)[number];
+    additional_information?: string;
     allergies?: string[];
     medical_conditions?: string[];
+    ai_extraction_consent?: boolean;
   };
   locale?: AppLocale;
 };
@@ -29,32 +51,231 @@ type OnboardingProfileFormProps = {
 const initialState: OnboardingActionState = {};
 const ONBOARDING_DRAFT_KEY = "phc_onboarding_profile_draft";
 
+type StepKey = 1 | 2 | 3 | 4;
+
+const FIELD_TO_STEP: Record<string, StepKey> = {
+  first_name: 1,
+  last_name: 1,
+  date_of_birth: 1,
+  biological_sex: 1,
+  weight: 1,
+  weight_kg: 1,
+  height: 1,
+  height_cm: 1,
+  activity_level: 2,
+  exercise_modalities: 2,
+  exercise_frequency_days_per_week: 2,
+  exercise_duration_minutes: 2,
+  nutritional_goal: 2,
+  pregnancy_lactation_status: 3,
+  has_medical_conditions: 3,
+  medical_conditions_details: 3,
+  has_regular_medications: 3,
+  regular_medications_details: 3,
+  hot_climate_or_heavy_sweating: 3,
+  habits: 3,
+  dietary_preference: 4,
+  allergies: 4,
+  additional_information: 4,
+};
+
 type OnboardingFormDraft = {
-  age: string;
-  gender: string;
-  height_cm: string;
-  weight_kg: string;
+  first_name: string;
+  last_name: string;
+  date_of_birth: string;
+  biological_sex: "male" | "female" | "";
+  weight_unit: "kg" | "lbs";
+  weight_value: string;
+  height_unit: "cm" | "ft_in";
+  height_cm_value: string;
+  height_ft_value: string;
+  height_in_value: string;
   activity_level: (typeof activityLevelOptions)[number];
-  preferred_language: "en" | "he";
+  exercise_modalities: string[];
+  exercise_frequency_days_per_week: string;
+  exercise_duration_minutes: string;
+  nutritional_goal: (typeof nutritionalGoalOptions)[number] | "";
+  pregnancy_lactation_status: "none" | "pregnant" | "lactating";
+  has_medical_conditions: "yes" | "no" | "";
+  medical_conditions_details: string;
+  has_regular_medications: "yes" | "no" | "";
+  regular_medications_details: string;
+  hot_climate_or_heavy_sweating: "yes" | "no" | "";
+  habits: string[];
+  dietary_preference: (typeof dietaryPreferenceOptions)[number] | "";
+  additional_information: string;
   allergies: string;
-  medical_conditions: string;
+  preferred_language: "en" | "he";
   accept_ai_extraction: boolean;
 };
+
+function toKg(value: string, unit: "kg" | "lbs"): number | null {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  return unit === "kg" ? numeric : numeric * 0.45359237;
+}
+
+function toCm(draft: OnboardingFormDraft): number | null {
+  if (draft.height_unit === "cm") {
+    const cm = Number(draft.height_cm_value);
+    if (!Number.isFinite(cm) || cm <= 0) return null;
+    return cm;
+  }
+
+  const ft = Number(draft.height_ft_value || "0");
+  const inches = Number(draft.height_in_value || "0");
+  if (!Number.isFinite(ft) || !Number.isFinite(inches) || ft < 0 || inches < 0) {
+    return null;
+  }
+
+  const totalInches = ft * 12 + inches;
+  if (totalInches <= 0) return null;
+  return totalInches * 2.54;
+}
+
+function calculateAge(dateOfBirth: string): number | null {
+  if (!dateOfBirth) return null;
+  const dob = new Date(dateOfBirth);
+  if (Number.isNaN(dob.getTime())) return null;
+
+  const now = new Date();
+  let years = now.getUTCFullYear() - dob.getUTCFullYear();
+  const monthDelta = now.getUTCMonth() - dob.getUTCMonth();
+  const dayDelta = now.getUTCDate() - dob.getUTCDate();
+  if (monthDelta < 0 || (monthDelta === 0 && dayDelta < 0)) {
+    years -= 1;
+  }
+
+  if (years < 0 || years > 120) return null;
+  return years;
+}
+
+function calculateBmi(weightKg: number | null, heightCm: number | null): number | null {
+  if (weightKg == null || heightCm == null || heightCm <= 0) return null;
+  const meters = heightCm / 100;
+  const bmi = weightKg / (meters * meters);
+  return Number.isFinite(bmi) ? bmi : null;
+}
+
+const BMI_SCALE_MIN = 12;
+const BMI_SCALE_MAX = 40;
+const BMI_GOOD_MIN = 18.5;
+const BMI_GOOD_MAX = 24.9;
+
+type BmiStatus = "good" | "warning" | "out_of_range";
+
+function bmiStatus(bmi: number): BmiStatus {
+  if (bmi < BMI_GOOD_MIN || bmi > BMI_GOOD_MAX) {
+    return "out_of_range";
+  }
+
+  const goodRange = BMI_GOOD_MAX - BMI_GOOD_MIN;
+  const warningBand = goodRange * 0.1;
+  const closeToMin = bmi - BMI_GOOD_MIN <= warningBand;
+  const closeToMax = BMI_GOOD_MAX - bmi <= warningBand;
+
+  if (closeToMin || closeToMax) {
+    return "warning";
+  }
+
+  return "good";
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function bmiPositionPercent(bmi: number): number {
+  const clamped = clamp(bmi, BMI_SCALE_MIN, BMI_SCALE_MAX);
+  return ((clamped - BMI_SCALE_MIN) / (BMI_SCALE_MAX - BMI_SCALE_MIN)) * 100;
+}
+
+function goalLabel(goal: (typeof nutritionalGoalOptions)[number], locale: AppLocale): string {
+  if (goal === "maintenance") return tr(locale, "Maintenance", "שימור");
+  if (goal === "weight_loss") return tr(locale, "Weight Loss", "ירידה במשקל");
+  if (goal === "muscle_hypertrophy") return tr(locale, "Muscle Hypertrophy", "היפרטרופיה");
+  if (goal === "body_recomposition") return tr(locale, "Body Recomposition", "הרכב גוף");
+  return tr(locale, "Athletic Performance", "ביצועים אתלטיים");
+}
+
+function goalEnergyTarget(goal: (typeof nutritionalGoalOptions)[number], locale: AppLocale): string {
+  if (goal === "maintenance") return tr(locale, "100% of TDEE", "100% מ-TDEE");
+  if (goal === "weight_loss") return tr(locale, "-15% to -25% TDEE", "15%- עד 25%- TDEE");
+  if (goal === "muscle_hypertrophy") return tr(locale, "+5% to +15% TDEE", "+5% עד +15% TDEE");
+  if (goal === "body_recomposition") return tr(locale, "0% to -10% TDEE", "0% עד 10%- TDEE");
+  return tr(locale, "+5% to +10% TDEE", "+5% עד +10% TDEE");
+}
+
+function goalProteinRange(goal: (typeof nutritionalGoalOptions)[number]): string {
+  if (goal === "maintenance") return "1.2-1.6 g/kg";
+  if (goal === "weight_loss") return "1.8-2.4 g/kg";
+  if (goal === "muscle_hypertrophy") return "1.6-2.2 g/kg";
+  if (goal === "body_recomposition") return "2.0-2.4 g/kg";
+  return "1.4-2.0 g/kg";
+}
+
+function normalizeServerField(field: string): string {
+  if (field === "weight_kg") return "weight";
+  if (field === "height_cm") return "height";
+  return field;
+}
 
 function createInitialDraft(
   defaults: OnboardingProfileFormProps["defaults"],
   locale: AppLocale,
 ): OnboardingFormDraft {
+  const defaultWeightUnit = locale === "he" ? "kg" : "lbs";
+  const defaultsWeightKg = defaults?.weight_kg ?? null;
+  const defaultWeightValue =
+    defaultsWeightKg == null
+      ? ""
+      : (defaultWeightUnit === "kg"
+        ? String(defaultsWeightKg)
+        : String((defaultsWeightKg / 0.45359237).toFixed(1)));
+
   return {
-    age: defaults?.age != null ? String(defaults.age) : "",
-    gender: defaults?.gender ?? "",
-    height_cm: defaults?.height_cm != null ? String(defaults.height_cm) : "",
-    weight_kg: defaults?.weight_kg != null ? String(defaults.weight_kg) : "",
+    first_name: defaults?.first_name ?? "",
+    last_name: defaults?.last_name ?? "",
+    date_of_birth: defaults?.date_of_birth ?? "",
+    biological_sex: defaults?.biological_sex ?? "",
+    weight_unit: defaultWeightUnit,
+    weight_value: defaultWeightValue,
+    height_unit: "cm",
+    height_cm_value: defaults?.height_cm != null ? String(defaults.height_cm) : "",
+    height_ft_value: "",
+    height_in_value: "",
     activity_level: defaults?.activity_level ?? "moderate",
-    preferred_language: defaults?.preferred_language ?? locale,
+    exercise_modalities: defaults?.exercise_modalities ?? [],
+    exercise_frequency_days_per_week:
+      defaults?.exercise_frequency_days_per_week != null
+        ? String(defaults.exercise_frequency_days_per_week)
+        : "",
+    exercise_duration_minutes:
+      defaults?.exercise_duration_minutes != null
+        ? String(defaults.exercise_duration_minutes)
+        : "",
+    nutritional_goal: defaults?.nutritional_goal ?? "",
+    pregnancy_lactation_status: defaults?.pregnancy_lactation_status ?? "none",
+    has_medical_conditions:
+      defaults?.has_medical_conditions == null
+        ? ""
+        : (defaults.has_medical_conditions ? "yes" : "no"),
+    medical_conditions_details: defaults?.medical_conditions_details ?? "",
+    has_regular_medications:
+      defaults?.has_regular_medications == null
+        ? ""
+        : (defaults.has_regular_medications ? "yes" : "no"),
+    regular_medications_details: defaults?.regular_medications_details ?? "",
+    hot_climate_or_heavy_sweating:
+      defaults?.hot_climate_or_heavy_sweating == null
+        ? ""
+        : (defaults.hot_climate_or_heavy_sweating ? "yes" : "no"),
+    habits: defaults?.habits ?? [],
+    dietary_preference: defaults?.dietary_preference ?? "",
+    additional_information: defaults?.additional_information ?? "",
     allergies: defaults?.allergies?.join(", ") ?? "",
-    medical_conditions: defaults?.medical_conditions?.join(", ") ?? "",
-    accept_ai_extraction: false,
+    preferred_language: defaults?.preferred_language ?? locale,
+    accept_ai_extraction: defaults?.ai_extraction_consent ?? false,
   };
 }
 
@@ -62,15 +283,39 @@ function isValidDraft(value: unknown): value is OnboardingFormDraft {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<OnboardingFormDraft>;
   return (
-    typeof candidate.age === "string" &&
-    typeof candidate.gender === "string" &&
-    typeof candidate.height_cm === "string" &&
-    typeof candidate.weight_kg === "string" &&
+    typeof candidate.first_name === "string" &&
+    typeof candidate.last_name === "string" &&
+    typeof candidate.date_of_birth === "string" &&
+    (candidate.biological_sex === "male" || candidate.biological_sex === "female" || candidate.biological_sex === "") &&
+    (candidate.weight_unit === "kg" || candidate.weight_unit === "lbs") &&
+    typeof candidate.weight_value === "string" &&
+    (candidate.height_unit === "cm" || candidate.height_unit === "ft_in") &&
+    typeof candidate.height_cm_value === "string" &&
+    typeof candidate.height_ft_value === "string" &&
+    typeof candidate.height_in_value === "string" &&
     typeof candidate.activity_level === "string" &&
     activityLevelOptions.includes(candidate.activity_level as (typeof activityLevelOptions)[number]) &&
-    (candidate.preferred_language === "en" || candidate.preferred_language === "he") &&
+    Array.isArray(candidate.exercise_modalities) &&
+    typeof candidate.exercise_frequency_days_per_week === "string" &&
+    typeof candidate.exercise_duration_minutes === "string" &&
+    (candidate.nutritional_goal === ""
+      || nutritionalGoalOptions.includes(candidate.nutritional_goal as (typeof nutritionalGoalOptions)[number])) &&
+    (candidate.pregnancy_lactation_status === "none"
+      || candidate.pregnancy_lactation_status === "pregnant"
+      || candidate.pregnancy_lactation_status === "lactating") &&
+    (candidate.has_medical_conditions === "yes" || candidate.has_medical_conditions === "no" || candidate.has_medical_conditions === "") &&
+    typeof candidate.medical_conditions_details === "string" &&
+    (candidate.has_regular_medications === "yes" || candidate.has_regular_medications === "no" || candidate.has_regular_medications === "") &&
+    typeof candidate.regular_medications_details === "string" &&
+    (candidate.hot_climate_or_heavy_sweating === "yes"
+      || candidate.hot_climate_or_heavy_sweating === "no"
+      || candidate.hot_climate_or_heavy_sweating === "") &&
+    Array.isArray(candidate.habits) &&
+    (candidate.dietary_preference === ""
+      || dietaryPreferenceOptions.includes(candidate.dietary_preference as (typeof dietaryPreferenceOptions)[number])) &&
+    typeof candidate.additional_information === "string" &&
     typeof candidate.allergies === "string" &&
-    typeof candidate.medical_conditions === "string" &&
+    (candidate.preferred_language === "en" || candidate.preferred_language === "he") &&
     typeof candidate.accept_ai_extraction === "boolean"
   );
 }
@@ -82,9 +327,9 @@ function SubmitButton({ locale }: { locale: AppLocale }) {
     <button
       type="submit"
       disabled={pending}
-      className="inline-flex w-full items-center justify-center rounded-xl bg-teal-700 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800"
+      className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-5 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800"
     >
-      {pending ? tr(locale, "Saving profile...", "שומר פרופיל...") : tr(locale, "Save profile", "שמירת פרופיל")}
+      {pending ? tr(locale, "Saving profile...", "שומר פרופיל...") : tr(locale, "Complete setup", "סיום הגדרה")}
     </button>
   );
 }
@@ -114,6 +359,21 @@ export function OnboardingProfileForm({
       return initialDraft;
     }
   });
+  const [step, setStep] = useState<StepKey>(1);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const effectiveLocale = draft.preferred_language;
+
+  const weightKg = toKg(draft.weight_value, draft.weight_unit);
+  const heightCm = toCm(draft);
+  const ageYears = calculateAge(draft.date_of_birth);
+  const bmi = calculateBmi(weightKg, heightCm);
+  const isUnderweight = bmi != null && bmi < 18.5;
+  const isHighBmi = bmi != null && bmi >= 35;
+  const bmiState = bmi != null ? bmiStatus(bmi) : null;
+  const bmiPercent = bmi != null ? bmiPositionPercent(bmi) : null;
+
+  const selectedGoal = draft.nutritional_goal || null;
 
   useEffect(() => {
     try {
@@ -122,6 +382,42 @@ export function OnboardingProfileForm({
       // Ignore blocked storage writes.
     }
   }, [draft]);
+
+  useEffect(() => {
+    if (!state.fieldErrors || state.fieldErrors.length === 0) {
+      return;
+    }
+
+    const mappedErrors: Record<string, string> = {};
+    for (const issue of state.fieldErrors) {
+      const key = normalizeServerField(issue.field);
+      if (!mappedErrors[key]) {
+        mappedErrors[key] = issue.message;
+      }
+    }
+
+    setTimeout(() => {
+      setErrors(mappedErrors);
+    }, 0);
+
+    const firstField = Object.keys(mappedErrors)[0];
+    const targetStep = FIELD_TO_STEP[firstField] ?? step;
+    if (targetStep !== step) {
+      setTimeout(() => {
+        setStep(targetStep);
+        const element = document.querySelector<HTMLElement>(`[data-field='${firstField}']`);
+        if (element) {
+          element.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }, 0);
+      return;
+    }
+
+    const element = document.querySelector<HTMLElement>(`[data-field='${firstField}']`);
+    if (element) {
+      element.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [state.fieldErrors, step]);
 
   const persistDraft = (next: OnboardingFormDraft) => {
     setDraft(next);
@@ -134,9 +430,123 @@ export function OnboardingProfileForm({
 
   const updateDraft = (patch: Partial<OnboardingFormDraft>) => {
     persistDraft({ ...draft, ...patch });
+    setErrors((current) => (Object.keys(current).length > 0 ? {} : current));
+  };
+
+  const toggleListValue = (key: "exercise_modalities" | "habits", value: string) => {
+    const set = new Set(draft[key]);
+    if (set.has(value)) {
+      set.delete(value);
+    } else {
+      if (key === "habits" && value === "none") {
+        set.clear();
+      }
+      if (key === "habits" && value !== "none") {
+        set.delete("none");
+      }
+      set.add(value);
+    }
+
+    updateDraft({ [key]: Array.from(set) } as Partial<OnboardingFormDraft>);
+  };
+
+  const setYesNo = (
+    key: "has_medical_conditions" | "has_regular_medications" | "hot_climate_or_heavy_sweating",
+    value: "yes" | "no",
+  ) => {
+    updateDraft({ [key]: value } as Partial<OnboardingFormDraft>);
+  };
+
+  const validateStep = (stepToValidate: StepKey): Record<string, string> => {
+    const nextErrors: Record<string, string> = {};
+
+    if (stepToValidate === 1) {
+      if (!draft.first_name.trim()) nextErrors.first_name = tr(effectiveLocale, "First name is required.", "שם פרטי חובה.");
+      if (!draft.last_name.trim()) nextErrors.last_name = tr(effectiveLocale, "Last name is required.", "שם משפחה חובה.");
+      if (!draft.date_of_birth) nextErrors.date_of_birth = tr(effectiveLocale, "Date of birth is required.", "תאריך לידה חובה.");
+      if (ageYears == null) nextErrors.date_of_birth = tr(effectiveLocale, "Enter a valid date of birth.", "יש להזין תאריך לידה תקין.");
+      if (!draft.biological_sex) nextErrors.biological_sex = tr(effectiveLocale, "Select biological sex.", "יש לבחור מין ביולוגי.");
+      if (weightKg == null || weightKg < 20 || weightKg > 400) {
+        nextErrors.weight = tr(effectiveLocale, "Weight must be between 20 and 400 kg.", "המשקל חייב להיות בין 20 ל-400 ק" + "ג.");
+      }
+      if (heightCm == null || heightCm < 80 || heightCm > 250) {
+        nextErrors.height = tr(effectiveLocale, "Height must be between 80 and 250 cm.", "הגובה חייב להיות בין 80 ל-250 ס" + "מ.");
+      }
+    }
+
+    if (stepToValidate === 2) {
+      if (!draft.activity_level) {
+        nextErrors.activity_level = tr(effectiveLocale, "Activity level is required.", "רמת פעילות חובה.");
+      }
+      if (draft.exercise_modalities.length === 0) {
+        nextErrors.exercise_modalities = tr(effectiveLocale, "Select at least one exercise modality.", "יש לבחור לפחות סוג אימון אחד.");
+      }
+      if (!draft.exercise_frequency_days_per_week) {
+        nextErrors.exercise_frequency_days_per_week = tr(effectiveLocale, "Frequency is required.", "תדירות חובה.");
+      }
+      if (!draft.exercise_duration_minutes) {
+        nextErrors.exercise_duration_minutes = tr(effectiveLocale, "Duration is required.", "משך אימון חובה.");
+      }
+      if (!draft.nutritional_goal) {
+        nextErrors.nutritional_goal = tr(effectiveLocale, "Select a nutritional goal.", "יש לבחור מטרה תזונתית.");
+      }
+      if (isUnderweight && (draft.nutritional_goal === "weight_loss" || draft.nutritional_goal === "body_recomposition")) {
+        nextErrors.nutritional_goal = tr(
+          effectiveLocale,
+          "Weight Loss and Body Recomposition are disabled for BMI below 18.5.",
+          "ירידה במשקל והרכב גוף מושבתים עבור BMI מתחת ל-18.5.",
+        );
+      }
+    }
+
+    if (stepToValidate === 3) {
+      if (draft.biological_sex === "female" && !draft.pregnancy_lactation_status) {
+        nextErrors.pregnancy_lactation_status = tr(effectiveLocale, "Choose pregnancy/lactation status.", "יש לבחור סטטוס הריון/הנקה.");
+      }
+      if (!draft.has_medical_conditions) {
+        nextErrors.has_medical_conditions = tr(effectiveLocale, "Choose Yes or No.", "יש לבחור כן או לא.");
+      }
+      if (!draft.has_regular_medications) {
+        nextErrors.has_regular_medications = tr(effectiveLocale, "Choose Yes or No.", "יש לבחור כן או לא.");
+      }
+      if (!draft.hot_climate_or_heavy_sweating) {
+        nextErrors.hot_climate_or_heavy_sweating = tr(effectiveLocale, "Choose Yes or No.", "יש לבחור כן או לא.");
+      }
+    }
+
+    if (stepToValidate === 4) {
+      if (draft.additional_information.length > 1000) {
+        nextErrors.additional_information = tr(effectiveLocale, "Maximum 1000 characters.", "מקסימום 1000 תווים.");
+      }
+    }
+
+    return nextErrors;
+  };
+
+  const goToStep = (nextStep: StepKey) => {
+    const nextErrors = validateStep(step);
+    if (Object.keys(nextErrors).length > 0) {
+      setErrors(nextErrors);
+      const firstKey = Object.keys(nextErrors)[0];
+      const element = document.querySelector<HTMLElement>(`[data-field='${firstKey}']`);
+      if (element) {
+        element.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+      return;
+    }
+
+    setErrors({});
+    setStep(nextStep);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const onSubmit = () => {
+    const nextErrors = validateStep(4);
+    if (Object.keys(nextErrors).length > 0) {
+      setErrors(nextErrors);
+      return;
+    }
+
     try {
       window.sessionStorage.removeItem(ONBOARDING_DRAFT_KEY);
     } catch {
@@ -144,168 +554,708 @@ export function OnboardingProfileForm({
     }
   };
 
+  const isGoalDisabled = (goal: (typeof nutritionalGoalOptions)[number]): boolean => {
+    return isUnderweight && (goal === "weight_loss" || goal === "body_recomposition");
+  };
+
+  const showSedentaryHint = draft.activity_level === "sedentary";
+
+  const renderFieldError = (key: string) => {
+    const message = errors[key];
+    if (!message) return null;
+    return <p className="mt-1 text-xs text-rose-700">{message}</p>;
+  };
+
+  const inputErrorClass = (key: string): string => {
+    return errors[key] ? "border-rose-700" : "border-slate-300";
+  };
+
   return (
-    <form action={formAction} onSubmit={onSubmit} className="mt-6 space-y-4">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <label className="block">
-          <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Age", "גיל")}</span>
-          <input
-            type="number"
-            name="age"
-            required
-            min={10}
-            max={120}
-            value={draft.age}
-            onChange={(event) => updateDraft({ age: event.target.value })}
-            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
-          />
-        </label>
-
-        <label className="block">
-          <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Gender", "מגדר")}</span>
-          <input
-            type="text"
-            name="gender"
-            required
-            maxLength={30}
-            value={draft.gender}
-            onChange={(event) => updateDraft({ gender: event.target.value })}
-            placeholder={tr(locale, "e.g. female, male", "לדוגמה: זכר, נקבה")}
-            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
-          />
-        </label>
-
-        <label className="block">
-          <span className="mb-1 block text-sm font-medium text-slate-700">
-            {tr(locale, "Height (cm)", "גובה (ס\"מ)")}
-          </span>
-          <input
-            type="number"
-            name="height_cm"
-            required
-            min={80}
-            max={250}
-            step="0.01"
-            value={draft.height_cm}
-            onChange={(event) => updateDraft({ height_cm: event.target.value })}
-            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
-          />
-        </label>
-
-        <label className="block">
-          <span className="mb-1 block text-sm font-medium text-slate-700">
-            {tr(locale, "Weight (kg)", "משקל (ק\"ג)")}
-          </span>
-          <input
-            type="number"
-            name="weight_kg"
-            required
-            min={20}
-            max={400}
-            step="0.01"
-            value={draft.weight_kg}
-            onChange={(event) => updateDraft({ weight_kg: event.target.value })}
-            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
-          />
-        </label>
+    <form action={formAction} onSubmit={onSubmit} className="mt-6 space-y-5 pb-20">
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+        <div className="text-sm font-medium text-slate-700">
+          {tr(effectiveLocale, `Step ${step} of 4`, `שלב ${step} מתוך 4`)}
+        </div>
+        <div className="flex gap-1.5" data-field="preferred_language">
+          <button
+            type="button"
+            onClick={() => updateDraft({ preferred_language: "en", weight_unit: "lbs" })}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${draft.preferred_language === "en" ? "bg-slate-900 text-white" : "bg-white text-slate-700"}`}
+          >
+            English
+          </button>
+          <button
+            type="button"
+            onClick={() => updateDraft({ preferred_language: "he", weight_unit: "kg" })}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${draft.preferred_language === "he" ? "bg-slate-900 text-white" : "bg-white text-slate-700"}`}
+          >
+            עברית
+          </button>
+        </div>
       </div>
 
-      <label className="block">
-        <span className="mb-1 block text-sm font-medium text-slate-700">
-          {tr(locale, "Activity level", "רמת פעילות")}
-        </span>
-        <select
-          name="activity_level"
-          required
-          value={draft.activity_level}
-          onChange={(event) =>
-            updateDraft({
-              activity_level: event.target.value as (typeof activityLevelOptions)[number],
-            })
-          }
-          className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
-        >
-            {activityLevelOptions.map((option) => (
-              <option key={option} value={option}>
-                {formatActivityLevel(option, locale)}
-              </option>
-            ))}
-        </select>
-      </label>
-
-      <label className="block">
-        <span className="mb-1 block text-sm font-medium text-slate-700">
-          {tr(locale, "Language", "שפה")}
-        </span>
-        <select
-          name="preferred_language"
-          required
-          value={draft.preferred_language}
-          onChange={(event) =>
-            updateDraft({ preferred_language: event.target.value as "en" | "he" })
-          }
-          className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
-        >
-          <option value="en">English</option>
-          <option value="he">עברית</option>
-        </select>
-      </label>
-
-      <label className="block">
-        <span className="mb-1 block text-sm font-medium text-slate-700">
-          {tr(locale, "Allergies (comma separated)", "אלרגיות (מופרדות בפסיקים)")}
-        </span>
-        <input
-          type="text"
-          name="allergies"
-          value={draft.allergies}
-          onChange={(event) => updateDraft({ allergies: event.target.value })}
-          placeholder={tr(locale, "e.g. peanuts, shellfish", "לדוגמה: בוטנים, רכיכות")}
-          className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
+      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
+        <div
+          className="h-full rounded-full bg-teal-600 transition-all"
+          style={{ width: `${(step / 4) * 100}%` }}
         />
-      </label>
+      </div>
 
-      <label className="block">
-        <span className="mb-1 block text-sm font-medium text-slate-700">
-          {tr(locale, "Medical condition (comma separated)", "מצב רפואי (מופרד בפסיקים)")}
-        </span>
-        <input
-          type="text"
-          name="medical_conditions"
-          value={draft.medical_conditions}
-          onChange={(event) => updateDraft({ medical_conditions: event.target.value })}
-          placeholder={tr(locale, "e.g. hypertension", "לדוגמה: יתר לחץ דם")}
-          className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
-        />
-      </label>
+      <input type="hidden" name="preferred_language" value={draft.preferred_language} />
+      <input type="hidden" name="first_name" value={draft.first_name} />
+      <input type="hidden" name="last_name" value={draft.last_name} />
+      <input type="hidden" name="date_of_birth" value={draft.date_of_birth} />
+      <input type="hidden" name="biological_sex" value={draft.biological_sex} />
+      <input type="hidden" name="height_cm" value={heightCm != null ? String(heightCm) : ""} />
+      <input type="hidden" name="weight_kg" value={weightKg != null ? String(weightKg) : ""} />
+      <input type="hidden" name="activity_level" value={draft.activity_level} />
+      <input
+        type="hidden"
+        name="exercise_frequency_days_per_week"
+        value={draft.exercise_frequency_days_per_week}
+      />
+      <input
+        type="hidden"
+        name="exercise_duration_minutes"
+        value={draft.exercise_duration_minutes}
+      />
+      <input type="hidden" name="nutritional_goal" value={draft.nutritional_goal} />
+      <input
+        type="hidden"
+        name="pregnancy_lactation_status"
+        value={draft.pregnancy_lactation_status}
+      />
+      <input type="hidden" name="has_medical_conditions" value={draft.has_medical_conditions} />
+      <input type="hidden" name="medical_conditions_details" value={draft.medical_conditions_details} />
+      <input type="hidden" name="has_regular_medications" value={draft.has_regular_medications} />
+      <input
+        type="hidden"
+        name="regular_medications_details"
+        value={draft.regular_medications_details}
+      />
+      <input
+        type="hidden"
+        name="hot_climate_or_heavy_sweating"
+        value={draft.hot_climate_or_heavy_sweating}
+      />
+      <input type="hidden" name="dietary_preference" value={draft.dietary_preference} />
+      <input type="hidden" name="allergies" value={draft.allergies} />
+      <input
+        type="hidden"
+        name="additional_information"
+        value={draft.additional_information}
+      />
+      <input
+        type="hidden"
+        name="medical_conditions"
+        value={draft.has_medical_conditions === "yes" ? draft.medical_conditions_details : ""}
+      />
+      {draft.exercise_modalities.map((value) => (
+        <input key={`hidden-exercise-${value}`} type="hidden" name="exercise_modalities" value={value} />
+      ))}
+      {draft.habits.map((value) => (
+        <input key={`hidden-habit-${value}`} type="hidden" name="habits" value={value} />
+      ))}
 
-      <label className="flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5 text-sm text-sky-900">
-        <input
-          type="checkbox"
-          name="accept_ai_extraction"
-          value="yes"
-          checked={draft.accept_ai_extraction}
-          onChange={(event) =>
-            updateDraft({ accept_ai_extraction: event.target.checked })
-          }
-          className="mt-0.5"
-        />
-        <span>
-          {tr(
-            locale,
-            "I agree that my extracted health text can be sent to the configured AI provider for analysis.",
-            "אני מסכים/ה שטקסט בריאות שחולץ יכול להישלח לספק ה-AI שהוגדר לצורך ניתוח.",
+      {step === 1 ? (
+        <section className="space-y-4">
+          <h2 className="text-lg font-semibold text-slate-900">{tr(effectiveLocale, "Identity & Vital Statistics", "זהות ומדדים בסיסיים")}</h2>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block" data-field="first_name">
+              <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "First name", "שם פרטי")}</span>
+              <input
+                type="text"
+                name="first_name"
+                required
+                value={draft.first_name}
+                onChange={(event) => updateDraft({ first_name: event.target.value })}
+                className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("first_name")}`}
+              />
+              {renderFieldError("first_name")}
+            </label>
+
+            <label className="block" data-field="last_name">
+              <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Last name", "שם משפחה")}</span>
+              <input
+                type="text"
+                name="last_name"
+                required
+                value={draft.last_name}
+                onChange={(event) => updateDraft({ last_name: event.target.value })}
+                className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("last_name")}`}
+              />
+              {renderFieldError("last_name")}
+            </label>
+
+            <label className="block" data-field="date_of_birth">
+              <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Date of birth", "תאריך לידה")}</span>
+              <input
+                type="date"
+                name="date_of_birth"
+                required
+                max={new Date().toISOString().slice(0, 10)}
+                value={draft.date_of_birth}
+                onChange={(event) => updateDraft({ date_of_birth: event.target.value })}
+                className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("date_of_birth")}`}
+              />
+              {renderFieldError("date_of_birth")}
+            </label>
+
+            <div className="block" data-field="biological_sex">
+              <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Biological sex", "מין ביולוגי")}</span>
+              <div className={`grid grid-cols-2 overflow-hidden rounded-xl border ${inputErrorClass("biological_sex")}`}>
+                <button
+                  type="button"
+                  className={`px-3 py-2 text-sm font-medium ${draft.biological_sex === "male" ? "bg-teal-700 text-white" : "bg-white text-slate-700"}`}
+                  onClick={() => updateDraft({ biological_sex: "male", pregnancy_lactation_status: "none" })}
+                >
+                  {tr(effectiveLocale, "Male", "זכר")}
+                </button>
+                <button
+                  type="button"
+                  className={`px-3 py-2 text-sm font-medium ${draft.biological_sex === "female" ? "bg-teal-700 text-white" : "bg-white text-slate-700"}`}
+                  onClick={() => updateDraft({ biological_sex: "female" })}
+                >
+                  {tr(effectiveLocale, "Female", "נקבה")}
+                </button>
+              </div>
+              {renderFieldError("biological_sex")}
+            </div>
+
+            <div className="space-y-2" data-field="weight">
+              <div className="flex items-center justify-between">
+                <span className="block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Current weight", "משקל נוכחי")}</span>
+                <div className="flex overflow-hidden rounded-lg border border-slate-300 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => updateDraft({ weight_unit: "kg" })}
+                    className={`px-3 py-1.5 ${draft.weight_unit === "kg" ? "bg-slate-900 text-white" : "bg-white text-slate-700"}`}
+                  >
+                    kg
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateDraft({ weight_unit: "lbs" })}
+                    className={`px-3 py-1.5 ${draft.weight_unit === "lbs" ? "bg-slate-900 text-white" : "bg-white text-slate-700"}`}
+                  >
+                    lbs
+                  </button>
+                </div>
+              </div>
+              <input
+                type="number"
+                min={1}
+                step="0.1"
+                value={draft.weight_value}
+                onChange={(event) => updateDraft({ weight_value: event.target.value })}
+                className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("weight")}`}
+              />
+              {renderFieldError("weight")}
+            </div>
+
+            <div className="space-y-2" data-field="height">
+              <div className="flex items-center justify-between">
+                <span className="block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Height", "גובה")}</span>
+                <div className="flex overflow-hidden rounded-lg border border-slate-300 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => updateDraft({ height_unit: "cm" })}
+                    className={`px-3 py-1.5 ${draft.height_unit === "cm" ? "bg-slate-900 text-white" : "bg-white text-slate-700"}`}
+                  >
+                    cm
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateDraft({ height_unit: "ft_in" })}
+                    className={`px-3 py-1.5 ${draft.height_unit === "ft_in" ? "bg-slate-900 text-white" : "bg-white text-slate-700"}`}
+                  >
+                    ft/in
+                  </button>
+                </div>
+              </div>
+              {draft.height_unit === "cm" ? (
+                <input
+                  type="number"
+                  min={1}
+                  step="0.1"
+                  value={draft.height_cm_value}
+                  onChange={(event) => updateDraft({ height_cm_value: event.target.value })}
+                  className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("height")}`}
+                />
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    placeholder={tr(effectiveLocale, "Feet", "רגל")}
+                    value={draft.height_ft_value}
+                    onChange={(event) => updateDraft({ height_ft_value: event.target.value })}
+                    className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("height")}`}
+                  />
+                  <input
+                    type="number"
+                    min={0}
+                    placeholder={tr(effectiveLocale, "Inches", "אינץ'")}
+                    value={draft.height_in_value}
+                    onChange={(event) => updateDraft({ height_in_value: event.target.value })}
+                    className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("height")}`}
+                  />
+                </div>
+              )}
+              {renderFieldError("height")}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-teal-100 bg-teal-50 px-4 py-3 text-sm text-teal-900">
+            <p>
+              {tr(effectiveLocale, "Calculated age", "גיל מחושב")}: {ageYears != null ? ageYears : tr(effectiveLocale, "n/a", "לא זמין")}
+            </p>
+            <p>
+              BMI: {bmi != null ? formatNumberForLocale(bmi, effectiveLocale, { maximumFractionDigits: 2 }) : tr(effectiveLocale, "n/a", "לא זמין")}
+            </p>
+
+            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3 text-slate-700">
+              <div className="mb-2 flex items-center justify-between text-xs">
+                <span>{tr(effectiveLocale, "BMI scale", "סקאלת BMI")}</span>
+                <span>
+                  {tr(effectiveLocale, "Good range", "טווח תקין")}: {BMI_GOOD_MIN}-{BMI_GOOD_MAX}
+                </span>
+              </div>
+
+              <div className="mb-2 grid grid-cols-2 gap-2 text-xs text-slate-600">
+                <p>
+                  {tr(effectiveLocale, "Scale min", "מינימום סקאלה")}: <span className="font-semibold text-slate-900">{BMI_SCALE_MIN}</span>
+                </p>
+                <p className="text-right">
+                  {tr(effectiveLocale, "Scale max", "מקסימום סקאלה")}: <span className="font-semibold text-slate-900">{BMI_SCALE_MAX}</span>
+                </p>
+                <p>
+                  {tr(effectiveLocale, "Healthy min", "מינימום תקין")}: <span className="font-semibold text-slate-900">{BMI_GOOD_MIN}</span>
+                </p>
+                <p className="text-right">
+                  {tr(effectiveLocale, "Healthy max", "מקסימום תקין")}: <span className="font-semibold text-slate-900">{BMI_GOOD_MAX}</span>
+                </p>
+              </div>
+
+              <div className="relative h-3 rounded-full bg-slate-200">
+                <div
+                  className="absolute h-full rounded-full bg-emerald-400"
+                  style={{
+                    left: `${((BMI_GOOD_MIN - BMI_SCALE_MIN) / (BMI_SCALE_MAX - BMI_SCALE_MIN)) * 100}%`,
+                    width: `${((BMI_GOOD_MAX - BMI_GOOD_MIN) / (BMI_SCALE_MAX - BMI_SCALE_MIN)) * 100}%`,
+                  }}
+                />
+                {bmi != null && bmiPercent != null ? (
+                  <div
+                    className={`absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 bg-white ${
+                      bmiState === "good"
+                        ? "border-emerald-600"
+                        : bmiState === "warning"
+                          ? "border-amber-500"
+                          : "border-rose-600"
+                    }`}
+                    style={{ left: `${bmiPercent}%` }}
+                    aria-label="bmi-marker"
+                  />
+                ) : null}
+              </div>
+
+              <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+                <span>{BMI_SCALE_MIN}</span>
+                <span>{BMI_SCALE_MAX}</span>
+              </div>
+
+              {bmi != null ? (
+                <p
+                  className={`mt-2 text-xs font-semibold ${
+                    bmiState === "good"
+                      ? "text-emerald-700"
+                      : bmiState === "warning"
+                        ? "text-amber-700"
+                        : "text-rose-700"
+                  }`}
+                >
+                  {tr(effectiveLocale, "Current BMI", "BMI נוכחי")}: {formatNumberForLocale(bmi, effectiveLocale, { maximumFractionDigits: 2 })}. {" "}
+                  {bmiState === "good"
+                    ? tr(effectiveLocale, "BMI is in a healthy range.", "ה-BMI בטווח תקין.")
+                    : bmiState === "warning"
+                      ? tr(effectiveLocale, "BMI is in range but close to a boundary.", "ה-BMI בטווח אך קרוב לקצה.")
+                      : tr(effectiveLocale, "BMI is outside the recommended range.", "ה-BMI מחוץ לטווח המומלץ.")}
+                </p>
+              ) : (
+                <p className="mt-2 text-xs font-semibold text-slate-600">
+                  {tr(
+                    effectiveLocale,
+                    "Enter valid height and weight to place your BMI marker on the scale.",
+                    "יש להזין גובה ומשקל תקינים כדי להציג את סמן ה-BMI על הסקאלה.",
+                  )}
+                </p>
+              )}
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {step === 2 ? (
+        <section className="space-y-4">
+          <h2 className="text-lg font-semibold text-slate-900">{tr(effectiveLocale, "Lifestyle & Physical Activity", "אורח חיים ופעילות")}</h2>
+
+          <div data-field="activity_level">
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Daily activity level", "רמת פעילות יומית")}</span>
+            <select
+              name="activity_level"
+              value={draft.activity_level}
+              onChange={(event) => updateDraft({ activity_level: event.target.value as (typeof activityLevelOptions)[number] })}
+              className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("activity_level")}`}
+            >
+              {activityLevelOptions.map((option) => (
+                <option key={option} value={option}>{formatActivityLevel(option, effectiveLocale)}</option>
+              ))}
+            </select>
+            {renderFieldError("activity_level")}
+          </div>
+
+          <div data-field="exercise_modalities">
+            <span className="mb-2 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Exercise modality", "סוג אימון")}</span>
+            <div className="flex flex-wrap gap-2">
+              {exerciseModalityOptions.map((value) => {
+                const label =
+                  value === "resistance_hypertrophy"
+                    ? tr(effectiveLocale, "Resistance / Hypertrophy", "התנגדות / היפרטרופיה")
+                    : value === "endurance_cardio"
+                      ? tr(effectiveLocale, "Endurance / Cardio", "סבולת / אירובי")
+                      : value === "martial_arts"
+                        ? tr(effectiveLocale, "Martial Arts", "אומנויות לחימה")
+                        : tr(effectiveLocale, "Other", "אחר");
+                const active = draft.exercise_modalities.includes(value);
+
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => toggleListValue("exercise_modalities", value)}
+                    className={`rounded-full border px-3 py-1.5 text-xs font-medium ${active ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-700"}`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            {renderFieldError("exercise_modalities")}
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block" data-field="exercise_frequency_days_per_week">
+              <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Frequency (days/week)", "תדירות (ימים/שבוע)")}</span>
+              <input
+                type="number"
+                name="exercise_frequency_days_per_week"
+                min={0}
+                max={14}
+                value={draft.exercise_frequency_days_per_week}
+                onChange={(event) => updateDraft({ exercise_frequency_days_per_week: event.target.value })}
+                className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("exercise_frequency_days_per_week")}`}
+              />
+              {renderFieldError("exercise_frequency_days_per_week")}
+            </label>
+
+            <label className="block" data-field="exercise_duration_minutes">
+              <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Duration (minutes/session)", "משך (דקות לאימון)")}</span>
+              <input
+                type="number"
+                name="exercise_duration_minutes"
+                min={0}
+                max={600}
+                value={draft.exercise_duration_minutes}
+                onChange={(event) => updateDraft({ exercise_duration_minutes: event.target.value })}
+                className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("exercise_duration_minutes")}`}
+              />
+              {renderFieldError("exercise_duration_minutes")}
+            </label>
+          </div>
+
+          <div data-field="nutritional_goal">
+            <span className="mb-2 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Nutritional goal", "מטרה תזונתית")}</span>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {nutritionalGoalOptions.map((goal) => {
+                const disabled = isGoalDisabled(goal);
+                const selected = draft.nutritional_goal === goal;
+                return (
+                  <button
+                    key={goal}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => updateDraft({ nutritional_goal: goal })}
+                    className={`rounded-xl border px-3 py-2 text-left text-xs ${selected ? "border-teal-700 bg-teal-50" : "border-slate-300 bg-white"} ${disabled ? "cursor-not-allowed opacity-50" : "hover:border-teal-400"}`}
+                  >
+                    <p className="font-semibold text-slate-900">{goalLabel(goal, effectiveLocale)}</p>
+                    <p className="mt-1 text-slate-600">{goalEnergyTarget(goal, effectiveLocale)}</p>
+                    <p className="text-slate-600">{goalProteinRange(goal)}</p>
+                    {showSedentaryHint && goal === "muscle_hypertrophy" ? (
+                      <p className="mt-1 text-amber-700">{tr(effectiveLocale, "Hypertrophy requires structured resistance training.", "היפרטרופיה דורשת אימון התנגדות מובנה.")}</p>
+                    ) : null}
+                    {showSedentaryHint && goal === "athletic_performance" ? (
+                      <p className="mt-1 text-amber-700">{tr(effectiveLocale, "Athletic performance targets active training lifestyles.", "ביצועים אתלטיים מיועדים לאורח חיים פעיל.")}</p>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+            {renderFieldError("nutritional_goal")}
+
+            {isUnderweight ? (
+              <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                {tr(
+                  effectiveLocale,
+                  "Weight Loss and Recomposition are disabled because your calculated BMI is under 18.5. We recommend Maintenance or Hypertrophy.",
+                  "ירידה במשקל והרכב גוף מושבתים כי BMI נמוך מ-18.5. מומלץ שימור או היפרטרופיה.",
+                )}
+              </p>
+            ) : null}
+
+            {isHighBmi && selectedGoal === "muscle_hypertrophy" ? (
+              <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                {tr(
+                  effectiveLocale,
+                  "Caloric surplus may not be recommended at your current BMI. Body Recomposition or Weight Loss is typically advised.",
+                  "עודף קלורי עשוי לא להתאים ל-BMI הנוכחי. בדרך כלל מומלץ הרכב גוף או ירידה במשקל.",
+                )}
+              </p>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
+      {step === 3 ? (
+        <section className="space-y-4">
+          <h2 className="text-lg font-semibold text-slate-900">{tr(effectiveLocale, "Medical & Physiological Status", "מצב רפואי ופיזיולוגי")}</h2>
+
+          {draft.biological_sex === "female" ? (
+            <div data-field="pregnancy_lactation_status">
+              <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Pregnancy / lactation", "הריון / הנקה")}</span>
+              <select
+                name="pregnancy_lactation_status"
+                value={draft.pregnancy_lactation_status}
+                onChange={(event) =>
+                  updateDraft({
+                    pregnancy_lactation_status: event.target.value as "none" | "pregnant" | "lactating",
+                  })
+                }
+                className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("pregnancy_lactation_status")}`}
+              >
+                <option value="none">{tr(effectiveLocale, "No", "לא")}</option>
+                <option value="pregnant">{tr(effectiveLocale, "Pregnant", "בהריון")}</option>
+                <option value="lactating">{tr(effectiveLocale, "Lactating", "מניקה")}</option>
+              </select>
+              {renderFieldError("pregnancy_lactation_status")}
+            </div>
+          ) : (
+            null
           )}
-        </span>
-      </label>
 
-      {state.error ? (
+          <div data-field="has_medical_conditions">
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Medical conditions", "מצבים רפואיים")}</span>
+            <div className="flex gap-3 text-sm">
+              <label className="flex items-center gap-2"><input type="radio" name="has_medical_conditions" value="yes" checked={draft.has_medical_conditions === "yes"} onChange={() => setYesNo("has_medical_conditions", "yes")} /> {tr(effectiveLocale, "Yes", "כן")}</label>
+              <label className="flex items-center gap-2"><input type="radio" name="has_medical_conditions" value="no" checked={draft.has_medical_conditions === "no"} onChange={() => setYesNo("has_medical_conditions", "no")} /> {tr(effectiveLocale, "No", "לא")}</label>
+            </div>
+            {draft.has_medical_conditions === "yes" ? (
+              <textarea
+                name="medical_conditions_details"
+                value={draft.medical_conditions_details}
+                onChange={(event) => updateDraft({ medical_conditions_details: event.target.value })}
+                placeholder={tr(effectiveLocale, "e.g., diabetes, hypertension, kidney disease, IBD", "לדוגמה: סוכרת, יתר לחץ דם")}
+                className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
+                rows={3}
+              />
+            ) : (
+              null
+            )}
+            {renderFieldError("has_medical_conditions")}
+          </div>
+
+          <div data-field="has_regular_medications">
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Regular medications", "תרופות קבועות")}</span>
+            <div className="flex gap-3 text-sm">
+              <label className="flex items-center gap-2"><input type="radio" name="has_regular_medications" value="yes" checked={draft.has_regular_medications === "yes"} onChange={() => setYesNo("has_regular_medications", "yes")} /> {tr(effectiveLocale, "Yes", "כן")}</label>
+              <label className="flex items-center gap-2"><input type="radio" name="has_regular_medications" value="no" checked={draft.has_regular_medications === "no"} onChange={() => setYesNo("has_regular_medications", "no")} /> {tr(effectiveLocale, "No", "לא")}</label>
+            </div>
+            {draft.has_regular_medications === "yes" ? (
+              <textarea
+                name="regular_medications_details"
+                value={draft.regular_medications_details}
+                onChange={(event) => updateDraft({ regular_medications_details: event.target.value })}
+                placeholder={tr(effectiveLocale, "e.g., acid reducers, diuretics, metformin", "לדוגמה: מטפורמין, משתנים")}
+                className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
+                rows={3}
+              />
+            ) : (
+              null
+            )}
+            {renderFieldError("has_regular_medications")}
+          </div>
+
+          <div data-field="hot_climate_or_heavy_sweating">
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Heavy sweating / hot climate exposure", "חשיפה לחום/הזעה מרובה")}</span>
+            <div className="flex gap-3 text-sm">
+              <label className="flex items-center gap-2"><input type="radio" name="hot_climate_or_heavy_sweating" value="yes" checked={draft.hot_climate_or_heavy_sweating === "yes"} onChange={() => setYesNo("hot_climate_or_heavy_sweating", "yes")} /> {tr(effectiveLocale, "Yes", "כן")}</label>
+              <label className="flex items-center gap-2"><input type="radio" name="hot_climate_or_heavy_sweating" value="no" checked={draft.hot_climate_or_heavy_sweating === "no"} onChange={() => setYesNo("hot_climate_or_heavy_sweating", "no")} /> {tr(effectiveLocale, "No", "לא")}</label>
+            </div>
+            {renderFieldError("hot_climate_or_heavy_sweating")}
+          </div>
+
+          <div data-field="habits">
+            <span className="mb-2 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Habits & substance use", "הרגלים ושימוש בחומרים")}</span>
+            <div className="flex flex-wrap gap-2">
+              {habitOptions.map((value) => {
+                const label =
+                  value === "smoking_or_vaping"
+                    ? tr(effectiveLocale, "Regular Smoking / Vaping", "עישון / אידוי קבוע")
+                    : value === "alcohol"
+                      ? tr(effectiveLocale, "Regular Alcohol Consumption", "צריכת אלכוהול קבועה")
+                      : tr(effectiveLocale, "None of these", "אף אחד מהבאים");
+                const selected = draft.habits.includes(value);
+
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => toggleListValue("habits", value)}
+                    className={`rounded-full border px-3 py-1.5 text-xs font-medium ${selected ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 bg-white text-slate-700"}`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            {renderFieldError("habits")}
+          </div>
+        </section>
+      ) : null}
+
+      {step === 4 ? (
+        <section className="space-y-4">
+          <h2 className="text-lg font-semibold text-slate-900">{tr(effectiveLocale, "Dietary Profile & Context", "פרופיל תזונתי והקשר")}</h2>
+
+          <div data-field="dietary_preference">
+            <span className="mb-2 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Dietary preference", "העדפה תזונתית")}</span>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {dietaryPreferenceOptions.map((value) => {
+                const label =
+                  value === "standard"
+                    ? tr(effectiveLocale, "Standard Diet", "תזונה רגילה")
+                    : value === "vegetarian"
+                      ? tr(effectiveLocale, "Vegetarian", "צמחוני")
+                      : value === "vegan"
+                        ? tr(effectiveLocale, "Vegan", "טבעוני")
+                        : tr(effectiveLocale, "Low-Carb / Keto", "דל פחמימה / קטו");
+                const selected = draft.dietary_preference === value;
+
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => updateDraft({ dietary_preference: value })}
+                    className={`rounded-xl border px-3 py-2 text-sm font-medium ${selected ? "border-teal-700 bg-teal-50 text-teal-900" : "border-slate-300 bg-white text-slate-700"}`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            {renderFieldError("dietary_preference")}
+          </div>
+
+          <label className="block" data-field="allergies">
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Allergies (optional)", "אלרגיות (אופציונלי)")}</span>
+            <input
+              type="text"
+              name="allergies"
+              value={draft.allergies}
+              onChange={(event) => updateDraft({ allergies: event.target.value })}
+              placeholder={tr(effectiveLocale, "e.g., peanuts, shellfish", "לדוגמה: בוטנים, רכיכות")}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
+            />
+          </label>
+
+          <label className="block" data-field="additional_information">
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Additional information", "מידע נוסף")}</span>
+            <textarea
+              name="additional_information"
+              rows={5}
+              maxLength={1000}
+              value={draft.additional_information}
+              onChange={(event) => updateDraft({ additional_information: event.target.value })}
+              placeholder={tr(
+                effectiveLocale,
+                "Tell us anything else your AI coach should consider (allergies, sleep, constraints).",
+                "שתפו כל מידע נוסף שהמאמן הדיגיטלי צריך לדעת (אלרגיות, שינה, מגבלות).",
+              )}
+              className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("additional_information")}`}
+            />
+            <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+              <span>{tr(effectiveLocale, "Character count", "ספירת תווים")}</span>
+              <span>{draft.additional_information.length} / 1000</span>
+            </div>
+            {renderFieldError("additional_information")}
+          </label>
+
+          <label className="flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5 text-sm text-sky-900">
+            <input
+              type="checkbox"
+              name="accept_ai_extraction"
+              value="yes"
+              checked={draft.accept_ai_extraction}
+              onChange={(event) => updateDraft({ accept_ai_extraction: event.target.checked })}
+              className="mt-0.5"
+            />
+            <span>
+              {tr(
+                effectiveLocale,
+                "I agree that my extracted health text can be sent to the configured AI provider for analysis.",
+                "אני מסכים/ה שטקסט בריאות שחולץ יכול להישלח לספק ה-AI שהוגדר לצורך ניתוח.",
+              )}
+            </span>
+          </label>
+        </section>
+      ) : null}
+
+      {state.error && !state.fieldErrors?.length ? (
         <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
           {state.error}
         </p>
       ) : null}
 
-      <SubmitButton locale={locale} />
+      {state.error && state.fieldErrors?.length ? (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          {state.error}
+        </p>
+      ) : null}
+
+      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 px-6 py-3 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-2">
+          <button
+            type="button"
+            disabled={step === 1}
+            onClick={() => setStep((step - 1) as StepKey)}
+            className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {tr(effectiveLocale, "Back", "חזרה")}
+          </button>
+
+          {step < 4 ? (
+            <button
+              type="button"
+              onClick={() => goToStep((step + 1) as StepKey)}
+              className="rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800"
+            >
+              {tr(effectiveLocale, "Next", "הבא")}
+            </button>
+          ) : (
+            <SubmitButton locale={effectiveLocale} />
+          )}
+        </div>
+      </div>
     </form>
   );
 }

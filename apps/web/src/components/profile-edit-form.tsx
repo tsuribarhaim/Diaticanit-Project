@@ -6,23 +6,43 @@ import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 
 import {
-  type ProfileUpdateActionState,
   updateProfileAction,
+  type ProfileUpdateActionState,
 } from "@/app/app/profile/actions";
-import { activityLevelOptions } from "@/lib/profile";
+import {
+  activityLevelOptions,
+  dietaryPreferenceOptions,
+  exerciseModalityOptions,
+  habitOptions,
+  nutritionalGoalOptions,
+} from "@/lib/profile";
 import type { AppLocale } from "@/lib/locale";
-import { formatActivityLevel, tr } from "@/lib/locale";
+import { formatActivityLevel, formatNumberForLocale, tr } from "@/lib/locale";
 
 type ProfileEditFormProps = {
   defaults: {
-    age: number;
-    gender: string;
+    first_name: string;
+    last_name: string;
+    date_of_birth: string;
+    biological_sex: "male" | "female";
     height_cm: number;
     weight_kg: number;
     activity_level: (typeof activityLevelOptions)[number];
+    exercise_modalities: string[];
+    exercise_frequency_days_per_week: number;
+    exercise_duration_minutes: number;
+    nutritional_goal: (typeof nutritionalGoalOptions)[number];
+    pregnancy_lactation_status: "none" | "pregnant" | "lactating";
+    has_medical_conditions: boolean;
+    medical_conditions_details: string;
+    has_regular_medications: boolean;
+    regular_medications_details: string;
+    hot_climate_or_heavy_sweating: boolean;
+    habits: string[];
+    dietary_preference: (typeof dietaryPreferenceOptions)[number];
+    additional_information: string;
     preferred_language: "en" | "he";
     allergies: string[];
-    medical_conditions: string[];
     ai_extraction_consent: boolean;
   };
   locale: AppLocale;
@@ -32,27 +52,80 @@ const initialState: ProfileUpdateActionState = {};
 const PROFILE_EDIT_DRAFT_KEY = "phc_profile_edit_draft";
 
 type ProfileEditDraft = {
-  age: string;
-  gender: string;
+  first_name: string;
+  last_name: string;
+  date_of_birth: string;
+  biological_sex: "male" | "female";
   height_cm: string;
   weight_kg: string;
   activity_level: (typeof activityLevelOptions)[number];
+  exercise_modalities: string[];
+  exercise_frequency_days_per_week: string;
+  exercise_duration_minutes: string;
+  nutritional_goal: (typeof nutritionalGoalOptions)[number];
+  pregnancy_lactation_status: "none" | "pregnant" | "lactating";
+  has_medical_conditions: "yes" | "no";
+  medical_conditions_details: string;
+  has_regular_medications: "yes" | "no";
+  regular_medications_details: string;
+  hot_climate_or_heavy_sweating: "yes" | "no";
+  habits: string[];
+  dietary_preference: (typeof dietaryPreferenceOptions)[number];
+  additional_information: string;
   preferred_language: "en" | "he";
   allergies: string;
-  medical_conditions: string;
   accept_ai_extraction: boolean;
 };
 
+function calculateAge(dateOfBirth: string): number | null {
+  if (!dateOfBirth) return null;
+  const dob = new Date(dateOfBirth);
+  if (Number.isNaN(dob.getTime())) return null;
+
+  const now = new Date();
+  let years = now.getUTCFullYear() - dob.getUTCFullYear();
+  const monthDelta = now.getUTCMonth() - dob.getUTCMonth();
+  const dayDelta = now.getUTCDate() - dob.getUTCDate();
+  if (monthDelta < 0 || (monthDelta === 0 && dayDelta < 0)) {
+    years -= 1;
+  }
+
+  return years < 0 ? null : years;
+}
+
+function calculateBmi(weightKg: number, heightCm: number): number | null {
+  if (!Number.isFinite(weightKg) || !Number.isFinite(heightCm) || heightCm <= 0) {
+    return null;
+  }
+  const meters = heightCm / 100;
+  const bmi = weightKg / (meters * meters);
+  return Number.isFinite(bmi) ? bmi : null;
+}
+
 function createInitialDraft(defaults: ProfileEditFormProps["defaults"]): ProfileEditDraft {
   return {
-    age: String(defaults.age),
-    gender: defaults.gender,
+    first_name: defaults.first_name,
+    last_name: defaults.last_name,
+    date_of_birth: defaults.date_of_birth,
+    biological_sex: defaults.biological_sex,
     height_cm: String(defaults.height_cm),
     weight_kg: String(defaults.weight_kg),
     activity_level: defaults.activity_level,
+    exercise_modalities: defaults.exercise_modalities,
+    exercise_frequency_days_per_week: String(defaults.exercise_frequency_days_per_week),
+    exercise_duration_minutes: String(defaults.exercise_duration_minutes),
+    nutritional_goal: defaults.nutritional_goal,
+    pregnancy_lactation_status: defaults.pregnancy_lactation_status,
+    has_medical_conditions: defaults.has_medical_conditions ? "yes" : "no",
+    medical_conditions_details: defaults.medical_conditions_details,
+    has_regular_medications: defaults.has_regular_medications ? "yes" : "no",
+    regular_medications_details: defaults.regular_medications_details,
+    hot_climate_or_heavy_sweating: defaults.hot_climate_or_heavy_sweating ? "yes" : "no",
+    habits: defaults.habits,
+    dietary_preference: defaults.dietary_preference,
+    additional_information: defaults.additional_information,
     preferred_language: defaults.preferred_language,
     allergies: defaults.allergies.join(", "),
-    medical_conditions: defaults.medical_conditions.join(", "),
     accept_ai_extraction: defaults.ai_extraction_consent,
   };
 }
@@ -61,15 +134,33 @@ function isValidDraft(value: unknown): value is ProfileEditDraft {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<ProfileEditDraft>;
   return (
-    typeof candidate.age === "string" &&
-    typeof candidate.gender === "string" &&
+    typeof candidate.first_name === "string" &&
+    typeof candidate.last_name === "string" &&
+    typeof candidate.date_of_birth === "string" &&
+    (candidate.biological_sex === "male" || candidate.biological_sex === "female") &&
     typeof candidate.height_cm === "string" &&
     typeof candidate.weight_kg === "string" &&
     typeof candidate.activity_level === "string" &&
     activityLevelOptions.includes(candidate.activity_level as (typeof activityLevelOptions)[number]) &&
+    Array.isArray(candidate.exercise_modalities) &&
+    typeof candidate.exercise_frequency_days_per_week === "string" &&
+    typeof candidate.exercise_duration_minutes === "string" &&
+    typeof candidate.nutritional_goal === "string" &&
+    nutritionalGoalOptions.includes(candidate.nutritional_goal as (typeof nutritionalGoalOptions)[number]) &&
+    (candidate.pregnancy_lactation_status === "none"
+      || candidate.pregnancy_lactation_status === "pregnant"
+      || candidate.pregnancy_lactation_status === "lactating") &&
+    (candidate.has_medical_conditions === "yes" || candidate.has_medical_conditions === "no") &&
+    typeof candidate.medical_conditions_details === "string" &&
+    (candidate.has_regular_medications === "yes" || candidate.has_regular_medications === "no") &&
+    typeof candidate.regular_medications_details === "string" &&
+    (candidate.hot_climate_or_heavy_sweating === "yes" || candidate.hot_climate_or_heavy_sweating === "no") &&
+    Array.isArray(candidate.habits) &&
+    typeof candidate.dietary_preference === "string" &&
+    dietaryPreferenceOptions.includes(candidate.dietary_preference as (typeof dietaryPreferenceOptions)[number]) &&
+    typeof candidate.additional_information === "string" &&
     (candidate.preferred_language === "en" || candidate.preferred_language === "he") &&
     typeof candidate.allergies === "string" &&
-    typeof candidate.medical_conditions === "string" &&
     typeof candidate.accept_ai_extraction === "boolean"
   );
 }
@@ -129,6 +220,30 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
     persistDraft({ ...draft, ...patch });
   };
 
+  const toggleListValue = (key: "exercise_modalities" | "habits", value: string) => {
+    const set = new Set(draft[key]);
+    if (set.has(value)) {
+      set.delete(value);
+    } else {
+      if (key === "habits" && value === "none") {
+        set.clear();
+      }
+      if (key === "habits" && value !== "none") {
+        set.delete("none");
+      }
+      set.add(value);
+    }
+
+    updateDraft({ [key]: Array.from(set) } as Partial<ProfileEditDraft>);
+  };
+
+  const setYesNo = (
+    key: "has_medical_conditions" | "has_regular_medications" | "hot_climate_or_heavy_sweating",
+    value: "yes" | "no",
+  ) => {
+    updateDraft({ [key]: value } as Partial<ProfileEditDraft>);
+  };
+
   const onSubmit = () => {
     try {
       window.sessionStorage.removeItem(PROFILE_EDIT_DRAFT_KEY);
@@ -137,157 +252,171 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
     }
   };
 
+  const age = calculateAge(draft.date_of_birth);
+  const bmi = calculateBmi(Number(draft.weight_kg), Number(draft.height_cm));
+
   return (
     <form action={formAction} onSubmit={onSubmit} className="mt-6 space-y-4">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <label className="block">
-          <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Age", "גיל")}</span>
-          <input
-            type="number"
-            name="age"
-            required
-            min={10}
-            max={120}
-            value={draft.age}
-            onChange={(event) => updateDraft({ age: event.target.value })}
-            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
-          />
-        </label>
+      <input type="hidden" name="biological_sex" value={draft.biological_sex} />
+      <input type="hidden" name="nutritional_goal" value={draft.nutritional_goal} />
+      <input type="hidden" name="dietary_preference" value={draft.dietary_preference} />
+      <input type="hidden" name="medical_conditions" value={draft.has_medical_conditions === "yes" ? draft.medical_conditions_details : ""} />
 
-        <label className="block">
-          <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Gender", "מגדר")}</span>
-          <input
-            type="text"
-            name="gender"
-            required
-            maxLength={30}
-            value={draft.gender}
-            onChange={(event) => updateDraft({ gender: event.target.value })}
-            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
-          />
-        </label>
+      <section className="rounded-xl border border-slate-200 p-4">
+        <h2 className="text-base font-semibold text-slate-900">{tr(locale, "Step 1 - Identity & Vital Statistics", "שלב 1 - זהות ומדדים")}</h2>
+        <div className="mt-3 grid gap-4 sm:grid-cols-2">
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "First name", "שם פרטי")}</span>
+            <input type="text" name="first_name" required value={draft.first_name} onChange={(event) => updateDraft({ first_name: event.target.value })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Last name", "שם משפחה")}</span>
+            <input type="text" name="last_name" required value={draft.last_name} onChange={(event) => updateDraft({ last_name: event.target.value })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Date of birth", "תאריך לידה")}</span>
+            <input type="date" name="date_of_birth" required max={new Date().toISOString().slice(0, 10)} value={draft.date_of_birth} onChange={(event) => updateDraft({ date_of_birth: event.target.value })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" />
+          </label>
+          <div className="block">
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Biological sex", "מין ביולוגי")}</span>
+            <div className="grid grid-cols-2 overflow-hidden rounded-xl border border-slate-300">
+              <button type="button" onClick={() => updateDraft({ biological_sex: "male", pregnancy_lactation_status: "none" })} className={`px-3 py-2 text-sm ${draft.biological_sex === "male" ? "bg-teal-700 text-white" : "bg-white text-slate-700"}`}>{tr(locale, "Male", "זכר")}</button>
+              <button type="button" onClick={() => updateDraft({ biological_sex: "female" })} className={`px-3 py-2 text-sm ${draft.biological_sex === "female" ? "bg-teal-700 text-white" : "bg-white text-slate-700"}`}>{tr(locale, "Female", "נקבה")}</button>
+            </div>
+          </div>
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Height (cm)", "גובה (ס\"מ)")}</span>
+            <input type="number" name="height_cm" required min={80} max={250} step="0.01" value={draft.height_cm} onChange={(event) => updateDraft({ height_cm: event.target.value })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Weight (kg)", "משקל (ק\"ג)")}</span>
+            <input type="number" name="weight_kg" required min={20} max={400} step="0.01" value={draft.weight_kg} onChange={(event) => updateDraft({ weight_kg: event.target.value })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" />
+          </label>
+        </div>
+        <div className="mt-3 rounded-xl border border-teal-100 bg-teal-50 px-3 py-2 text-sm text-teal-900">
+          <p>{tr(locale, "Calculated age", "גיל מחושב")}: {age ?? tr(locale, "n/a", "לא זמין")}</p>
+          <p>BMI: {bmi != null ? formatNumberForLocale(bmi, locale, { maximumFractionDigits: 2 }) : tr(locale, "n/a", "לא זמין")}</p>
+        </div>
+      </section>
 
-        <label className="block">
-          <span className="mb-1 block text-sm font-medium text-slate-700">
-            {tr(locale, "Height (cm)", "גובה (ס\"מ)")}
-          </span>
-          <input
-            type="number"
-            name="height_cm"
-            required
-            min={80}
-            max={250}
-            step="0.01"
-            value={draft.height_cm}
-            onChange={(event) => updateDraft({ height_cm: event.target.value })}
-            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
-          />
-        </label>
+      <section className="rounded-xl border border-slate-200 p-4">
+        <h2 className="text-base font-semibold text-slate-900">{tr(locale, "Step 2 - Lifestyle & Activity", "שלב 2 - אורח חיים ופעילות")}</h2>
+        <div className="mt-3 space-y-4">
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Activity level", "רמת פעילות")}</span>
+            <select name="activity_level" value={draft.activity_level} onChange={(event) => updateDraft({ activity_level: event.target.value as (typeof activityLevelOptions)[number] })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2">
+              {activityLevelOptions.map((option) => <option key={option} value={option}>{formatActivityLevel(option, locale)}</option>)}
+            </select>
+          </label>
+          <div>
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Exercise modality", "סוג אימון")}</span>
+            <div className="flex flex-wrap gap-2">
+              {exerciseModalityOptions.map((value) => {
+                const label = value === "resistance_hypertrophy" ? tr(locale, "Resistance / Hypertrophy", "התנגדות / היפרטרופיה") : value === "endurance_cardio" ? tr(locale, "Endurance / Cardio", "סבולת / אירובי") : value === "martial_arts" ? tr(locale, "Martial Arts", "אומנויות לחימה") : tr(locale, "Other", "אחר");
+                const selected = draft.exercise_modalities.includes(value);
+                return <button key={value} type="button" onClick={() => toggleListValue("exercise_modalities", value)} className={`rounded-full border px-3 py-1.5 text-xs ${selected ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-700"}`}>{label}</button>;
+              })}
+            </div>
+            {draft.exercise_modalities.map((value) => <input key={value} type="hidden" name="exercise_modalities" value={value} />)}
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block"><span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Frequency (days/week)", "תדירות (ימים/שבוע)")}</span><input type="number" name="exercise_frequency_days_per_week" min={0} max={14} value={draft.exercise_frequency_days_per_week} onChange={(event) => updateDraft({ exercise_frequency_days_per_week: event.target.value })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" /></label>
+            <label className="block"><span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Duration (minutes)", "משך (דקות)")}</span><input type="number" name="exercise_duration_minutes" min={0} max={600} value={draft.exercise_duration_minutes} onChange={(event) => updateDraft({ exercise_duration_minutes: event.target.value })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" /></label>
+          </div>
+          <div>
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Nutritional goal", "מטרה תזונתית")}</span>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {nutritionalGoalOptions.map((goal) => {
+                const label = goal === "maintenance" ? tr(locale, "Maintenance", "שימור") : goal === "weight_loss" ? tr(locale, "Weight Loss", "ירידה במשקל") : goal === "muscle_hypertrophy" ? tr(locale, "Muscle Hypertrophy", "היפרטרופיה") : goal === "body_recomposition" ? tr(locale, "Body Recomposition", "הרכב גוף") : tr(locale, "Athletic Performance", "ביצועים אתלטיים");
+                const selected = draft.nutritional_goal === goal;
+                return <button key={goal} type="button" onClick={() => updateDraft({ nutritional_goal: goal })} className={`rounded-xl border px-3 py-2 text-sm ${selected ? "border-teal-700 bg-teal-50 text-teal-900" : "border-slate-300 bg-white text-slate-700"}`}>{label}</button>;
+              })}
+            </div>
+          </div>
+        </div>
+      </section>
 
-        <label className="block">
-          <span className="mb-1 block text-sm font-medium text-slate-700">
-            {tr(locale, "Weight (kg)", "משקל (ק\"ג)")}
-          </span>
-          <input
-            type="number"
-            name="weight_kg"
-            required
-            min={20}
-            max={400}
-            step="0.01"
-            value={draft.weight_kg}
-            onChange={(event) => updateDraft({ weight_kg: event.target.value })}
-            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
-          />
-        </label>
-      </div>
+      <section className="rounded-xl border border-slate-200 p-4">
+        <h2 className="text-base font-semibold text-slate-900">{tr(locale, "Step 3 - Medical & Physiology", "שלב 3 - רפואי ופיזיולוגי")}</h2>
+        <div className="mt-3 space-y-4">
+          {draft.biological_sex === "female" ? (
+            <label className="block">
+              <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Pregnancy / lactation", "הריון / הנקה")}</span>
+              <select name="pregnancy_lactation_status" value={draft.pregnancy_lactation_status} onChange={(event) => updateDraft({ pregnancy_lactation_status: event.target.value as "none" | "pregnant" | "lactating" })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2">
+                <option value="none">{tr(locale, "No", "לא")}</option>
+                <option value="pregnant">{tr(locale, "Pregnant", "בהריון")}</option>
+                <option value="lactating">{tr(locale, "Lactating", "מניקה")}</option>
+              </select>
+            </label>
+          ) : <input type="hidden" name="pregnancy_lactation_status" value="none" />}
 
-      <label className="block">
-        <span className="mb-1 block text-sm font-medium text-slate-700">
-          {tr(locale, "Activity level", "רמת פעילות")}
-        </span>
-        <select
-          name="activity_level"
-          required
-          value={draft.activity_level}
-          onChange={(event) =>
-            updateDraft({
-              activity_level: event.target.value as (typeof activityLevelOptions)[number],
-            })
-          }
-          className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
-        >
-          {activityLevelOptions.map((option) => (
-            <option key={option} value={option}>
-              {formatActivityLevel(option, locale)}
-            </option>
-          ))}
-        </select>
-      </label>
+          <div>
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Medical conditions", "מצבים רפואיים")}</span>
+            <div className="flex gap-3 text-sm"><label className="flex items-center gap-2"><input type="radio" name="has_medical_conditions" value="yes" checked={draft.has_medical_conditions === "yes"} onChange={() => setYesNo("has_medical_conditions", "yes")} /> {tr(locale, "Yes", "כן")}</label><label className="flex items-center gap-2"><input type="radio" name="has_medical_conditions" value="no" checked={draft.has_medical_conditions === "no"} onChange={() => setYesNo("has_medical_conditions", "no")} /> {tr(locale, "No", "לא")}</label></div>
+            {draft.has_medical_conditions === "yes" ? <textarea name="medical_conditions_details" rows={3} value={draft.medical_conditions_details} onChange={(event) => updateDraft({ medical_conditions_details: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" /> : <input type="hidden" name="medical_conditions_details" value="" />}
+          </div>
 
-      <label className="block">
-        <span className="mb-1 block text-sm font-medium text-slate-700">
-          {tr(locale, "Language", "שפה")}
-        </span>
-        <select
-          name="preferred_language"
-          required
-          value={draft.preferred_language}
-          onChange={(event) =>
-            updateDraft({ preferred_language: event.target.value as "en" | "he" })
-          }
-          className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
-        >
-          <option value="en">English</option>
-          <option value="he">עברית</option>
-        </select>
-      </label>
+          <div>
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Regular medications", "תרופות קבועות")}</span>
+            <div className="flex gap-3 text-sm"><label className="flex items-center gap-2"><input type="radio" name="has_regular_medications" value="yes" checked={draft.has_regular_medications === "yes"} onChange={() => setYesNo("has_regular_medications", "yes")} /> {tr(locale, "Yes", "כן")}</label><label className="flex items-center gap-2"><input type="radio" name="has_regular_medications" value="no" checked={draft.has_regular_medications === "no"} onChange={() => setYesNo("has_regular_medications", "no")} /> {tr(locale, "No", "לא")}</label></div>
+            {draft.has_regular_medications === "yes" ? <textarea name="regular_medications_details" rows={3} value={draft.regular_medications_details} onChange={(event) => updateDraft({ regular_medications_details: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" /> : <input type="hidden" name="regular_medications_details" value="" />}
+          </div>
 
-      <label className="block">
-        <span className="mb-1 block text-sm font-medium text-slate-700">
-          {tr(locale, "Allergies (comma separated)", "אלרגיות (מופרדות בפסיקים)")}
-        </span>
-        <input
-          type="text"
-          name="allergies"
-          value={draft.allergies}
-          onChange={(event) => updateDraft({ allergies: event.target.value })}
-          className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
-        />
-      </label>
+          <div>
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Heavy sweating / hot climate", "הזעה מרובה / אקלים חם")}</span>
+            <div className="flex gap-3 text-sm"><label className="flex items-center gap-2"><input type="radio" name="hot_climate_or_heavy_sweating" value="yes" checked={draft.hot_climate_or_heavy_sweating === "yes"} onChange={() => setYesNo("hot_climate_or_heavy_sweating", "yes")} /> {tr(locale, "Yes", "כן")}</label><label className="flex items-center gap-2"><input type="radio" name="hot_climate_or_heavy_sweating" value="no" checked={draft.hot_climate_or_heavy_sweating === "no"} onChange={() => setYesNo("hot_climate_or_heavy_sweating", "no")} /> {tr(locale, "No", "לא")}</label></div>
+          </div>
 
-      <label className="block">
-        <span className="mb-1 block text-sm font-medium text-slate-700">
-          {tr(locale, "Medical condition (comma separated)", "מצב רפואי (מופרד בפסיקים)")}
-        </span>
-        <input
-          type="text"
-          name="medical_conditions"
-          value={draft.medical_conditions}
-          onChange={(event) => updateDraft({ medical_conditions: event.target.value })}
-          className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
-        />
-      </label>
+          <div>
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Habits", "הרגלים")}</span>
+            <div className="flex flex-wrap gap-2">
+              {habitOptions.map((value) => {
+                const label = value === "smoking_or_vaping" ? tr(locale, "Smoking / Vaping", "עישון / אידוי") : value === "alcohol" ? tr(locale, "Regular Alcohol", "אלכוהול קבוע") : tr(locale, "None", "ללא");
+                const selected = draft.habits.includes(value);
+                return <button key={value} type="button" onClick={() => toggleListValue("habits", value)} className={`rounded-full border px-3 py-1.5 text-xs ${selected ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 bg-white text-slate-700"}`}>{label}</button>;
+              })}
+            </div>
+            {draft.habits.map((value) => <input key={value} type="hidden" name="habits" value={value} />)}
+          </div>
+        </div>
+      </section>
 
-      <label className="flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5 text-sm text-sky-900">
-        <input
-          type="checkbox"
-          name="accept_ai_extraction"
-          value="yes"
-          checked={draft.accept_ai_extraction}
-          onChange={(event) =>
-            updateDraft({ accept_ai_extraction: event.target.checked })
-          }
-          className="mt-0.5"
-        />
-        <span>
-          {tr(
-            locale,
-            "I agree that my extracted health text can be sent to the configured AI provider for analysis.",
-            "אני מסכים/ה שטקסט בריאות שחולץ יכול להישלח לספק ה-AI שהוגדר לצורך ניתוח.",
-          )}
-        </span>
-      </label>
+      <section className="rounded-xl border border-slate-200 p-4">
+        <h2 className="text-base font-semibold text-slate-900">{tr(locale, "Step 4 - Dietary Profile & Context", "שלב 4 - פרופיל תזונתי")}</h2>
+        <div className="mt-3 space-y-4">
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Language", "שפה")}</span>
+            <select name="preferred_language" value={draft.preferred_language} onChange={(event) => updateDraft({ preferred_language: event.target.value as "en" | "he" })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"><option value="en">English</option><option value="he">עברית</option></select>
+          </label>
+
+          <div>
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Dietary preference", "העדפה תזונתית")}</span>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {dietaryPreferenceOptions.map((value) => {
+                const label = value === "standard" ? tr(locale, "Standard Diet", "תזונה רגילה") : value === "vegetarian" ? tr(locale, "Vegetarian", "צמחוני") : value === "vegan" ? tr(locale, "Vegan", "טבעוני") : tr(locale, "Low-Carb / Keto", "דל פחמימה / קטו");
+                const selected = draft.dietary_preference === value;
+                return <button key={value} type="button" onClick={() => updateDraft({ dietary_preference: value })} className={`rounded-xl border px-3 py-2 text-sm ${selected ? "border-teal-700 bg-teal-50 text-teal-900" : "border-slate-300 bg-white text-slate-700"}`}>{label}</button>;
+              })}
+            </div>
+          </div>
+
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Allergies (comma separated)", "אלרגיות (מופרדות בפסיקים)")}</span>
+            <input type="text" name="allergies" value={draft.allergies} onChange={(event) => updateDraft({ allergies: event.target.value })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" />
+          </label>
+
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Additional information", "מידע נוסף")}</span>
+            <textarea name="additional_information" rows={4} maxLength={1000} value={draft.additional_information} onChange={(event) => updateDraft({ additional_information: event.target.value })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" />
+            <p className="mt-1 text-right text-xs text-slate-500">{draft.additional_information.length} / 1000</p>
+          </label>
+
+          <label className="flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5 text-sm text-sky-900">
+            <input type="checkbox" name="accept_ai_extraction" value="yes" checked={draft.accept_ai_extraction} onChange={(event) => updateDraft({ accept_ai_extraction: event.target.checked })} className="mt-0.5" />
+            <span>{tr(locale, "I agree that my extracted health text can be sent to the configured AI provider for analysis.", "אני מסכים/ה שטקסט בריאות שחולץ יכול להישלח לספק ה-AI שהוגדר לצורך ניתוח.")}</span>
+          </label>
+        </div>
+      </section>
 
       {state.error ? (
         <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
