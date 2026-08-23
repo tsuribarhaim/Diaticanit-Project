@@ -19,7 +19,7 @@ export default async function ProfileEditPage() {
   const { data: profile, error } = await supabase
     .from("user_profile_enriched")
     .select(
-      "first_name, last_name, date_of_birth, biological_sex, height_cm, weight_kg, activity_level, preferred_language, exercise_modalities, exercise_modality_other_details, exercise_frequency_days_per_week, exercise_duration_minutes, nutritional_goal, pregnancy_lactation_status, has_medical_conditions, medical_conditions_details, has_regular_medications, regular_medications_details, hot_climate_or_heavy_sweating, habits, alcohol_times_per_week, smoking_packs_per_day, dietary_preference, additional_information, allergies, calculated_age_years, bmi",
+      "first_name, last_name, date_of_birth, biological_sex, height_cm, weight_kg, activity_level, preferred_language, exercise_modalities, exercise_modality_other_details, exercise_frequency_days_per_week, exercise_duration_minutes, nutritional_goal, pregnancy_lactation_status, has_medical_conditions, medical_conditions_details, has_regular_medications, regular_medications_details, hot_climate_or_heavy_sweating, habits, alcohol_times_per_week, smoking_packs_per_day, dietary_preference, additional_information, allergies, calculated_age_years, bmi, updated_at",
     )
     .eq("user_id", user.id)
     .maybeSingle();
@@ -68,6 +68,7 @@ export default async function ProfileEditPage() {
     allergies: profile.allergies ?? [],
     preferred_language: locale,
     ai_extraction_consent: hasAiExtractionConsent,
+    profile_updated_at: profile.updated_at ?? null,
   };
 
   return (
