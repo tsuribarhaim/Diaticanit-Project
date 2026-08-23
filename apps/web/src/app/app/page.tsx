@@ -2,6 +2,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { signOutAction } from "@/app/app/actions";
+import { EnvironmentBadge } from "@/components/environment-badge";
+import { getEnvironmentBadgeLabel } from "@/lib/environment-badge";
 import { formatActivityLevel, formatGender, formatMeasurementUnit, formatProfileValue, normalizeLocale, tr } from "@/lib/locale";
 import { createClient } from "@/lib/supabase/server";
 
@@ -38,14 +40,18 @@ export default async function AppHomePage() {
         .maybeSingle()
     ).data?.preferred_language,
   );
+  const environmentBadgeLabel = getEnvironmentBadgeLabel();
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-10">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-teal-700">
-            {tr(locale, "Protected area", "אזור מוגן")}
-          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-teal-700">
+              {tr(locale, "Protected area", "אזור מוגן")}
+            </p>
+            {environmentBadgeLabel ? <EnvironmentBadge label={environmentBadgeLabel} /> : null}
+          </div>
           <h1 className="mt-1 text-2xl font-bold text-slate-900">{tr(locale, "Dashboard", "לוח בקרה")}</h1>
         </div>
 
