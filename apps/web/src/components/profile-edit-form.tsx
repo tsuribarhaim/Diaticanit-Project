@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 
@@ -15,9 +15,11 @@ import {
   exerciseModalityOptions,
   habitOptions,
   nutritionalGoalOptions,
+  validateAllergyEntry,
+  validateExerciseOtherDetails,
 } from "@/lib/profile";
 import type { AppLocale } from "@/lib/locale";
-import { formatActivityLevel, formatNumberForLocale, tr } from "@/lib/locale";
+import { formatActivityLevel, formatNumberForLocale, localeTag, tr } from "@/lib/locale";
 
 type ProfileEditFormProps = {
   defaults: {
@@ -29,6 +31,7 @@ type ProfileEditFormProps = {
     weight_kg: number;
     activity_level: (typeof activityLevelOptions)[number];
     exercise_modalities: string[];
+    exercise_modality_other_details?: string;
     exercise_frequency_days_per_week: number;
     exercise_duration_minutes: number;
     nutritional_goal: (typeof nutritionalGoalOptions)[number];
@@ -39,6 +42,8 @@ type ProfileEditFormProps = {
     regular_medications_details: string;
     hot_climate_or_heavy_sweating: boolean;
     habits: string[];
+    alcohol_times_per_week: number | null;
+    smoking_packs_per_day: number | null;
     dietary_preference: (typeof dietaryPreferenceOptions)[number];
     additional_information: string;
     preferred_language: "en" | "he";
@@ -55,11 +60,13 @@ type ProfileEditDraft = {
   first_name: string;
   last_name: string;
   date_of_birth: string;
+  date_of_birth_display: string;
   biological_sex: "male" | "female";
   height_cm: string;
   weight_kg: string;
   activity_level: (typeof activityLevelOptions)[number];
   exercise_modalities: string[];
+  exercise_modality_other_details: string;
   exercise_frequency_days_per_week: string;
   exercise_duration_minutes: string;
   nutritional_goal: (typeof nutritionalGoalOptions)[number];
@@ -70,6 +77,8 @@ type ProfileEditDraft = {
   regular_medications_details: string;
   hot_climate_or_heavy_sweating: "yes" | "no";
   habits: string[];
+  alcohol_times_per_week: string;
+  smoking_packs_per_day: string;
   dietary_preference: (typeof dietaryPreferenceOptions)[number];
   additional_information: string;
   preferred_language: "en" | "he";
@@ -102,16 +111,48 @@ function calculateBmi(weightKg: number, heightCm: number): number | null {
   return Number.isFinite(bmi) ? bmi : null;
 }
 
+function isoToHebrewDisplayDate(value: string): string {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return value;
+  return `${match[3]}/${match[2]}/${match[1]}`;
+}
+
+function hebrewDisplayDateToIso(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  const match = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) return null;
+
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  const candidate = new Date(year, month - 1, day);
+
+  const isValid =
+    candidate.getFullYear() === year &&
+    candidate.getMonth() === month - 1 &&
+    candidate.getDate() === day;
+
+  if (!isValid) return null;
+
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
 function createInitialDraft(defaults: ProfileEditFormProps["defaults"]): ProfileEditDraft {
   return {
     first_name: defaults.first_name,
     last_name: defaults.last_name,
     date_of_birth: defaults.date_of_birth,
+    date_of_birth_display: defaults.preferred_language === "he"
+      ? isoToHebrewDisplayDate(defaults.date_of_birth)
+      : defaults.date_of_birth,
     biological_sex: defaults.biological_sex,
     height_cm: String(defaults.height_cm),
     weight_kg: String(defaults.weight_kg),
     activity_level: defaults.activity_level,
     exercise_modalities: defaults.exercise_modalities,
+    exercise_modality_other_details: defaults.exercise_modality_other_details ?? "",
     exercise_frequency_days_per_week: String(defaults.exercise_frequency_days_per_week),
     exercise_duration_minutes: String(defaults.exercise_duration_minutes),
     nutritional_goal: defaults.nutritional_goal,
@@ -122,6 +163,10 @@ function createInitialDraft(defaults: ProfileEditFormProps["defaults"]): Profile
     regular_medications_details: defaults.regular_medications_details,
     hot_climate_or_heavy_sweating: defaults.hot_climate_or_heavy_sweating ? "yes" : "no",
     habits: defaults.habits,
+    alcohol_times_per_week:
+      defaults.alcohol_times_per_week == null ? "" : String(defaults.alcohol_times_per_week),
+    smoking_packs_per_day:
+      defaults.smoking_packs_per_day == null ? "" : String(defaults.smoking_packs_per_day),
     dietary_preference: defaults.dietary_preference,
     additional_information: defaults.additional_information,
     preferred_language: defaults.preferred_language,
@@ -137,12 +182,14 @@ function isValidDraft(value: unknown): value is ProfileEditDraft {
     typeof candidate.first_name === "string" &&
     typeof candidate.last_name === "string" &&
     typeof candidate.date_of_birth === "string" &&
+    typeof candidate.date_of_birth_display === "string" &&
     (candidate.biological_sex === "male" || candidate.biological_sex === "female") &&
     typeof candidate.height_cm === "string" &&
     typeof candidate.weight_kg === "string" &&
     typeof candidate.activity_level === "string" &&
     activityLevelOptions.includes(candidate.activity_level as (typeof activityLevelOptions)[number]) &&
     Array.isArray(candidate.exercise_modalities) &&
+    typeof candidate.exercise_modality_other_details === "string" &&
     typeof candidate.exercise_frequency_days_per_week === "string" &&
     typeof candidate.exercise_duration_minutes === "string" &&
     typeof candidate.nutritional_goal === "string" &&
@@ -156,6 +203,8 @@ function isValidDraft(value: unknown): value is ProfileEditDraft {
     typeof candidate.regular_medications_details === "string" &&
     (candidate.hot_climate_or_heavy_sweating === "yes" || candidate.hot_climate_or_heavy_sweating === "no") &&
     Array.isArray(candidate.habits) &&
+    typeof candidate.alcohol_times_per_week === "string" &&
+    typeof candidate.smoking_packs_per_day === "string" &&
     typeof candidate.dietary_preference === "string" &&
     dietaryPreferenceOptions.includes(candidate.dietary_preference as (typeof dietaryPreferenceOptions)[number]) &&
     typeof candidate.additional_information === "string" &&
@@ -165,13 +214,13 @@ function isValidDraft(value: unknown): value is ProfileEditDraft {
   );
 }
 
-function SaveButton({ locale }: { locale: AppLocale }) {
+function SaveButton({ locale, canSubmit }: { locale: AppLocale; canSubmit: boolean }) {
   const { pending } = useFormStatus();
 
   return (
     <button
       type="submit"
-      disabled={pending}
+      disabled={pending || !canSubmit}
       className="inline-flex w-full items-center justify-center rounded-xl bg-teal-700 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800"
     >
       {pending ? tr(locale, "Saving changes...", "שומר שינויים...") : tr(locale, "Save changes", "שמירת שינויים")}
@@ -181,6 +230,9 @@ function SaveButton({ locale }: { locale: AppLocale }) {
 
 export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
   const [state, formAction] = useActionState(updateProfileAction, initialState);
+  const [clientError, setClientError] = useState<string | null>(null);
+  const [allergyError, setAllergyError] = useState<string | null>(null);
+  const [consentError, setConsentError] = useState<string | null>(null);
   const [draft, setDraft] = useState<ProfileEditDraft>(() => {
     const initialDraft = createInitialDraft(defaults);
 
@@ -192,7 +244,17 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
       const raw = window.sessionStorage.getItem(PROFILE_EDIT_DRAFT_KEY);
       if (!raw) return initialDraft;
       const parsed = JSON.parse(raw);
-      return isValidDraft(parsed) ? parsed : initialDraft;
+
+      if (!parsed || typeof parsed !== "object") {
+        return initialDraft;
+      }
+
+      const merged = {
+        ...initialDraft,
+        ...parsed,
+      };
+
+      return isValidDraft(merged) ? merged : initialDraft;
     } catch {
       // Ignore invalid or blocked storage reads.
       return initialDraft;
@@ -217,7 +279,29 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
   };
 
   const updateDraft = (patch: Partial<ProfileEditDraft>) => {
-    persistDraft({ ...draft, ...patch });
+    const changedKeys = Object.keys(patch);
+    const changedNonConsentField = changedKeys.some((key) => key !== "accept_ai_extraction");
+
+    if (clientError) {
+      setClientError(null);
+    }
+    if (allergyError) {
+      setAllergyError(null);
+    }
+    if (consentError && patch.accept_ai_extraction) {
+      setConsentError(null);
+    }
+
+    const nextDraft: ProfileEditDraft = {
+      ...draft,
+      ...patch,
+    };
+
+    if (changedNonConsentField && draft.accept_ai_extraction && patch.accept_ai_extraction === undefined) {
+      nextDraft.accept_ai_extraction = false;
+    }
+
+    persistDraft(nextDraft);
   };
 
   const toggleListValue = (key: "exercise_modalities" | "habits", value: string) => {
@@ -225,6 +309,12 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
     if (set.has(value)) {
       set.delete(value);
     } else {
+      if (key === "exercise_modalities" && value === "none") {
+        set.clear();
+      }
+      if (key === "exercise_modalities" && value !== "none") {
+        set.delete("none");
+      }
       if (key === "habits" && value === "none") {
         set.clear();
       }
@@ -234,7 +324,28 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
       set.add(value);
     }
 
-    updateDraft({ [key]: Array.from(set) } as Partial<ProfileEditDraft>);
+    const nextValues = Array.from(set);
+    const patch: Partial<ProfileEditDraft> = { [key]: nextValues } as Partial<ProfileEditDraft>;
+
+    if (key === "habits") {
+      if (!nextValues.includes("alcohol")) {
+        patch.alcohol_times_per_week = "";
+      }
+      if (!nextValues.includes("smoking_or_vaping")) {
+        patch.smoking_packs_per_day = "";
+      }
+    }
+
+    if (key === "exercise_modalities" && !nextValues.includes("other")) {
+      patch.exercise_modality_other_details = "";
+    }
+
+    if (key === "exercise_modalities" && nextValues.includes("none")) {
+      patch.exercise_frequency_days_per_week = "0";
+      patch.exercise_duration_minutes = "0";
+    }
+
+    updateDraft(patch);
   };
 
   const setYesNo = (
@@ -244,15 +355,73 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
     updateDraft({ [key]: value } as Partial<ProfileEditDraft>);
   };
 
-  const onSubmit = () => {
-    try {
-      window.sessionStorage.removeItem(PROFILE_EDIT_DRAFT_KEY);
-    } catch {
-      // Ignore blocked storage writes.
+  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
+    if (!draft.accept_ai_extraction) {
+      setConsentError(
+        tr(
+          locale,
+          "Consent is required before saving changes.",
+          "נדרשת הסכמה לפני שמירת שינויים.",
+        ),
+      );
+      event.preventDefault();
+      return;
     }
+
+    if (draft.exercise_modalities.includes("other")) {
+      const validationResult = validateExerciseOtherDetails(draft.exercise_modality_other_details);
+      if (!validationResult.isMeaningful) {
+        const suggestionText = validationResult.suggestions.join(", ");
+        setClientError(
+          suggestionText
+            ? tr(
+              locale,
+              `Please enter a meaningful exercise type. Maybe: ${suggestionText}`,
+              `יש להזין סוג אימון משמעותי. אולי התכוונת ל: ${suggestionText}`,
+            )
+            : tr(
+              locale,
+              "Please enter a meaningful exercise type related to training.",
+              "יש להזין סוג אימון משמעותי שקשור לאימון.",
+            ),
+        );
+        event.preventDefault();
+        return;
+      }
+    }
+
+    const allergyEntries = draft.allergies
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    const invalidAllergy = allergyEntries.find((entry) => !validateAllergyEntry(entry).isMeaningful);
+    if (invalidAllergy) {
+      const suggestionText = validateAllergyEntry(invalidAllergy).suggestions.join(", ");
+      setAllergyError(
+        suggestionText
+          ? tr(
+            locale,
+            `Please enter a meaningful allergy. Maybe: ${suggestionText}`,
+            `יש להזין אלרגיה משמעותית. אולי התכוונת ל: ${suggestionText}`,
+          )
+          : tr(
+            locale,
+            "Please enter a meaningful allergy description.",
+            "יש להזין תיאור אלרגיה משמעותי.",
+          ),
+      );
+      event.preventDefault();
+      return;
+    }
+
   };
 
-  const age = calculateAge(draft.date_of_birth);
+  const normalizedDateOfBirth = locale === "he"
+    ? (hebrewDisplayDateToIso(draft.date_of_birth_display) ?? draft.date_of_birth)
+    : draft.date_of_birth;
+
+  const age = calculateAge(normalizedDateOfBirth);
   const bmi = calculateBmi(Number(draft.weight_kg), Number(draft.height_cm));
 
   return (
@@ -260,7 +429,11 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
       <input type="hidden" name="biological_sex" value={draft.biological_sex} />
       <input type="hidden" name="nutritional_goal" value={draft.nutritional_goal} />
       <input type="hidden" name="dietary_preference" value={draft.dietary_preference} />
+      <input type="hidden" name="exercise_modality_other_details" value={draft.exercise_modality_other_details} />
       <input type="hidden" name="medical_conditions" value={draft.has_medical_conditions === "yes" ? draft.medical_conditions_details : ""} />
+      <input type="hidden" name="alcohol_times_per_week" value={draft.alcohol_times_per_week} />
+      <input type="hidden" name="smoking_packs_per_day" value={draft.smoking_packs_per_day} />
+      {locale === "he" ? <input type="hidden" name="date_of_birth" value={normalizedDateOfBirth} /> : null}
 
       <section className="rounded-xl border border-slate-200 p-4">
         <h2 className="text-base font-semibold text-slate-900">{tr(locale, "Step 1 - Identity & Vital Statistics", "שלב 1 - זהות ומדדים")}</h2>
@@ -275,7 +448,36 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
           </label>
           <label className="block">
             <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Date of birth", "תאריך לידה")}</span>
-            <input type="date" name="date_of_birth" required max={new Date().toISOString().slice(0, 10)} value={draft.date_of_birth} onChange={(event) => updateDraft({ date_of_birth: event.target.value })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" />
+            {locale === "he" ? (
+              <input
+                type="text"
+                required
+                inputMode="numeric"
+                placeholder="dd/mm/yyyy"
+                value={draft.date_of_birth_display}
+                onChange={(event) => {
+                  const raw = event.target.value;
+                  const maybeIso = hebrewDisplayDateToIso(raw);
+                  updateDraft({
+                    date_of_birth_display: raw,
+                    date_of_birth: maybeIso ?? "",
+                  });
+                }}
+                className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
+              />
+            ) : (
+              <input
+                type="date"
+                name="date_of_birth"
+                required
+                max={new Date().toISOString().slice(0, 10)}
+                value={draft.date_of_birth}
+                onChange={(event) => updateDraft({ date_of_birth: event.target.value, date_of_birth_display: event.target.value })}
+                lang={localeTag(locale)}
+                className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
+              />
+            )}
+            <p className="mt-1 text-xs text-slate-500">{tr(locale, "Format: yyyy-mm-dd", "פורמט: dd/mm/yyyy")}</p>
           </label>
           <div className="block">
             <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Biological sex", "מין ביולוגי")}</span>
@@ -312,11 +514,32 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
             <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Exercise modality", "סוג אימון")}</span>
             <div className="flex flex-wrap gap-2">
               {exerciseModalityOptions.map((value) => {
-                const label = value === "resistance_hypertrophy" ? tr(locale, "Resistance / Hypertrophy", "התנגדות / היפרטרופיה") : value === "endurance_cardio" ? tr(locale, "Endurance / Cardio", "סבולת / אירובי") : value === "martial_arts" ? tr(locale, "Martial Arts", "אומנויות לחימה") : tr(locale, "Other", "אחר");
+                const label = value === "resistance_hypertrophy" ? tr(locale, "Resistance / Hypertrophy", "התנגדות / היפרטרופיה") : value === "endurance_cardio" ? tr(locale, "Endurance / Cardio", "סבולת / אירובי") : value === "martial_arts" ? tr(locale, "Martial Arts", "אומנויות לחימה") : value === "none" ? tr(locale, "None", "ללא") : tr(locale, "Other", "אחר");
                 const selected = draft.exercise_modalities.includes(value);
                 return <button key={value} type="button" onClick={() => toggleListValue("exercise_modalities", value)} className={`rounded-full border px-3 py-1.5 text-xs ${selected ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-700"}`}>{label}</button>;
               })}
             </div>
+            {draft.exercise_modalities.includes("other") ? (
+              <label className="mt-3 block">
+                <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Other exercise type", "סוג אימון אחר")}</span>
+                <input
+                  type="text"
+                  maxLength={80}
+                  value={draft.exercise_modality_other_details}
+                  onChange={(event) => updateDraft({ exercise_modality_other_details: event.target.value })}
+                  placeholder={tr(locale, "e.g. Pilates, spinning, climbing", "לדוגמה: פילאטיס, ספינינג, טיפוס")}
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  {tr(
+                    locale,
+                    "Use a real exercise term. Typos are okay, random text is not.",
+                    "יש להזין שם אמיתי של פעילות גופנית. שגיאות כתיב נסבלות, טקסט אקראי לא.",
+                  )}
+                </p>
+                {clientError ? <p className="mt-1 text-xs text-rose-700">{clientError}</p> : null}
+              </label>
+            ) : null}
             {draft.exercise_modalities.map((value) => <input key={value} type="hidden" name="exercise_modalities" value={value} />)}
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -352,30 +575,42 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
 
           <div>
             <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Medical conditions", "מצבים רפואיים")}</span>
-            <div className="flex gap-3 text-sm"><label className="flex items-center gap-2"><input type="radio" name="has_medical_conditions" value="yes" checked={draft.has_medical_conditions === "yes"} onChange={() => setYesNo("has_medical_conditions", "yes")} /> {tr(locale, "Yes", "כן")}</label><label className="flex items-center gap-2"><input type="radio" name="has_medical_conditions" value="no" checked={draft.has_medical_conditions === "no"} onChange={() => setYesNo("has_medical_conditions", "no")} /> {tr(locale, "No", "לא")}</label></div>
+            <div className="flex gap-3 text-sm"><label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_medical_conditions === "yes" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_medical_conditions" value="yes" checked={draft.has_medical_conditions === "yes"} onChange={() => setYesNo("has_medical_conditions", "yes")} /> {tr(locale, "Yes", "כן")}</label><label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_medical_conditions === "no" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_medical_conditions" value="no" checked={draft.has_medical_conditions === "no"} onChange={() => setYesNo("has_medical_conditions", "no")} /> {tr(locale, "No", "לא")}</label></div>
             {draft.has_medical_conditions === "yes" ? <textarea name="medical_conditions_details" rows={3} value={draft.medical_conditions_details} onChange={(event) => updateDraft({ medical_conditions_details: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" /> : <input type="hidden" name="medical_conditions_details" value="" />}
           </div>
 
           <div>
             <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Regular medications", "תרופות קבועות")}</span>
-            <div className="flex gap-3 text-sm"><label className="flex items-center gap-2"><input type="radio" name="has_regular_medications" value="yes" checked={draft.has_regular_medications === "yes"} onChange={() => setYesNo("has_regular_medications", "yes")} /> {tr(locale, "Yes", "כן")}</label><label className="flex items-center gap-2"><input type="radio" name="has_regular_medications" value="no" checked={draft.has_regular_medications === "no"} onChange={() => setYesNo("has_regular_medications", "no")} /> {tr(locale, "No", "לא")}</label></div>
+            <div className="flex gap-3 text-sm"><label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_regular_medications === "yes" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_regular_medications" value="yes" checked={draft.has_regular_medications === "yes"} onChange={() => setYesNo("has_regular_medications", "yes")} /> {tr(locale, "Yes", "כן")}</label><label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_regular_medications === "no" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_regular_medications" value="no" checked={draft.has_regular_medications === "no"} onChange={() => setYesNo("has_regular_medications", "no")} /> {tr(locale, "No", "לא")}</label></div>
             {draft.has_regular_medications === "yes" ? <textarea name="regular_medications_details" rows={3} value={draft.regular_medications_details} onChange={(event) => updateDraft({ regular_medications_details: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" /> : <input type="hidden" name="regular_medications_details" value="" />}
           </div>
 
           <div>
             <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Heavy sweating / hot climate", "הזעה מרובה / אקלים חם")}</span>
-            <div className="flex gap-3 text-sm"><label className="flex items-center gap-2"><input type="radio" name="hot_climate_or_heavy_sweating" value="yes" checked={draft.hot_climate_or_heavy_sweating === "yes"} onChange={() => setYesNo("hot_climate_or_heavy_sweating", "yes")} /> {tr(locale, "Yes", "כן")}</label><label className="flex items-center gap-2"><input type="radio" name="hot_climate_or_heavy_sweating" value="no" checked={draft.hot_climate_or_heavy_sweating === "no"} onChange={() => setYesNo("hot_climate_or_heavy_sweating", "no")} /> {tr(locale, "No", "לא")}</label></div>
+            <div className="flex gap-3 text-sm"><label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.hot_climate_or_heavy_sweating === "yes" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="hot_climate_or_heavy_sweating" value="yes" checked={draft.hot_climate_or_heavy_sweating === "yes"} onChange={() => setYesNo("hot_climate_or_heavy_sweating", "yes")} /> {tr(locale, "Yes", "כן")}</label><label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.hot_climate_or_heavy_sweating === "no" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="hot_climate_or_heavy_sweating" value="no" checked={draft.hot_climate_or_heavy_sweating === "no"} onChange={() => setYesNo("hot_climate_or_heavy_sweating", "no")} /> {tr(locale, "No", "לא")}</label></div>
           </div>
 
           <div>
             <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Habits", "הרגלים")}</span>
             <div className="flex flex-wrap gap-2">
               {habitOptions.map((value) => {
-                const label = value === "smoking_or_vaping" ? tr(locale, "Smoking / Vaping", "עישון / אידוי") : value === "alcohol" ? tr(locale, "Regular Alcohol", "אלכוהול קבוע") : tr(locale, "None", "ללא");
+                const label = value === "smoking_or_vaping" ? tr(locale, "Smoking", "עישון") : value === "alcohol" ? tr(locale, "Regular Alcohol", "אלכוהול קבוע") : tr(locale, "None", "ללא");
                 const selected = draft.habits.includes(value);
                 return <button key={value} type="button" onClick={() => toggleListValue("habits", value)} className={`rounded-full border px-3 py-1.5 text-xs ${selected ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 bg-white text-slate-700"}`}>{label}</button>;
               })}
             </div>
+            {draft.habits.includes("alcohol") ? (
+              <label className="mt-2 block">
+                <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Alcohol frequency (times/week)", "תדירות אלכוהול (פעמים בשבוע)")}</span>
+                <input type="number" min={0} step="0.1" value={draft.alcohol_times_per_week} onChange={(event) => updateDraft({ alcohol_times_per_week: event.target.value })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" />
+              </label>
+            ) : null}
+            {draft.habits.includes("smoking_or_vaping") ? (
+              <label className="mt-2 block">
+                <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Smoking amount (packs/day)", "כמות עישון (חפיסות ביום)")}</span>
+                <input type="number" min={0} step="0.1" value={draft.smoking_packs_per_day} onChange={(event) => updateDraft({ smoking_packs_per_day: event.target.value })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" />
+              </label>
+            ) : null}
             {draft.habits.map((value) => <input key={value} type="hidden" name="habits" value={value} />)}
           </div>
         </div>
@@ -403,6 +638,8 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
           <label className="block">
             <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Allergies (comma separated)", "אלרגיות (מופרדות בפסיקים)")}</span>
             <input type="text" name="allergies" value={draft.allergies} onChange={(event) => updateDraft({ allergies: event.target.value })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" />
+            <p className="mt-1 text-xs text-slate-500">{tr(locale, "Use real allergy names. Typos are okay, random text is not.", "יש להזין שמות אלרגיה אמיתיים. שגיאות כתיב נסבלות, טקסט אקראי לא.")}</p>
+            {allergyError ? <p className="mt-1 text-xs text-rose-700">{allergyError}</p> : null}
           </label>
 
           <label className="block">
@@ -413,8 +650,9 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
 
           <label className="flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5 text-sm text-sky-900">
             <input type="checkbox" name="accept_ai_extraction" value="yes" checked={draft.accept_ai_extraction} onChange={(event) => updateDraft({ accept_ai_extraction: event.target.checked })} className="mt-0.5" />
-            <span>{tr(locale, "I agree that my extracted health text can be sent to the configured AI provider for analysis.", "אני מסכים/ה שטקסט בריאות שחולץ יכול להישלח לספק ה-AI שהוגדר לצורך ניתוח.")}</span>
+            <span>{tr(locale, "I agree to the transfer and storage of my health data with the AI provider for analysis purposes", "אני מסכים/ה לשליחת נתוני הבריאות והתזונה לספק ה-AI ולשמירתם לצורך ניתוח ושיפור השירות.")}</span>
           </label>
+          {consentError ? <p className="mt-1 text-xs text-rose-700">{consentError}</p> : null}
         </div>
       </section>
 
@@ -430,7 +668,7 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
       ) : null}
 
       <div className="flex flex-col gap-3 sm:flex-row">
-        <SaveButton locale={locale} />
+        <SaveButton locale={locale} canSubmit={draft.accept_ai_extraction} />
         <Link
           href="/app/profile"
           className="inline-flex w-full items-center justify-center rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-100"

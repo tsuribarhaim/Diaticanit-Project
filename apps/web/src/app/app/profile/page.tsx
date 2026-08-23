@@ -3,10 +3,15 @@ import { redirect } from "next/navigation";
 
 import {
   formatActivityLevel,
+  formatDateForLocale,
   formatDateTimeForLocale,
+  formatDietaryPreference,
+  formatExerciseModality,
   formatGender,
+  formatMeasurementUnit,
+  formatNutritionalGoal,
   formatNumberForLocale,
-  formatProfileValue,
+  formatPregnancyLactationStatus,
   normalizeLocale,
   tr,
 } from "@/lib/locale";
@@ -43,6 +48,13 @@ function bmiStatus(bmi: number): "good" | "warning" | "out_of_range" {
   return "good";
 }
 
+function formatHabitLabel(value: string, locale: "en" | "he"): string {
+  if (value === "smoking_or_vaping") return tr(locale, "Smoking", "עישון");
+  if (value === "alcohol") return tr(locale, "Alcohol", "אלכוהול");
+  if (value === "none") return tr(locale, "None", "ללא");
+  return value;
+}
+
 export const dynamic = "force-dynamic";
 
 export default async function ProfilePage() {
@@ -58,7 +70,7 @@ export default async function ProfilePage() {
   const { data: profile, error } = await supabase
     .from("user_profile_enriched")
     .select(
-      "first_name, last_name, date_of_birth, biological_sex, calculated_age_years, bmi, height_cm, weight_kg, activity_level, exercise_modalities, exercise_frequency_days_per_week, exercise_duration_minutes, nutritional_goal, pregnancy_lactation_status, has_medical_conditions, medical_conditions_details, has_regular_medications, regular_medications_details, hot_climate_or_heavy_sweating, habits, dietary_preference, additional_information, allergies, updated_at",
+      "first_name, last_name, date_of_birth, biological_sex, calculated_age_years, bmi, height_cm, weight_kg, activity_level, exercise_modalities, exercise_modality_other_details, exercise_frequency_days_per_week, exercise_duration_minutes, nutritional_goal, pregnancy_lactation_status, has_medical_conditions, medical_conditions_details, has_regular_medications, regular_medications_details, hot_climate_or_heavy_sweating, habits, alcohol_times_per_week, smoking_packs_per_day, dietary_preference, additional_information, allergies, updated_at",
     )
     .eq("user_id", user.id)
     .maybeSingle();
@@ -88,7 +100,7 @@ export default async function ProfilePage() {
         <div className="mt-5 grid gap-4">
           <section className="rounded-xl border border-slate-200 p-4">
             <h2 className="text-sm font-semibold text-slate-900">{tr(locale, "Step 1 - Identity & Vital Statistics", "שלב 1 - זהות ומדדים")}</h2>
-            <dl className="mt-3 grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
+            <dl className="mt-3 grid gap-3 text-sm text-slate-700 sm:grid-cols-2 [&>div>dd]:mt-0.5 [&>div>dd]:italic [&>div>dd]:text-slate-600 [&>div>dd]:before:mr-1 [&>div>dd]:before:content-['-']">
               <div>
                 <dt className="font-medium text-slate-900">{tr(locale, "First name", "שם פרטי")}</dt>
                 <dd>{profile.first_name ?? tr(locale, "n/a", "לא זמין")}</dd>
@@ -99,7 +111,7 @@ export default async function ProfilePage() {
               </div>
               <div>
                 <dt className="font-medium text-slate-900">{tr(locale, "Date of birth", "תאריך לידה")}</dt>
-                <dd>{profile.date_of_birth ?? tr(locale, "n/a", "לא זמין")}</dd>
+                <dd>{profile.date_of_birth ? formatDateForLocale(profile.date_of_birth, locale) : tr(locale, "n/a", "לא זמין")}</dd>
               </div>
               <div>
                 <dt className="font-medium text-slate-900">{tr(locale, "Age", "גיל")}</dt>
@@ -115,11 +127,11 @@ export default async function ProfilePage() {
               </div>
               <div>
                 <dt className="font-medium text-slate-900">{tr(locale, "Height", "גובה")}</dt>
-                <dd>{profile.height_cm ?? tr(locale, "n/a", "לא זמין")} cm</dd>
+                <dd>{profile.height_cm ?? tr(locale, "n/a", "לא זמין")} {formatMeasurementUnit("cm", locale)}</dd>
               </div>
               <div>
                 <dt className="font-medium text-slate-900">{tr(locale, "Weight", "משקל")}</dt>
-                <dd>{profile.weight_kg ?? tr(locale, "n/a", "לא זמין")} kg</dd>
+                <dd>{profile.weight_kg ?? tr(locale, "n/a", "לא זמין")} {formatMeasurementUnit("kg", locale)}</dd>
               </div>
             </dl>
 
@@ -182,15 +194,25 @@ export default async function ProfilePage() {
 
           <section className="rounded-xl border border-slate-200 p-4">
             <h2 className="text-sm font-semibold text-slate-900">{tr(locale, "Step 2 - Lifestyle & Activity", "שלב 2 - אורח חיים ופעילות")}</h2>
-            <dl className="mt-3 grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
+            <dl className="mt-3 grid gap-3 text-sm text-slate-700 sm:grid-cols-2 [&>div>dd]:mt-0.5 [&>div>dd]:italic [&>div>dd]:text-slate-600 [&>div>dd]:before:mr-1 [&>div>dd]:before:content-['-']">
               <div>
                 <dt className="font-medium text-slate-900">{tr(locale, "Activity level", "רמת פעילות")}</dt>
                 <dd>{formatActivityLevel(profile.activity_level, locale)}</dd>
               </div>
               <div>
                 <dt className="font-medium text-slate-900">{tr(locale, "Exercise modalities", "סוגי אימון")}</dt>
-                <dd>{profile.exercise_modalities?.length ? profile.exercise_modalities.join(", ") : tr(locale, "None", "ללא")}</dd>
+                <dd>
+                  {profile.exercise_modalities?.length
+                    ? profile.exercise_modalities.map((value) => formatExerciseModality(value, locale)).join(", ")
+                    : tr(locale, "None", "ללא")}
+                </dd>
               </div>
+              {profile.exercise_modalities?.includes("other") && profile.exercise_modality_other_details ? (
+                <div>
+                  <dt className="font-medium text-slate-900">{tr(locale, "Other exercise type", "סוג אימון אחר")}</dt>
+                  <dd>{profile.exercise_modality_other_details}</dd>
+                </div>
+              ) : null}
               <div>
                 <dt className="font-medium text-slate-900">{tr(locale, "Frequency", "תדירות")}</dt>
                 <dd>{profile.exercise_frequency_days_per_week ?? tr(locale, "n/a", "לא זמין")}</dd>
@@ -201,17 +223,17 @@ export default async function ProfilePage() {
               </div>
               <div>
                 <dt className="font-medium text-slate-900">{tr(locale, "Goal", "מטרה")}</dt>
-                <dd>{profile.nutritional_goal ? formatProfileValue(profile.nutritional_goal.replaceAll("_", " "), locale) : tr(locale, "n/a", "לא זמין")}</dd>
+                <dd>{profile.nutritional_goal ? formatNutritionalGoal(profile.nutritional_goal, locale) : tr(locale, "n/a", "לא זמין")}</dd>
               </div>
             </dl>
           </section>
 
           <section className="rounded-xl border border-slate-200 p-4">
             <h2 className="text-sm font-semibold text-slate-900">{tr(locale, "Step 3 - Medical & Physiology", "שלב 3 - רפואי ופיזיולוגי")}</h2>
-            <dl className="mt-3 grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
+            <dl className="mt-3 grid gap-3 text-sm text-slate-700 sm:grid-cols-2 [&>div>dd]:mt-0.5 [&>div>dd]:italic [&>div>dd]:text-slate-600 [&>div>dd]:before:mr-1 [&>div>dd]:before:content-['-']">
               <div>
                 <dt className="font-medium text-slate-900">{tr(locale, "Pregnancy/lactation", "הריון/הנקה")}</dt>
-                <dd>{profile.pregnancy_lactation_status ?? tr(locale, "n/a", "לא זמין")}</dd>
+                <dd>{profile.pregnancy_lactation_status ? formatPregnancyLactationStatus(profile.pregnancy_lactation_status, locale) : tr(locale, "n/a", "לא זמין")}</dd>
               </div>
               <div>
                 <dt className="font-medium text-slate-900">{tr(locale, "Medical conditions", "מצבים רפואיים")}</dt>
@@ -227,17 +249,37 @@ export default async function ProfilePage() {
               </div>
               <div>
                 <dt className="font-medium text-slate-900">{tr(locale, "Habits", "הרגלים")}</dt>
-                <dd>{profile.habits?.length ? profile.habits.join(", ") : tr(locale, "None", "ללא")}</dd>
+                <dd>{profile.habits?.length ? profile.habits.map((value) => formatHabitLabel(value, locale)).join(", ") : tr(locale, "None", "ללא")}</dd>
               </div>
+              {profile.habits?.includes("alcohol") ? (
+                <div>
+                  <dt className="font-medium text-slate-900">{tr(locale, "Alcohol frequency", "תדירות אלכוהול")}</dt>
+                  <dd>
+                    {profile.alcohol_times_per_week != null
+                      ? `${formatNumberForLocale(profile.alcohol_times_per_week, locale, { maximumFractionDigits: 1 })} ${tr(locale, "times/week", "פעמים בשבוע")}`
+                      : tr(locale, "n/a", "לא זמין")}
+                  </dd>
+                </div>
+              ) : null}
+              {profile.habits?.includes("smoking_or_vaping") ? (
+                <div>
+                  <dt className="font-medium text-slate-900">{tr(locale, "Smoking amount", "כמות עישון")}</dt>
+                  <dd>
+                    {profile.smoking_packs_per_day != null
+                      ? `${formatNumberForLocale(profile.smoking_packs_per_day, locale, { maximumFractionDigits: 1 })} ${tr(locale, "packs/day", "חפיסות ביום")}`
+                      : tr(locale, "n/a", "לא זמין")}
+                  </dd>
+                </div>
+              ) : null}
             </dl>
           </section>
 
           <section className="rounded-xl border border-slate-200 p-4">
             <h2 className="text-sm font-semibold text-slate-900">{tr(locale, "Step 4 - Dietary Profile & Context", "שלב 4 - פרופיל תזונתי")}</h2>
-            <dl className="mt-3 grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
+            <dl className="mt-3 grid gap-3 text-sm text-slate-700 sm:grid-cols-2 [&>div>dd]:mt-0.5 [&>div>dd]:italic [&>div>dd]:text-slate-600 [&>div>dd]:before:mr-1 [&>div>dd]:before:content-['-']">
               <div>
                 <dt className="font-medium text-slate-900">{tr(locale, "Dietary preference", "העדפה תזונתית")}</dt>
-                <dd>{profile.dietary_preference ? formatProfileValue(profile.dietary_preference.replaceAll("_", " "), locale) : tr(locale, "n/a", "לא זמין")}</dd>
+                <dd>{profile.dietary_preference ? formatDietaryPreference(profile.dietary_preference, locale) : tr(locale, "n/a", "לא זמין")}</dd>
               </div>
               <div>
                 <dt className="font-medium text-slate-900">{tr(locale, "Allergies", "אלרגיות")}</dt>

@@ -184,32 +184,36 @@ export default async function GoalsPage() {
             <div className="rounded-lg bg-slate-50 p-4">
               <p className="mt-1">
                 <span className="font-semibold text-slate-900">{tr(locale, "Original request", "בקשה מקורית")}:</span>{" "}
-                {activeGoal.raw_goal_text}
+                <span className="italic text-slate-600 before:mr-1 before:content-['-']">{activeGoal.raw_goal_text}</span>
               </p>
               <p className="mt-1">
                 <span className="font-semibold text-slate-900">{tr(locale, "Translated at", "תורגם בתאריך")}:</span>{" "}
-                {activeGoal.translated_at
-                  ? formatDateTimeForLocale(activeGoal.translated_at, locale)
-                  : tr(locale, "n/a", "לא זמין")}
+                <span className="italic text-slate-600 before:mr-1 before:content-['-']">
+                  {activeGoal.translated_at
+                    ? formatDateTimeForLocale(activeGoal.translated_at, locale)
+                    : tr(locale, "n/a", "לא זמין")}
+                </span>
               </p>
               <p className="mt-1">
                 <span className="font-semibold text-slate-900">{tr(locale, "Goal type", "סוג יעד")}:</span>{" "}
-                {formatGoalType(activeGoal.goal_type, locale)}
+                <span className="italic text-slate-600 before:mr-1 before:content-['-']">{formatGoalType(activeGoal.goal_type, locale)}</span>
               </p>
               <p className="mt-1">
                 <span className="font-semibold text-slate-900">{tr(locale, "Confidence", "רמת ביטחון")}:</span>{" "}
-                {activeGoal.translation_confidence ?? tr(locale, "n/a", "לא זמין")}
+                <span className="italic text-slate-600 before:mr-1 before:content-['-']">{activeGoal.translation_confidence ?? tr(locale, "n/a", "לא זמין")}</span>
               </p>
               <p className="mt-1">
                 <span className="font-semibold text-slate-900">{tr(locale, "Analysis source", "מקור ניתוח")}:</span>{" "}
-                {activeGoal.analysis_source === "ai"
-                  ? "AI"
-                  : tr(locale, "Heuristic", "יוריסטי")}
+                <span className="italic text-slate-600 before:mr-1 before:content-['-']">
+                  {activeGoal.analysis_source === "ai"
+                    ? "AI"
+                    : tr(locale, "Heuristic", "יוריסטי")}
+                </span>
               </p>
               {latestConfirmedDailyReport ? (
                 <p className="mt-1">
                   <span className="font-semibold text-slate-900">{tr(locale, "Latest confirmed daily report", "הדיווח המאושר האחרון")}:</span>{" "}
-                  {formatDateTimeForLocale(String(latestConfirmedDailyReport.report_at), locale)}
+                  <span className="italic text-slate-600 before:mr-1 before:content-['-']">{formatDateTimeForLocale(String(latestConfirmedDailyReport.report_at), locale)}</span>
                 </p>
               ) : null}
             </div>

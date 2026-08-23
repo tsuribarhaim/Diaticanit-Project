@@ -204,23 +204,23 @@ export default async function GoalsProgressPage() {
             <div className="rounded-lg bg-slate-50 p-4">
               <p>
                 <span className="font-semibold text-slate-900">{tr(locale, "Goal request", "בקשת יעד")}:</span>{" "}
-                {activeGoal.raw_goal_text}
+                <span className="italic text-slate-600 before:mr-1 before:content-['-']">{activeGoal.raw_goal_text}</span>
               </p>
               <p className="mt-1">
                 <span className="font-semibold text-slate-900">{tr(locale, "Goal type", "סוג יעד")}:</span>{" "}
-                {formatGoalType(activeGoal.goal_type, locale)}
+                <span className="italic text-slate-600 before:mr-1 before:content-['-']">{formatGoalType(activeGoal.goal_type, locale)}</span>
               </p>
               <p className="mt-1">
                 <span className="font-semibold text-slate-900">{tr(locale, "Start date", "תאריך התחלה")}:</span>{" "}
-                {startDate ? formatDateTimeForLocale(startDate, locale) : tr(locale, "n/a", "לא זמין")}
+                <span className="italic text-slate-600 before:mr-1 before:content-['-']">{startDate ? formatDateTimeForLocale(startDate, locale) : tr(locale, "n/a", "לא זמין")}</span>
               </p>
               <p className="mt-1">
                 <span className="font-semibold text-slate-900">{tr(locale, "End date", "תאריך סיום")}:</span>{" "}
-                {endDate ? formatDateTimeForLocale(endDate, locale) : tr(locale, "n/a", "לא זמין")}
+                <span className="italic text-slate-600 before:mr-1 before:content-['-']">{endDate ? formatDateTimeForLocale(endDate, locale) : tr(locale, "n/a", "לא זמין")}</span>
               </p>
               <p className="mt-1">
                 <span className="font-semibold text-slate-900">{tr(locale, "Progress to date", "התקדמות עד כה")}:</span>{" "}
-                {elapsedPercent !== null ? `${formatNumberForLocale(elapsedPercent, locale)}%` : tr(locale, "n/a", "לא זמין")}
+                <span className="italic text-slate-600 before:mr-1 before:content-['-']">{elapsedPercent !== null ? `${formatNumberForLocale(elapsedPercent, locale)}%` : tr(locale, "n/a", "לא זמין")}</span>
               </p>
             </div>
 
@@ -265,11 +265,11 @@ export default async function GoalsProgressPage() {
               <p className="font-semibold text-slate-900">{tr(locale, "Planned trajectory at today", "מסלול מתוכנן להיום")}</p>
               <p className="mt-1">
                 <span className="font-semibold text-slate-900">{tr(locale, "Expected delta by now", "שינוי צפוי עד עכשיו")}:</span>{" "}
-                {expectedDeltaTodayKg !== null ? `${formatDecimal(expectedDeltaTodayKg, locale)} ${formatMeasurementUnit("kg", locale)}` : tr(locale, "n/a", "לא זמין")}
+                <span className="italic text-slate-600 before:mr-1 before:content-['-']">{expectedDeltaTodayKg !== null ? `${formatDecimal(expectedDeltaTodayKg, locale)} ${formatMeasurementUnit("kg", locale)}` : tr(locale, "n/a", "לא זמין")}</span>
               </p>
               <p className="mt-1">
                 <span className="font-semibold text-slate-900">{tr(locale, "Expected weight by now", "משקל צפוי עד עכשיו")}:</span>{" "}
-                {expectedWeightTodayKg !== null ? `${formatDecimal(expectedWeightTodayKg, locale)} ${formatMeasurementUnit("kg", locale)}` : tr(locale, "n/a", "לא זמין")}
+                <span className="italic text-slate-600 before:mr-1 before:content-['-']">{expectedWeightTodayKg !== null ? `${formatDecimal(expectedWeightTodayKg, locale)} ${formatMeasurementUnit("kg", locale)}` : tr(locale, "n/a", "לא זמין")}</span>
               </p>
               <p className="mt-3 text-xs text-slate-500">
                 {tr(
@@ -284,23 +284,23 @@ export default async function GoalsProgressPage() {
               <p className="font-semibold text-slate-900">{tr(locale, "Actual weight trend", "מגמת משקל בפועל")}</p>
               <p className="mt-1">
                 <span className="font-semibold text-slate-900">{tr(locale, "First reported weight", "משקל ראשון שדווח")}:</span>{" "}
-                {actualWeightStartKg !== null ? `${formatDecimal(actualWeightStartKg, locale)} ${formatMeasurementUnit("kg", locale)}` : tr(locale, "n/a", "לא זמין")}
+                <span className="italic text-slate-600 before:mr-1 before:content-['-']">{actualWeightStartKg !== null ? `${formatDecimal(actualWeightStartKg, locale)} ${formatMeasurementUnit("kg", locale)}` : tr(locale, "n/a", "לא זמין")}</span>
               </p>
               <p className="mt-1">
                 <span className="font-semibold text-slate-900">{tr(locale, "Latest reported weight", "משקל אחרון שדווח")}:</span>{" "}
-                {actualWeightNowKg !== null ? `${formatDecimal(actualWeightNowKg, locale)} ${formatMeasurementUnit("kg", locale)}` : tr(locale, "n/a", "לא זמין")}
+                <span className="italic text-slate-600 before:mr-1 before:content-['-']">{actualWeightNowKg !== null ? `${formatDecimal(actualWeightNowKg, locale)} ${formatMeasurementUnit("kg", locale)}` : tr(locale, "n/a", "לא זמין")}</span>
               </p>
               <p className="mt-1">
                 <span className="font-semibold text-slate-900">{tr(locale, "Actual trend delta", "שינוי מגמה בפועל")}:</span>{" "}
-                {actualWeightDeltaKg !== null ? `${formatDecimal(actualWeightDeltaKg, locale)} ${formatMeasurementUnit("kg", locale)}` : tr(locale, "n/a", "לא זמין")}
+                <span className="italic text-slate-600 before:mr-1 before:content-['-']">{actualWeightDeltaKg !== null ? `${formatDecimal(actualWeightDeltaKg, locale)} ${formatMeasurementUnit("kg", locale)}` : tr(locale, "n/a", "לא זמין")}</span>
               </p>
               <p className="mt-1">
                 <span className="font-semibold text-slate-900">{tr(locale, "Actual vs expected today", "בפועל מול צפוי היום")}:</span>{" "}
-                {actualVsExpectedKg !== null ? `${formatDecimal(actualVsExpectedKg, locale)} ${formatMeasurementUnit("kg", locale)}` : tr(locale, "n/a", "לא זמין")}
+                <span className="italic text-slate-600 before:mr-1 before:content-['-']">{actualVsExpectedKg !== null ? `${formatDecimal(actualVsExpectedKg, locale)} ${formatMeasurementUnit("kg", locale)}` : tr(locale, "n/a", "לא זמין")}</span>
               </p>
               <p className="mt-1">
                 <span className="font-semibold text-slate-900">{tr(locale, "Progress toward target", "התקדמות אל היעד")}:</span>{" "}
-                {targetProgressPercent !== null ? `${formatDecimal(targetProgressPercent, locale, 1)}%` : tr(locale, "n/a", "לא זמין")}
+                <span className="italic text-slate-600 before:mr-1 before:content-['-']">{targetProgressPercent !== null ? `${formatDecimal(targetProgressPercent, locale, 1)}%` : tr(locale, "n/a", "לא זמין")}</span>
               </p>
               <p className="mt-3 text-xs text-slate-500">
                 {tr(locale, "Trend history uses all daily reports with reported body weight values, including pending confirmations.", "היסטוריית המגמה מבוססת על כל הדיווחים היומיים הכוללים ערך משקל מדווח, כולל דיווחים שממתינים לאישור.")}

@@ -14,9 +14,11 @@ import {
   exerciseModalityOptions,
   habitOptions,
   nutritionalGoalOptions,
+  validateAllergyEntry,
+  validateExerciseOtherDetails,
 } from "@/lib/profile";
 import type { AppLocale } from "@/lib/locale";
-import { formatActivityLevel, formatNumberForLocale, tr } from "@/lib/locale";
+import { formatActivityLevel, formatNumberForLocale, localeTag, tr } from "@/lib/locale";
 
 type OnboardingProfileFormProps = {
   defaults?: {
@@ -29,6 +31,7 @@ type OnboardingProfileFormProps = {
     activity_level?: (typeof activityLevelOptions)[number];
     preferred_language?: "en" | "he";
     exercise_modalities?: string[];
+    exercise_modality_other_details?: string;
     exercise_frequency_days_per_week?: number;
     exercise_duration_minutes?: number;
     nutritional_goal?: (typeof nutritionalGoalOptions)[number];
@@ -39,6 +42,8 @@ type OnboardingProfileFormProps = {
     regular_medications_details?: string;
     hot_climate_or_heavy_sweating?: boolean;
     habits?: string[];
+    alcohol_times_per_week?: number | null;
+    smoking_packs_per_day?: number | null;
     dietary_preference?: (typeof dietaryPreferenceOptions)[number];
     additional_information?: string;
     allergies?: string[];
@@ -64,6 +69,7 @@ const FIELD_TO_STEP: Record<string, StepKey> = {
   height_cm: 1,
   activity_level: 2,
   exercise_modalities: 2,
+  exercise_modality_other_details: 2,
   exercise_frequency_days_per_week: 2,
   exercise_duration_minutes: 2,
   nutritional_goal: 2,
@@ -74,15 +80,19 @@ const FIELD_TO_STEP: Record<string, StepKey> = {
   regular_medications_details: 3,
   hot_climate_or_heavy_sweating: 3,
   habits: 3,
+  alcohol_times_per_week: 3,
+  smoking_packs_per_day: 3,
   dietary_preference: 4,
   allergies: 4,
   additional_information: 4,
+  accept_ai_extraction: 4,
 };
 
 type OnboardingFormDraft = {
   first_name: string;
   last_name: string;
   date_of_birth: string;
+  date_of_birth_display: string;
   biological_sex: "male" | "female" | "";
   weight_unit: "kg" | "lbs";
   weight_value: string;
@@ -92,6 +102,7 @@ type OnboardingFormDraft = {
   height_in_value: string;
   activity_level: (typeof activityLevelOptions)[number];
   exercise_modalities: string[];
+  exercise_modality_other_details: string;
   exercise_frequency_days_per_week: string;
   exercise_duration_minutes: string;
   nutritional_goal: (typeof nutritionalGoalOptions)[number] | "";
@@ -102,6 +113,8 @@ type OnboardingFormDraft = {
   regular_medications_details: string;
   hot_climate_or_heavy_sweating: "yes" | "no" | "";
   habits: string[];
+  alcohol_times_per_week: string;
+  smoking_packs_per_day: string;
   dietary_preference: (typeof dietaryPreferenceOptions)[number] | "";
   additional_information: string;
   allergies: string;
@@ -155,6 +168,34 @@ function calculateBmi(weightKg: number | null, heightCm: number | null): number 
   const meters = heightCm / 100;
   const bmi = weightKg / (meters * meters);
   return Number.isFinite(bmi) ? bmi : null;
+}
+
+function isoToHebrewDisplayDate(value: string): string {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return value;
+  return `${match[3]}/${match[2]}/${match[1]}`;
+}
+
+function hebrewDisplayDateToIso(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  const match = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) return null;
+
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  const candidate = new Date(year, month - 1, day);
+
+  const isValid =
+    candidate.getFullYear() === year &&
+    candidate.getMonth() === month - 1 &&
+    candidate.getDate() === day;
+
+  if (!isValid) return null;
+
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 const BMI_SCALE_MIN = 12;
@@ -237,6 +278,9 @@ function createInitialDraft(
     first_name: defaults?.first_name ?? "",
     last_name: defaults?.last_name ?? "",
     date_of_birth: defaults?.date_of_birth ?? "",
+    date_of_birth_display: (defaults?.preferred_language ?? locale) === "he"
+      ? isoToHebrewDisplayDate(defaults?.date_of_birth ?? "")
+      : (defaults?.date_of_birth ?? ""),
     biological_sex: defaults?.biological_sex ?? "",
     weight_unit: defaultWeightUnit,
     weight_value: defaultWeightValue,
@@ -246,6 +290,7 @@ function createInitialDraft(
     height_in_value: "",
     activity_level: defaults?.activity_level ?? "moderate",
     exercise_modalities: defaults?.exercise_modalities ?? [],
+    exercise_modality_other_details: defaults?.exercise_modality_other_details ?? "",
     exercise_frequency_days_per_week:
       defaults?.exercise_frequency_days_per_week != null
         ? String(defaults.exercise_frequency_days_per_week)
@@ -271,11 +316,15 @@ function createInitialDraft(
         ? ""
         : (defaults.hot_climate_or_heavy_sweating ? "yes" : "no"),
     habits: defaults?.habits ?? [],
+    alcohol_times_per_week:
+      defaults?.alcohol_times_per_week == null ? "" : String(defaults.alcohol_times_per_week),
+    smoking_packs_per_day:
+      defaults?.smoking_packs_per_day == null ? "" : String(defaults.smoking_packs_per_day),
     dietary_preference: defaults?.dietary_preference ?? "",
     additional_information: defaults?.additional_information ?? "",
     allergies: defaults?.allergies?.join(", ") ?? "",
     preferred_language: defaults?.preferred_language ?? locale,
-    accept_ai_extraction: defaults?.ai_extraction_consent ?? false,
+    accept_ai_extraction: false,
   };
 }
 
@@ -286,6 +335,7 @@ function isValidDraft(value: unknown): value is OnboardingFormDraft {
     typeof candidate.first_name === "string" &&
     typeof candidate.last_name === "string" &&
     typeof candidate.date_of_birth === "string" &&
+    typeof candidate.date_of_birth_display === "string" &&
     (candidate.biological_sex === "male" || candidate.biological_sex === "female" || candidate.biological_sex === "") &&
     (candidate.weight_unit === "kg" || candidate.weight_unit === "lbs") &&
     typeof candidate.weight_value === "string" &&
@@ -296,6 +346,7 @@ function isValidDraft(value: unknown): value is OnboardingFormDraft {
     typeof candidate.activity_level === "string" &&
     activityLevelOptions.includes(candidate.activity_level as (typeof activityLevelOptions)[number]) &&
     Array.isArray(candidate.exercise_modalities) &&
+    typeof candidate.exercise_modality_other_details === "string" &&
     typeof candidate.exercise_frequency_days_per_week === "string" &&
     typeof candidate.exercise_duration_minutes === "string" &&
     (candidate.nutritional_goal === ""
@@ -311,6 +362,8 @@ function isValidDraft(value: unknown): value is OnboardingFormDraft {
       || candidate.hot_climate_or_heavy_sweating === "no"
       || candidate.hot_climate_or_heavy_sweating === "") &&
     Array.isArray(candidate.habits) &&
+    typeof candidate.alcohol_times_per_week === "string" &&
+    typeof candidate.smoking_packs_per_day === "string" &&
     (candidate.dietary_preference === ""
       || dietaryPreferenceOptions.includes(candidate.dietary_preference as (typeof dietaryPreferenceOptions)[number])) &&
     typeof candidate.additional_information === "string" &&
@@ -320,13 +373,13 @@ function isValidDraft(value: unknown): value is OnboardingFormDraft {
   );
 }
 
-function SubmitButton({ locale }: { locale: AppLocale }) {
+function SubmitButton({ locale, canSubmit }: { locale: AppLocale; canSubmit: boolean }) {
   const { pending } = useFormStatus();
 
   return (
     <button
       type="submit"
-      disabled={pending}
+      disabled={pending || !canSubmit}
       className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-5 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800"
     >
       {pending ? tr(locale, "Saving profile...", "שומר פרופיל...") : tr(locale, "Complete setup", "סיום הגדרה")}
@@ -353,7 +406,19 @@ export function OnboardingProfileForm({
       const raw = window.sessionStorage.getItem(ONBOARDING_DRAFT_KEY);
       if (!raw) return initialDraft;
       const parsed = JSON.parse(raw);
-      return isValidDraft(parsed) ? parsed : initialDraft;
+
+      if (!parsed || typeof parsed !== "object") {
+        return initialDraft;
+      }
+
+      const merged = {
+        ...initialDraft,
+        ...parsed,
+      };
+
+      merged.accept_ai_extraction = false;
+
+      return isValidDraft(merged) ? merged : initialDraft;
     } catch {
       // Ignore invalid or blocked storage reads.
       return initialDraft;
@@ -364,9 +429,13 @@ export function OnboardingProfileForm({
 
   const effectiveLocale = draft.preferred_language;
 
+  const normalizedDateOfBirth = effectiveLocale === "he"
+    ? (hebrewDisplayDateToIso(draft.date_of_birth_display) ?? "")
+    : draft.date_of_birth;
+
   const weightKg = toKg(draft.weight_value, draft.weight_unit);
   const heightCm = toCm(draft);
-  const ageYears = calculateAge(draft.date_of_birth);
+  const ageYears = calculateAge(normalizedDateOfBirth);
   const bmi = calculateBmi(weightKg, heightCm);
   const isUnderweight = bmi != null && bmi < 18.5;
   const isHighBmi = bmi != null && bmi >= 35;
@@ -438,6 +507,12 @@ export function OnboardingProfileForm({
     if (set.has(value)) {
       set.delete(value);
     } else {
+      if (key === "exercise_modalities" && value === "none") {
+        set.clear();
+      }
+      if (key === "exercise_modalities" && value !== "none") {
+        set.delete("none");
+      }
       if (key === "habits" && value === "none") {
         set.clear();
       }
@@ -447,7 +522,28 @@ export function OnboardingProfileForm({
       set.add(value);
     }
 
-    updateDraft({ [key]: Array.from(set) } as Partial<OnboardingFormDraft>);
+    const nextValues = Array.from(set);
+    const patch: Partial<OnboardingFormDraft> = { [key]: nextValues } as Partial<OnboardingFormDraft>;
+
+    if (key === "habits") {
+      if (!nextValues.includes("alcohol")) {
+        patch.alcohol_times_per_week = "";
+      }
+      if (!nextValues.includes("smoking_or_vaping")) {
+        patch.smoking_packs_per_day = "";
+      }
+    }
+
+    if (key === "exercise_modalities" && !nextValues.includes("other")) {
+      patch.exercise_modality_other_details = "";
+    }
+
+    if (key === "exercise_modalities" && nextValues.includes("none")) {
+      patch.exercise_frequency_days_per_week = "0";
+      patch.exercise_duration_minutes = "0";
+    }
+
+    updateDraft(patch);
   };
 
   const setYesNo = (
@@ -481,6 +577,23 @@ export function OnboardingProfileForm({
       if (draft.exercise_modalities.length === 0) {
         nextErrors.exercise_modalities = tr(effectiveLocale, "Select at least one exercise modality.", "יש לבחור לפחות סוג אימון אחד.");
       }
+      if (draft.exercise_modalities.includes("other")) {
+        const validationResult = validateExerciseOtherDetails(draft.exercise_modality_other_details);
+        if (!validationResult.isMeaningful) {
+          const suggestionText = validationResult.suggestions.join(", ");
+          nextErrors.exercise_modality_other_details = suggestionText
+            ? tr(
+              effectiveLocale,
+              `Please enter a meaningful exercise type. Maybe: ${suggestionText}`,
+              `יש להזין סוג אימון משמעותי. אולי התכוונת ל: ${suggestionText}`,
+            )
+            : tr(
+              effectiveLocale,
+              "Please enter a meaningful exercise type related to training.",
+              "יש להזין סוג אימון משמעותי שקשור לאימון.",
+            );
+        }
+      }
       if (!draft.exercise_frequency_days_per_week) {
         nextErrors.exercise_frequency_days_per_week = tr(effectiveLocale, "Frequency is required.", "תדירות חובה.");
       }
@@ -512,11 +625,53 @@ export function OnboardingProfileForm({
       if (!draft.hot_climate_or_heavy_sweating) {
         nextErrors.hot_climate_or_heavy_sweating = tr(effectiveLocale, "Choose Yes or No.", "יש לבחור כן או לא.");
       }
+
+      if (draft.habits.includes("alcohol")) {
+        const alcoholPerWeek = Number(draft.alcohol_times_per_week);
+        if (!Number.isFinite(alcoholPerWeek) || alcoholPerWeek <= 0) {
+          nextErrors.alcohol_times_per_week = tr(effectiveLocale, "Enter alcohol times per week.", "יש להזין תדירות אלכוהול בשבוע.");
+        }
+      }
+
+      if (draft.habits.includes("smoking_or_vaping")) {
+        const smokingPerDay = Number(draft.smoking_packs_per_day);
+        if (!Number.isFinite(smokingPerDay) || smokingPerDay <= 0) {
+          nextErrors.smoking_packs_per_day = tr(effectiveLocale, "Enter smoking packs per day.", "יש להזין כמות חפיסות עישון ביום.");
+        }
+      }
     }
 
     if (stepToValidate === 4) {
+      const allergyEntries = draft.allergies
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+      const invalidAllergy = allergyEntries.find((entry) => !validateAllergyEntry(entry).isMeaningful);
+      if (invalidAllergy) {
+        const suggestionText = validateAllergyEntry(invalidAllergy).suggestions.join(", ");
+        nextErrors.allergies = suggestionText
+          ? tr(
+            effectiveLocale,
+            `Please enter a meaningful allergy. Maybe: ${suggestionText}`,
+            `יש להזין אלרגיה משמעותית. אולי התכוונת ל: ${suggestionText}`,
+          )
+          : tr(
+            effectiveLocale,
+            "Please enter a meaningful allergy description.",
+            "יש להזין תיאור אלרגיה משמעותי.",
+          );
+      }
+
       if (draft.additional_information.length > 1000) {
         nextErrors.additional_information = tr(effectiveLocale, "Maximum 1000 characters.", "מקסימום 1000 תווים.");
+      }
+      if (!draft.accept_ai_extraction) {
+        nextErrors.accept_ai_extraction = tr(
+          effectiveLocale,
+          "Consent is required before completing setup.",
+          "נדרשת הסכמה לפני סיום ההגדרה.",
+        );
       }
     }
 
@@ -604,11 +759,12 @@ export function OnboardingProfileForm({
       <input type="hidden" name="preferred_language" value={draft.preferred_language} />
       <input type="hidden" name="first_name" value={draft.first_name} />
       <input type="hidden" name="last_name" value={draft.last_name} />
-      <input type="hidden" name="date_of_birth" value={draft.date_of_birth} />
+      <input type="hidden" name="date_of_birth" value={normalizedDateOfBirth} />
       <input type="hidden" name="biological_sex" value={draft.biological_sex} />
       <input type="hidden" name="height_cm" value={heightCm != null ? String(heightCm) : ""} />
       <input type="hidden" name="weight_kg" value={weightKg != null ? String(weightKg) : ""} />
       <input type="hidden" name="activity_level" value={draft.activity_level} />
+      <input type="hidden" name="exercise_modality_other_details" value={draft.exercise_modality_other_details} />
       <input
         type="hidden"
         name="exercise_frequency_days_per_week"
@@ -638,6 +794,8 @@ export function OnboardingProfileForm({
         name="hot_climate_or_heavy_sweating"
         value={draft.hot_climate_or_heavy_sweating}
       />
+      <input type="hidden" name="alcohol_times_per_week" value={draft.alcohol_times_per_week} />
+      <input type="hidden" name="smoking_packs_per_day" value={draft.smoking_packs_per_day} />
       <input type="hidden" name="dietary_preference" value={draft.dietary_preference} />
       <input type="hidden" name="allergies" value={draft.allergies} />
       <input
@@ -689,15 +847,35 @@ export function OnboardingProfileForm({
 
             <label className="block" data-field="date_of_birth">
               <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Date of birth", "תאריך לידה")}</span>
-              <input
-                type="date"
-                name="date_of_birth"
-                required
-                max={new Date().toISOString().slice(0, 10)}
-                value={draft.date_of_birth}
-                onChange={(event) => updateDraft({ date_of_birth: event.target.value })}
-                className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("date_of_birth")}`}
-              />
+              {effectiveLocale === "he" ? (
+                <input
+                  type="text"
+                  required
+                  inputMode="numeric"
+                  placeholder="dd/mm/yyyy"
+                  value={draft.date_of_birth_display}
+                  onChange={(event) => {
+                    const raw = event.target.value;
+                    const maybeIso = hebrewDisplayDateToIso(raw);
+                    updateDraft({
+                      date_of_birth_display: raw,
+                      date_of_birth: maybeIso ?? "",
+                    });
+                  }}
+                  className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("date_of_birth")}`}
+                />
+              ) : (
+                <input
+                  type="date"
+                  required
+                  max={new Date().toISOString().slice(0, 10)}
+                  value={draft.date_of_birth}
+                  onChange={(event) => updateDraft({ date_of_birth: event.target.value, date_of_birth_display: event.target.value })}
+                  lang={localeTag(effectiveLocale)}
+                  className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("date_of_birth")}`}
+                />
+              )}
+              <p className="mt-1 text-xs text-slate-500">{tr(effectiveLocale, "Format: yyyy-mm-dd", "פורמט: dd/mm/yyyy")}</p>
               {renderFieldError("date_of_birth")}
             </label>
 
@@ -926,6 +1104,8 @@ export function OnboardingProfileForm({
                       ? tr(effectiveLocale, "Endurance / Cardio", "סבולת / אירובי")
                       : value === "martial_arts"
                         ? tr(effectiveLocale, "Martial Arts", "אומנויות לחימה")
+                        : value === "none"
+                          ? tr(effectiveLocale, "None", "ללא")
                         : tr(effectiveLocale, "Other", "אחר");
                 const active = draft.exercise_modalities.includes(value);
 
@@ -942,6 +1122,28 @@ export function OnboardingProfileForm({
               })}
             </div>
             {renderFieldError("exercise_modalities")}
+
+            {draft.exercise_modalities.includes("other") ? (
+              <label className="mt-3 block" data-field="exercise_modality_other_details">
+                <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Other exercise type", "סוג אימון אחר")}</span>
+                <input
+                  type="text"
+                  maxLength={80}
+                  value={draft.exercise_modality_other_details}
+                  onChange={(event) => updateDraft({ exercise_modality_other_details: event.target.value })}
+                  placeholder={tr(effectiveLocale, "e.g. Pilates, spinning, climbing", "לדוגמה: פילאטיס, ספינינג, טיפוס")}
+                  className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("exercise_modality_other_details")}`}
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  {tr(
+                    effectiveLocale,
+                    "Use a real exercise term. Typos are okay, random text is not.",
+                    "יש להזין שם אמיתי של פעילות גופנית. שגיאות כתיב נסבלות, טקסט אקראי לא.",
+                  )}
+                </p>
+                {renderFieldError("exercise_modality_other_details")}
+              </label>
+            ) : null}
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
@@ -1056,8 +1258,8 @@ export function OnboardingProfileForm({
           <div data-field="has_medical_conditions">
             <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Medical conditions", "מצבים רפואיים")}</span>
             <div className="flex gap-3 text-sm">
-              <label className="flex items-center gap-2"><input type="radio" name="has_medical_conditions" value="yes" checked={draft.has_medical_conditions === "yes"} onChange={() => setYesNo("has_medical_conditions", "yes")} /> {tr(effectiveLocale, "Yes", "כן")}</label>
-              <label className="flex items-center gap-2"><input type="radio" name="has_medical_conditions" value="no" checked={draft.has_medical_conditions === "no"} onChange={() => setYesNo("has_medical_conditions", "no")} /> {tr(effectiveLocale, "No", "לא")}</label>
+              <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_medical_conditions === "yes" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_medical_conditions" value="yes" checked={draft.has_medical_conditions === "yes"} onChange={() => setYesNo("has_medical_conditions", "yes")} /> {tr(effectiveLocale, "Yes", "כן")}</label>
+              <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_medical_conditions === "no" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_medical_conditions" value="no" checked={draft.has_medical_conditions === "no"} onChange={() => setYesNo("has_medical_conditions", "no")} /> {tr(effectiveLocale, "No", "לא")}</label>
             </div>
             {draft.has_medical_conditions === "yes" ? (
               <textarea
@@ -1077,8 +1279,8 @@ export function OnboardingProfileForm({
           <div data-field="has_regular_medications">
             <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Regular medications", "תרופות קבועות")}</span>
             <div className="flex gap-3 text-sm">
-              <label className="flex items-center gap-2"><input type="radio" name="has_regular_medications" value="yes" checked={draft.has_regular_medications === "yes"} onChange={() => setYesNo("has_regular_medications", "yes")} /> {tr(effectiveLocale, "Yes", "כן")}</label>
-              <label className="flex items-center gap-2"><input type="radio" name="has_regular_medications" value="no" checked={draft.has_regular_medications === "no"} onChange={() => setYesNo("has_regular_medications", "no")} /> {tr(effectiveLocale, "No", "לא")}</label>
+              <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_regular_medications === "yes" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_regular_medications" value="yes" checked={draft.has_regular_medications === "yes"} onChange={() => setYesNo("has_regular_medications", "yes")} /> {tr(effectiveLocale, "Yes", "כן")}</label>
+              <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_regular_medications === "no" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_regular_medications" value="no" checked={draft.has_regular_medications === "no"} onChange={() => setYesNo("has_regular_medications", "no")} /> {tr(effectiveLocale, "No", "לא")}</label>
             </div>
             {draft.has_regular_medications === "yes" ? (
               <textarea
@@ -1098,8 +1300,8 @@ export function OnboardingProfileForm({
           <div data-field="hot_climate_or_heavy_sweating">
             <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Heavy sweating / hot climate exposure", "חשיפה לחום/הזעה מרובה")}</span>
             <div className="flex gap-3 text-sm">
-              <label className="flex items-center gap-2"><input type="radio" name="hot_climate_or_heavy_sweating" value="yes" checked={draft.hot_climate_or_heavy_sweating === "yes"} onChange={() => setYesNo("hot_climate_or_heavy_sweating", "yes")} /> {tr(effectiveLocale, "Yes", "כן")}</label>
-              <label className="flex items-center gap-2"><input type="radio" name="hot_climate_or_heavy_sweating" value="no" checked={draft.hot_climate_or_heavy_sweating === "no"} onChange={() => setYesNo("hot_climate_or_heavy_sweating", "no")} /> {tr(effectiveLocale, "No", "לא")}</label>
+              <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.hot_climate_or_heavy_sweating === "yes" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="hot_climate_or_heavy_sweating" value="yes" checked={draft.hot_climate_or_heavy_sweating === "yes"} onChange={() => setYesNo("hot_climate_or_heavy_sweating", "yes")} /> {tr(effectiveLocale, "Yes", "כן")}</label>
+              <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.hot_climate_or_heavy_sweating === "no" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="hot_climate_or_heavy_sweating" value="no" checked={draft.hot_climate_or_heavy_sweating === "no"} onChange={() => setYesNo("hot_climate_or_heavy_sweating", "no")} /> {tr(effectiveLocale, "No", "לא")}</label>
             </div>
             {renderFieldError("hot_climate_or_heavy_sweating")}
           </div>
@@ -1110,7 +1312,7 @@ export function OnboardingProfileForm({
               {habitOptions.map((value) => {
                 const label =
                   value === "smoking_or_vaping"
-                    ? tr(effectiveLocale, "Regular Smoking / Vaping", "עישון / אידוי קבוע")
+                    ? tr(effectiveLocale, "Regular Smoking", "עישון קבוע")
                     : value === "alcohol"
                       ? tr(effectiveLocale, "Regular Alcohol Consumption", "צריכת אלכוהול קבועה")
                       : tr(effectiveLocale, "None of these", "אף אחד מהבאים");
@@ -1128,6 +1330,41 @@ export function OnboardingProfileForm({
                 );
               })}
             </div>
+
+            {draft.habits.includes("alcohol") ? (
+              <label className="mt-2 block" data-field="alcohol_times_per_week">
+                <span className="mb-1 block text-sm font-medium text-slate-700">
+                  {tr(effectiveLocale, "Alcohol frequency (times/week)", "תדירות אלכוהול (פעמים בשבוע)")}
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.1"
+                  value={draft.alcohol_times_per_week}
+                  onChange={(event) => updateDraft({ alcohol_times_per_week: event.target.value })}
+                  className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("alcohol_times_per_week")}`}
+                />
+                {renderFieldError("alcohol_times_per_week")}
+              </label>
+            ) : null}
+
+            {draft.habits.includes("smoking_or_vaping") ? (
+              <label className="mt-2 block" data-field="smoking_packs_per_day">
+                <span className="mb-1 block text-sm font-medium text-slate-700">
+                  {tr(effectiveLocale, "Smoking amount (packs/day)", "כמות עישון (חפיסות ביום)")}
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.1"
+                  value={draft.smoking_packs_per_day}
+                  onChange={(event) => updateDraft({ smoking_packs_per_day: event.target.value })}
+                  className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("smoking_packs_per_day")}`}
+                />
+                {renderFieldError("smoking_packs_per_day")}
+              </label>
+            ) : null}
+
             {renderFieldError("habits")}
           </div>
         </section>
@@ -1174,8 +1411,16 @@ export function OnboardingProfileForm({
               value={draft.allergies}
               onChange={(event) => updateDraft({ allergies: event.target.value })}
               placeholder={tr(effectiveLocale, "e.g., peanuts, shellfish", "לדוגמה: בוטנים, רכיכות")}
-              className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
+              className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("allergies")}`}
             />
+            <p className="mt-1 text-xs text-slate-500">
+              {tr(
+                effectiveLocale,
+                "Use real allergy names. Typos are okay, random text is not.",
+                "יש להזין שמות אלרגיה אמיתיים. שגיאות כתיב נסבלות, טקסט אקראי לא.",
+              )}
+            </p>
+            {renderFieldError("allergies")}
           </label>
 
           <label className="block" data-field="additional_information">
@@ -1212,11 +1457,12 @@ export function OnboardingProfileForm({
             <span>
               {tr(
                 effectiveLocale,
-                "I agree that my extracted health text can be sent to the configured AI provider for analysis.",
-                "אני מסכים/ה שטקסט בריאות שחולץ יכול להישלח לספק ה-AI שהוגדר לצורך ניתוח.",
+                "I agree to the transfer and storage of my health data with the AI provider for analysis purposes",
+                "אני מסכים/ה לשליחת נתוני הבריאות והתזונה לספק ה-AI ולשמירתם לצורך ניתוח ושיפור השירות.",
               )}
             </span>
           </label>
+          {renderFieldError("accept_ai_extraction")}
         </section>
       ) : null}
 
@@ -1252,7 +1498,7 @@ export function OnboardingProfileForm({
               {tr(effectiveLocale, "Next", "הבא")}
             </button>
           ) : (
-            <SubmitButton locale={effectiveLocale} />
+            <SubmitButton locale={effectiveLocale} canSubmit={draft.accept_ai_extraction} />
           )}
         </div>
       </div>

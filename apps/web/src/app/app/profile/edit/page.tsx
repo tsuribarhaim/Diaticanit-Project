@@ -19,7 +19,7 @@ export default async function ProfileEditPage() {
   const { data: profile, error } = await supabase
     .from("user_profile_enriched")
     .select(
-      "first_name, last_name, date_of_birth, biological_sex, height_cm, weight_kg, activity_level, preferred_language, exercise_modalities, exercise_frequency_days_per_week, exercise_duration_minutes, nutritional_goal, pregnancy_lactation_status, has_medical_conditions, medical_conditions_details, has_regular_medications, regular_medications_details, hot_climate_or_heavy_sweating, habits, dietary_preference, additional_information, allergies, calculated_age_years, bmi",
+      "first_name, last_name, date_of_birth, biological_sex, height_cm, weight_kg, activity_level, preferred_language, exercise_modalities, exercise_modality_other_details, exercise_frequency_days_per_week, exercise_duration_minutes, nutritional_goal, pregnancy_lactation_status, has_medical_conditions, medical_conditions_details, has_regular_medications, regular_medications_details, hot_climate_or_heavy_sweating, habits, alcohol_times_per_week, smoking_packs_per_day, dietary_preference, additional_information, allergies, calculated_age_years, bmi",
     )
     .eq("user_id", user.id)
     .maybeSingle();
@@ -50,6 +50,7 @@ export default async function ProfileEditPage() {
     weight_kg: profile.weight_kg ?? 70,
     activity_level: profile.activity_level ?? "moderate",
     exercise_modalities: profile.exercise_modalities ?? [],
+    exercise_modality_other_details: profile.exercise_modality_other_details ?? "",
     exercise_frequency_days_per_week: profile.exercise_frequency_days_per_week ?? 0,
     exercise_duration_minutes: profile.exercise_duration_minutes ?? 0,
     nutritional_goal: profile.nutritional_goal ?? "maintenance",
@@ -60,6 +61,8 @@ export default async function ProfileEditPage() {
     regular_medications_details: profile.regular_medications_details ?? "",
     hot_climate_or_heavy_sweating: Boolean(profile.hot_climate_or_heavy_sweating),
     habits: profile.habits ?? [],
+    alcohol_times_per_week: profile.alcohol_times_per_week ?? null,
+    smoking_packs_per_day: profile.smoking_packs_per_day ?? null,
     dietary_preference: profile.dietary_preference ?? "standard",
     additional_information: profile.additional_information ?? "",
     allergies: profile.allergies ?? [],

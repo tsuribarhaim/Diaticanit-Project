@@ -12,6 +12,7 @@ import {
   parseDelimitedList,
   parseMultiSelect,
 } from "@/lib/profile";
+import { normalizeLocale, tr } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
 
@@ -31,6 +32,9 @@ function isMissingOnboardingV2Columns(errorMessage: string): boolean {
     errorMessage.includes("date_of_birth")
     || errorMessage.includes("first_name")
     || errorMessage.includes("nutritional_goal")
+    || errorMessage.includes("exercise_modality_other_details")
+    || errorMessage.includes("alcohol_times_per_week")
+    || errorMessage.includes("smoking_packs_per_day")
     || errorMessage.includes("needs_onboarding_refresh")
   );
 }
@@ -40,10 +44,15 @@ function getFormString(formData: FormData, key: string): string {
   return typeof value === "string" ? value : "";
 }
 
+function requestLocale(formData: FormData): "en" | "he" {
+  return normalizeLocale(getFormString(formData, "preferred_language"));
+}
+
 export async function updateProfileAction(
   _prevState: ProfileUpdateActionState,
   formData: FormData,
 ): Promise<ProfileUpdateActionState> {
+  const locale = requestLocale(formData);
   const supabase = await createClient();
   const {
     data: { user },
@@ -63,6 +72,7 @@ export async function updateProfileAction(
     activity_level: getFormString(formData, "activity_level"),
     preferred_language: getFormString(formData, "preferred_language"),
     exercise_modalities: parseMultiSelect(formData, "exercise_modalities"),
+    exercise_modality_other_details: getFormString(formData, "exercise_modality_other_details"),
     exercise_frequency_days_per_week: getFormString(formData, "exercise_frequency_days_per_week"),
     exercise_duration_minutes: getFormString(formData, "exercise_duration_minutes"),
     nutritional_goal: getFormString(formData, "nutritional_goal"),
@@ -73,6 +83,8 @@ export async function updateProfileAction(
     regular_medications_details: getFormString(formData, "regular_medications_details"),
     hot_climate_or_heavy_sweating: parseBooleanField(formData.get("hot_climate_or_heavy_sweating")),
     habits: parseMultiSelect(formData, "habits"),
+    alcohol_times_per_week: getFormString(formData, "alcohol_times_per_week"),
+    smoking_packs_per_day: getFormString(formData, "smoking_packs_per_day"),
     dietary_preference: getFormString(formData, "dietary_preference"),
     additional_information: getFormString(formData, "additional_information"),
     allergies: parseDelimitedList(formData.get("allergies")),
@@ -84,12 +96,24 @@ export async function updateProfileAction(
       userId: user.id,
       issues: parsed.error.issues,
     });
-    return { error: parsed.error.issues[0]?.message ?? "Invalid form payload." };
+    return {
+      error: tr(
+        locale,
+        "Please correct the highlighted fields and try again.",
+        "יש לתקן את השדות המסומנים ולנסות שוב.",
+      ),
+    };
   }
 
   const calculatedAge = calculateAgeYears(parsed.data.date_of_birth);
   if (calculatedAge == null) {
-    return { error: "Date of birth must produce a valid age between 0 and 120." };
+    return {
+      error: tr(
+        locale,
+        "Date of birth must produce a valid age between 0 and 120.",
+        "תאריך הלידה חייב להפיק גיל תקין בין 0 ל-120.",
+      ),
+    };
   }
 
   const legacyMedicalConditions = parsed.data.has_medical_conditions
@@ -99,6 +123,16 @@ export async function updateProfileAction(
     : [];
 
   const acceptedAiExtraction = formData.get("accept_ai_extraction")?.toString() === "yes";
+
+  if (!acceptedAiExtraction) {
+    return {
+      error: tr(
+        locale,
+        "Consent is required before saving changes.",
+        "נדרשת הסכמה לפני שמירת השינויים.",
+      ),
+    };
+  }
 
   const payload = {
     age: calculatedAge,
@@ -115,6 +149,9 @@ export async function updateProfileAction(
     dietary_preference: parsed.data.dietary_preference,
     hot_climate_or_heavy_sweating: parsed.data.hot_climate_or_heavy_sweating,
     exercise_modalities: parsed.data.exercise_modalities,
+    exercise_modality_other_details: parsed.data.exercise_modalities.includes("other")
+      ? parsed.data.exercise_modality_other_details
+      : null,
     exercise_frequency_days_per_week: parsed.data.exercise_frequency_days_per_week,
     exercise_duration_minutes: parsed.data.exercise_duration_minutes,
     pregnancy_lactation_status: parsed.data.pregnancy_lactation_status,
@@ -123,6 +160,8 @@ export async function updateProfileAction(
     has_regular_medications: parsed.data.has_regular_medications,
     regular_medications_details: parsed.data.regular_medications_details,
     habits: parsed.data.habits,
+    alcohol_times_per_week: parsed.data.habits.includes("alcohol") ? parsed.data.alcohol_times_per_week : null,
+    smoking_packs_per_day: parsed.data.habits.includes("smoking_or_vaping") ? parsed.data.smoking_packs_per_day : null,
     additional_information: parsed.data.additional_information,
     allergies: parsed.data.allergies,
     medical_conditions: legacyMedicalConditions,
@@ -145,56 +184,53 @@ export async function updateProfileAction(
 
     if (isMissingPreferredLanguageColumn(error.message)) {
       return {
-        error:
+        error: tr(
+          locale,
           "Database migration missing: apply db/migrations/010_phase4_profile_preferred_language.sql, then try again.",
+          "חסרה מיגרציית בסיס נתונים: יש להחיל את db/migrations/010_phase4_profile_preferred_language.sql ואז לנסות שוב.",
+        ),
       };
     }
 
     if (isMissingOnboardingV2Columns(error.message)) {
       return {
-        error:
-          "Database migration missing: apply db/migrations/014_phase5_profile_versions_onboarding_fields.sql, then try again.",
+        error: tr(
+          locale,
+          "Database migration missing: apply db/migrations/014_phase5_profile_versions_onboarding_fields.sql, db/migrations/015_phase5_habit_magnitude_fields.sql, and db/migrations/017_phase5_exercise_other_details.sql, then try again.",
+          "חסרות מיגרציות בסיס נתונים: יש להחיל את 014, 015 ו-017 תחת db/migrations ואז לנסות שוב.",
+        ),
       };
     }
 
-    return { error: error.message };
+    return {
+      error: tr(
+        locale,
+        "Failed to update profile. Please try again.",
+        "עדכון הפרופיל נכשל. יש לנסות שוב.",
+      ),
+    };
   }
 
-  if (acceptedAiExtraction) {
-    const aiConfig = getAiExtractionConfig();
-    const provider = aiConfig?.provider ?? "openai-compatible";
+  const aiConfig = getAiExtractionConfig();
+  const provider = aiConfig?.provider ?? "openai-compatible";
 
-    const { error: aiConsentError } = await supabase
-      .from("ai_extraction_consents")
-      .upsert(
-        {
-          user_id: user.id,
-          provider,
-          accepted_at: new Date().toISOString(),
-          revoked_at: null,
-        },
-        { onConflict: "user_id" },
-      );
+  const { error: aiConsentError } = await supabase
+    .from("ai_extraction_consents")
+    .upsert(
+      {
+        user_id: user.id,
+        provider,
+        accepted_at: new Date().toISOString(),
+        revoked_at: null,
+      },
+      { onConflict: "user_id" },
+    );
 
-    if (aiConsentError) {
-      logServerError("profile.update", "ai_consent_upsert_failed", {
-        userId: user.id,
-        error: aiConsentError.message,
-      });
-    }
-  } else {
-    const { error: aiConsentRevokeError } = await supabase
-      .from("ai_extraction_consents")
-      .update({ revoked_at: new Date().toISOString() })
-      .eq("user_id", user.id)
-      .is("revoked_at", null);
-
-    if (aiConsentRevokeError) {
-      logServerError("profile.update", "ai_consent_revoke_failed", {
-        userId: user.id,
-        error: aiConsentRevokeError.message,
-      });
-    }
+  if (aiConsentError) {
+    logServerError("profile.update", "ai_consent_upsert_failed", {
+      userId: user.id,
+      error: aiConsentError.message,
+    });
   }
 
   revalidatePath("/app");
@@ -209,5 +245,7 @@ export async function updateProfileAction(
     maxAge: 60 * 60 * 24 * 365,
   });
 
-  return { success: "Profile updated successfully." };
+  return {
+    success: tr(locale, "Profile updated successfully.", "הפרופיל עודכן בהצלחה."),
+  };
 }
