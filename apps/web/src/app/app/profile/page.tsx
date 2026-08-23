@@ -203,7 +203,7 @@ export default async function ProfilePage() {
                 <dt className="font-medium text-slate-900">{tr(locale, "Exercise modalities", "סוגי אימון")}</dt>
                 <dd>
                   {profile.exercise_modalities?.length
-                    ? profile.exercise_modalities.map((value) => formatExerciseModality(value, locale)).join(", ")
+                    ? profile.exercise_modalities.map((value: string) => formatExerciseModality(value, locale)).join(", ")
                     : tr(locale, "None", "ללא")}
                 </dd>
               </div>
@@ -249,7 +249,7 @@ export default async function ProfilePage() {
               </div>
               <div>
                 <dt className="font-medium text-slate-900">{tr(locale, "Habits", "הרגלים")}</dt>
-                <dd>{profile.habits?.length ? profile.habits.map((value) => formatHabitLabel(value, locale)).join(", ") : tr(locale, "None", "ללא")}</dd>
+                <dd>{profile.habits?.length ? profile.habits.map((value: string) => formatHabitLabel(value, locale)).join(", ") : tr(locale, "None", "ללא")}</dd>
               </div>
               {profile.habits?.includes("alcohol") ? (
                 <div>
