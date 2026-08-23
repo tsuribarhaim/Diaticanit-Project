@@ -178,7 +178,7 @@ export function DailyReportForm({
                 value="heuristic"
                 checked={parseMode === "heuristic"}
                 onChange={() => setParseMode("heuristic")}
-                className="mt-0.5"
+                className="mt-0.5 h-4 w-4 accent-teal-700"
               />
               <span>
                 <span className="block font-medium text-slate-800">{tr(locale, "Heuristic", "יוריסטי")}</span>
@@ -199,7 +199,7 @@ export function DailyReportForm({
                 checked={parseMode === "ai"}
                 onChange={() => setParseMode("ai")}
                 disabled={!aiAvailable}
-                className="mt-0.5"
+                className="mt-0.5 h-4 w-4 accent-teal-700"
               />
               <span>
                 <span className="block font-medium text-slate-800">AI</span>
