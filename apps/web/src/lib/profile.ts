@@ -383,7 +383,7 @@ export const onboardingProfileSchema = z.object({
     z.coerce
       .number({ error: "Smoking amount must be a number." })
       .min(0, "Smoking amount cannot be negative.")
-      .max(20, "Smoking amount must be at most 20 packs per day.")
+      .max(20, "Smoking amount must be at most 400 cigarettes per day.")
       .optional(),
   ),
   dietary_preference: z.preprocess(
@@ -424,7 +424,7 @@ export const onboardingProfileSchema = z.object({
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["smoking_packs_per_day"],
-      message: "Enter smoking packs per day.",
+      message: "Enter cigarettes per day.",
     });
   }
 

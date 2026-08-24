@@ -21,6 +21,7 @@ const BMI_SCALE_MIN = 12;
 const BMI_SCALE_MAX = 40;
 const BMI_GOOD_MIN = 18.5;
 const BMI_GOOD_MAX = 24.9;
+const CIGARETTES_PER_PACK = 20;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -266,7 +267,7 @@ export default async function ProfilePage() {
                   <dt className="font-medium text-slate-900">{tr(locale, "Smoking amount", "כמות עישון")}</dt>
                   <dd>
                     {profile.smoking_packs_per_day != null
-                      ? `${formatNumberForLocale(profile.smoking_packs_per_day, locale, { maximumFractionDigits: 1 })} ${tr(locale, "packs/day", "חפיסות ביום")}`
+                      ? `${formatNumberForLocale(profile.smoking_packs_per_day * CIGARETTES_PER_PACK, locale, { maximumFractionDigits: 0 })} ${tr(locale, "cigarettes/day", "סיגריות ביום")}`
                       : tr(locale, "n/a", "לא זמין")}
                   </dd>
                 </div>
