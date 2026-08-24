@@ -56,6 +56,7 @@ type ProfileEditFormProps = {
 
 const initialState: ProfileUpdateActionState = {};
 const PROFILE_EDIT_DRAFT_KEY = "phc_profile_edit_draft";
+const CIGARETTES_PER_PACK = 20;
 
 type ProfileEditDraft = {
   first_name: string;
@@ -92,6 +93,18 @@ type PersistedProfileEditDraft = {
   draft: ProfileEditDraft;
 };
 
+function packsPerDayToCigarettesString(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return "";
+  return String(Math.round(value * CIGARETTES_PER_PACK));
+}
+
+function cigarettesPerDayToPacksString(value: string): string {
+  if (value.trim() === "") return "";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "";
+  return String(numeric / CIGARETTES_PER_PACK);
+}
+
 function calculateAge(dateOfBirth: string): number | null {
   if (!dateOfBirth) return null;
   const dob = new Date(dateOfBirth);
@@ -117,42 +130,12 @@ function calculateBmi(weightKg: number, heightCm: number): number | null {
   return Number.isFinite(bmi) ? bmi : null;
 }
 
-function isoToHebrewDisplayDate(value: string): string {
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!match) return value;
-  return `${match[3]}/${match[2]}/${match[1]}`;
-}
-
-function hebrewDisplayDateToIso(value: string): string | null {
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-
-  const match = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (!match) return null;
-
-  const day = Number(match[1]);
-  const month = Number(match[2]);
-  const year = Number(match[3]);
-  const candidate = new Date(year, month - 1, day);
-
-  const isValid =
-    candidate.getFullYear() === year &&
-    candidate.getMonth() === month - 1 &&
-    candidate.getDate() === day;
-
-  if (!isValid) return null;
-
-  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-}
-
 function createInitialDraft(defaults: ProfileEditFormProps["defaults"]): ProfileEditDraft {
   return {
     first_name: defaults.first_name,
     last_name: defaults.last_name,
     date_of_birth: defaults.date_of_birth,
-    date_of_birth_display: defaults.preferred_language === "he"
-      ? isoToHebrewDisplayDate(defaults.date_of_birth)
-      : defaults.date_of_birth,
+    date_of_birth_display: defaults.date_of_birth,
     biological_sex: defaults.biological_sex,
     height_cm: String(defaults.height_cm),
     weight_kg: String(defaults.weight_kg),
@@ -171,8 +154,7 @@ function createInitialDraft(defaults: ProfileEditFormProps["defaults"]): Profile
     habits: defaults.habits,
     alcohol_times_per_week:
       defaults.alcohol_times_per_week == null ? "" : String(defaults.alcohol_times_per_week),
-    smoking_packs_per_day:
-      defaults.smoking_packs_per_day == null ? "" : String(defaults.smoking_packs_per_day),
+    smoking_packs_per_day: packsPerDayToCigarettesString(defaults.smoking_packs_per_day),
     dietary_preference: defaults.dietary_preference,
     additional_information: defaults.additional_information,
     preferred_language: defaults.preferred_language,
@@ -442,9 +424,7 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
 
   };
 
-  const normalizedDateOfBirth = locale === "he"
-    ? (hebrewDisplayDateToIso(draft.date_of_birth_display) ?? draft.date_of_birth)
-    : draft.date_of_birth;
+  const normalizedDateOfBirth = draft.date_of_birth;
 
   const age = calculateAge(normalizedDateOfBirth);
   const bmi = calculateBmi(Number(draft.weight_kg), Number(draft.height_cm));
@@ -457,8 +437,7 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
       <input type="hidden" name="exercise_modality_other_details" value={draft.exercise_modality_other_details} />
       <input type="hidden" name="medical_conditions" value={draft.has_medical_conditions === "yes" ? draft.medical_conditions_details : ""} />
       <input type="hidden" name="alcohol_times_per_week" value={draft.alcohol_times_per_week} />
-      <input type="hidden" name="smoking_packs_per_day" value={draft.smoking_packs_per_day} />
-      {locale === "he" ? <input type="hidden" name="date_of_birth" value={normalizedDateOfBirth} /> : null}
+      <input type="hidden" name="smoking_packs_per_day" value={cigarettesPerDayToPacksString(draft.smoking_packs_per_day)} />
 
       <section className="rounded-xl border border-slate-200 p-4">
         <h2 className="text-base font-semibold text-slate-900">{tr(locale, "Step 1 - Identity & Vital Statistics", "שלב 1 - זהות ומדדים")}</h2>
@@ -473,36 +452,17 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
           </label>
           <label className="block">
             <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Date of birth", "תאריך לידה")}</span>
-            {locale === "he" ? (
-              <input
-                type="text"
-                required
-                inputMode="numeric"
-                placeholder="dd/mm/yyyy"
-                value={draft.date_of_birth_display}
-                onChange={(event) => {
-                  const raw = event.target.value;
-                  const maybeIso = hebrewDisplayDateToIso(raw);
-                  updateDraft({
-                    date_of_birth_display: raw,
-                    date_of_birth: maybeIso ?? "",
-                  });
-                }}
-                className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
-              />
-            ) : (
-              <input
-                type="date"
-                name="date_of_birth"
-                required
-                max={new Date().toISOString().slice(0, 10)}
-                value={draft.date_of_birth}
-                onChange={(event) => updateDraft({ date_of_birth: event.target.value, date_of_birth_display: event.target.value })}
-                lang={localeTag(locale)}
-                className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
-              />
-            )}
-            <p className="mt-1 text-xs text-slate-500">{tr(locale, "Format: yyyy-mm-dd", "פורמט: dd/mm/yyyy")}</p>
+            <input
+              type="date"
+              name="date_of_birth"
+              required
+              max={new Date().toISOString().slice(0, 10)}
+              value={draft.date_of_birth}
+              onChange={(event) => updateDraft({ date_of_birth: event.target.value, date_of_birth_display: event.target.value })}
+              lang={localeTag(locale)}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
+            />
+            <p className="mt-1 text-xs text-slate-500">{tr(locale, "Pick the date from the calendar.", "יש לבחור תאריך מהיומן.")}</p>
           </label>
           <div className="block">
             <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Biological sex", "מין ביולוגי")}</span>
@@ -632,8 +592,8 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
             ) : null}
             {draft.habits.includes("smoking_or_vaping") ? (
               <label className="mt-2 block">
-                <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Smoking amount (packs/day)", "כמות עישון (חפיסות ביום)")}</span>
-                <input type="number" min={0} step="0.1" value={draft.smoking_packs_per_day} onChange={(event) => updateDraft({ smoking_packs_per_day: event.target.value })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" />
+                <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Smoking amount (cigarettes/day)", "כמות עישון (סיגריות ביום)")}</span>
+                <input type="number" min={0} step="1" value={draft.smoking_packs_per_day} onChange={(event) => updateDraft({ smoking_packs_per_day: event.target.value })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" />
               </label>
             ) : null}
             {draft.habits.map((value) => <input key={value} type="hidden" name="habits" value={value} />)}
