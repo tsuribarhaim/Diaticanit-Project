@@ -4,12 +4,16 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { getAiExtractionConfig } from "@/lib/ai/env";
+import { evaluateProfileTextWithAi } from "@/lib/ai/profile-text";
 import {
   calculateAgeYears,
+  deriveExerciseSummaryFromSchedule,
   onboardingProfileSchema,
   parseBooleanField,
   parseDelimitedList,
   parseMultiSelect,
+  validateMedicalConditionOtherDetails,
+  validateMedicationDetails,
 } from "@/lib/profile";
 import { normalizeLocale, tr } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
@@ -35,6 +39,7 @@ function isMissingOnboardingV2Columns(errorMessage: string): boolean {
     || errorMessage.includes("first_name")
     || errorMessage.includes("nutritional_goal")
     || errorMessage.includes("exercise_modality_other_details")
+    || errorMessage.includes("exercise_schedule_by_modality")
     || errorMessage.includes("alcohol_times_per_week")
     || errorMessage.includes("smoking_packs_per_day")
     || errorMessage.includes("needs_onboarding_refresh")
@@ -48,6 +53,47 @@ function getFormString(formData: FormData, key: string): string {
 
 function requestLocale(formData: FormData): "en" | "he" {
   return normalizeLocale(getFormString(formData, "preferred_language"));
+}
+
+function buildAiFieldMessage({
+  locale,
+  fallback,
+  clarificationQuestion,
+  suggestedRewrite,
+  options,
+  optionsLead,
+}: {
+  locale: "en" | "he";
+  fallback: { en: string; he: string };
+  clarificationQuestion: string;
+  suggestedRewrite: string;
+  options: string[];
+  optionsLead?: { en: string; he: string };
+}): string {
+  const question = clarificationQuestion.trim();
+  const rewrite = suggestedRewrite.trim();
+  const optionsText = options.filter(Boolean).slice(0, 3).join(", ");
+
+  const base = tr(locale, fallback.en, fallback.he);
+  const parts = [base];
+
+  if (question) {
+    parts.push(question);
+  }
+  if (rewrite) {
+    parts.push(tr(locale, `If it helps, you can write: ${rewrite}`, `אם זה עוזר, אפשר לכתוב כך: ${rewrite}`));
+  }
+  if (optionsText) {
+    parts.push(
+      tr(
+        locale,
+        `${optionsLead?.en ?? "You can choose one of these options:"} ${optionsText}`,
+        `${optionsLead?.he ?? "אפשר לבחור אחת מהאפשרויות הבאות:"} ${optionsText}`,
+      ),
+    );
+  }
+
+  return parts.join(" ");
 }
 
 export async function saveOnboardingProfileAction(
@@ -75,6 +121,7 @@ export async function saveOnboardingProfileAction(
     preferred_language: getFormString(formData, "preferred_language"),
     exercise_modalities: parseMultiSelect(formData, "exercise_modalities"),
     exercise_modality_other_details: getFormString(formData, "exercise_modality_other_details"),
+    exercise_schedule_by_modality: getFormString(formData, "exercise_schedule_by_modality"),
     exercise_frequency_days_per_week: getFormString(formData, "exercise_frequency_days_per_week"),
     exercise_duration_minutes: getFormString(formData, "exercise_duration_minutes"),
     nutritional_goal: getFormString(formData, "nutritional_goal"),
@@ -127,6 +174,13 @@ export async function saveOnboardingProfileAction(
       : parseDelimitedList(parsed.data.medical_conditions_details))
     : [];
 
+  const exerciseSummary = deriveExerciseSummaryFromSchedule(
+    parsed.data.exercise_modalities,
+    parsed.data.exercise_schedule_by_modality,
+    parsed.data.exercise_frequency_days_per_week,
+    parsed.data.exercise_duration_minutes,
+  );
+
   const payload = {
     user_id: user.id,
     age: calculatedAge,
@@ -146,8 +200,9 @@ export async function saveOnboardingProfileAction(
     exercise_modality_other_details: parsed.data.exercise_modalities.includes("other")
       ? parsed.data.exercise_modality_other_details
       : null,
-    exercise_frequency_days_per_week: parsed.data.exercise_frequency_days_per_week,
-    exercise_duration_minutes: parsed.data.exercise_duration_minutes,
+    exercise_schedule_by_modality: parsed.data.exercise_schedule_by_modality,
+    exercise_frequency_days_per_week: exerciseSummary.frequencyDaysPerWeek,
+    exercise_duration_minutes: exerciseSummary.durationMinutes,
     pregnancy_lactation_status: parsed.data.pregnancy_lactation_status,
     has_medical_conditions: parsed.data.has_medical_conditions,
     medical_conditions_details: parsed.data.medical_conditions_details,
@@ -166,6 +221,159 @@ export async function saveOnboardingProfileAction(
   };
 
   const acceptedAiExtraction = formData.get("accept_ai_extraction")?.toString() === "yes";
+  const aiConfig = getAiExtractionConfig();
+
+  if (parsed.data.has_medical_conditions && parsed.data.medical_conditions.includes("other")) {
+    const medicalText = parsed.data.medical_conditions_details.trim();
+    const deterministicValidation = validateMedicalConditionOtherDetails(medicalText);
+
+    if (aiConfig) {
+      try {
+        const aiValidation = await evaluateProfileTextWithAi({
+          config: aiConfig,
+          userId: user.id,
+          field: "medical_condition",
+          text: medicalText,
+        });
+
+        if (!aiValidation.isRelevant) {
+          return {
+            error: tr(locale, "Please clarify your medical condition text.", "יש לדייק בתיאור המצב הרפואי."),
+            fieldErrors: [
+              {
+                field: "medical_conditions_details",
+                message: buildAiFieldMessage({
+                  locale,
+                  fallback: {
+                    en: "I want to help you describe this accurately in your medical profile.",
+                    he: "אני רוצה לעזור לך לתאר זאת בצורה מדויקת בפרופיל הרפואי.",
+                  },
+                  clarificationQuestion: aiValidation.clarificationQuestion,
+                  suggestedRewrite: aiValidation.suggestedRewrite,
+                  options: aiValidation.options,
+                  optionsLead: {
+                    en: "Here are possible condition names you can enter in this field:",
+                    he: "להלן מחלות אפשריות עבורך לציין בשדה הנכון:",
+                  },
+                }),
+              },
+            ],
+          };
+        }
+      } catch (error) {
+        logServerError("onboarding.saveProfile", "ai_medical_validation_failed", {
+          userId: user.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+
+        if (!deterministicValidation.isMeaningful) {
+          return {
+            error: tr(locale, "Please refine the medical condition text and try again.", "יש לדייק את תיאור המצב הרפואי ולנסות שוב."),
+            fieldErrors: [
+              {
+                field: "medical_conditions_details",
+                message: tr(
+                  locale,
+                  "Please describe a diagnosed medical condition (name, symptom, or diagnosis).",
+                  "יש לתאר מצב רפואי מאובחן (שם, תסמין או אבחנה).",
+                ),
+              },
+            ],
+          };
+        }
+      }
+    } else if (!deterministicValidation.isMeaningful) {
+      return {
+        error: tr(locale, "Please refine the medical condition text.", "יש לדייק את תיאור המצב הרפואי."),
+        fieldErrors: [
+          {
+            field: "medical_conditions_details",
+            message: tr(
+              locale,
+              "Please describe a diagnosed medical condition (name, symptom, or diagnosis).",
+              "יש לתאר מצב רפואי מאובחן (שם, תסמין או אבחנה).",
+            ),
+          },
+        ],
+      };
+    }
+  }
+
+  if (parsed.data.has_regular_medications) {
+    const medicationText = parsed.data.regular_medications_details.trim();
+    const deterministicValidation = validateMedicationDetails(medicationText);
+
+    if (aiConfig) {
+      try {
+        const aiValidation = await evaluateProfileTextWithAi({
+          config: aiConfig,
+          userId: user.id,
+          field: "medication",
+          text: medicationText,
+        });
+
+        if (!aiValidation.isRelevant) {
+          return {
+            error: tr(locale, "Please clarify your medication details.", "יש לדייק את פרטי התרופות."),
+            fieldErrors: [
+              {
+                field: "regular_medications_details",
+                message: buildAiFieldMessage({
+                  locale,
+                  fallback: {
+                    en: "I want to help you record medication details clearly.",
+                    he: "אני רוצה לעזור לך לרשום את פרטי התרופות בצורה ברורה.",
+                  },
+                  clarificationQuestion: aiValidation.clarificationQuestion,
+                  suggestedRewrite: aiValidation.suggestedRewrite,
+                  options: aiValidation.options,
+                  optionsLead: {
+                    en: "Here are possible medication names/details you can enter:",
+                    he: "להלן אפשרויות אפשריות לרישום שם תרופה או פרטי מינון:",
+                  },
+                }),
+              },
+            ],
+          };
+        }
+      } catch (error) {
+        logServerError("onboarding.saveProfile", "ai_medication_validation_failed", {
+          userId: user.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+
+        if (!deterministicValidation.isMeaningful) {
+          return {
+            error: tr(locale, "Please refine medication details and try again.", "יש לדייק את פרטי התרופות ולנסות שוב."),
+            fieldErrors: [
+              {
+                field: "regular_medications_details",
+                message: tr(
+                  locale,
+                  "Please include medication name and/or dosage/frequency.",
+                  "יש לכלול שם תרופה ו/או מינון ותדירות.",
+                ),
+              },
+            ],
+          };
+        }
+      }
+    } else if (!deterministicValidation.isMeaningful) {
+      return {
+        error: tr(locale, "Please refine medication details.", "יש לדייק את פרטי התרופות."),
+        fieldErrors: [
+          {
+            field: "regular_medications_details",
+            message: tr(
+              locale,
+              "Please include medication name and/or dosage/frequency.",
+              "יש לכלול שם תרופה ו/או מינון ותדירות.",
+            ),
+          },
+        ],
+      };
+    }
+  }
 
   if (!acceptedAiExtraction) {
     return {
@@ -211,8 +419,8 @@ export async function saveOnboardingProfileAction(
       return {
         error: tr(
           locale,
-          "Database migration missing: apply db/migrations/014_phase5_profile_versions_onboarding_fields.sql, db/migrations/015_phase5_habit_magnitude_fields.sql, and db/migrations/017_phase5_exercise_other_details.sql, then try again.",
-          "חסרות מיגרציות בסיס נתונים: יש להחיל את 014, 015 ו-017 תחת db/migrations ואז לנסות שוב.",
+          "Database migration missing: apply db/migrations/014_phase5_profile_versions_onboarding_fields.sql, db/migrations/015_phase5_habit_magnitude_fields.sql, db/migrations/017_phase5_exercise_other_details.sql, and db/migrations/018_phase5_exercise_schedule_by_modality.sql, then try again.",
+          "חסרות מיגרציות בסיס נתונים: יש להחיל את 014, 015, 017 ו-018 תחת db/migrations ואז לנסות שוב.",
         ),
       };
     }
@@ -227,7 +435,6 @@ export async function saveOnboardingProfileAction(
   }
 
   if (acceptedAiExtraction) {
-    const aiConfig = getAiExtractionConfig();
     const provider = aiConfig?.provider ?? "openai-compatible";
 
     const { error: aiConsentError } = await supabase
