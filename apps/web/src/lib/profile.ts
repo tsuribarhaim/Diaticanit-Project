@@ -967,14 +967,16 @@ export function deriveExerciseSummaryFromSchedule(
 
   const entries = selectedScheduledModalities
     .map((modality) => scheduleByModality[modality])
-    .filter(
-      (entry): entry is ExerciseScheduleEntry =>
-        Boolean(entry)
-        && Number.isFinite(entry.days_per_week)
+    .filter((entry): entry is ExerciseScheduleEntry => {
+      if (!entry) {
+        return false;
+      }
+
+      return Number.isFinite(entry.days_per_week)
         && Number.isFinite(entry.minutes_per_session)
         && entry.days_per_week > 0
-        && entry.minutes_per_session > 0,
-    );
+        && entry.minutes_per_session > 0;
+    });
 
   if (entries.length === 0) {
     return {
