@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 
@@ -442,37 +442,8 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
   const [clientError, setClientError] = useState<string | null>(null);
   const [allergyError, setAllergyError] = useState<string | null>(null);
   const [consentError, setConsentError] = useState<string | null>(null);
-  const [draft, setDraft] = useState<ProfileEditDraft>(() => {
-    const initialDraft = createInitialDraft(defaults);
-    const currentProfileUpdatedAt = defaults.profile_updated_at ?? null;
-
-    if (typeof window === "undefined") {
-      return initialDraft;
-    }
-
-    try {
-      const raw = window.sessionStorage.getItem(PROFILE_EDIT_DRAFT_KEY);
-      if (!raw) return initialDraft;
-      const parsed = JSON.parse(raw);
-
-      if (!parsed || typeof parsed !== "object") {
-        return initialDraft;
-      }
-
-      if (isPersistedDraft(parsed)) {
-        if (parsed.profileUpdatedAt !== currentProfileUpdatedAt) {
-          return initialDraft;
-        }
-
-        return parsed.draft;
-      }
-
-      return initialDraft;
-    } catch {
-      // Ignore invalid or blocked storage reads.
-      return initialDraft;
-    }
-  });
+  const [draft, setDraft] = useState<ProfileEditDraft>(() => createInitialDraft(defaults));
+  const canPersistDraftRef = useRef(false);
   const selectedExerciseModalities = getScheduledModalities(draft.exercise_modalities);
   const hasClientBlockingError = Boolean(clientError || allergyError || consentError);
   const exerciseSummary = computeExerciseSummaryFromDraft(
@@ -481,6 +452,45 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
   );
 
   useEffect(() => {
+    const initialDraft = createInitialDraft(defaults);
+    const currentProfileUpdatedAt = defaults.profile_updated_at ?? null;
+
+    const restoreTimer = window.setTimeout(() => {
+      try {
+        const raw = window.sessionStorage.getItem(PROFILE_EDIT_DRAFT_KEY);
+        if (!raw) {
+          canPersistDraftRef.current = true;
+          return;
+        }
+
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object") {
+          canPersistDraftRef.current = true;
+          return;
+        }
+
+        if (isPersistedDraft(parsed) && parsed.profileUpdatedAt === currentProfileUpdatedAt) {
+          setDraft(parsed.draft);
+        } else {
+          setDraft(initialDraft);
+        }
+      } catch {
+        // Ignore invalid or blocked storage reads.
+      } finally {
+        canPersistDraftRef.current = true;
+      }
+    }, 0);
+
+    return () => {
+      window.clearTimeout(restoreTimer);
+    };
+  }, [defaults]);
+
+  useEffect(() => {
+    if (!canPersistDraftRef.current) {
+      return;
+    }
+
     const payload: PersistedProfileEditDraft = {
       profileUpdatedAt: defaults.profile_updated_at ?? null,
       draft,
