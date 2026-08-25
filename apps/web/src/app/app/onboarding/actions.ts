@@ -234,6 +234,7 @@ export async function saveOnboardingProfileAction(
           userId: user.id,
           field: "medical_condition",
           text: medicalText,
+          locale,
         });
 
         if (!aiValidation.isRelevant) {
@@ -310,6 +311,7 @@ export async function saveOnboardingProfileAction(
           userId: user.id,
           field: "medication",
           text: medicationText,
+          locale,
         });
 
         if (!aiValidation.isRelevant) {

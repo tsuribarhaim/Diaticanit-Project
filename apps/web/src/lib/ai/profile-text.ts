@@ -109,34 +109,51 @@ function sanitizeMedicalNameOptions(options: string[]): string[] {
   return cleaned.slice(0, 3);
 }
 
-function fallbackMedicalNameOptions(normalizedText: string): string[] {
+function fallbackMedicalNameOptions(normalizedText: string, locale: "en" | "he"): string[] {
   if (/(?:כלי(?:ה|ות)|kidney|renal)/i.test(normalizedText)) {
-    return ["מחלת כליות כרונית", "אי ספיקת כליות כרונית", "נפרופתיה כרונית"];
+    return locale === "he"
+      ? ["מחלת כליות כרונית", "אי ספיקת כליות כרונית", "נפרופתיה כרונית"]
+      : ["Chronic kidney disease", "Chronic renal failure", "Chronic nephropathy"];
   }
 
   if (/(?:לחץ\s*דם|blood\s*pressure|hypertension)/i.test(normalizedText)) {
-    return ["יתר לחץ דם", "יתר לחץ דם ראשוני", "יתר לחץ דם שניוני"];
+    return locale === "he"
+      ? ["יתר לחץ דם", "יתר לחץ דם ראשוני", "יתר לחץ דם שניוני"]
+      : ["Hypertension", "Primary hypertension", "Secondary hypertension"];
   }
 
   if (/(?:סוכר(?:ת)?|diabet)/i.test(normalizedText)) {
-    return ["סוכרת סוג 2", "סוכרת סוג 1", "טרום סוכרת"];
+    return locale === "he"
+      ? ["סוכרת סוג 2", "סוכרת סוג 1", "טרום סוכרת"]
+      : ["Type 2 diabetes", "Type 1 diabetes", "Prediabetes"];
   }
 
   return [];
 }
 
-function fallbackGeneralMedicalNameOptions(): string[] {
-  return ["יתר לחץ דם", "סוכרת", "אסתמה"];
+function fallbackGeneralMedicalNameOptions(locale: "en" | "he"): string[] {
+  return locale === "he" ? ["יתר לחץ דם", "סוכרת", "אסתמה"] : ["Hypertension", "Diabetes", "Asthma"];
 }
 
-function fallbackMedicationOptions(): string[] {
-  return ["Metformin 500mg twice daily", "Lisinopril 10mg once daily", "Levothyroxine 50mcg once daily"];
+function fallbackMedicationOptions(locale: "en" | "he"): string[] {
+  return locale === "he"
+    ? ["מטפורמין 500 מ\"ג פעמיים ביום", "ליזינופריל 10 מ\"ג פעם ביום", "לבותירוקסין 50 מק\"ג פעם ביום"]
+    : ["Metformin 500mg twice daily", "Lisinopril 10mg once daily", "Levothyroxine 50mcg once daily"];
 }
 
-function buildUserPrompt({ field, text }: { field: ProfileTextField; text: string }): string {
+function buildUserPrompt({
+  field,
+  text,
+  locale,
+}: {
+  field: ProfileTextField;
+  text: string;
+  locale: "en" | "he";
+}): string {
   const fieldInstruction = field === "medical_condition"
     ? "Field type: medical condition description (diagnosis/symptom)."
     : "Field type: medication details (medication name, dosage, or frequency).";
+  const languageName = locale === "he" ? "Hebrew" : "English";
 
   return [
     fieldInstruction,
@@ -147,6 +164,7 @@ function buildUserPrompt({ field, text }: { field: ProfileTextField; text: strin
     "4) Reject input that contains obvious gibberish or keyboard-mash fragments, even if part of the sentence is medically relevant.",
     "5) If relevant but unclear, suggest improved wording and up to 3 options.",
     "6) For medical_condition uncertainty, options must be short possible condition names only (2-6 words), not full sentences.",
+    `7) Write suggested_rewrite, options, clarification_question, and rationale entirely in ${languageName}. Do not mix languages within a single field.`,
     "Return strict JSON only with this shape:",
     '{"is_relevant":boolean,"confidence":number,"suggested_rewrite":"string","options":["string"],"clarification_question":"string","rationale":"string"}',
     "input_text:",
@@ -170,11 +188,13 @@ export async function evaluateProfileTextWithAi({
   userId,
   field,
   text,
+  locale,
 }: {
   config: AiExtractionConfig;
   userId: string;
   field: ProfileTextField;
   text: string;
+  locale: "en" | "he";
 }): Promise<ProfileTextEvaluation> {
   if (config.provider === "github") {
     throw new Error(
@@ -183,7 +203,7 @@ export async function evaluateProfileTextWithAi({
   }
 
   const normalizedInput = normalizeValidationInput(text);
-  const cacheKey = [userId, field, config.model, normalizedInput].join("::");
+  const cacheKey = [userId, field, config.model, locale, normalizedInput].join("::");
   const now = Date.now();
   const cached = profileTextValidationCache.get(cacheKey);
   if (cached && cached.expiresAt > now) {
@@ -205,7 +225,7 @@ export async function evaluateProfileTextWithAi({
       },
       {
         role: "user",
-        content: buildUserPrompt({ field, text }),
+        content: buildUserPrompt({ field, text, locale }),
       },
     ],
   };
@@ -284,38 +304,43 @@ export async function evaluateProfileTextWithAi({
     result.isRelevant = false;
     result.options = sanitizeMedicalNameOptions(result.options);
     if (result.options.length === 0) {
-      result.options = fallbackMedicalNameOptions(normalizedInput);
+      result.options = fallbackMedicalNameOptions(normalizedInput, locale);
     }
     if (!result.clarificationQuestion) {
-      result.clarificationQuestion =
-        "Please choose the closest condition name, or describe the diagnosed symptom and current treatment.";
+      result.clarificationQuestion = locale === "he"
+        ? "אנא בחר/י את שם המצב הקרוב ביותר, או תאר/י את התסמין המאובחן והטיפול הנוכחי."
+        : "Please choose the closest condition name, or describe the diagnosed symptom and current treatment.";
     }
     if (!result.suggestedRewrite) {
-      result.suggestedRewrite = "מחלת כליות כרונית (השם המדויק יאושר על ידי הרופא).";
+      result.suggestedRewrite = locale === "he"
+        ? "מחלת כליות כרונית (השם המדויק יאושר על ידי הרופא)."
+        : "Chronic kidney disease (exact name to be confirmed by physician).";
     }
   }
 
   if (field === "medical_condition" && !result.isRelevant) {
     result.options = sanitizeMedicalNameOptions(result.options);
     if (result.options.length === 0) {
-      result.options = fallbackMedicalNameOptions(normalizedInput);
+      result.options = fallbackMedicalNameOptions(normalizedInput, locale);
     }
     if (result.options.length === 0) {
-      result.options = fallbackGeneralMedicalNameOptions();
+      result.options = fallbackGeneralMedicalNameOptions(locale);
     }
     if (!result.clarificationQuestion) {
-      result.clarificationQuestion =
-        "Please describe a diagnosed condition or symptom so I can help you refine the wording.";
+      result.clarificationQuestion = locale === "he"
+        ? "אנא תאר/י מצב רפואי מאובחן או תסמין כדי שאוכל לעזור לך לדייק את הניסוח."
+        : "Please describe a diagnosed condition or symptom so I can help you refine the wording.";
     }
   }
 
   if (field === "medication" && !result.isRelevant) {
     if (result.options.length === 0) {
-      result.options = fallbackMedicationOptions();
+      result.options = fallbackMedicationOptions(locale);
     }
     if (!result.clarificationQuestion) {
-      result.clarificationQuestion =
-        "Please include medication name and dosage/frequency so I can help format it correctly.";
+      result.clarificationQuestion = locale === "he"
+        ? "אנא כלול/י שם תרופה ומינון/תדירות כדי שאוכל לעזור בניסוח נכון."
+        : "Please include medication name and dosage/frequency so I can help format it correctly.";
     }
   }
 
