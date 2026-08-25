@@ -12,11 +12,16 @@ import {
 import {
   activityLevelOptions,
   dietaryPreferenceOptions,
+  type ExerciseScheduleByModality,
+  type ExerciseScheduleModalityOption,
   exerciseModalityOptions,
   habitOptions,
+  medicalConditionOptions,
+  modalityRequiresSchedule,
   nutritionalGoalOptions,
   validateAllergyEntry,
   validateExerciseOtherDetails,
+  validateFreeTextDetails,
 } from "@/lib/profile";
 import type { AppLocale } from "@/lib/locale";
 import { formatActivityLevel, formatNumberForLocale, localeTag, tr } from "@/lib/locale";
@@ -30,13 +35,15 @@ type ProfileEditFormProps = {
     height_cm: number;
     weight_kg: number;
     activity_level: (typeof activityLevelOptions)[number];
-    exercise_modalities: string[];
+    exercise_modalities: Array<(typeof exerciseModalityOptions)[number]>;
     exercise_modality_other_details?: string;
+    exercise_schedule_by_modality?: ExerciseScheduleByModality;
     exercise_frequency_days_per_week: number;
     exercise_duration_minutes: number;
     nutritional_goal: (typeof nutritionalGoalOptions)[number];
     pregnancy_lactation_status: "none" | "pregnant" | "lactating";
     has_medical_conditions: boolean;
+    medical_conditions?: string[];
     medical_conditions_details: string;
     has_regular_medications: boolean;
     regular_medications_details: string;
@@ -58,6 +65,24 @@ const initialState: ProfileUpdateActionState = {};
 const PROFILE_EDIT_DRAFT_KEY = "phc_profile_edit_draft";
 const CIGARETTES_PER_PACK = 20;
 
+const EXERCISE_MODALITY_LABELS: Record<ExerciseScheduleModalityOption, { en: string; he: string }> = {
+  resistance_hypertrophy: { en: "Resistance / Hypertrophy", he: "התנגדות / היפרטרופיה" },
+  endurance_cardio: { en: "Endurance / Cardio", he: "סבולת / אירובי" },
+  martial_arts: { en: "Martial Arts", he: "אומנויות לחימה" },
+  other: { en: "Other", he: "אחר" },
+};
+
+type MedicalConditionOption = (typeof medicalConditionOptions)[number];
+
+const MEDICAL_CONDITION_LABELS: Record<MedicalConditionOption, { en: string; he: string }> = {
+  celiac_disease: { en: "Celiac Disease", he: "צליאק" },
+  hypertension: { en: "Hypertension (High Blood Pressure)", he: "יתר לחץ דם" },
+  kidney_renal_failure: { en: "Kidney / Renal Failure", he: "אי ספיקת כליות" },
+  diabetes: { en: "Diabetes", he: "סוכרת" },
+  other: { en: "Others (Please specify)", he: "אחר (נא לפרט)" },
+  prefer_not_to_disclose: { en: "Prefer not to disclose", he: "מעדיפ/ה לא לשתף" },
+};
+
 type ProfileEditDraft = {
   first_name: string;
   last_name: string;
@@ -67,13 +92,17 @@ type ProfileEditDraft = {
   height_cm: string;
   weight_kg: string;
   activity_level: (typeof activityLevelOptions)[number];
-  exercise_modalities: string[];
+  exercise_modalities: Array<(typeof exerciseModalityOptions)[number]>;
   exercise_modality_other_details: string;
+  exercise_schedule_by_modality: Partial<
+    Record<ExerciseScheduleModalityOption, { days_per_week: string; minutes_per_session: string }>
+  >;
   exercise_frequency_days_per_week: string;
   exercise_duration_minutes: string;
   nutritional_goal: (typeof nutritionalGoalOptions)[number];
   pregnancy_lactation_status: "none" | "pregnant" | "lactating";
   has_medical_conditions: "yes" | "no";
+  medical_conditions: MedicalConditionOption[];
   medical_conditions_details: string;
   has_regular_medications: "yes" | "no";
   regular_medications_details: string;
@@ -92,6 +121,173 @@ type PersistedProfileEditDraft = {
   profileUpdatedAt: string | null;
   draft: ProfileEditDraft;
 };
+
+function exerciseModalityLabel(modality: ExerciseScheduleModalityOption, locale: AppLocale): string {
+  const labels = EXERCISE_MODALITY_LABELS[modality];
+  return locale === "he" ? labels.he : labels.en;
+}
+
+function medicalConditionLabel(condition: MedicalConditionOption, locale: AppLocale): string {
+  const labels = MEDICAL_CONDITION_LABELS[condition];
+  return locale === "he" ? labels.he : labels.en;
+}
+
+function parseMedicalConditionOption(value: string): MedicalConditionOption | null {
+  const normalized = value.trim().toLowerCase();
+  if (medicalConditionOptions.includes(normalized as MedicalConditionOption)) {
+    return normalized as MedicalConditionOption;
+  }
+
+  if (normalized.includes("celiac") || normalized.includes("צליאק")) return "celiac_disease";
+  if (
+    normalized.includes("hypertension")
+    || normalized.includes("high blood pressure")
+    || normalized.includes("יתר לחץ דם")
+  ) return "hypertension";
+  if (
+    normalized.includes("kidney")
+    || normalized.includes("renal")
+    || normalized.includes("כליות")
+  ) return "kidney_renal_failure";
+  if (normalized.includes("diabetes") || normalized.includes("סוכרת")) return "diabetes";
+  if (
+    normalized.includes("prefer")
+    || normalized.includes("disclose")
+    || normalized.includes("לא לשתף")
+  ) return "prefer_not_to_disclose";
+  if (normalized === "other" || normalized.includes("אחר")) return "other";
+
+  return null;
+}
+
+function parseInitialMedicalConditionState(defaults: ProfileEditFormProps["defaults"]): {
+  selected: MedicalConditionOption[];
+  otherDetails: string;
+} {
+  const rawConditions = defaults.medical_conditions ?? [];
+  const selectedSet = new Set<MedicalConditionOption>();
+  const unmappedConditions: string[] = [];
+
+  rawConditions.forEach((condition) => {
+    const mapped = parseMedicalConditionOption(condition);
+    if (mapped) {
+      selectedSet.add(mapped);
+    } else if (condition.trim()) {
+      unmappedConditions.push(condition.trim());
+    }
+  });
+
+  if (unmappedConditions.length > 0) {
+    selectedSet.add("other");
+  }
+
+  const detailsFromDefaults = defaults.medical_conditions_details.trim();
+  const otherDetails = detailsFromDefaults || unmappedConditions.join(", ");
+
+  if (defaults.has_medical_conditions && selectedSet.size === 0 && otherDetails) {
+    selectedSet.add("other");
+  }
+
+  if (selectedSet.has("prefer_not_to_disclose")) {
+    return {
+      selected: ["prefer_not_to_disclose"],
+      otherDetails: "",
+    };
+  }
+
+  return {
+    selected: Array.from(selectedSet),
+    otherDetails,
+  };
+}
+
+function getScheduledModalities(
+  modalities: Array<(typeof exerciseModalityOptions)[number]>,
+): ExerciseScheduleModalityOption[] {
+  return modalities.filter(modalityRequiresSchedule);
+}
+
+function parseScheduleNumber(value: string): number | null {
+  if (value.trim() === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function normalizeExerciseScheduleByModality(
+  schedule: ProfileEditDraft["exercise_schedule_by_modality"],
+  selectedModalities: ExerciseScheduleModalityOption[],
+): ProfileEditDraft["exercise_schedule_by_modality"] {
+  const next: ProfileEditDraft["exercise_schedule_by_modality"] = {};
+
+  selectedModalities.forEach((modality) => {
+    const existing = schedule[modality];
+    next[modality] = {
+      days_per_week: existing?.days_per_week ?? "",
+      minutes_per_session: existing?.minutes_per_session ?? "",
+    };
+  });
+
+  return next;
+}
+
+function buildInitialExerciseSchedule(
+  defaults: ProfileEditFormProps["defaults"],
+  modalities: ExerciseScheduleModalityOption[],
+): ProfileEditDraft["exercise_schedule_by_modality"] {
+  const next: ProfileEditDraft["exercise_schedule_by_modality"] = {};
+  const scheduleDefaults = defaults.exercise_schedule_by_modality ?? {};
+  const fallbackDays = String(defaults.exercise_frequency_days_per_week);
+  const fallbackMinutes = String(defaults.exercise_duration_minutes);
+
+  modalities.forEach((modality) => {
+    const fromSchedule = scheduleDefaults[modality];
+    next[modality] = {
+      days_per_week:
+        fromSchedule?.days_per_week != null
+          ? String(fromSchedule.days_per_week)
+          : fallbackDays,
+      minutes_per_session:
+        fromSchedule?.minutes_per_session != null
+          ? String(fromSchedule.minutes_per_session)
+          : fallbackMinutes,
+    };
+  });
+
+  return next;
+}
+
+function computeExerciseSummaryFromDraft(
+  selectedModalities: ExerciseScheduleModalityOption[],
+  schedule: ProfileEditDraft["exercise_schedule_by_modality"],
+): { frequency: string; duration: string } {
+  if (selectedModalities.length === 0) {
+    return { frequency: "0", duration: "0" };
+  }
+
+  const rows = selectedModalities
+    .map((modality) => schedule[modality])
+    .filter((entry) => {
+      const days = parseScheduleNumber(entry?.days_per_week ?? "");
+      const minutes = parseScheduleNumber(entry?.minutes_per_session ?? "");
+      return days != null && minutes != null && days > 0 && minutes > 0;
+    })
+    .map((entry) => ({
+      days: Number(entry?.days_per_week ?? "0"),
+      minutes: Number(entry?.minutes_per_session ?? "0"),
+    }));
+
+  if (rows.length === 0) {
+    return { frequency: "", duration: "" };
+  }
+
+  const totalDays = rows.reduce((sum, row) => sum + row.days, 0);
+  const weightedMinutes = rows.reduce((sum, row) => sum + (row.days * row.minutes), 0);
+
+  return {
+    frequency: String(Math.min(14, Math.round(totalDays))),
+    duration: String(Math.round(weightedMinutes / totalDays)),
+  };
+}
 
 function packsPerDayToCigarettesString(value: number | null): string {
   if (value == null || !Number.isFinite(value)) return "";
@@ -131,6 +327,18 @@ function calculateBmi(weightKg: number, heightCm: number): number | null {
 }
 
 function createInitialDraft(defaults: ProfileEditFormProps["defaults"]): ProfileEditDraft {
+  const initialExerciseModalities = defaults.exercise_modalities
+    .filter((value): value is (typeof exerciseModalityOptions)[number] =>
+      exerciseModalityOptions.includes(value as (typeof exerciseModalityOptions)[number]),
+    );
+  const scheduledModalities = getScheduledModalities(initialExerciseModalities);
+  const exerciseScheduleByModality = buildInitialExerciseSchedule(defaults, scheduledModalities);
+  const summaryFromSchedule = computeExerciseSummaryFromDraft(
+    scheduledModalities,
+    exerciseScheduleByModality,
+  );
+  const initialMedicalConditions = parseInitialMedicalConditionState(defaults);
+
   return {
     first_name: defaults.first_name,
     last_name: defaults.last_name,
@@ -140,14 +348,16 @@ function createInitialDraft(defaults: ProfileEditFormProps["defaults"]): Profile
     height_cm: String(defaults.height_cm),
     weight_kg: String(defaults.weight_kg),
     activity_level: defaults.activity_level,
-    exercise_modalities: defaults.exercise_modalities,
+    exercise_modalities: initialExerciseModalities,
     exercise_modality_other_details: defaults.exercise_modality_other_details ?? "",
-    exercise_frequency_days_per_week: String(defaults.exercise_frequency_days_per_week),
-    exercise_duration_minutes: String(defaults.exercise_duration_minutes),
+    exercise_schedule_by_modality: exerciseScheduleByModality,
+    exercise_frequency_days_per_week: summaryFromSchedule.frequency,
+    exercise_duration_minutes: summaryFromSchedule.duration,
     nutritional_goal: defaults.nutritional_goal,
     pregnancy_lactation_status: defaults.pregnancy_lactation_status,
     has_medical_conditions: defaults.has_medical_conditions ? "yes" : "no",
-    medical_conditions_details: defaults.medical_conditions_details,
+    medical_conditions: initialMedicalConditions.selected,
+    medical_conditions_details: initialMedicalConditions.otherDetails,
     has_regular_medications: defaults.has_regular_medications ? "yes" : "no",
     regular_medications_details: defaults.regular_medications_details,
     hot_climate_or_heavy_sweating: defaults.hot_climate_or_heavy_sweating ? "yes" : "no",
@@ -178,6 +388,9 @@ function isValidDraft(value: unknown): value is ProfileEditDraft {
     activityLevelOptions.includes(candidate.activity_level as (typeof activityLevelOptions)[number]) &&
     Array.isArray(candidate.exercise_modalities) &&
     typeof candidate.exercise_modality_other_details === "string" &&
+    !!candidate.exercise_schedule_by_modality &&
+    !Array.isArray(candidate.exercise_schedule_by_modality) &&
+    typeof candidate.exercise_schedule_by_modality === "object" &&
     typeof candidate.exercise_frequency_days_per_week === "string" &&
     typeof candidate.exercise_duration_minutes === "string" &&
     typeof candidate.nutritional_goal === "string" &&
@@ -186,6 +399,7 @@ function isValidDraft(value: unknown): value is ProfileEditDraft {
       || candidate.pregnancy_lactation_status === "pregnant"
       || candidate.pregnancy_lactation_status === "lactating") &&
     (candidate.has_medical_conditions === "yes" || candidate.has_medical_conditions === "no") &&
+    Array.isArray(candidate.medical_conditions) &&
     typeof candidate.medical_conditions_details === "string" &&
     (candidate.has_regular_medications === "yes" || candidate.has_regular_medications === "no") &&
     typeof candidate.regular_medications_details === "string" &&
@@ -259,6 +473,12 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
       return initialDraft;
     }
   });
+  const selectedExerciseModalities = getScheduledModalities(draft.exercise_modalities);
+  const hasClientBlockingError = Boolean(clientError || allergyError || consentError);
+  const exerciseSummary = computeExerciseSummaryFromDraft(
+    selectedExerciseModalities,
+    draft.exercise_schedule_by_modality,
+  );
 
   useEffect(() => {
     const payload: PersistedProfileEditDraft = {
@@ -304,6 +524,19 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
       ...patch,
     };
 
+    const normalizedSchedule = normalizeExerciseScheduleByModality(
+      nextDraft.exercise_schedule_by_modality,
+      getScheduledModalities(nextDraft.exercise_modalities),
+    );
+    const summary = computeExerciseSummaryFromDraft(
+      getScheduledModalities(nextDraft.exercise_modalities),
+      normalizedSchedule,
+    );
+
+    nextDraft.exercise_schedule_by_modality = normalizedSchedule;
+    nextDraft.exercise_frequency_days_per_week = summary.frequency;
+    nextDraft.exercise_duration_minutes = summary.duration;
+
     if (changedNonConsentField && draft.accept_ai_extraction && patch.accept_ai_extraction === undefined) {
       nextDraft.accept_ai_extraction = false;
     }
@@ -311,7 +544,10 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
     persistDraft(nextDraft);
   };
 
-  const toggleListValue = (key: "exercise_modalities" | "habits", value: string) => {
+  const toggleListValue = (
+    key: "exercise_modalities" | "habits",
+    value: (typeof exerciseModalityOptions)[number] | (typeof habitOptions)[number],
+  ) => {
     const set = new Set(draft[key]);
     if (set.has(value)) {
       set.delete(value);
@@ -347,9 +583,11 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
       patch.exercise_modality_other_details = "";
     }
 
-    if (key === "exercise_modalities" && nextValues.includes("none")) {
-      patch.exercise_frequency_days_per_week = "0";
-      patch.exercise_duration_minutes = "0";
+    if (key === "exercise_modalities") {
+      patch.exercise_schedule_by_modality = normalizeExerciseScheduleByModality(
+        draft.exercise_schedule_by_modality,
+        getScheduledModalities(nextValues as Array<(typeof exerciseModalityOptions)[number]>),
+      );
     }
 
     updateDraft(patch);
@@ -359,7 +597,41 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
     key: "has_medical_conditions" | "has_regular_medications" | "hot_climate_or_heavy_sweating",
     value: "yes" | "no",
   ) => {
+    if (key === "has_medical_conditions" && value === "no") {
+      updateDraft({
+        has_medical_conditions: "no",
+        medical_conditions: [],
+        medical_conditions_details: "",
+      });
+      return;
+    }
+
     updateDraft({ [key]: value } as Partial<ProfileEditDraft>);
+  };
+
+  const toggleMedicalCondition = (value: MedicalConditionOption) => {
+    const current = new Set(draft.medical_conditions);
+
+    if (current.has(value)) {
+      current.delete(value);
+    } else if (value === "prefer_not_to_disclose") {
+      current.clear();
+      current.add("prefer_not_to_disclose");
+    } else {
+      current.delete("prefer_not_to_disclose");
+      current.add(value);
+    }
+
+    const nextConditions = Array.from(current);
+    const patch: Partial<ProfileEditDraft> = {
+      medical_conditions: nextConditions,
+    };
+
+    if (!nextConditions.includes("other")) {
+      patch.medical_conditions_details = "";
+    }
+
+    updateDraft(patch);
   };
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -397,6 +669,34 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
       }
     }
 
+    const invalidSchedule = selectedExerciseModalities.some((modality) => {
+      const schedule = draft.exercise_schedule_by_modality[modality];
+      const days = parseScheduleNumber(schedule?.days_per_week ?? "");
+      const minutes = parseScheduleNumber(schedule?.minutes_per_session ?? "");
+      return (
+        days == null
+        || !Number.isInteger(days)
+        || days < 1
+        || days > 14
+        || minutes == null
+        || !Number.isInteger(minutes)
+        || minutes < 1
+        || minutes > 600
+      );
+    });
+
+    if (invalidSchedule) {
+      setClientError(
+        tr(
+          locale,
+          "Set valid frequency and duration for each selected exercise type.",
+          "יש להגדיר תדירות ומשך תקינים לכל סוג אימון שנבחר.",
+        ),
+      );
+      event.preventDefault();
+      return;
+    }
+
     const allergyEntries = draft.allergies
       .split(",")
       .map((item) => item.trim())
@@ -422,6 +722,63 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
       return;
     }
 
+    if (draft.has_medical_conditions === "yes") {
+      if (draft.medical_conditions.length === 0) {
+        setClientError(
+          tr(
+            locale,
+            "Select at least one medical condition option.",
+            "יש לבחור לפחות אפשרות אחת במצבים רפואיים.",
+          ),
+        );
+        event.preventDefault();
+        return;
+      }
+
+      if (draft.medical_conditions.includes("other")) {
+        if (draft.medical_conditions_details.trim().length < 3) {
+          setClientError(
+            tr(
+              locale,
+              "Please describe a diagnosed condition (name, symptom, or diagnosis) or uncheck 'Others'.",
+              "אנא תאר מצב רפואי מאובחן (שם, תסמין או אבחנה) או הסר את הסימון מ'אחר'.",
+            ),
+          );
+          event.preventDefault();
+          return;
+        }
+      }
+    }
+
+    if (draft.has_regular_medications === "yes") {
+      if (draft.regular_medications_details.trim().length < 3) {
+        setClientError(
+          tr(
+            locale,
+            "Please include medication name and/or dosage/frequency (e.g., Metformin 500mg twice daily).",
+            "יש לכלול שם תרופה ו/או מינון ותדירות (לדוגמה: Metformin 500mg twice daily).",
+          ),
+        );
+        event.preventDefault();
+        return;
+      }
+    }
+
+    if (draft.additional_information.trim()) {
+      const additionalInfoValidation = validateFreeTextDetails(draft.additional_information, 5);
+      if (!additionalInfoValidation.isMeaningful) {
+        setClientError(
+          tr(
+            locale,
+            "Enter meaningful additional information or leave it empty.",
+            "יש להזין מידע נוסף משמעותי או להשאיר ריק.",
+          ),
+        );
+        event.preventDefault();
+        return;
+      }
+    }
+
   };
 
   const normalizedDateOfBirth = draft.date_of_birth;
@@ -435,7 +792,26 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
       <input type="hidden" name="nutritional_goal" value={draft.nutritional_goal} />
       <input type="hidden" name="dietary_preference" value={draft.dietary_preference} />
       <input type="hidden" name="exercise_modality_other_details" value={draft.exercise_modality_other_details} />
-      <input type="hidden" name="medical_conditions" value={draft.has_medical_conditions === "yes" ? draft.medical_conditions_details : ""} />
+      <input
+        type="hidden"
+        name="exercise_schedule_by_modality"
+        value={JSON.stringify(draft.exercise_schedule_by_modality)}
+      />
+      <input
+        type="hidden"
+        name="exercise_frequency_days_per_week"
+        value={exerciseSummary.frequency}
+      />
+      <input
+        type="hidden"
+        name="exercise_duration_minutes"
+        value={exerciseSummary.duration}
+      />
+      <input
+        type="hidden"
+        name="medical_conditions"
+        value={draft.has_medical_conditions === "yes" ? draft.medical_conditions.join(",") : ""}
+      />
       <input type="hidden" name="alcohol_times_per_week" value={draft.alcohol_times_per_week} />
       <input type="hidden" name="smoking_packs_per_day" value={cigarettesPerDayToPacksString(draft.smoking_packs_per_day)} />
 
@@ -522,15 +898,79 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
                     "יש להזין שם אמיתי של פעילות גופנית. שגיאות כתיב נסבלות, טקסט אקראי לא.",
                   )}
                 </p>
-                {clientError ? <p className="mt-1 text-xs text-rose-700">{clientError}</p> : null}
               </label>
             ) : null}
             {draft.exercise_modalities.map((value) => <input key={value} type="hidden" name="exercise_modalities" value={value} />)}
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block"><span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Frequency (days/week)", "תדירות (ימים/שבוע)")}</span><input type="number" name="exercise_frequency_days_per_week" min={0} max={14} value={draft.exercise_frequency_days_per_week} onChange={(event) => updateDraft({ exercise_frequency_days_per_week: event.target.value })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" /></label>
-            <label className="block"><span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Duration (minutes)", "משך (דקות)")}</span><input type="number" name="exercise_duration_minutes" min={0} max={600} value={draft.exercise_duration_minutes} onChange={(event) => updateDraft({ exercise_duration_minutes: event.target.value })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" /></label>
-          </div>
+          {selectedExerciseModalities.length > 0 ? (
+            <div className="space-y-3">
+              <p className="text-sm font-medium text-slate-700">
+                {tr(
+                  locale,
+                  "Set frequency and duration for each selected exercise type",
+                  "יש להגדיר תדירות ומשך לכל סוג אימון שנבחר",
+                )}
+              </p>
+              <div className="grid gap-3">
+                {selectedExerciseModalities.map((modality) => {
+                  const schedule = draft.exercise_schedule_by_modality[modality] ?? {
+                    days_per_week: "",
+                    minutes_per_session: "",
+                  };
+
+                  return (
+                    <div key={modality} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <p className="text-sm font-semibold text-slate-900">{exerciseModalityLabel(modality, locale)}</p>
+                      <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                        <label className="block">
+                          <span className="mb-1 block text-xs font-medium text-slate-700">{tr(locale, "Frequency (days/week)", "תדירות (ימים/שבוע)")}</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={14}
+                            value={schedule.days_per_week}
+                            onChange={(event) => {
+                              updateDraft({
+                                exercise_schedule_by_modality: {
+                                  ...draft.exercise_schedule_by_modality,
+                                  [modality]: {
+                                    ...schedule,
+                                    days_per_week: event.target.value,
+                                  },
+                                },
+                              });
+                            }}
+                            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="mb-1 block text-xs font-medium text-slate-700">{tr(locale, "Duration (minutes/session)", "משך (דקות לאימון)")}</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={600}
+                            value={schedule.minutes_per_session}
+                            onChange={(event) => {
+                              updateDraft({
+                                exercise_schedule_by_modality: {
+                                  ...draft.exercise_schedule_by_modality,
+                                  [modality]: {
+                                    ...schedule,
+                                    minutes_per_session: event.target.value,
+                                  },
+                                },
+                              });
+                            }}
+                            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
           <div>
             <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Nutritional goal", "מטרה תזונתית")}</span>
             <div className="grid gap-2 sm:grid-cols-2">
@@ -559,15 +999,58 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
           ) : <input type="hidden" name="pregnancy_lactation_status" value="none" />}
 
           <div>
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Medical conditions", "מצבים רפואיים")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "🩺 Medical conditions", "🩺 מצבים רפואיים")}</span>
             <div className="flex gap-3 text-sm"><label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_medical_conditions === "yes" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_medical_conditions" value="yes" checked={draft.has_medical_conditions === "yes"} onChange={() => setYesNo("has_medical_conditions", "yes")} /> {tr(locale, "Yes", "כן")}</label><label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_medical_conditions === "no" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_medical_conditions" value="no" checked={draft.has_medical_conditions === "no"} onChange={() => setYesNo("has_medical_conditions", "no")} /> {tr(locale, "No", "לא")}</label></div>
-            {draft.has_medical_conditions === "yes" ? <textarea name="medical_conditions_details" rows={3} value={draft.medical_conditions_details} onChange={(event) => updateDraft({ medical_conditions_details: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" /> : <input type="hidden" name="medical_conditions_details" value="" />}
+            <div
+              className={`overflow-hidden transition-all duration-300 ${draft.has_medical_conditions === "yes" ? "mt-3 max-h-[700px] opacity-100" : "max-h-0 opacity-0"}`}
+            >
+              <div className="grid gap-2 sm:grid-cols-2">
+                {medicalConditionOptions.map((condition) => {
+                  const selected = draft.medical_conditions.includes(condition);
+                  return (
+                    <button
+                      key={condition}
+                      type="button"
+                      onClick={() => toggleMedicalCondition(condition)}
+                      className={`rounded-xl border px-3 py-2 text-left text-xs font-medium ${selected ? "border-teal-700 bg-teal-50 text-teal-900" : "border-slate-300 bg-white text-slate-700"}`}
+                    >
+                      {medicalConditionLabel(condition, locale)}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {draft.medical_conditions.includes("other") ? (
+                <label className="mt-3 block">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Other diagnosed conditions", "מצבים רפואיים נוספים")}</span>
+                  <textarea
+                    name="medical_conditions_details"
+                    value={draft.medical_conditions_details}
+                    onChange={(event) => updateDraft({ medical_conditions_details: event.target.value })}
+                    placeholder={tr(locale, "Enter any other diagnosed medical conditions (e.g., Anemia, Gout, Sleep Apnea).", "יש להזין מצבים רפואיים מאובחנים נוספים (לדוגמה: אנמיה, גאוט, דום נשימה בשינה).")}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
+                    rows={3}
+                    minLength={3}
+                    maxLength={250}
+                  />
+                </label>
+              ) : <input type="hidden" name="medical_conditions_details" value="" />}
+            </div>
           </div>
 
           <div>
             <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Regular medications", "תרופות קבועות")}</span>
             <div className="flex gap-3 text-sm"><label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_regular_medications === "yes" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_regular_medications" value="yes" checked={draft.has_regular_medications === "yes"} onChange={() => setYesNo("has_regular_medications", "yes")} /> {tr(locale, "Yes", "כן")}</label><label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_regular_medications === "no" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_regular_medications" value="no" checked={draft.has_regular_medications === "no"} onChange={() => setYesNo("has_regular_medications", "no")} /> {tr(locale, "No", "לא")}</label></div>
-            {draft.has_regular_medications === "yes" ? <textarea name="regular_medications_details" rows={3} value={draft.regular_medications_details} onChange={(event) => updateDraft({ regular_medications_details: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" /> : <input type="hidden" name="regular_medications_details" value="" />}
+            {draft.has_regular_medications === "yes" ? <textarea name="regular_medications_details" rows={3} value={draft.regular_medications_details} onChange={(event) => updateDraft({ regular_medications_details: event.target.value })} placeholder={tr(locale, "e.g., Metformin 500mg twice daily", "לדוגמה: Metformin 500mg פעמיים ביום")} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2" /> : <input type="hidden" name="regular_medications_details" value="" />}
+            {draft.has_regular_medications === "yes" ? (
+              <p className="mt-1 text-xs text-slate-500">
+                {tr(
+                  locale,
+                  "Tip: include medication name and dosage/frequency. Typos are okay, unrelated text is not.",
+                  "טיפ: יש לכלול שם תרופה ומינון/תדירות. שגיאות כתיב נסבלות, טקסט לא קשור לא.",
+                )}
+              </p>
+            ) : null}
           </div>
 
           <div>
@@ -646,7 +1129,12 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
           {state.error}
         </p>
       ) : null}
-      {state.success ? (
+      {clientError ? (
+        <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          {clientError}
+        </p>
+      ) : null}
+      {state.success && !hasClientBlockingError ? (
         <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
           {state.success}
         </p>

@@ -21,7 +21,12 @@ const BMI_SCALE_MIN = 12;
 const BMI_SCALE_MAX = 40;
 const BMI_GOOD_MIN = 18.5;
 const BMI_GOOD_MAX = 24.9;
+const BMI_WARNING_MARGIN_FACTOR = 0.3;
 const CIGARETTES_PER_PACK = 20;
+
+const BMI_GOOD_RANGE = BMI_GOOD_MAX - BMI_GOOD_MIN;
+const BMI_WARNING_LOW_MIN = Math.max(BMI_SCALE_MIN, BMI_GOOD_MIN - (BMI_GOOD_RANGE * BMI_WARNING_MARGIN_FACTOR));
+const BMI_WARNING_HIGH_MAX = Math.min(BMI_SCALE_MAX, BMI_GOOD_MAX + (BMI_GOOD_RANGE * BMI_WARNING_MARGIN_FACTOR));
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -33,20 +38,18 @@ function bmiPositionPercent(bmi: number): number {
 }
 
 function bmiStatus(bmi: number): "good" | "warning" | "out_of_range" {
-  if (bmi < BMI_GOOD_MIN || bmi > BMI_GOOD_MAX) {
-    return "out_of_range";
+  if (bmi >= BMI_GOOD_MIN && bmi <= BMI_GOOD_MAX) {
+    return "good";
   }
 
-  const goodRange = BMI_GOOD_MAX - BMI_GOOD_MIN;
-  const warningBand = goodRange * 0.1;
-  const closeToMin = bmi - BMI_GOOD_MIN <= warningBand;
-  const closeToMax = BMI_GOOD_MAX - bmi <= warningBand;
+  const inLowWarningBand = bmi >= BMI_WARNING_LOW_MIN && bmi < BMI_GOOD_MIN;
+  const inHighWarningBand = bmi > BMI_GOOD_MAX && bmi <= BMI_WARNING_HIGH_MAX;
 
-  if (closeToMin || closeToMax) {
+  if (inLowWarningBand || inHighWarningBand) {
     return "warning";
   }
 
-  return "good";
+  return "out_of_range";
 }
 
 function formatHabitLabel(value: string, locale: "en" | "he"): string {
@@ -54,6 +57,10 @@ function formatHabitLabel(value: string, locale: "en" | "he"): string {
   if (value === "alcohol") return tr(locale, "Alcohol", "אלכוהול");
   if (value === "none") return tr(locale, "None", "ללא");
   return value;
+}
+
+function modalitySupportsSchedule(value: string): boolean {
+  return value !== "none";
 }
 
 export const dynamic = "force-dynamic";
@@ -71,7 +78,7 @@ export default async function ProfilePage() {
   const { data: profile, error } = await supabase
     .from("user_profile_enriched")
     .select(
-      "first_name, last_name, date_of_birth, biological_sex, calculated_age_years, bmi, height_cm, weight_kg, activity_level, exercise_modalities, exercise_modality_other_details, exercise_frequency_days_per_week, exercise_duration_minutes, nutritional_goal, pregnancy_lactation_status, has_medical_conditions, medical_conditions_details, has_regular_medications, regular_medications_details, hot_climate_or_heavy_sweating, habits, alcohol_times_per_week, smoking_packs_per_day, dietary_preference, additional_information, allergies, updated_at",
+      "first_name, last_name, date_of_birth, biological_sex, calculated_age_years, bmi, height_cm, weight_kg, activity_level, exercise_modalities, exercise_modality_other_details, exercise_schedule_by_modality, exercise_frequency_days_per_week, exercise_duration_minutes, nutritional_goal, pregnancy_lactation_status, has_medical_conditions, medical_conditions_details, has_regular_medications, regular_medications_details, hot_climate_or_heavy_sweating, habits, alcohol_times_per_week, smoking_packs_per_day, dietary_preference, additional_information, allergies, updated_at",
     )
     .eq("user_id", user.id)
     .maybeSingle();
@@ -91,6 +98,11 @@ export default async function ProfilePage() {
   );
   const bmiState = profile.bmi != null ? bmiStatus(profile.bmi) : null;
   const bmiPercent = profile.bmi != null ? bmiPositionPercent(profile.bmi) : null;
+  const scheduleByModality =
+    profile.exercise_schedule_by_modality && typeof profile.exercise_schedule_by_modality === "object"
+      ? profile.exercise_schedule_by_modality as Record<string, { days_per_week?: number; minutes_per_session?: number }>
+      : {};
+  const selectedScheduledModalities = (profile.exercise_modalities ?? []).filter(modalitySupportsSchedule);
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-10">
@@ -123,10 +135,6 @@ export default async function ProfilePage() {
                 <dd>{profile.biological_sex ? formatGender(profile.biological_sex, locale) : tr(locale, "n/a", "לא זמין")}</dd>
               </div>
               <div>
-                <dt className="font-medium text-slate-900">BMI</dt>
-                <dd>{profile.bmi != null ? formatNumberForLocale(profile.bmi, locale, { maximumFractionDigits: 2 }) : tr(locale, "n/a", "לא זמין")}</dd>
-              </div>
-              <div>
                 <dt className="font-medium text-slate-900">{tr(locale, "Height", "גובה")}</dt>
                 <dd>{profile.height_cm ?? tr(locale, "n/a", "לא זמין")} {formatMeasurementUnit("cm", locale)}</dd>
               </div>
@@ -139,22 +147,28 @@ export default async function ProfilePage() {
             <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-slate-700">
               <div className="mb-2 flex items-center justify-between text-xs">
                 <span>{tr(locale, "BMI scale", "סקאלת BMI")}</span>
-                <span>{tr(locale, "Good range", "טווח תקין")}: {BMI_GOOD_MIN}-{BMI_GOOD_MAX}</span>
               </div>
 
-              <div className="mb-2 grid grid-cols-2 gap-2 text-xs text-slate-600">
-                <p>{tr(locale, "Scale min", "מינימום סקאלה")}: <span className="font-semibold text-slate-900">{BMI_SCALE_MIN}</span></p>
-                <p className="text-right">{tr(locale, "Scale max", "מקסימום סקאלה")}: <span className="font-semibold text-slate-900">{BMI_SCALE_MAX}</span></p>
-                <p>{tr(locale, "Healthy min", "מינימום תקין")}: <span className="font-semibold text-slate-900">{BMI_GOOD_MIN}</span></p>
-                <p className="text-right">{tr(locale, "Healthy max", "מקסימום תקין")}: <span className="font-semibold text-slate-900">{BMI_GOOD_MAX}</span></p>
-              </div>
-
-              <div className="relative h-3 rounded-full bg-slate-200">
+              <div className="relative h-3 rounded-full bg-rose-300">
+                <div
+                  className="absolute h-full bg-amber-300"
+                  style={{
+                    left: `${((BMI_WARNING_LOW_MIN - BMI_SCALE_MIN) / (BMI_SCALE_MAX - BMI_SCALE_MIN)) * 100}%`,
+                    width: `${((BMI_GOOD_MIN - BMI_WARNING_LOW_MIN) / (BMI_SCALE_MAX - BMI_SCALE_MIN)) * 100}%`,
+                  }}
+                />
                 <div
                   className="absolute h-full rounded-full bg-emerald-400"
                   style={{
                     left: `${((BMI_GOOD_MIN - BMI_SCALE_MIN) / (BMI_SCALE_MAX - BMI_SCALE_MIN)) * 100}%`,
                     width: `${((BMI_GOOD_MAX - BMI_GOOD_MIN) / (BMI_SCALE_MAX - BMI_SCALE_MIN)) * 100}%`,
+                  }}
+                />
+                <div
+                  className="absolute h-full bg-amber-300"
+                  style={{
+                    left: `${((BMI_GOOD_MAX - BMI_SCALE_MIN) / (BMI_SCALE_MAX - BMI_SCALE_MIN)) * 100}%`,
+                    width: `${((BMI_WARNING_HIGH_MAX - BMI_GOOD_MAX) / (BMI_SCALE_MAX - BMI_SCALE_MIN)) * 100}%`,
                   }}
                 />
                 {bmiPercent != null ? (
@@ -222,6 +236,27 @@ export default async function ProfilePage() {
                 <dt className="font-medium text-slate-900">{tr(locale, "Duration", "משך")}</dt>
                 <dd>{profile.exercise_duration_minutes ?? tr(locale, "n/a", "לא זמין")} {tr(locale, "minutes", "דקות")}</dd>
               </div>
+              {selectedScheduledModalities.length > 0 ? (
+                <div className="sm:col-span-2">
+                  <dt className="font-medium text-slate-900">{tr(locale, "Per exercise type schedule", "תכנית לפי סוג אימון")}</dt>
+                  <dd>
+                    <div className="mt-2 space-y-2">
+                      {selectedScheduledModalities.map((modality: string) => {
+                        const schedule = scheduleByModality[modality];
+                        return (
+                          <p key={modality} className="not-italic text-slate-700 before:content-none">
+                            <span className="font-medium text-slate-900">{formatExerciseModality(modality, locale)}</span>
+                            {": "}
+                            {schedule?.days_per_week != null && schedule?.minutes_per_session != null
+                              ? `${schedule.days_per_week} ${tr(locale, "days/week", "ימים/שבוע")}, ${schedule.minutes_per_session} ${tr(locale, "minutes/session", "דקות לאימון")}`
+                              : tr(locale, "Schedule not set", "לא הוגדרה תכנית")}
+                          </p>
+                        );
+                      })}
+                    </div>
+                  </dd>
+                </div>
+              ) : null}
               <div>
                 <dt className="font-medium text-slate-900">{tr(locale, "Goal", "מטרה")}</dt>
                 <dd>{profile.nutritional_goal ? formatNutritionalGoal(profile.nutritional_goal, locale) : tr(locale, "n/a", "לא זמין")}</dd>
