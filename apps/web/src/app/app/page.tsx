@@ -133,12 +133,6 @@ export default async function AppHomePage() {
           >
             {tr(locale, "Report defaults", "ברירות מחדל לדיווח")}
           </Link>
-          <Link
-            href="/app/documents"
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-          >
-            {tr(locale, "Documents", "מסמכים")}
-          </Link>
         </div>
       </section>
     </main>
