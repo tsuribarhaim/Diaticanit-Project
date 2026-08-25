@@ -30,6 +30,7 @@ type CacheValue = {
 
 const profileTextValidationCache = new Map<string, CacheValue>();
 const CACHE_TTL_MS = 10 * 60 * 1000;
+const AI_REQUEST_TIMEOUT_MS = 12000;
 
 function normalizeValidationInput(value: string): string {
   return value
@@ -124,6 +125,14 @@ function fallbackMedicalNameOptions(normalizedText: string): string[] {
   return [];
 }
 
+function fallbackGeneralMedicalNameOptions(): string[] {
+  return ["יתר לחץ דם", "סוכרת", "אסתמה"];
+}
+
+function fallbackMedicationOptions(): string[] {
+  return ["Metformin 500mg twice daily", "Lisinopril 10mg once daily", "Levothyroxine 50mcg once daily"];
+}
+
 function buildUserPrompt({ field, text }: { field: ProfileTextField; text: string }): string {
   const fieldInstruction = field === "medical_condition"
     ? "Field type: medical condition description (diagnosis/symptom)."
@@ -211,14 +220,26 @@ export async function evaluateProfileTextWithAi({
   let lastBody = "";
 
   for (const candidateUrl of candidateUrls) {
-    response = await fetch(candidateUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify(requestBody),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT_MS);
+    try {
+      response = await fetch(candidateUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error(`AI profile text validation timed out after ${AI_REQUEST_TIMEOUT_MS}ms.`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (response.ok) {
       break;
@@ -271,6 +292,30 @@ export async function evaluateProfileTextWithAi({
     }
     if (!result.suggestedRewrite) {
       result.suggestedRewrite = "מחלת כליות כרונית (השם המדויק יאושר על ידי הרופא).";
+    }
+  }
+
+  if (field === "medical_condition" && !result.isRelevant) {
+    result.options = sanitizeMedicalNameOptions(result.options);
+    if (result.options.length === 0) {
+      result.options = fallbackMedicalNameOptions(normalizedInput);
+    }
+    if (result.options.length === 0) {
+      result.options = fallbackGeneralMedicalNameOptions();
+    }
+    if (!result.clarificationQuestion) {
+      result.clarificationQuestion =
+        "Please describe a diagnosed condition or symptom so I can help you refine the wording.";
+    }
+  }
+
+  if (field === "medication" && !result.isRelevant) {
+    if (result.options.length === 0) {
+      result.options = fallbackMedicationOptions();
+    }
+    if (!result.clarificationQuestion) {
+      result.clarificationQuestion =
+        "Please include medication name and dosage/frequency so I can help format it correctly.";
     }
   }
 
