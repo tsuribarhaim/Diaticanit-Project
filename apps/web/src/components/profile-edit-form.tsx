@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 
@@ -373,56 +373,6 @@ function createInitialDraft(defaults: ProfileEditFormProps["defaults"]): Profile
   };
 }
 
-function isValidDraft(value: unknown): value is ProfileEditDraft {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Partial<ProfileEditDraft>;
-  return (
-    typeof candidate.first_name === "string" &&
-    typeof candidate.last_name === "string" &&
-    typeof candidate.date_of_birth === "string" &&
-    typeof candidate.date_of_birth_display === "string" &&
-    (candidate.biological_sex === "male" || candidate.biological_sex === "female") &&
-    typeof candidate.height_cm === "string" &&
-    typeof candidate.weight_kg === "string" &&
-    typeof candidate.activity_level === "string" &&
-    activityLevelOptions.includes(candidate.activity_level as (typeof activityLevelOptions)[number]) &&
-    Array.isArray(candidate.exercise_modalities) &&
-    typeof candidate.exercise_modality_other_details === "string" &&
-    !!candidate.exercise_schedule_by_modality &&
-    !Array.isArray(candidate.exercise_schedule_by_modality) &&
-    typeof candidate.exercise_schedule_by_modality === "object" &&
-    typeof candidate.exercise_frequency_days_per_week === "string" &&
-    typeof candidate.exercise_duration_minutes === "string" &&
-    typeof candidate.nutritional_goal === "string" &&
-    nutritionalGoalOptions.includes(candidate.nutritional_goal as (typeof nutritionalGoalOptions)[number]) &&
-    (candidate.pregnancy_lactation_status === "none"
-      || candidate.pregnancy_lactation_status === "pregnant"
-      || candidate.pregnancy_lactation_status === "lactating") &&
-    (candidate.has_medical_conditions === "yes" || candidate.has_medical_conditions === "no") &&
-    Array.isArray(candidate.medical_conditions) &&
-    typeof candidate.medical_conditions_details === "string" &&
-    (candidate.has_regular_medications === "yes" || candidate.has_regular_medications === "no") &&
-    typeof candidate.regular_medications_details === "string" &&
-    (candidate.hot_climate_or_heavy_sweating === "yes" || candidate.hot_climate_or_heavy_sweating === "no") &&
-    Array.isArray(candidate.habits) &&
-    typeof candidate.alcohol_times_per_week === "string" &&
-    typeof candidate.smoking_packs_per_day === "string" &&
-    typeof candidate.dietary_preference === "string" &&
-    dietaryPreferenceOptions.includes(candidate.dietary_preference as (typeof dietaryPreferenceOptions)[number]) &&
-    typeof candidate.additional_information === "string" &&
-    (candidate.preferred_language === "en" || candidate.preferred_language === "he") &&
-    typeof candidate.allergies === "string" &&
-    typeof candidate.accept_ai_extraction === "boolean"
-  );
-}
-
-function isPersistedDraft(value: unknown): value is PersistedProfileEditDraft {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Partial<PersistedProfileEditDraft>;
-  const hasValidVersion = candidate.profileUpdatedAt === null || typeof candidate.profileUpdatedAt === "string";
-  return hasValidVersion && isValidDraft(candidate.draft);
-}
-
 function SaveButton({ locale, canSubmit }: { locale: AppLocale; canSubmit: boolean }) {
   const { pending } = useFormStatus();
 
@@ -443,7 +393,6 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
   const [allergyError, setAllergyError] = useState<string | null>(null);
   const [consentError, setConsentError] = useState<string | null>(null);
   const [draft, setDraft] = useState<ProfileEditDraft>(() => createInitialDraft(defaults));
-  const canPersistDraftRef = useRef(false);
   const selectedExerciseModalities = getScheduledModalities(draft.exercise_modalities);
   const hasClientBlockingError = Boolean(clientError || allergyError || consentError);
   const exerciseSummary = computeExerciseSummaryFromDraft(
@@ -452,45 +401,6 @@ export function ProfileEditForm({ defaults, locale }: ProfileEditFormProps) {
   );
 
   useEffect(() => {
-    const initialDraft = createInitialDraft(defaults);
-    const currentProfileUpdatedAt = defaults.profile_updated_at ?? null;
-
-    const restoreTimer = window.setTimeout(() => {
-      try {
-        const raw = window.sessionStorage.getItem(PROFILE_EDIT_DRAFT_KEY);
-        if (!raw) {
-          canPersistDraftRef.current = true;
-          return;
-        }
-
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== "object") {
-          canPersistDraftRef.current = true;
-          return;
-        }
-
-        if (isPersistedDraft(parsed) && parsed.profileUpdatedAt === currentProfileUpdatedAt) {
-          setDraft(parsed.draft);
-        } else {
-          setDraft(initialDraft);
-        }
-      } catch {
-        // Ignore invalid or blocked storage reads.
-      } finally {
-        canPersistDraftRef.current = true;
-      }
-    }, 0);
-
-    return () => {
-      window.clearTimeout(restoreTimer);
-    };
-  }, [defaults]);
-
-  useEffect(() => {
-    if (!canPersistDraftRef.current) {
-      return;
-    }
-
     const payload: PersistedProfileEditDraft = {
       profileUpdatedAt: defaults.profile_updated_at ?? null,
       draft,
