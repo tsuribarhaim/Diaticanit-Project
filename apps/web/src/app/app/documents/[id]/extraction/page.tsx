@@ -291,10 +291,10 @@ export default async function DocumentExtractionPage({
             <p className="mt-2 text-sm text-slate-600">{documentRow.file_name}</p>
           </div>
           <Link
-            href="/app/documents"
+            href="/app/profile"
             className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
           >
-            {tr(locale, "Back to documents", "חזרה למסמכים")}
+            {tr(locale, "Back to profile", "חזרה לפרופיל")}
           </Link>
         </div>
 

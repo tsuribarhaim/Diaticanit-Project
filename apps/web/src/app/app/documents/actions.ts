@@ -1602,6 +1602,7 @@ export async function uploadDocumentAction(
   }
 
   revalidatePath("/app/documents");
+  revalidatePath("/app/profile");
   return { success: "Document uploaded successfully." };
 }
 
@@ -1843,6 +1844,7 @@ export async function requestExtractionAction(formData: FormData): Promise<void>
   }
 
   revalidatePath("/app/documents");
+  revalidatePath("/app/profile");
   revalidatePath(`/app/documents/${documentId}/extraction`);
 }
 
@@ -1906,6 +1908,7 @@ export async function deleteDocumentAction(formData: FormData): Promise<void> {
   }
 
   revalidatePath("/app/documents");
+  revalidatePath("/app/profile");
 }
 
 export async function openOriginalDocumentAction(formData: FormData): Promise<void> {
