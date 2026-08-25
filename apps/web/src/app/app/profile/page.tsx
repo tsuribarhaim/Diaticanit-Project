@@ -149,46 +149,49 @@ export default async function ProfilePage() {
                 <span>{tr(locale, "BMI scale", "סקאלת BMI")}</span>
               </div>
 
-              <div className="relative h-3 rounded-full bg-rose-300">
-                <div
-                  className="absolute h-full bg-amber-300"
-                  style={{
-                    left: `${((BMI_WARNING_LOW_MIN - BMI_SCALE_MIN) / (BMI_SCALE_MAX - BMI_SCALE_MIN)) * 100}%`,
-                    width: `${((BMI_GOOD_MIN - BMI_WARNING_LOW_MIN) / (BMI_SCALE_MAX - BMI_SCALE_MIN)) * 100}%`,
-                  }}
-                />
-                <div
-                  className="absolute h-full rounded-full bg-emerald-400"
-                  style={{
-                    left: `${((BMI_GOOD_MIN - BMI_SCALE_MIN) / (BMI_SCALE_MAX - BMI_SCALE_MIN)) * 100}%`,
-                    width: `${((BMI_GOOD_MAX - BMI_GOOD_MIN) / (BMI_SCALE_MAX - BMI_SCALE_MIN)) * 100}%`,
-                  }}
-                />
-                <div
-                  className="absolute h-full bg-amber-300"
-                  style={{
-                    left: `${((BMI_GOOD_MAX - BMI_SCALE_MIN) / (BMI_SCALE_MAX - BMI_SCALE_MIN)) * 100}%`,
-                    width: `${((BMI_WARNING_HIGH_MAX - BMI_GOOD_MAX) / (BMI_SCALE_MAX - BMI_SCALE_MIN)) * 100}%`,
-                  }}
-                />
-                {bmiPercent != null ? (
+              {/* Numeric scale is always left-to-right, even on RTL pages, so bar position and labels stay aligned. */}
+              <div dir="ltr">
+                <div className="relative h-3 rounded-full bg-rose-300">
                   <div
-                    className={`absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 bg-white ${
-                      bmiState === "good"
-                        ? "border-emerald-600"
-                        : bmiState === "warning"
-                          ? "border-amber-500"
-                          : "border-rose-600"
-                    }`}
-                    style={{ left: `${bmiPercent}%` }}
-                    aria-label="bmi-marker"
+                    className="absolute h-full bg-amber-300"
+                    style={{
+                      left: `${((BMI_WARNING_LOW_MIN - BMI_SCALE_MIN) / (BMI_SCALE_MAX - BMI_SCALE_MIN)) * 100}%`,
+                      width: `${((BMI_GOOD_MIN - BMI_WARNING_LOW_MIN) / (BMI_SCALE_MAX - BMI_SCALE_MIN)) * 100}%`,
+                    }}
                   />
-                ) : null}
-              </div>
+                  <div
+                    className="absolute h-full rounded-full bg-emerald-400"
+                    style={{
+                      left: `${((BMI_GOOD_MIN - BMI_SCALE_MIN) / (BMI_SCALE_MAX - BMI_SCALE_MIN)) * 100}%`,
+                      width: `${((BMI_GOOD_MAX - BMI_GOOD_MIN) / (BMI_SCALE_MAX - BMI_SCALE_MIN)) * 100}%`,
+                    }}
+                  />
+                  <div
+                    className="absolute h-full bg-amber-300"
+                    style={{
+                      left: `${((BMI_GOOD_MAX - BMI_SCALE_MIN) / (BMI_SCALE_MAX - BMI_SCALE_MIN)) * 100}%`,
+                      width: `${((BMI_WARNING_HIGH_MAX - BMI_GOOD_MAX) / (BMI_SCALE_MAX - BMI_SCALE_MIN)) * 100}%`,
+                    }}
+                  />
+                  {bmiPercent != null ? (
+                    <div
+                      className={`absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 bg-white ${
+                        bmiState === "good"
+                          ? "border-emerald-600"
+                          : bmiState === "warning"
+                            ? "border-amber-500"
+                            : "border-rose-600"
+                      }`}
+                      style={{ left: `${bmiPercent}%` }}
+                      aria-label="bmi-marker"
+                    />
+                  ) : null}
+                </div>
 
-              <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
-                <span>{BMI_SCALE_MIN}</span>
-                <span>{BMI_SCALE_MAX}</span>
+                <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+                  <span>{BMI_SCALE_MIN}</span>
+                  <span>{BMI_SCALE_MAX}</span>
+                </div>
               </div>
 
               {profile.bmi != null ? (
