@@ -802,6 +802,13 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
                 max={maxDateOfBirth}
                 value={draft.date_of_birth}
                 onChange={(event) => updateDraft({ date_of_birth: event.target.value, date_of_birth_display: event.target.value })}
+                onClick={(event) => {
+                  try {
+                    event.currentTarget.showPicker?.();
+                  } catch {
+                    // picker may already be open; ignore
+                  }
+                }}
                 lang={localeTag(locale)}
                 className="peer absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
               />
