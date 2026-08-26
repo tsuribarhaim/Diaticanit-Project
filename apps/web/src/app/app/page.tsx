@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 
 import { signOutAction } from "@/app/app/actions";
 import { EnvironmentBadge } from "@/components/environment-badge";
+import { LanguageToggle } from "@/components/language-toggle";
 import { getEnvironmentBadgeLabel } from "@/lib/environment-badge";
 import { formatActivityLevel, formatGender, formatMeasurementUnit, formatProfileValue, normalizeLocale, tr } from "@/lib/locale";
 import { createClient } from "@/lib/supabase/server";
@@ -55,14 +56,17 @@ export default async function AppHomePage() {
           <h1 className="mt-1 text-2xl font-bold text-slate-900">{tr(locale, "Dashboard", "לוח בקרה")}</h1>
         </div>
 
-        <form action={signOutAction}>
-          <button
-            type="submit"
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
-          >
-            {tr(locale, "Sign out", "התנתקות")}
-          </button>
-        </form>
+        <div className="flex items-center gap-3">
+          <LanguageToggle locale={locale} />
+          <form action={signOutAction}>
+            <button
+              type="submit"
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+            >
+              {tr(locale, "Sign out", "התנתקות")}
+            </button>
+          </form>
+        </div>
       </header>
 
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
