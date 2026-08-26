@@ -173,14 +173,17 @@ function summarizeAiError(errorBody: string, status: number): string {
   return `AI daily report request failed (${status}): ${errorBody.slice(0, 240)}`;
 }
 
-export async function parseDailyReportWithAi({
+type ChatMessage = {
+  role: "system" | "user";
+  content: string | Array<Record<string, unknown>>;
+};
+
+async function callDailyReportChatCompletion({
   config,
-  reportText,
-  weightKg,
+  messages,
 }: {
   config: AiExtractionConfig;
-  reportText: string;
-  weightKg: number;
+  messages: ChatMessage[];
 }): Promise<DailyReportParseResult> {
   if (config.provider === "github") {
     throw new Error(
@@ -188,34 +191,11 @@ export async function parseDailyReportWithAi({
     );
   }
 
-  const clippedText = reportText.slice(0, 8000);
-
   const requestBody = {
     model: config.model,
     temperature: 0,
     response_format: { type: "json_object" },
-    messages: [
-      {
-        role: "system",
-        content:
-          "You convert nutrition and exercise daily logs into structured JSON only. Never include markdown.",
-      },
-      {
-        role: "user",
-        content: [
-          "Return strict JSON with this shape:",
-          '{"confidence":number,"requiresConfirmation":boolean,"foodItems":[{"name":"string","quantity":number,"unit":"string","caloriesKcal":number,"proteinG":number,"carbsG":number,"fatG":number,"waterMl":number,"magnesiumMg":number,"potassiumMg":number,"ironMg":number,"zincMg":number}],"exerciseItems":[{"name":"string","minutes":number,"estimatedBurnKcal":number}],"metrics":{"caloriesKcal":number,"proteinG":number,"carbsG":number,"fatG":number,"waterMl":number,"magnesiumMg":number,"potassiumMg":number,"ironMg":number,"zincMg":number,"exerciseMinutes":number,"estimatedBurnKcal":number}}',
-          "Rules:",
-          "- Use only non-negative numbers.",
-          "- Include reasonable estimates when exact values are unclear.",
-          "- confidence must be between 0 and 1.",
-          "- requiresConfirmation should be true when extraction is uncertain.",
-          `weightKg: ${Number.isFinite(weightKg) ? weightKg : 0}`,
-          "daily_report_text:",
-          clippedText,
-        ].join("\n"),
-      },
-    ],
+    messages,
   };
 
   const normalizedBaseUrl = config.baseUrl.replace(/\/+$/, "");
@@ -307,4 +287,89 @@ export async function parseDailyReportWithAi({
     foodItems,
     exerciseItems,
   };
+}
+
+export async function parseDailyReportWithAi({
+  config,
+  reportText,
+  weightKg,
+}: {
+  config: AiExtractionConfig;
+  reportText: string;
+  weightKg: number;
+}): Promise<DailyReportParseResult> {
+  const clippedText = reportText.slice(0, 8000);
+
+  return callDailyReportChatCompletion({
+    config,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You convert nutrition and exercise daily logs into structured JSON only. Never include markdown.",
+      },
+      {
+        role: "user",
+        content: [
+          "Return strict JSON with this shape:",
+          '{"confidence":number,"requiresConfirmation":boolean,"foodItems":[{"name":"string","quantity":number,"unit":"string","caloriesKcal":number,"proteinG":number,"carbsG":number,"fatG":number,"waterMl":number,"magnesiumMg":number,"potassiumMg":number,"ironMg":number,"zincMg":number}],"exerciseItems":[{"name":"string","minutes":number,"estimatedBurnKcal":number}],"metrics":{"caloriesKcal":number,"proteinG":number,"carbsG":number,"fatG":number,"waterMl":number,"magnesiumMg":number,"potassiumMg":number,"ironMg":number,"zincMg":number,"exerciseMinutes":number,"estimatedBurnKcal":number}}',
+          "Rules:",
+          "- Use only non-negative numbers.",
+          "- Include reasonable estimates when exact values are unclear.",
+          "- confidence must be between 0 and 1.",
+          "- requiresConfirmation should be true when extraction is uncertain.",
+          `weightKg: ${Number.isFinite(weightKg) ? weightKg : 0}`,
+          "daily_report_text:",
+          clippedText,
+        ].join("\n"),
+      },
+    ],
+  });
+}
+
+export async function parseDailyReportPhotoWithAi({
+  config,
+  imageBase64,
+  mimeType,
+  weightKg,
+}: {
+  config: AiExtractionConfig;
+  imageBase64: string;
+  mimeType: string;
+  weightKg: number;
+}): Promise<DailyReportParseResult> {
+  return callDailyReportChatCompletion({
+    config,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You estimate nutrition from a photo of food. Return strict JSON only. Never include markdown.",
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: [
+              "Look at the attached photo and identify each distinct food or drink item visible.",
+              "Return strict JSON with this shape:",
+              '{"confidence":number,"requiresConfirmation":boolean,"foodItems":[{"name":"string","quantity":number,"unit":"string","caloriesKcal":number,"proteinG":number,"carbsG":number,"fatG":number,"waterMl":number,"magnesiumMg":number,"potassiumMg":number,"ironMg":number,"zincMg":number}],"exerciseItems":[],"metrics":{"caloriesKcal":number,"proteinG":number,"carbsG":number,"fatG":number,"waterMl":number,"magnesiumMg":number,"potassiumMg":number,"ironMg":number,"zincMg":number,"exerciseMinutes":number,"estimatedBurnKcal":number}}',
+              "Rules:",
+              "- Estimate realistic portion sizes from visual cues (plate size, utensils, packaging).",
+              "- Use only non-negative numbers.",
+              "- exerciseItems must always be an empty array; this is a food photo only.",
+              "- Photo-based estimates are inherently uncertain: keep confidence at 0.6 or below unless the meal is very simple and fully visible.",
+              "- requiresConfirmation must always be true.",
+              `weightKg: ${Number.isFinite(weightKg) ? weightKg : 0}`,
+            ].join("\n"),
+          },
+          {
+            type: "image_url",
+            image_url: { url: `data:${mimeType};base64,${imageBase64}` },
+          },
+        ],
+      },
+    ],
+  });
 }
