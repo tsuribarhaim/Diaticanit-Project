@@ -40,6 +40,7 @@ export default async function ProfileEditPage() {
 
   const hasAiExtractionConsent =
     Boolean(aiConsentRow?.accepted_at) && !aiConsentRow?.revoked_at;
+  const maxDateOfBirth = new Date().toISOString().slice(0, 10);
 
   const formDefaults = {
     first_name: profile.first_name ?? "",
@@ -79,7 +80,7 @@ export default async function ProfileEditPage() {
         <p className="mt-3 text-sm text-slate-600">
           {tr(locale, "Update your health profile details.", "עדכון פרטי הפרופיל הבריאותי שלך.")}
         </p>
-        <ProfileEditForm defaults={formDefaults} locale={locale} />
+        <ProfileEditForm defaults={formDefaults} locale={locale} maxDateOfBirth={maxDateOfBirth} />
       </section>
     </main>
   );
