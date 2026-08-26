@@ -24,7 +24,7 @@ import {
   validateFreeTextDetails,
 } from "@/lib/profile";
 import type { AppLocale } from "@/lib/locale";
-import { formatActivityLevel, formatDateForLocale, formatNumberForLocale, localeTag, tr } from "@/lib/locale";
+import { formatActivityLevel, formatNumberForLocale, localeTag, tr } from "@/lib/locale";
 
 type ProfileEditFormProps = {
   defaults: {
@@ -793,33 +793,16 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
           </label>
           <label className="block" data-field="date_of_birth">
             <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Date of birth", "תאריך לידה")}</span>
-            {/* Native date input format follows the browser/OS locale, not `lang`, so we overlay a locale-formatted display and keep the input transparent for the calendar picker only. */}
-            <div className="relative">
-              <input
-                type="date"
-                name="date_of_birth"
-                required
-                max={maxDateOfBirth}
-                value={draft.date_of_birth}
-                onChange={(event) => updateDraft({ date_of_birth: event.target.value, date_of_birth_display: event.target.value })}
-                onClick={(event) => {
-                  try {
-                    event.currentTarget.showPicker?.();
-                  } catch {
-                    // picker may already be open; ignore
-                  }
-                }}
-                lang={localeTag(locale)}
-                className="peer absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
-              />
-              <div
-                aria-hidden="true"
-                className={`pointer-events-none flex w-full items-center rounded-xl border px-3 py-2.5 text-sm peer-focus:ring-2 peer-focus:ring-teal-600 ${inputErrorClass("date_of_birth")}`}
-              >
-                {draft.date_of_birth ? formatDateForLocale(draft.date_of_birth, locale) : tr(locale, "Select a date", "יש לבחור תאריך")}
-              </div>
-            </div>
-            <p className="mt-1 text-xs text-slate-500">{tr(locale, "Pick the date from the calendar.", "יש לבחור תאריך מהיומן.")}</p>
+            <input
+              type="date"
+              name="date_of_birth"
+              required
+              max={maxDateOfBirth}
+              value={draft.date_of_birth}
+              onChange={(event) => updateDraft({ date_of_birth: event.target.value, date_of_birth_display: event.target.value })}
+              lang={localeTag(locale)}
+              className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("date_of_birth")}`}
+            />
             {renderFieldError("date_of_birth")}
           </label>
           <div className="block" data-field="biological_sex">
