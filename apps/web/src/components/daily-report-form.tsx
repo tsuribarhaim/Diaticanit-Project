@@ -68,7 +68,8 @@ export function DailyReportForm({
   const [reportText, setReportText] = useState("");
   const [selectedDefaults, setSelectedDefaults] = useState<Record<string, boolean>>({});
   const [reportAtValue, setReportAtValue] = useState("");
-  const [parseMode, setParseMode] = useState<"heuristic" | "ai">("heuristic");
+  const [parseMode, setParseMode] = useState<"heuristic" | "ai" | "ai_photo">("heuristic");
+  const [mealPhotoPreview, setMealPhotoPreview] = useState<string | null>(null);
   const currentLocalDateTime = useMemo(() => getLocalDateTimeValue(new Date()), []);
 
   const reportLength = reportText.length;
@@ -169,8 +170,11 @@ export function DailyReportForm({
         <p className="mt-1 text-xs text-slate-600">
           {tr(locale, "Choose how free-text input is translated into structured nutrition and exercise values.", "בחרו כיצד טקסט חופשי יתורגם לערכים מובנים של תזונה ופעילות.")}
         </p>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          <label className={`rounded-lg border px-3 py-2 text-sm ${parseMode === "heuristic" ? "border-teal-300 bg-teal-50" : "border-slate-200 bg-white"}`}>
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          <label
+            className={`rounded-lg border px-3 py-2 text-sm ${parseMode === "heuristic" ? "border-teal-300 bg-teal-50" : "border-slate-200 bg-white"}`}
+            onClick={() => setParseMode("heuristic")}
+          >
             <span className="flex items-start gap-2">
               <input
                 type="radio"
@@ -190,6 +194,9 @@ export function DailyReportForm({
             className={`rounded-lg border px-3 py-2 text-sm ${
               parseMode === "ai" ? "border-teal-300 bg-teal-50" : "border-slate-200 bg-white"
             } ${!aiAvailable ? "opacity-70" : ""}`}
+            onClick={() => {
+              if (aiAvailable) setParseMode("ai");
+            }}
           >
             <span className="flex items-start gap-2">
               <input
@@ -212,7 +219,64 @@ export function DailyReportForm({
               </span>
             </span>
           </label>
+          <label
+            className={`rounded-lg border px-3 py-2 text-sm ${
+              parseMode === "ai_photo" ? "border-teal-300 bg-teal-50" : "border-slate-200 bg-white"
+            } ${!aiAvailable ? "opacity-70" : ""}`}
+            onClick={() => {
+              if (aiAvailable) setParseMode("ai_photo");
+            }}
+          >
+            <span className="flex items-start gap-2">
+              <input
+                type="radio"
+                name="parse_mode"
+                value="ai_photo"
+                checked={parseMode === "ai_photo"}
+                onChange={() => setParseMode("ai_photo")}
+                disabled={!aiAvailable}
+                className="mt-0.5 h-4 w-4 accent-teal-700"
+              />
+              <span>
+                <span className="block font-medium text-slate-800">{tr(locale, "Photo (AI)", "תמונה (AI)")}</span>
+                <span className="mt-0.5 block text-xs text-slate-600">{tr(locale, "Take or upload a photo of your plate for an AI estimate.", "צלמו או העלו תמונה של הצלחת לקבלת הערכה מבוססת AI.")}</span>
+                {!aiAvailable ? (
+                  <span className="mt-1 block text-xs font-medium text-amber-700">
+                    {tr(locale, "AI mode is currently unavailable in this environment.", "מצב AI אינו זמין כרגע בסביבה זו.")}
+                  </span>
+                ) : null}
+              </span>
+            </span>
+          </label>
         </div>
+
+        {parseMode === "ai_photo" ? (
+          <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+            <label className="block">
+              <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Meal photo", "תמונת ארוחה")}</span>
+              <input
+                type="file"
+                name="meal_photo"
+                accept="image/*"
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null;
+                  setMealPhotoPreview((previous) => {
+                    if (previous) URL.revokeObjectURL(previous);
+                    return file ? URL.createObjectURL(file) : null;
+                  });
+                }}
+                className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-teal-700 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white"
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                {tr(locale, "This is an estimate the AI derives from the photo, review it before confirming.", "זו הערכה שה-AI מפיק מהתמונה, יש לבדוק אותה לפני האישור.")}
+              </p>
+            </label>
+            {mealPhotoPreview ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={mealPhotoPreview} alt="" className="mt-3 max-h-48 rounded-lg border border-slate-200 object-contain" />
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       {defaultItems.length ? (

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { dailyReportInputSchema, parseDailyReportText } from "@/lib/daily-report";
-import { parseDailyReportWithAi } from "@/lib/ai/daily-report";
+import { parseDailyReportPhotoWithAi, parseDailyReportWithAi } from "@/lib/ai/daily-report";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
@@ -14,7 +14,10 @@ export type DailyReportActionState = {
   success?: string;
 };
 
-type DailyReportParseMode = "heuristic" | "ai";
+type DailyReportParseMode = "heuristic" | "ai" | "ai_photo";
+
+const ALLOWED_MEAL_PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const MAX_MEAL_PHOTO_BYTES = 10 * 1024 * 1024;
 
 type ParsedFoodItem = {
   name: string;
@@ -125,7 +128,10 @@ function emptyParseResult(): DailyParseResult {
 }
 
 function getRequestedParseMode(formData: FormData): DailyReportParseMode {
-  return formData.get("parse_mode")?.toString() === "ai" ? "ai" : "heuristic";
+  const raw = formData.get("parse_mode")?.toString();
+  if (raw === "ai") return "ai";
+  if (raw === "ai_photo") return "ai_photo";
+  return "heuristic";
 }
 
 function buildDailyReportRedirectPath(params: { notice?: string; error?: string }): string {
@@ -264,9 +270,14 @@ export async function saveDailyReportAction(
     .getAll("selected_default_ids")
     .map((value) => value.toString())
     .filter(Boolean);
+  const mealPhotoEntry = formData.get("meal_photo");
+  const mealPhotoFile =
+    requestedParseMode === "ai_photo" && mealPhotoEntry instanceof File && mealPhotoEntry.size > 0
+      ? mealPhotoEntry
+      : null;
 
-  if (!reportText && selectedDefaultIds.length === 0) {
-    return { error: "Add free text, select at least one default, or both." };
+  if (!reportText && selectedDefaultIds.length === 0 && !mealPhotoFile) {
+    return { error: "Add free text, a meal photo, select at least one default, or a combination." };
   }
 
   if (reportText.length > 2000) {
@@ -307,14 +318,39 @@ export async function saveDailyReportAction(
   let parserVersionUsed = "daily-heuristic-v1";
 
   try {
-    const parsedByMode = await parseReportTextByMode({
-      reportText,
-      weightKg: Number(profile.weight_kg),
-      mode: requestedParseMode,
-    });
-    parsedResult = parsedByMode.result;
-    modeUsedForReport = parsedByMode.modeUsed;
-    parserVersionUsed = parsedByMode.parserVersion;
+    if (mealPhotoFile) {
+      if (!ALLOWED_MEAL_PHOTO_TYPES.includes(mealPhotoFile.type)) {
+        throw new Error("Meal photo must be a JPEG, PNG, or WEBP image.");
+      }
+      if (mealPhotoFile.size > MAX_MEAL_PHOTO_BYTES) {
+        throw new Error("Meal photo must be 10 MB or smaller.");
+      }
+
+      const aiConfig = getAiExtractionConfig();
+      if (!aiConfig) {
+        throw new Error("AI mode is unavailable. Configure AI extraction settings first.");
+      }
+
+      const imageBase64 = Buffer.from(await mealPhotoFile.arrayBuffer()).toString("base64");
+
+      parsedResult = await parseDailyReportPhotoWithAi({
+        config: aiConfig,
+        imageBase64,
+        mimeType: mealPhotoFile.type,
+        weightKg: Number(profile.weight_kg),
+      });
+      modeUsedForReport = "ai_photo";
+      parserVersionUsed = `daily-ai-photo-${aiConfig.provider}-v1`;
+    } else {
+      const parsedByMode = await parseReportTextByMode({
+        reportText,
+        weightKg: Number(profile.weight_kg),
+        mode: requestedParseMode === "ai_photo" ? "heuristic" : requestedParseMode,
+      });
+      parsedResult = parsedByMode.result;
+      modeUsedForReport = parsedByMode.modeUsed;
+      parserVersionUsed = parsedByMode.parserVersion;
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to parse daily report.";
     logServerError("dailyReport.save", "parse_failed", {
@@ -500,7 +536,8 @@ export async function saveDailyReportAction(
     estimated_burn_kcal: mergedMetrics.estimatedBurnKcal,
     reported_weight_kg: reportedWeightKg,
     selected_defaults: selectedDefaultsSnapshot,
-    parse_mode: modeUsedForReport,
+    // DB check constraint only allows 'heuristic' | 'ai'; parser_version carries the "-photo-" marker.
+    parse_mode: modeUsedForReport === "ai_photo" ? "ai" : modeUsedForReport,
     parser_version: parserVersionUsed,
     parsed_items: [...parsedResult.foodItems, ...defaultFoodItems],
     parsed_exercises: [...parsedResult.exerciseItems, ...defaultExerciseItems],
@@ -549,7 +586,7 @@ export async function saveDailyReportAction(
   revalidatePath("/app/goals");
   revalidatePath("/app/goals/progress");
 
-  const modeLabel = modeUsedForReport === "ai" ? "AI" : "heuristic";
+  const modeLabel = modeUsedForReport === "ai" ? "AI" : modeUsedForReport === "ai_photo" ? "AI photo" : "heuristic";
   const weightNotice = reportedWeightNotPersisted
     ? " Reported weight was not saved because migration db/migrations/012_phase4_daily_reports_reported_weight.sql is not applied yet."
     : "";
