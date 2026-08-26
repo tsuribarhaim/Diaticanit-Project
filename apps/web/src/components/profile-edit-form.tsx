@@ -24,7 +24,7 @@ import {
   validateFreeTextDetails,
 } from "@/lib/profile";
 import type { AppLocale } from "@/lib/locale";
-import { formatActivityLevel, formatDateForLocale, formatNumberForLocale, localeTag, tr } from "@/lib/locale";
+import { formatActivityLevel, formatNumberForLocale, localeTag, tr } from "@/lib/locale";
 
 type ProfileEditFormProps = {
   defaults: {
@@ -793,26 +793,16 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
           </label>
           <label className="block" data-field="date_of_birth">
             <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Date of birth", "תאריך לידה")}</span>
-            {/* Native date input format follows the browser/OS locale, not `lang`, so we overlay a locale-formatted display and keep the input transparent for the calendar picker only. */}
-            <div className="relative">
-              <input
-                type="date"
-                name="date_of_birth"
-                required
-                max={maxDateOfBirth}
-                value={draft.date_of_birth}
-                onChange={(event) => updateDraft({ date_of_birth: event.target.value, date_of_birth_display: event.target.value })}
-                lang={localeTag(locale)}
-                className="peer absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
-              />
-              <div
-                aria-hidden="true"
-                className={`pointer-events-none flex w-full items-center rounded-xl border px-3 py-2.5 text-sm peer-focus:ring-2 peer-focus:ring-teal-600 ${inputErrorClass("date_of_birth")}`}
-              >
-                {draft.date_of_birth ? formatDateForLocale(draft.date_of_birth, locale) : tr(locale, "Select a date", "יש לבחור תאריך")}
-              </div>
-            </div>
-            <p className="mt-1 text-xs text-slate-500">{tr(locale, "Pick the date from the calendar.", "יש לבחור תאריך מהיומן.")}</p>
+            <input
+              type="date"
+              name="date_of_birth"
+              required
+              max={maxDateOfBirth}
+              value={draft.date_of_birth}
+              onChange={(event) => updateDraft({ date_of_birth: event.target.value, date_of_birth_display: event.target.value })}
+              lang={localeTag(locale)}
+              className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("date_of_birth")}`}
+            />
             {renderFieldError("date_of_birth")}
           </label>
           <div className="block" data-field="biological_sex">
@@ -1004,6 +994,15 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
                   );
                 })}
               </div>
+              {draft.medical_conditions.includes("prefer_not_to_disclose") ? (
+                <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  {tr(
+                    locale,
+                    "Choosing not to disclose will prevent your Health Companion from considering your specific needs when processing your targets and progress.",
+                    "בחירה שלא לשתף תמנע מהמלווה הבריאותי שלך להתחשב בצרכים הייחודיים שלך בעת עיבוד היעדים וההתקדמות שלך.",
+                  )}
+                </p>
+              ) : null}
               {renderFieldError("medical_conditions")}
 
               {draft.medical_conditions.includes("other") ? (
@@ -1082,10 +1081,7 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
       <section className="rounded-xl border border-slate-200 p-4">
         <h2 className="text-base font-semibold text-slate-900">{tr(locale, "Step 4 - Dietary Profile & Context", "שלב 4 - פרופיל תזונתי")}</h2>
         <div className="mt-3 space-y-4">
-          <label className="block">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Language", "שפה")}</span>
-            <select name="preferred_language" value={draft.preferred_language} onChange={(event) => updateDraft({ preferred_language: event.target.value as "en" | "he" })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"><option value="en">English</option><option value="he">עברית</option></select>
-          </label>
+          <input type="hidden" name="preferred_language" value={draft.preferred_language} />
 
           <div data-field="dietary_preference">
             <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Dietary preference", "העדפה תזונתית")}</span>

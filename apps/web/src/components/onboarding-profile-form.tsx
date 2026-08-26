@@ -23,7 +23,7 @@ import {
   validateFreeTextDetails,
 } from "@/lib/profile";
 import type { AppLocale } from "@/lib/locale";
-import { formatActivityLevel, formatDateForLocale, formatNumberForLocale, localeTag, tr } from "@/lib/locale";
+import { formatActivityLevel, formatNumberForLocale, localeTag, tr } from "@/lib/locale";
 
 type OnboardingProfileFormProps = {
   defaults?: {
@@ -1167,25 +1167,15 @@ export function OnboardingProfileForm({
 
             <label className="block" data-field="date_of_birth">
               <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Date of birth", "תאריך לידה")}</span>
-              {/* Native date input format follows the browser/OS locale, not `lang`, so we overlay a locale-formatted display and keep the input transparent for the calendar picker only. */}
-              <div className="relative">
-                <input
-                  type="date"
-                  required
-                  max={new Date().toISOString().slice(0, 10)}
-                  value={draft.date_of_birth}
-                  onChange={(event) => updateDraft({ date_of_birth: event.target.value, date_of_birth_display: event.target.value })}
-                  lang={localeTag(effectiveLocale)}
-                  className="peer absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
-                />
-                <div
-                  aria-hidden="true"
-                  className={`pointer-events-none flex w-full items-center rounded-xl border px-3 py-2.5 text-sm peer-focus:ring-2 peer-focus:ring-teal-600 ${inputErrorClass("date_of_birth")}`}
-                >
-                  {draft.date_of_birth ? formatDateForLocale(draft.date_of_birth, effectiveLocale) : tr(effectiveLocale, "Select a date", "יש לבחור תאריך")}
-                </div>
-              </div>
-              <p className="mt-1 text-xs text-slate-500">{tr(effectiveLocale, "Pick the date from the calendar.", "יש לבחור תאריך מהיומן.")}</p>
+              <input
+                type="date"
+                required
+                max={new Date().toISOString().slice(0, 10)}
+                value={draft.date_of_birth}
+                onChange={(event) => updateDraft({ date_of_birth: event.target.value, date_of_birth_display: event.target.value })}
+                lang={localeTag(effectiveLocale)}
+                className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("date_of_birth")}`}
+              />
               {renderFieldError("date_of_birth")}
             </label>
 
@@ -1632,6 +1622,15 @@ export function OnboardingProfileForm({
                   );
                 })}
               </div>
+              {draft.medical_conditions.includes("prefer_not_to_disclose") ? (
+                <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  {tr(
+                    effectiveLocale,
+                    "Choosing not to disclose will prevent your Health Companion from considering your specific needs when processing your targets and progress.",
+                    "בחירה שלא לשתף תמנע מהמלווה הבריאותי שלך להתחשב בצרכים הייחודיים שלך בעת עיבוד היעדים וההתקדמות שלך.",
+                  )}
+                </p>
+              ) : null}
               {renderFieldError("medical_conditions")}
 
               {draft.medical_conditions.includes("other") ? (
