@@ -22,6 +22,7 @@ import { createClient } from "@/lib/supabase/server";
 
 export type ProfileUpdateActionState = {
   error?: string;
+  fieldErrors?: Array<{ field: string; message: string }>;
   success?: string;
 };
 
@@ -139,6 +140,11 @@ export async function updateProfileAction(
   });
 
   if (!parsed.success) {
+    const fieldErrors = parsed.error.issues.map((issue) => ({
+      field: issue.path[0]?.toString() || "form",
+      message: issue.message,
+    }));
+
     logServerError("profile.update", "validation_failed", {
       userId: user.id,
       issues: parsed.error.issues,
@@ -146,9 +152,10 @@ export async function updateProfileAction(
     return {
       error: tr(
         locale,
-        "Please correct the highlighted fields and try again.",
-        "יש לתקן את השדות המסומנים ולנסות שוב.",
+        "An error occurred while saving. Please review and update the marked fields above.",
+        "אירעה שגיאה בשמירה. יש לבדוק ולעדכן את השדות המסומנים למעלה.",
       ),
+      fieldErrors,
     };
   }
 
@@ -157,9 +164,19 @@ export async function updateProfileAction(
     return {
       error: tr(
         locale,
-        "Date of birth must produce a valid age between 0 and 120.",
-        "תאריך הלידה חייב להפיק גיל תקין בין 0 ל-120.",
+        "An error occurred while saving. Please review and update the marked fields above.",
+        "אירעה שגיאה בשמירה. יש לבדוק ולעדכן את השדות המסומנים למעלה.",
       ),
+      fieldErrors: [
+        {
+          field: "date_of_birth",
+          message: tr(
+            locale,
+            "Date of birth must produce a valid age between 0 and 120.",
+            "תאריך הלידה חייב להפיק גיל תקין בין 0 ל-120.",
+          ),
+        },
+      ],
     };
   }
 
@@ -183,9 +200,19 @@ export async function updateProfileAction(
     return {
       error: tr(
         locale,
-        "Consent is required before saving changes.",
-        "נדרשת הסכמה לפני שמירת השינויים.",
+        "An error occurred while saving. Please review and update the marked fields above.",
+        "אירעה שגיאה בשמירה. יש לבדוק ולעדכן את השדות המסומנים למעלה.",
       ),
+      fieldErrors: [
+        {
+          field: "accept_ai_extraction",
+          message: tr(
+            locale,
+            "Consent is required before saving changes.",
+            "נדרשת הסכמה לפני שמירת השינויים.",
+          ),
+        },
+      ],
     };
   }
 
@@ -205,20 +232,30 @@ export async function updateProfileAction(
 
         if (!aiValidation.isRelevant) {
           return {
-            error: buildAiFieldMessage({
+            error: tr(
               locale,
-              fallback: {
-                en: "I want to help you describe this accurately in your medical profile.",
-                he: "אני רוצה לעזור לך לתאר זאת בצורה מדויקת בפרופיל הרפואי.",
+              "An error occurred while saving. Please review and update the marked fields above.",
+              "אירעה שגיאה בשמירה. יש לבדוק ולעדכן את השדות המסומנים למעלה.",
+            ),
+            fieldErrors: [
+              {
+                field: "medical_conditions_details",
+                message: buildAiFieldMessage({
+                  locale,
+                  fallback: {
+                    en: "I want to help you describe this accurately in your medical profile.",
+                    he: "אני רוצה לעזור לך לתאר זאת בצורה מדויקת בפרופיל הרפואי.",
+                  },
+                  clarificationQuestion: aiValidation.clarificationQuestion,
+                  suggestedRewrite: aiValidation.suggestedRewrite,
+                  options: aiValidation.options,
+                  optionsLead: {
+                    en: "Here are possible condition names you can enter in this field:",
+                    he: "להלן מחלות אפשריות עבורך לציין בשדה הנכון:",
+                  },
+                }),
               },
-              clarificationQuestion: aiValidation.clarificationQuestion,
-              suggestedRewrite: aiValidation.suggestedRewrite,
-              options: aiValidation.options,
-              optionsLead: {
-                en: "Here are possible condition names you can enter in this field:",
-                he: "להלן מחלות אפשריות עבורך לציין בשדה הנכון:",
-              },
-            }),
+            ],
           };
         }
       } catch (error) {
@@ -231,9 +268,19 @@ export async function updateProfileAction(
           return {
             error: tr(
               locale,
-              "Please describe a diagnosed medical condition (name, symptom, or diagnosis).",
-              "יש לתאר מצב רפואי מאובחן (שם, תסמין או אבחנה).",
+              "An error occurred while saving. Please review and update the marked fields above.",
+              "אירעה שגיאה בשמירה. יש לבדוק ולעדכן את השדות המסומנים למעלה.",
             ),
+            fieldErrors: [
+              {
+                field: "medical_conditions_details",
+                message: tr(
+                  locale,
+                  "Please describe a diagnosed medical condition (name, symptom, or diagnosis).",
+                  "יש לתאר מצב רפואי מאובחן (שם, תסמין או אבחנה).",
+                ),
+              },
+            ],
           };
         }
       }
@@ -241,9 +288,19 @@ export async function updateProfileAction(
       return {
         error: tr(
           locale,
-          "Please describe a diagnosed medical condition (name, symptom, or diagnosis).",
-          "יש לתאר מצב רפואי מאובחן (שם, תסמין או אבחנה).",
+          "An error occurred while saving. Please review and update the marked fields above.",
+          "אירעה שגיאה בשמירה. יש לבדוק ולעדכן את השדות המסומנים למעלה.",
         ),
+        fieldErrors: [
+          {
+            field: "medical_conditions_details",
+            message: tr(
+              locale,
+              "Please describe a diagnosed medical condition (name, symptom, or diagnosis).",
+              "יש לתאר מצב רפואי מאובחן (שם, תסמין או אבחנה).",
+            ),
+          },
+        ],
       };
     }
   }
@@ -264,20 +321,30 @@ export async function updateProfileAction(
 
         if (!aiValidation.isRelevant) {
           return {
-            error: buildAiFieldMessage({
+            error: tr(
               locale,
-              fallback: {
-                en: "I want to help you record medication details clearly.",
-                he: "אני רוצה לעזור לך לרשום את פרטי התרופות בצורה ברורה.",
+              "An error occurred while saving. Please review and update the marked fields above.",
+              "אירעה שגיאה בשמירה. יש לבדוק ולעדכן את השדות המסומנים למעלה.",
+            ),
+            fieldErrors: [
+              {
+                field: "regular_medications_details",
+                message: buildAiFieldMessage({
+                  locale,
+                  fallback: {
+                    en: "I want to help you record medication details clearly.",
+                    he: "אני רוצה לעזור לך לרשום את פרטי התרופות בצורה ברורה.",
+                  },
+                  clarificationQuestion: aiValidation.clarificationQuestion,
+                  suggestedRewrite: aiValidation.suggestedRewrite,
+                  options: aiValidation.options,
+                  optionsLead: {
+                    en: "Here are possible medication names/details you can enter:",
+                    he: "להלן אפשרויות אפשריות לרישום שם תרופה או פרטי מינון:",
+                  },
+                }),
               },
-              clarificationQuestion: aiValidation.clarificationQuestion,
-              suggestedRewrite: aiValidation.suggestedRewrite,
-              options: aiValidation.options,
-              optionsLead: {
-                en: "Here are possible medication names/details you can enter:",
-                he: "להלן אפשרויות אפשריות לרישום שם תרופה או פרטי מינון:",
-              },
-            }),
+            ],
           };
         }
       } catch (error) {
@@ -290,9 +357,19 @@ export async function updateProfileAction(
           return {
             error: tr(
               locale,
-              "Please include medication name and/or dosage/frequency.",
-              "יש לכלול שם תרופה ו/או מינון ותדירות.",
+              "An error occurred while saving. Please review and update the marked fields above.",
+              "אירעה שגיאה בשמירה. יש לבדוק ולעדכן את השדות המסומנים למעלה.",
             ),
+            fieldErrors: [
+              {
+                field: "regular_medications_details",
+                message: tr(
+                  locale,
+                  "Please include medication name and/or dosage/frequency.",
+                  "יש לכלול שם תרופה ו/או מינון ותדירות.",
+                ),
+              },
+            ],
           };
         }
       }
@@ -300,9 +377,19 @@ export async function updateProfileAction(
       return {
         error: tr(
           locale,
-          "Please include medication name and/or dosage/frequency.",
-          "יש לכלול שם תרופה ו/או מינון ותדירות.",
+          "An error occurred while saving. Please review and update the marked fields above.",
+          "אירעה שגיאה בשמירה. יש לבדוק ולעדכן את השדות המסומנים למעלה.",
         ),
+        fieldErrors: [
+          {
+            field: "regular_medications_details",
+            message: tr(
+              locale,
+              "Please include medication name and/or dosage/frequency.",
+              "יש לכלול שם תרופה ו/או מינון ותדירות.",
+            ),
+          },
+        ],
       };
     }
   }
