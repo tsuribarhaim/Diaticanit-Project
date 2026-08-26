@@ -1622,6 +1622,15 @@ export function OnboardingProfileForm({
                   );
                 })}
               </div>
+              {draft.medical_conditions.includes("prefer_not_to_disclose") ? (
+                <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  {tr(
+                    effectiveLocale,
+                    "Choosing not to disclose will prevent your Health Companion from considering your specific needs when processing your targets and progress.",
+                    "בחירה שלא לשתף תמנע מהמלווה הבריאותי שלך להתחשב בצרכים הייחודיים שלך בעת עיבוד היעדים וההתקדמות שלך.",
+                  )}
+                </p>
+              ) : null}
               {renderFieldError("medical_conditions")}
 
               {draft.medical_conditions.includes("other") ? (
