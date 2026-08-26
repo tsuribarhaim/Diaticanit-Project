@@ -39,17 +39,19 @@ From Project root:
 - .\run-dev-1.1.ps1
 
 ## Migration Workflow
-1. Add migration SQL file in db/migrations from the 1.1 workspace.
-2. Test migration in dev first:
+1. Add a new timestamped SQL file directly under supabase/migrations (e.g. `supabase migration new <name>`), so the Supabase CLI can track it. This folder is the only location the CLI reads for `db push` / `migration list` / `migration repair`.
+2. Also add a matching, human-readable copy in db/migrations (same SQL, legacy phase-numbered naming) purely for project history/readability. db/migrations is NOT read by the CLI.
+3. Test migration in dev first:
    - .\scripts\supabase-db-push.ps1 -Environment dev
-3. Validate app behavior in dev.
-4. Promote same migration to staging:
+4. Validate app behavior in dev.
+5. Promote same migration to staging:
    - .\scripts\supabase-db-push.ps1 -Environment staging
 
 ## Rules
 - No manual schema edits in Supabase dashboard for normal changes.
-- If emergency manual SQL is run in staging, create a matching migration file immediately.
+- If emergency manual SQL is run in staging, create a matching migration file in supabase/migrations immediately and run `supabase migration repair <version> --status applied --linked` so history stays accurate.
 - Promote changes in order: dev first, then staging.
+- 2026-08-25: discovered supabase/migrations never existed (only db/migrations, which the CLI ignores), so `db push` had been a silent no-op in both dev and staging since inception. Backfilled supabase/migrations with timestamped copies of migrations 001-018 and ran `supabase migration repair --status applied` against both dev and staging after verifying (via `supabase db query --linked` against information_schema) that all 18 migrations' schema changes were already live in both databases. `db push` is now functional going forward.
 
 ## Versioning
 - Tag stable tester release as v1.0.0.
