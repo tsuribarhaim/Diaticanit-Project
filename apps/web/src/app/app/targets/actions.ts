@@ -9,6 +9,8 @@ import { normalizeLocale } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import {
   generateHeuristicTargetProfile,
+  mapTargetProfileRowToPayload,
+  TARGET_PROFILE_COLUMNS,
   targetGenerationPayloadSchema,
   targetInputSchema,
   type ProfileForTargets,
@@ -58,12 +60,17 @@ export async function generateTargetsPayload({
   locale,
   aiConfig,
   hasConsent,
+  currentTargets,
 }: {
   goalText: string;
   profile: ProfileForTargets;
   locale: ReturnType<typeof normalizeLocale>;
   aiConfig: ReturnType<typeof getAiExtractionConfig>;
   hasConsent: boolean;
+  /** Present when this is an adjustment request against an already-locked
+   * plan rather than a fresh generation; ignored by the heuristic fallback
+   * (which is a simplified, non-AI path). */
+  currentTargets?: TargetGenerationPayload;
 }): Promise<{ payload: TargetGenerationPayload; source: "ai" | "heuristic"; heuristicReason: string | null }> {
   let heuristicReason: string | null = null;
   let payload: TargetGenerationPayload | null = null;
@@ -71,7 +78,7 @@ export async function generateTargetsPayload({
 
   if (aiConfig && hasConsent) {
     try {
-      payload = await generateTargetsWithAi({ config: aiConfig, goalText, profile, locale });
+      payload = await generateTargetsWithAi({ config: aiConfig, goalText, profile, locale, currentTargets });
       source = "ai";
     } catch (error) {
       heuristicReason = "AI generation failed at runtime; heuristic fallback was used.";
@@ -150,6 +157,14 @@ export async function generateTargetsAction(
   const locale = normalizeLocale(profileRow.preferred_language);
   const profile = toProfileForTargets(profileRow);
 
+  const { data: activeRow } = await supabase
+    .from("user_target_profiles")
+    .select(TARGET_PROFILE_COLUMNS)
+    .eq("user_id", user.id)
+    .eq("is_active", true)
+    .maybeSingle();
+  const currentTargets = activeRow ? mapTargetProfileRowToPayload(activeRow) : undefined;
+
   const aiConfig = getAiExtractionConfig();
   const hasConsent = aiConfig ? await hasAiTargetsConsent({ supabase, userId: user.id }) : false;
   const { payload, source, heuristicReason } = await generateTargetsPayload({
@@ -158,6 +173,7 @@ export async function generateTargetsAction(
     locale,
     aiConfig,
     hasConsent,
+    currentTargets,
   });
 
   return {
@@ -188,7 +204,7 @@ export async function lockTargetsAction(
   const payloadJson = formData.get("payload_json")?.toString() ?? "";
   const source = formData.get("source")?.toString() === "ai" ? "ai" : "heuristic";
 
-  if (!goalText || !payloadJson) {
+  if (!payloadJson) {
     return { error: "Missing generated target data. Please generate targets again." };
   }
 

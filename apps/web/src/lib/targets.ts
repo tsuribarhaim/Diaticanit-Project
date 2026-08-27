@@ -4,6 +4,11 @@ import type { AppLocale } from "@/lib/locale";
 import { tr } from "@/lib/locale";
 import { activityLevelOptions } from "@/lib/profile";
 
+/** Column list for selecting a full `user_target_profiles` row, shared by
+ * every query site so `mapTargetProfileRowToPayload` always gets what it needs. */
+export const TARGET_PROFILE_COLUMNS =
+  "id, raw_goal_text, goal_type, target_weight_kg, duration_days, blood_balance_focus, sleep_focus, calories_min, calories_max, protein_min_g, protein_max_g, carbs_min_g, carbs_max_g, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, sodium_min_mg, sodium_max_mg, added_sugar_min_g, added_sugar_max_g, water_min_ml, water_max_ml, potassium_min_mg, potassium_max_mg, magnesium_min_mg, magnesium_max_mg, calcium_min_mg, calcium_max_mg, iron_min_mg, iron_max_mg, zinc_min_mg, zinc_max_mg, vit_c_min_mg, vit_c_max_mg, vit_b12_min_mcg, vit_b12_max_mcg, vit_d_min_mcg, vit_d_max_mcg, sat_fat_min_g, sat_fat_max_g, omega3_min_g, omega3_max_g, exercise_targets, habits_do, habits_dont, ai_rationale_explanation, translation_confidence, analysis_source, sys_start_date";
+
 export const targetGoalTypes = ["weight_loss", "weight_gain", "maintain", "general"] as const;
 export type TargetGoalType = (typeof targetGoalTypes)[number];
 

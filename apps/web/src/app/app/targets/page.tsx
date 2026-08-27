@@ -1,13 +1,19 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { generateTargetsPayload, hasAiTargetsConsent } from "@/app/app/targets/actions";
 import { TargetProfileView } from "@/components/target-profile-view";
+import { TargetsAdjustForm } from "@/components/targets-adjust-form";
 import { TargetsGenerateForm } from "@/components/targets-generate-form";
+import { GuardedLink, UnsavedPreviewProvider } from "@/components/unsaved-preview-context";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { formatDateTimeForLocale, normalizeLocale, tr } from "@/lib/locale";
 import { createClient } from "@/lib/supabase/server";
-import { estimateMaintenanceCalories, mapTargetProfileRowToPayload, type ProfileForTargets } from "@/lib/targets";
+import {
+  estimateMaintenanceCalories,
+  mapTargetProfileRowToPayload,
+  TARGET_PROFILE_COLUMNS,
+  type ProfileForTargets,
+} from "@/lib/targets";
 
 export const dynamic = "force-dynamic";
 
@@ -63,9 +69,7 @@ export default async function TargetsPage() {
 
   const { data: activeTargetProfile, error: targetProfileError } = await supabase
     .from("user_target_profiles")
-    .select(
-      "id, raw_goal_text, goal_type, target_weight_kg, duration_days, blood_balance_focus, sleep_focus, calories_min, calories_max, protein_min_g, protein_max_g, carbs_min_g, carbs_max_g, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, sodium_min_mg, sodium_max_mg, added_sugar_min_g, added_sugar_max_g, water_min_ml, water_max_ml, potassium_min_mg, potassium_max_mg, magnesium_min_mg, magnesium_max_mg, calcium_min_mg, calcium_max_mg, iron_min_mg, iron_max_mg, zinc_min_mg, zinc_max_mg, vit_c_min_mg, vit_c_max_mg, vit_b12_min_mcg, vit_b12_max_mcg, vit_d_min_mcg, vit_d_max_mcg, sat_fat_min_g, sat_fat_max_g, omega3_min_g, omega3_max_g, exercise_targets, habits_do, habits_dont, ai_rationale_explanation, translation_confidence, analysis_source, sys_start_date",
-    )
+    .select(TARGET_PROFILE_COLUMNS)
     .eq("user_id", user.id)
     .eq("is_active", true)
     .maybeSingle();
@@ -92,6 +96,7 @@ export default async function TargetsPage() {
   }
 
   return (
+    <UnsavedPreviewProvider>
     <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col px-6 py-10">
       <section className="rounded-2xl border border-slate-200 bg-white p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -106,12 +111,17 @@ export default async function TargetsPage() {
             </p>
           </div>
 
-          <Link
+          <GuardedLink
             href="/app"
             className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+            confirmMessage={tr(
+              locale,
+              "You have a generated target plan that hasn't been locked in yet. Leave this page anyway?",
+              "יש לך תכנית יעדים שנוצרה אך טרם ננעלה. לעזוב את הדף בכל זאת?",
+            )}
           >
             {tr(locale, "Back to dashboard", "חזרה ללוח הבקרה")}
-          </Link>
+          </GuardedLink>
         </div>
 
         {!activeTargetProfile ? (
@@ -160,9 +170,17 @@ export default async function TargetsPage() {
                 "למטרות מידע בלבד. להחלטות רפואיות יש להתייעץ עם איש מקצוע מוסמך.",
               )}
             </p>
+
+            <TargetsAdjustForm
+              key={activeTargetProfile.id}
+              locale={locale}
+              maintenanceCalories={maintenanceCalories}
+              currentPayload={mapTargetProfileRowToPayload(activeTargetProfile)}
+            />
           </div>
         )}
       </section>
     </main>
+    </UnsavedPreviewProvider>
   );
 }

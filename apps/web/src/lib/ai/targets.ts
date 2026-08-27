@@ -240,11 +240,18 @@ export async function generateTargetsWithAi({
   goalText,
   profile,
   locale,
+  currentTargets,
 }: {
   config: AiExtractionConfig;
   goalText: string;
   profile: ProfileForTargets;
   locale: AppLocale;
+  /** When present, this is an adjustment request against an already-locked
+   * plan: the model should change only what was asked and keep everything
+   * else as close to unchanged as reasonable, propagating any necessary
+   * consistency changes (e.g. lower workout frequency -> lower calorie
+   * ceiling), instead of generating a fresh plan from scratch. */
+  currentTargets?: TargetGenerationPayload;
 }): Promise<TargetGenerationPayload> {
   if (config.provider === "github") {
     throw new Error(
@@ -253,6 +260,16 @@ export async function generateTargetsWithAi({
   }
 
   const languageName = locale === "he" ? "Hebrew" : "English";
+
+  const adjustmentContextLines = currentTargets
+    ? [
+        "This is an ADJUSTMENT request against an already-locked target plan, not a fresh generation.",
+        "current_active_targets (JSON):",
+        JSON.stringify(currentTargets),
+        "Change ONLY what the goal_text below asks for. Keep every other range, exercise entry, and habit as close to the current values as reasonable.",
+        "If the requested change would create an unsafe or unbalanced combination (e.g. reducing exercise while keeping calories at the same level), proactively adjust the dependent values (e.g. lower the calorie range) to keep the plan coherent, and explain that adjustment in global_coaching_explanation.",
+      ]
+    : [];
 
   const requestBody = {
     model: config.model,
@@ -285,6 +302,7 @@ export async function generateTargetsWithAi({
           "- habits_do and habits_dont: 2 to 4 entries each, each with a short actionable instruction and a one-sentence rationale.",
           "- confidence must be between 0 and 1.",
           `- Write every text field (ai_adjustment_note, habit_instruction, rationale, global_coaching_explanation) entirely in ${languageName}. Do not mix languages within a field.`,
+          ...adjustmentContextLines,
           "user_profile:",
           buildProfileSummary(profile),
           "goal_text:",

@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 
 import { generateTargetsAction, lockTargetsAction, type TargetsActionState } from "@/app/app/targets/actions";
 import { TargetProfileView } from "@/components/target-profile-view";
+import { useUnsavedPreview } from "@/components/unsaved-preview-context";
 import { tr, type AppLocale } from "@/lib/locale";
 import type { TargetGenerationPayload } from "@/lib/targets";
 
@@ -63,12 +64,22 @@ export function TargetsGenerateForm({
     : {};
   const [generateState, generateFormAction] = useActionState(generateTargetsAction, initialGenerateState);
   const [lockState, lockFormAction] = useActionState(lockTargetsAction, {});
+  const { setHasUnsavedPreview } = useUnsavedPreview();
 
   useEffect(() => {
     if (lockState.success) {
       router.refresh();
     }
   }, [lockState.success, router]);
+
+  useEffect(() => {
+    setHasUnsavedPreview(Boolean(generateState.preview) && !lockState.success);
+  }, [generateState.preview, lockState.success, setHasUnsavedPreview]);
+
+  useEffect(() => {
+    return () => setHasUnsavedPreview(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="mt-5 space-y-6">
