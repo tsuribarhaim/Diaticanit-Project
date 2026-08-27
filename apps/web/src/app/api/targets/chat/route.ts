@@ -150,6 +150,8 @@ export async function POST(request: NextRequest) {
           }
         }
 
+        controller.enqueue(sseEvent({ type: "status", status: "generating_targets" }));
+
         let targetsPayload;
         let source: "ai" | "heuristic" = "heuristic";
         let warning: string | undefined;
