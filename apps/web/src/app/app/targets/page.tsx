@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { generateTargetsPayload, hasAiTargetsConsent } from "@/app/app/targets/actions";
 import { TargetProfileView } from "@/components/target-profile-view";
 import { TargetsGenerateForm } from "@/components/targets-generate-form";
+import { getAiExtractionConfig } from "@/lib/ai/env";
 import { formatDateTimeForLocale, normalizeLocale, tr } from "@/lib/locale";
 import { createClient } from "@/lib/supabase/server";
 import { estimateMaintenanceCalories, mapTargetProfileRowToPayload, type ProfileForTargets } from "@/lib/targets";
@@ -72,6 +74,23 @@ export default async function TargetsPage() {
     throw new Error(targetProfileError.message);
   }
 
+  let initialPreview: { goalText: string; source: "ai" | "heuristic"; payload: ReturnType<typeof mapTargetProfileRowToPayload> } | null = null;
+  let initialWarning: string | undefined;
+
+  if (!activeTargetProfile) {
+    const aiConfig = getAiExtractionConfig();
+    const hasConsent = aiConfig ? await hasAiTargetsConsent({ supabase, userId: user.id }) : false;
+    const { payload, source, heuristicReason } = await generateTargetsPayload({
+      goalText: "",
+      profile,
+      locale,
+      aiConfig,
+      hasConsent,
+    });
+    initialPreview = { goalText: "", source, payload };
+    initialWarning = source === "heuristic" ? heuristicReason ?? undefined : undefined;
+  }
+
   return (
     <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col px-6 py-10">
       <section className="rounded-2xl border border-slate-200 bg-white p-6">
@@ -100,11 +119,16 @@ export default async function TargetsPage() {
             <p className="mt-4 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600">
               {tr(
                 locale,
-                "No active targets yet. Describe your goal below to generate a full target plan.",
-                "עדיין אין יעדים פעילים. תארו את המטרה שלכם למטה כדי ליצור תכנית יעדים מלאה.",
+                "Here's a recommended baseline based on your profile. Optionally describe a specific goal below and regenerate to refine it, then approve to lock it in.",
+                "להלן תכנית בסיס מומלצת בהתאם לפרופיל שלך. ניתן לתאר מטרה ספציפית למטה וליצור מחדש כדי לחדד אותה, ולאחר מכן לאשר וננעל אותה.",
               )}
             </p>
-            <TargetsGenerateForm locale={locale} maintenanceCalories={maintenanceCalories} />
+            <TargetsGenerateForm
+              locale={locale}
+              maintenanceCalories={maintenanceCalories}
+              initialPreview={initialPreview ?? undefined}
+              initialWarning={initialWarning}
+            />
           </>
         ) : (
           <div className="mt-5 space-y-4">

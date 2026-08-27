@@ -112,8 +112,10 @@ export const targetInputSchema = z.object({
   freeText: z
     .string()
     .trim()
-    .min(8, "Please add a bit more detail about your goal.")
-    .max(500, "Goal text must be 500 characters or less."),
+    .max(500, "Goal text must be 500 characters or less.")
+    .refine((value) => value.length === 0 || value.length >= 8, {
+      message: "Please add a bit more detail, or leave it empty for a general baseline plan.",
+    }),
 });
 
 export type ExerciseTargetEntry = {

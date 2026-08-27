@@ -27,7 +27,7 @@ export type TargetsActionState = {
   };
 };
 
-async function hasAiTargetsConsent({
+export async function hasAiTargetsConsent({
   supabase,
   userId,
 }: {
@@ -45,6 +45,51 @@ async function hasAiTargetsConsent({
   }
 
   return Boolean(data?.accepted_at) && !data?.revoked_at;
+}
+
+/**
+ * Core AI-with-heuristic-fallback generation, shared by the explicit
+ * "Generate/regenerate" action and the Targets page's automatic first-visit
+ * baseline generation (profile data alone, no goal text required).
+ */
+export async function generateTargetsPayload({
+  goalText,
+  profile,
+  locale,
+  aiConfig,
+  hasConsent,
+}: {
+  goalText: string;
+  profile: ProfileForTargets;
+  locale: ReturnType<typeof normalizeLocale>;
+  aiConfig: ReturnType<typeof getAiExtractionConfig>;
+  hasConsent: boolean;
+}): Promise<{ payload: TargetGenerationPayload; source: "ai" | "heuristic"; heuristicReason: string | null }> {
+  let heuristicReason: string | null = null;
+  let payload: TargetGenerationPayload | null = null;
+  let source: "ai" | "heuristic" = "heuristic";
+
+  if (aiConfig && hasConsent) {
+    try {
+      payload = await generateTargetsWithAi({ config: aiConfig, goalText, profile, locale });
+      source = "ai";
+    } catch (error) {
+      heuristicReason = "AI generation failed at runtime; heuristic fallback was used.";
+      logServerError("targets.generate", "ai_generation_failed", {
+        error: error instanceof Error ? error.message : "Unknown AI targets generation error",
+      });
+    }
+  } else if (!aiConfig) {
+    heuristicReason = "AI generation is disabled or missing configuration.";
+  } else if (!hasConsent) {
+    heuristicReason = "AI consent is missing for this user. Approve AI consent in your profile to enable AI-generated targets.";
+  }
+
+  if (!payload) {
+    payload = generateHeuristicTargetProfile({ freeText: goalText, profile, locale });
+  }
+
+  return { payload, source, heuristicReason };
 }
 
 function toProfileForTargets(profile: Record<string, unknown>): ProfileForTargets {
@@ -107,39 +152,13 @@ export async function generateTargetsAction(
 
   const aiConfig = getAiExtractionConfig();
   const hasConsent = aiConfig ? await hasAiTargetsConsent({ supabase, userId: user.id }) : false;
-  let heuristicReason: string | null = null;
-  let payload: TargetGenerationPayload | null = null;
-  let source: "ai" | "heuristic" = "heuristic";
-
-  if (aiConfig && hasConsent) {
-    try {
-      payload = await generateTargetsWithAi({
-        config: aiConfig,
-        goalText: parsedInput.data.freeText,
-        profile,
-        locale,
-      });
-      source = "ai";
-    } catch (error) {
-      heuristicReason = "AI generation failed at runtime; heuristic fallback was used.";
-      logServerError("targets.generate", "ai_generation_failed", {
-        userId: user.id,
-        error: error instanceof Error ? error.message : "Unknown AI targets generation error",
-      });
-    }
-  } else if (!aiConfig) {
-    heuristicReason = "AI generation is disabled or missing configuration.";
-  } else if (!hasConsent) {
-    heuristicReason = "AI consent is missing for this user. Approve AI consent in your profile to enable AI-generated targets.";
-  }
-
-  if (!payload) {
-    payload = generateHeuristicTargetProfile({
-      freeText: parsedInput.data.freeText,
-      profile,
-      locale,
-    });
-  }
+  const { payload, source, heuristicReason } = await generateTargetsPayload({
+    goalText: parsedInput.data.freeText,
+    profile,
+    locale,
+    aiConfig,
+    hasConsent,
+  });
 
   return {
     success: "Targets generated. Review the preview below before locking it in.",

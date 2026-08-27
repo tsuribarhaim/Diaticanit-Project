@@ -8,8 +8,7 @@ import { useRouter } from "next/navigation";
 import { generateTargetsAction, lockTargetsAction, type TargetsActionState } from "@/app/app/targets/actions";
 import { TargetProfileView } from "@/components/target-profile-view";
 import { tr, type AppLocale } from "@/lib/locale";
-
-const initialState: TargetsActionState = {};
+import type { TargetGenerationPayload } from "@/lib/targets";
 
 function GenerateSubmitButton({ locale }: { locale: AppLocale }) {
   const { pending } = useFormStatus();
@@ -39,10 +38,31 @@ function LockSubmitButton({ locale }: { locale: AppLocale }) {
   );
 }
 
-export function TargetsGenerateForm({ locale, maintenanceCalories }: { locale: AppLocale; maintenanceCalories: number }) {
+export function TargetsGenerateForm({
+  locale,
+  maintenanceCalories,
+  initialPreview,
+  initialWarning,
+}: {
+  locale: AppLocale;
+  maintenanceCalories: number;
+  initialPreview?: { goalText: string; source: "ai" | "heuristic"; payload: TargetGenerationPayload };
+  initialWarning?: string;
+}) {
   const router = useRouter();
-  const [generateState, generateFormAction] = useActionState(generateTargetsAction, initialState);
-  const [lockState, lockFormAction] = useActionState(lockTargetsAction, initialState);
+  const initialGenerateState: TargetsActionState = initialPreview
+    ? {
+        success: tr(
+          locale,
+          "A baseline plan was generated from your profile. Review it below before locking it in.",
+          "תכנית בסיס נוצרה מתוך הפרופיל שלך. יש לבדוק אותה למטה לפני נעילתה.",
+        ),
+        warning: initialWarning,
+        preview: initialPreview,
+      }
+    : {};
+  const [generateState, generateFormAction] = useActionState(generateTargetsAction, initialGenerateState);
+  const [lockState, lockFormAction] = useActionState(lockTargetsAction, {});
 
   useEffect(() => {
     if (lockState.success) {
@@ -54,17 +74,18 @@ export function TargetsGenerateForm({ locale, maintenanceCalories }: { locale: A
     <div className="mt-5 space-y-6">
       <form action={generateFormAction} className="space-y-3">
         <label className="block">
-          <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Your goal (free text)", "המטרה שלך (טקסט חופשי)")}</span>
+          <span className="mb-1 block text-sm font-medium text-slate-700">
+            {tr(locale, "Your goal (optional)", "המטרה שלך (אופציונלי)")}
+          </span>
           <textarea
             name="goal_text"
-            required
-            minLength={8}
             maxLength={500}
             rows={4}
+            defaultValue={initialPreview?.goalText ?? ""}
             placeholder={tr(
               locale,
-              "Example: I want to lose 5 kg in 2 months.",
-              "דוגמה: אני רוצה לרדת 5 ק\"ג בחודשיים.",
+              "Optional. Example: I want to lose 5 kg in 2 months. Leave empty to keep the general baseline plan.",
+              "אופציונלי. דוגמה: אני רוצה לרדת 5 ק\"ג בחודשיים. ניתן להשאיר ריק לשמירה על תכנית הבסיס הכללית.",
             )}
             className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
           />
