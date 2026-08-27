@@ -302,6 +302,8 @@ export async function generateTargetsWithAi({
           "- habits_do and habits_dont: 2 to 4 entries each, each with a short actionable instruction and a one-sentence rationale.",
           "- confidence must be between 0 and 1.",
           `- Write every text field (ai_adjustment_note, habit_instruction, rationale, global_coaching_explanation) entirely in ${languageName}. Do not mix languages within a field.`,
+          "- Address the user directly in second person (\"you\"/\"your\") in every text field. Never refer to the user in third person (\"he\", \"she\", \"his\", \"her\", or the user's inferred gender) even when their biological_sex is known.",
+          "- In Hebrew specifically, prefer gender-neutral or mixed-form second-person phrasing (e.g. \"שלך\", \"את/ה\") over a gendered third-person construction like \"בשל מצבו הרפואי\" or \"בשל מצבה הרפואי\" — write \"בשל המצב הרפואי שלך\" instead.",
           ...adjustmentContextLines,
           "user_profile:",
           buildProfileSummary(profile),
