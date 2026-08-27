@@ -64,7 +64,7 @@ function MetricRowView({ row, locale }: { row: MetricRow; locale: AppLocale }) {
           aria-label={tr(locale, "More information", "מידע נוסף")}
           className="flex h-7 w-7 cursor-pointer list-none items-center justify-center rounded-full border border-slate-300 text-xs font-bold text-slate-600 hover:bg-slate-100"
         >
-          i
+          ?
         </summary>
         <div className="absolute end-0 z-10 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-3 text-start text-xs text-slate-700 shadow-lg">
           <p className="font-semibold text-slate-900">{tr(locale, "Role", "תפקיד")}</p>

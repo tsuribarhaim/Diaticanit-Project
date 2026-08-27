@@ -81,10 +81,15 @@ export default async function TargetsPage() {
   let initialPreview: { goalText: string; source: "ai" | "heuristic"; payload: ReturnType<typeof mapTargetProfileRowToPayload> } | null = null;
   let initialWarning: string | undefined;
   let profileChanges: ReturnType<typeof computeProfileDiff> | undefined;
+  let missingProfileSnapshot = false;
 
   if (activeTargetProfile) {
     const snapshot = parseProfileSnapshot(activeTargetProfile.profile_snapshot);
-    profileChanges = snapshot ? computeProfileDiff(snapshot, profile, locale) : undefined;
+    if (snapshot) {
+      profileChanges = computeProfileDiff(snapshot, profile, locale);
+    } else {
+      missingProfileSnapshot = true;
+    }
   }
 
   if (!activeTargetProfile) {
@@ -173,6 +178,16 @@ export default async function TargetsPage() {
                 "למטרות מידע בלבד. להחלטות רפואיות יש להתייעץ עם איש מקצוע מוסמך.",
               )}
             </p>
+
+            {missingProfileSnapshot ? (
+              <p className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
+                {tr(
+                  locale,
+                  "These targets were locked before profile-change detection was added, so we can't yet tell if your profile has changed since then. Request any adjustment below to refresh this check going forward.",
+                  "היעדים הללו ננעלו לפני שנוסף מעקב שינויי פרופיל, ולכן לא ניתן עדיין לבדוק אם הפרופיל שלך השתנה מאז. יש לבקש כל שינוי למטה כדי לרענן בדיקה זו מכאן ואילך.",
+                )}
+              </p>
+            ) : null}
 
             <TargetsWorkspace
               key={activeTargetProfile.id}
