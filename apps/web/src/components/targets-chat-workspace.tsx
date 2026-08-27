@@ -14,11 +14,14 @@ import type { ProfileDiffRow, TargetGenerationPayload } from "@/lib/targets";
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
 
+const STREAM_INACTIVITY_TIMEOUT_MS = 20000;
+
 function ChatSendButton({ locale, disabled }: { locale: AppLocale; disabled: boolean }) {
   return (
     <button
       type="submit"
       disabled={disabled}
+      onMouseDown={(event) => event.preventDefault()}
       className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800"
     >
       {tr(locale, "Send", "שליחה")}
@@ -43,6 +46,8 @@ export function TargetsChatWorkspace({
   const [isStreaming, setIsStreaming] = useState(false);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [lastFailedMessage, setLastFailedMessage] = useState<string | null>(null);
+  const [isGeneratingTargets, setIsGeneratingTargets] = useState(false);
   const [pendingPreview, setPendingPreview] = useState<{ source: "ai" | "heuristic"; payload: TargetGenerationPayload } | null>(null);
   const [lockState, lockFormAction] = useActionState(lockTargetsAction, {} as TargetsActionState);
   const { setHasUnsavedPreview } = useUnsavedPreview();
@@ -76,6 +81,8 @@ export function TargetsChatWorkspace({
     if (!trimmed || isStreaming) return;
 
     setStreamError(null);
+    setLastFailedMessage(null);
+    setIsGeneratingTargets(false);
     const historyForRequest = messages;
     const userMessage: ChatMessage = { role: "user", content: trimmed };
     setMessages((previous) => [...previous, userMessage, { role: "assistant", content: "" }]);
@@ -85,7 +92,17 @@ export function TargetsChatWorkspace({
     const controller = new AbortController();
     abortRef.current = controller;
 
+    let timeoutId: ReturnType<typeof setTimeout>;
+    const armTimeout = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => controller.abort("timeout"), STREAM_INACTIVITY_TIMEOUT_MS);
+    };
+
+    let assistantText = "";
+    let receivedAnything = false;
+
     try {
+      armTimeout();
       const response = await fetch("/api/targets/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -104,11 +121,12 @@ export function TargetsChatWorkspace({
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      let assistantText = "";
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        armTimeout();
+        receivedAnything = true;
 
         buffer += decoder.decode(value, { stream: true });
         const frames = buffer.split("\n\n");
@@ -122,6 +140,7 @@ export function TargetsChatWorkspace({
 
           const event = JSON.parse(jsonText) as
             | { type: "token"; text: string }
+            | { type: "status"; status: "generating_targets" }
             | { type: "targets"; payload: TargetGenerationPayload; source: "ai" | "heuristic"; warning?: string }
             | { type: "error"; message: string }
             | { type: "done" };
@@ -133,22 +152,53 @@ export function TargetsChatWorkspace({
               next[next.length - 1] = { role: "assistant", content: assistantText };
               return next;
             });
+          } else if (event.type === "status" && event.status === "generating_targets") {
+            setIsGeneratingTargets(true);
           } else if (event.type === "targets") {
+            setIsGeneratingTargets(false);
             setPendingPreview({ source: event.source, payload: event.payload });
             if (event.warning) {
               setStreamError(event.warning);
             }
           } else if (event.type === "error") {
+            setIsGeneratingTargets(false);
             setStreamError(event.message);
           }
         }
       }
     } catch (error) {
-      if ((error as Error).name !== "AbortError") {
-        setStreamError(error instanceof Error ? error.message : tr(locale, "The chat request failed. Please try again.", "בקשת הצ'אט נכשלה. יש לנסות שוב."));
+      const isTimeout = (error as Error).name === "AbortError" && controller.signal.reason === "timeout";
+      const isUserAbort = (error as Error).name === "AbortError" && !isTimeout;
+
+      if (!isUserAbort) {
+        const isNetworkError = error instanceof TypeError;
+        const message = isTimeout
+          ? tr(
+              locale,
+              "This is taking longer than expected. If you're on a phone, make sure it's on the same Wi-Fi network as this computer — tap retry to try again.",
+              "זה לוקח יותר זמן מהצפוי. אם אתם משתמשים בטלפון, ודאו שהוא מחובר לאותה רשת Wi-Fi כמו המחשב הזה - יש ללחוץ על ניסיון חוזר.",
+            )
+          : isNetworkError
+            ? tr(
+                locale,
+                "Couldn't reach the server. If you're on a phone, make sure it's on the same Wi-Fi network as this computer, then retry.",
+                "לא ניתן להתחבר לשרת. אם אתם משתמשים בטלפון, ודאו שהוא מחובר לאותה רשת Wi-Fi כמו המחשב הזה, ולאחר מכן נסו שוב.",
+              )
+            : error instanceof Error
+              ? error.message
+              : tr(locale, "The chat request failed. Please try again.", "בקשת הצ'אט נכשלה. יש לנסות שוב.");
+
+        setStreamError(message);
+
+        if (!assistantText && !receivedAnything) {
+          setLastFailedMessage(trimmed);
+          setMessages((previous) => previous.slice(0, -1));
+        }
       }
     } finally {
+      clearTimeout(timeoutId!);
       setIsStreaming(false);
+      setIsGeneratingTargets(false);
       abortRef.current = null;
     }
   }
@@ -170,6 +220,16 @@ export function TargetsChatWorkspace({
             </span>
           ) : null}
         </div>
+
+        {isGeneratingTargets ? (
+          <div className="flex items-center gap-2 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800">
+            <svg className="h-4 w-4 shrink-0 animate-spin text-teal-700" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+            </svg>
+            <span>{tr(locale, "Updating your targets based on the reply above...", "מעדכן את היעדים שלך בהתאם לתשובה שלמעלה...")}</span>
+          </div>
+        ) : null}
 
         {pendingPreview ? (
           diffRows.length ? (
@@ -205,7 +265,15 @@ export function TargetsChatWorkspace({
       {isInputFocused ? (
         <div className="sticky top-0 z-10 -mx-1 mb-1 flex items-center justify-between rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-xs font-medium text-slate-700 shadow-sm backdrop-blur md:hidden">
           <span>{tr(locale, "Calories", "קלוריות")}: {displayedPayload.caloriesMin}–{displayedPayload.caloriesMax} kcal</span>
-          {pendingPreview ? (
+          {isGeneratingTargets ? (
+            <span className="flex items-center gap-1 rounded-full border border-teal-300 bg-teal-50 px-2 py-0.5 text-teal-700">
+              <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+              </svg>
+              {tr(locale, "Updating...", "מעדכן...")}
+            </span>
+          ) : pendingPreview ? (
             <span className="rounded-full border border-teal-300 bg-teal-50 px-2 py-0.5 text-teal-700">{tr(locale, "Preview ready", "תצוגה מקדימה מוכנה")}</span>
           ) : null}
         </div>
@@ -258,11 +326,33 @@ export function TargetsChatWorkspace({
                 </div>
               </div>
             ))}
+            {isGeneratingTargets ? (
+              <div className="flex justify-start">
+                <div className="flex items-center gap-2 rounded-2xl bg-slate-100 px-3 py-2 text-xs text-slate-600">
+                  <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                  </svg>
+                  {tr(locale, "Updating your targets...", "מעדכן את היעדים שלך...")}
+                </div>
+              </div>
+            ) : null}
             <div ref={messagesEndRef} />
           </div>
 
           {streamError ? (
-            <p className="border-t border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{streamError}</p>
+            <div className="flex items-center justify-between gap-2 border-t border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              <span>{streamError}</span>
+              {lastFailedMessage ? (
+                <button
+                  type="button"
+                  onClick={() => sendMessage(lastFailedMessage)}
+                  className="shrink-0 rounded-lg border border-rose-300 bg-white px-2 py-1 font-semibold text-rose-700 hover:bg-rose-100"
+                >
+                  {tr(locale, "Retry", "ניסיון חוזר")}
+                </button>
+              ) : null}
+            </div>
           ) : null}
 
           <form
