@@ -304,13 +304,11 @@ export async function saveDailyReportAction(
     return { error: "Please complete profile details before logging daily reports." };
   }
 
-  const { data: activeGoal } = await supabase
-    .from("user_goals")
+  const { data: activeTargetProfile } = await supabase
+    .from("user_target_profiles")
     .select("id")
     .eq("user_id", user.id)
     .eq("is_active", true)
-    .order("created_at", { ascending: false })
-    .limit(1)
     .maybeSingle();
 
   let parsedResult: DailyParseResult;
@@ -516,7 +514,7 @@ export async function saveDailyReportAction(
 
   const baseInsertPayload = {
     user_id: user.id,
-    goal_id: activeGoal?.id ?? null,
+    target_profile_id: activeTargetProfile?.id ?? null,
     raw_report_text: reportText,
     report_at: reportAt,
     status,
@@ -583,8 +581,7 @@ export async function saveDailyReportAction(
   }
 
   revalidatePath("/app/daily-report");
-  revalidatePath("/app/goals");
-  revalidatePath("/app/goals/progress");
+  revalidatePath("/app/targets");
 
   const modeLabel = modeUsedForReport === "ai" ? "AI" : modeUsedForReport === "ai_photo" ? "AI photo" : "heuristic";
   const weightNotice = reportedWeightNotPersisted
@@ -828,8 +825,7 @@ export async function retryDailyReportWithAiAction(formData: FormData): Promise<
   }
 
   revalidatePath("/app/daily-report");
-  revalidatePath("/app/goals");
-  revalidatePath("/app/goals/progress");
+  revalidatePath("/app/targets");
 
   redirect(buildDailyReportRedirectPath({ notice: "AI retry completed. Please confirm the updated entry before it affects plan comparison." }));
 }
@@ -869,8 +865,7 @@ export async function confirmDailyReportAction(formData: FormData): Promise<void
   }
 
   revalidatePath("/app/daily-report");
-  revalidatePath("/app/goals");
-  revalidatePath("/app/goals/progress");
+  revalidatePath("/app/targets");
 }
 
 export async function deleteDailyReportAction(formData: FormData): Promise<void> {
@@ -904,8 +899,7 @@ export async function deleteDailyReportAction(formData: FormData): Promise<void>
   }
 
   revalidatePath("/app/daily-report");
-  revalidatePath("/app/goals");
-  revalidatePath("/app/goals/progress");
+  revalidatePath("/app/targets");
 }
 
 export async function addReportToDefaultsAction(formData: FormData): Promise<void> {
