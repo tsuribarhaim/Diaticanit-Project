@@ -56,3 +56,5 @@ From Project root:
 ## Versioning
 - Tag stable tester release as v1.0.0.
 - Continue feature work on 1.1 from main.
+- `NEXT_PUBLIC_APP_VERSION` is set independently in each workspace's `apps/web/.env.local` (not committed, not shared) and only takes effect on staging after a rebuild (`next start` bakes it in at build time; dev's `next dev` picks it up live). Every time dev work is promoted to staging, update staging's `NEXT_PUBLIC_APP_VERSION` to match the dev version at the point being promoted (and bump dev's own version afterward if starting new work), so the on-screen badge always reflects what's actually deployed there. Tag the dev commit being promoted (e.g. `v1.1.2`) so there's a concrete rollback target if the new work needs to be reverted.
+- 2026-08-27: discovered staging had been showing 1.1.1 while running code already promoted through dev's 1.1.2 (the Dynamic Target-Setting Engine, Phases 1-3) - the two `.env.local` version strings had drifted because the version wasn't synced during promotion. Fixed by updating staging's version and rebuilding; the rule above is to prevent recurrence.
