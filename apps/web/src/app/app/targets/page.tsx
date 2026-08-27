@@ -1,16 +1,16 @@
 import { redirect } from "next/navigation";
 
 import { generateTargetsPayload, hasAiTargetsConsent } from "@/app/app/targets/actions";
-import { TargetProfileView } from "@/components/target-profile-view";
-import { TargetsAdjustForm } from "@/components/targets-adjust-form";
-import { TargetsGenerateForm } from "@/components/targets-generate-form";
+import { TargetsWorkspace } from "@/components/targets-workspace";
 import { GuardedLink, UnsavedPreviewProvider } from "@/components/unsaved-preview-context";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { formatDateTimeForLocale, normalizeLocale, tr } from "@/lib/locale";
 import { createClient } from "@/lib/supabase/server";
 import {
+  computeProfileDiff,
   estimateMaintenanceCalories,
   mapTargetProfileRowToPayload,
+  parseProfileSnapshot,
   TARGET_PROFILE_COLUMNS,
   type ProfileForTargets,
 } from "@/lib/targets";
@@ -80,6 +80,12 @@ export default async function TargetsPage() {
 
   let initialPreview: { goalText: string; source: "ai" | "heuristic"; payload: ReturnType<typeof mapTargetProfileRowToPayload> } | null = null;
   let initialWarning: string | undefined;
+  let profileChanges: ReturnType<typeof computeProfileDiff> | undefined;
+
+  if (activeTargetProfile) {
+    const snapshot = parseProfileSnapshot(activeTargetProfile.profile_snapshot);
+    profileChanges = snapshot ? computeProfileDiff(snapshot, profile, locale) : undefined;
+  }
 
   if (!activeTargetProfile) {
     const aiConfig = getAiExtractionConfig();
@@ -97,7 +103,7 @@ export default async function TargetsPage() {
 
   return (
     <UnsavedPreviewProvider>
-    <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col px-6 py-10">
+    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 py-10">
       <section className="rounded-2xl border border-slate-200 bg-white p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -133,12 +139,15 @@ export default async function TargetsPage() {
                 "להלן תכנית בסיס מומלצת בהתאם לפרופיל שלך. ניתן לתאר מטרה ספציפית למטה וליצור מחדש כדי לחדד אותה, ולאחר מכן לאשר וננעל אותה.",
               )}
             </p>
-            <TargetsGenerateForm
-              locale={locale}
-              maintenanceCalories={maintenanceCalories}
-              initialPreview={initialPreview ?? undefined}
-              initialWarning={initialWarning}
-            />
+            <div className="mt-5">
+              <TargetsWorkspace
+                locale={locale}
+                mode="initial"
+                maintenanceCalories={maintenanceCalories}
+                initialPreview={initialPreview ?? undefined}
+                initialWarning={initialWarning}
+              />
+            </div>
           </>
         ) : (
           <div className="mt-5 space-y-4">
@@ -157,12 +166,6 @@ export default async function TargetsPage() {
               </p>
             </div>
 
-            <TargetProfileView
-              payload={mapTargetProfileRowToPayload(activeTargetProfile)}
-              locale={locale}
-              maintenanceCalories={maintenanceCalories}
-            />
-
             <p className="text-xs text-slate-500">
               {tr(
                 locale,
@@ -171,11 +174,13 @@ export default async function TargetsPage() {
               )}
             </p>
 
-            <TargetsAdjustForm
+            <TargetsWorkspace
               key={activeTargetProfile.id}
               locale={locale}
+              mode="adjust"
               maintenanceCalories={maintenanceCalories}
               currentPayload={mapTargetProfileRowToPayload(activeTargetProfile)}
+              profileChanges={profileChanges}
             />
           </div>
         )}

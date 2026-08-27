@@ -1,13 +1,13 @@
 import { z } from "zod";
 
 import type { AppLocale } from "@/lib/locale";
-import { tr } from "@/lib/locale";
+import { formatNumberForLocale, tr } from "@/lib/locale";
 import { activityLevelOptions } from "@/lib/profile";
 
 /** Column list for selecting a full `user_target_profiles` row, shared by
  * every query site so `mapTargetProfileRowToPayload` always gets what it needs. */
 export const TARGET_PROFILE_COLUMNS =
-  "id, raw_goal_text, goal_type, target_weight_kg, duration_days, blood_balance_focus, sleep_focus, calories_min, calories_max, protein_min_g, protein_max_g, carbs_min_g, carbs_max_g, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, sodium_min_mg, sodium_max_mg, added_sugar_min_g, added_sugar_max_g, water_min_ml, water_max_ml, potassium_min_mg, potassium_max_mg, magnesium_min_mg, magnesium_max_mg, calcium_min_mg, calcium_max_mg, iron_min_mg, iron_max_mg, zinc_min_mg, zinc_max_mg, vit_c_min_mg, vit_c_max_mg, vit_b12_min_mcg, vit_b12_max_mcg, vit_d_min_mcg, vit_d_max_mcg, sat_fat_min_g, sat_fat_max_g, omega3_min_g, omega3_max_g, exercise_targets, habits_do, habits_dont, ai_rationale_explanation, translation_confidence, analysis_source, sys_start_date";
+  "id, raw_goal_text, goal_type, target_weight_kg, duration_days, blood_balance_focus, sleep_focus, calories_min, calories_max, protein_min_g, protein_max_g, carbs_min_g, carbs_max_g, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, sodium_min_mg, sodium_max_mg, added_sugar_min_g, added_sugar_max_g, water_min_ml, water_max_ml, potassium_min_mg, potassium_max_mg, magnesium_min_mg, magnesium_max_mg, calcium_min_mg, calcium_max_mg, iron_min_mg, iron_max_mg, zinc_min_mg, zinc_max_mg, vit_c_min_mg, vit_c_max_mg, vit_b12_min_mcg, vit_b12_max_mcg, vit_d_min_mcg, vit_d_max_mcg, sat_fat_min_g, sat_fat_max_g, omega3_min_g, omega3_max_g, exercise_targets, habits_do, habits_dont, ai_rationale_explanation, translation_confidence, analysis_source, sys_start_date, profile_snapshot";
 
 export const targetGoalTypes = ["weight_loss", "weight_gain", "maintain", "general"] as const;
 export type TargetGoalType = (typeof targetGoalTypes)[number];
@@ -893,4 +893,108 @@ export function mapTargetProfileRowToPayload(row: TargetProfileDbRow): TargetGen
     confidence: toNum(row.translation_confidence, 0.5),
     assumptions: [],
   };
+}
+
+// ---- Profile staleness: has the live profile drifted from the snapshot
+// taken when the active targets were locked? ----
+
+/** Safely parses the `profile_snapshot` jsonb column back into a
+ * `ProfileForTargets`. Returns null for a missing/empty/malformed snapshot
+ * (e.g. rows locked before this column existed), which callers should treat
+ * as "nothing to compare against" rather than a false staleness signal. */
+export function parseProfileSnapshot(value: unknown): ProfileForTargets | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.weight_kg !== "number" && typeof record.age !== "number") return null;
+
+  return {
+    age: Number(record.age ?? 0),
+    gender: (record.gender as string) ?? null,
+    biological_sex: (record.biological_sex as string) ?? null,
+    height_cm: Number(record.height_cm ?? 0),
+    weight_kg: Number(record.weight_kg ?? 0),
+    activity_level: (record.activity_level as ProfileForTargets["activity_level"]) ?? "sedentary",
+    allergies: Array.isArray(record.allergies) ? (record.allergies as string[]) : [],
+    medical_conditions: Array.isArray(record.medical_conditions) ? (record.medical_conditions as string[]) : [],
+    medical_conditions_details: (record.medical_conditions_details as string) ?? null,
+    regular_medications_details: (record.regular_medications_details as string) ?? null,
+    dietary_preference: (record.dietary_preference as string) ?? null,
+    exercise_modalities: Array.isArray(record.exercise_modalities) ? (record.exercise_modalities as string[]) : [],
+    exercise_schedule_by_modality:
+      (record.exercise_schedule_by_modality as ProfileForTargets["exercise_schedule_by_modality"]) ?? null,
+    habits: Array.isArray(record.habits) ? (record.habits as string[]) : [],
+    pregnancy_lactation_status: (record.pregnancy_lactation_status as string) ?? null,
+    hot_climate_or_heavy_sweating: Boolean(record.hot_climate_or_heavy_sweating),
+  };
+}
+
+export type ProfileDiffRow = { labelEn: string; labelHe: string; before: string; after: string };
+
+function joinedOrNone(values: string[], locale: AppLocale): string {
+  return values.length ? [...values].sort().join(", ") : tr(locale, "None", "ללא");
+}
+
+/** Compares the target-relevant fields of two profile snapshots and returns
+ * only the ones that changed, for the "your profile changed" banner. */
+export function computeProfileDiff(before: ProfileForTargets, after: ProfileForTargets, locale: AppLocale): ProfileDiffRow[] {
+  const rows: ProfileDiffRow[] = [];
+
+  function addIfChanged(labelEn: string, labelHe: string, beforeText: string, afterText: string) {
+    if (beforeText === afterText) return;
+    rows.push({ labelEn, labelHe, before: beforeText, after: afterText });
+  }
+
+  addIfChanged("Age", "גיל", String(before.age), String(after.age));
+  addIfChanged(
+    "Weight",
+    "משקל",
+    `${formatNumberForLocale(before.weight_kg, locale, { maximumFractionDigits: 1 })} kg`,
+    `${formatNumberForLocale(after.weight_kg, locale, { maximumFractionDigits: 1 })} kg`,
+  );
+  addIfChanged("Activity level", "רמת פעילות", before.activity_level, after.activity_level);
+  addIfChanged(
+    "Medical conditions",
+    "מצבים רפואיים",
+    joinedOrNone(before.medical_conditions, locale),
+    joinedOrNone(after.medical_conditions, locale),
+  );
+  addIfChanged(
+    "Medical condition details",
+    "פרטי מצב רפואי",
+    before.medical_conditions_details ?? tr(locale, "None", "ללא"),
+    after.medical_conditions_details ?? tr(locale, "None", "ללא"),
+  );
+  addIfChanged(
+    "Medications",
+    "תרופות",
+    before.regular_medications_details ?? tr(locale, "None", "ללא"),
+    after.regular_medications_details ?? tr(locale, "None", "ללא"),
+  );
+  addIfChanged("Allergies", "אלרגיות", joinedOrNone(before.allergies, locale), joinedOrNone(after.allergies, locale));
+  addIfChanged(
+    "Dietary preference",
+    "העדפה תזונתית",
+    before.dietary_preference ?? tr(locale, "None", "ללא"),
+    after.dietary_preference ?? tr(locale, "None", "ללא"),
+  );
+  addIfChanged(
+    "Exercise modalities",
+    "סוגי פעילות",
+    joinedOrNone(before.exercise_modalities, locale),
+    joinedOrNone(after.exercise_modalities, locale),
+  );
+  addIfChanged(
+    "Pregnancy / lactation status",
+    "סטטוס היריון / הנקה",
+    before.pregnancy_lactation_status ?? tr(locale, "None", "ללא"),
+    after.pregnancy_lactation_status ?? tr(locale, "None", "ללא"),
+  );
+  addIfChanged(
+    "Hot climate / heavy sweating",
+    "אקלים חם / הזעה מרובה",
+    before.hot_climate_or_heavy_sweating ? tr(locale, "Yes", "כן") : tr(locale, "No", "לא"),
+    after.hot_climate_or_heavy_sweating ? tr(locale, "Yes", "כן") : tr(locale, "No", "לא"),
+  );
+
+  return rows;
 }

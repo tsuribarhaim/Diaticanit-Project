@@ -220,6 +220,18 @@ export async function lockTargetsAction(
     return { error: "The generated target data was invalid. Please generate targets again." };
   }
 
+  // Snapshot the target-relevant profile fields as of right now, so a future
+  // visit can detect drift (e.g. a newly recorded medical condition) and
+  // prompt the user to recalculate.
+  const { data: profileRowForSnapshot } = await supabase
+    .from("user_profile")
+    .select(
+      "age, gender, biological_sex, height_cm, weight_kg, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_schedule_by_modality, habits, pregnancy_lactation_status, hot_climate_or_heavy_sweating",
+    )
+    .eq("user_id", user.id)
+    .maybeSingle();
+  const profileSnapshot = profileRowForSnapshot ? toProfileForTargets(profileRowForSnapshot) : {};
+
   const { error: deactivateError } = await supabase
     .from("user_target_profiles")
     .update({ is_active: false, sys_end_date: new Date().toISOString() })
@@ -305,6 +317,7 @@ export async function lockTargetsAction(
     requires_confirmation: source === "heuristic",
     analysis_source: source,
     generator_version: "targets-v1",
+    profile_snapshot: profileSnapshot,
   });
 
   if (insertError) {

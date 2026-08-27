@@ -142,7 +142,7 @@ export function TargetProfileView({
         <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
           {tr(locale, "Primary targets", "יעדים עיקריים")}
         </h3>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
           {metricRowsFromPayload(payload, primaryMetricIds).map((row) => (
             <MetricRowView key={row.id} row={row} locale={locale} />
           ))}
@@ -153,7 +153,7 @@ export function TargetProfileView({
         <summary className="cursor-pointer text-sm font-semibold text-teal-700">
           {tr(locale, "View Full Micronutrients Breakdown", "הצגת פירוט מלא של מיקרו-נוטריאנטים")}
         </summary>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
           {metricRowsFromPayload(payload, secondaryMetricIds).map((row) => (
             <MetricRowView key={row.id} row={row} locale={locale} />
           ))}
