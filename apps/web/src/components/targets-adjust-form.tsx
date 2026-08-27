@@ -115,32 +115,6 @@ export function TargetsAdjustForm({
 
   return (
     <div className="mt-6 space-y-4 border-t border-slate-200 pt-6">
-      <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-        {tr(locale, "Request an adjustment", "בקשת שינוי")}
-      </h3>
-      <form action={generateFormAction} className="space-y-3">
-        <textarea
-          name="goal_text"
-          maxLength={500}
-          rows={3}
-          placeholder={tr(
-            locale,
-            "Example: reduce my workout days to 2 times a week.",
-            "דוגמה: להפחית את ימי האימון שלי לפעמיים בשבוע.",
-          )}
-          className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
-        />
-
-        {generateState.error ? (
-          <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{generateState.error}</p>
-        ) : null}
-        {generateState.warning ? (
-          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{generateState.warning}</p>
-        ) : null}
-
-        <AdjustSubmitButton locale={locale} />
-      </form>
-
       {generateState.preview ? (
         <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -182,6 +156,32 @@ export function TargetsAdjustForm({
           </form>
         </div>
       ) : null}
+
+      <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+        {tr(locale, "Request an adjustment", "בקשת שינוי")}
+      </h3>
+      <form action={generateFormAction} className="space-y-3">
+        <textarea
+          name="goal_text"
+          maxLength={500}
+          rows={3}
+          placeholder={tr(
+            locale,
+            "Example: reduce my workout days to 2 times a week.",
+            "דוגמה: להפחית את ימי האימון שלי לפעמיים בשבוע.",
+          )}
+          className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
+        />
+
+        {generateState.error ? (
+          <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{generateState.error}</p>
+        ) : null}
+        {generateState.warning ? (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{generateState.warning}</p>
+        ) : null}
+
+        <AdjustSubmitButton locale={locale} />
+      </form>
     </div>
   );
 }

@@ -83,6 +83,31 @@ export function TargetsGenerateForm({
 
   return (
     <div className="mt-5 space-y-6">
+      {generateState.preview ? (
+        <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-slate-900">{tr(locale, "Preview", "תצוגה מקדימה")}</p>
+            <span className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">
+              {generateState.preview.source === "ai" ? "AI" : tr(locale, "Heuristic fallback", "גיבוי יוריסטי")}
+            </span>
+          </div>
+
+          <TargetProfileView payload={generateState.preview.payload} locale={locale} maintenanceCalories={maintenanceCalories} />
+
+          <form action={lockFormAction} className="space-y-2">
+            <input type="hidden" name="goal_text" value={generateState.preview.goalText} />
+            <input type="hidden" name="source" value={generateState.preview.source} />
+            <input type="hidden" name="payload_json" value={JSON.stringify(generateState.preview.payload)} />
+
+            {lockState.error ? (
+              <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{lockState.error}</p>
+            ) : null}
+
+            <LockSubmitButton locale={locale} />
+          </form>
+        </div>
+      ) : null}
+
       <form action={generateFormAction} className="space-y-3">
         <label className="block">
           <span className="mb-1 block text-sm font-medium text-slate-700">
@@ -111,31 +136,6 @@ export function TargetsGenerateForm({
 
         <GenerateSubmitButton locale={locale} />
       </form>
-
-      {generateState.preview ? (
-        <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm font-semibold text-slate-900">{tr(locale, "Preview", "תצוגה מקדימה")}</p>
-            <span className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">
-              {generateState.preview.source === "ai" ? "AI" : tr(locale, "Heuristic fallback", "גיבוי יוריסטי")}
-            </span>
-          </div>
-
-          <TargetProfileView payload={generateState.preview.payload} locale={locale} maintenanceCalories={maintenanceCalories} />
-
-          <form action={lockFormAction} className="space-y-2">
-            <input type="hidden" name="goal_text" value={generateState.preview.goalText} />
-            <input type="hidden" name="source" value={generateState.preview.source} />
-            <input type="hidden" name="payload_json" value={JSON.stringify(generateState.preview.payload)} />
-
-            {lockState.error ? (
-              <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{lockState.error}</p>
-            ) : null}
-
-            <LockSubmitButton locale={locale} />
-          </form>
-        </div>
-      ) : null}
     </div>
   );
 }
