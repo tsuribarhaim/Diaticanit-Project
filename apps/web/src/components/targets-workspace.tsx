@@ -6,8 +6,10 @@ import { useRouter } from "next/navigation";
 
 import { generateTargetsAction, lockTargetsAction, type TargetsActionState } from "@/app/app/targets/actions";
 import { TargetProfileView } from "@/components/target-profile-view";
+import { TargetsDiffTable } from "@/components/targets-diff-table";
 import { useUnsavedPreview } from "@/components/unsaved-preview-context";
-import { formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
+import { tr, type AppLocale } from "@/lib/locale";
+import { computeTargetsDiff } from "@/lib/targets-diff";
 import type { ProfileDiffRow, TargetGenerationPayload } from "@/lib/targets";
 
 const GENERATE_FORM_ID = "targets-generate-form";
@@ -30,7 +32,7 @@ function GenerateSubmitButton({ locale, mode }: { locale: AppLocale; mode: "init
   );
 }
 
-function LockSubmitButton({ locale, disabled }: { locale: AppLocale; disabled?: boolean }) {
+export function LockSubmitButton({ locale, disabled }: { locale: AppLocale; disabled?: boolean }) {
   const { pending } = useFormStatus();
   const isDisabled = pending || disabled;
 
@@ -46,111 +48,6 @@ function LockSubmitButton({ locale, disabled }: { locale: AppLocale; disabled?: 
       {pending ? tr(locale, "Locking in...", "נועל...") : tr(locale, "Approve & Lock Daily Targets", "אישור ונעילת היעדים היומיים")}
     </button>
   );
-}
-
-type MetricDiffRow = { labelEn: string; labelHe: string; before: string; after: string };
-
-const NUTRIENT_DIFF_FIELDS: Array<{
-  labelEn: string;
-  labelHe: string;
-  minKey: keyof TargetGenerationPayload;
-  maxKey: keyof TargetGenerationPayload;
-  unit: string;
-}> = [
-  { labelEn: "Calories", labelHe: "קלוריות", minKey: "caloriesMin", maxKey: "caloriesMax", unit: "kcal" },
-  { labelEn: "Protein", labelHe: "חלבון", minKey: "proteinMinG", maxKey: "proteinMaxG", unit: "g" },
-  { labelEn: "Carbohydrates", labelHe: "פחמימות", minKey: "carbsMinG", maxKey: "carbsMaxG", unit: "g" },
-  { labelEn: "Fats", labelHe: "שומנים", minKey: "fatsMinG", maxKey: "fatsMaxG", unit: "g" },
-  { labelEn: "Dietary Fiber", labelHe: "סיבים תזונתיים", minKey: "fiberMinG", maxKey: "fiberMaxG", unit: "g" },
-  { labelEn: "Sodium", labelHe: "נתרן", minKey: "sodiumMinMg", maxKey: "sodiumMaxMg", unit: "mg" },
-  { labelEn: "Added Sugars", labelHe: "סוכרים מוספים", minKey: "addedSugarMinG", maxKey: "addedSugarMaxG", unit: "g" },
-  { labelEn: "Fluid / Water", labelHe: "נוזלים", minKey: "waterMinMl", maxKey: "waterMaxMl", unit: "ml" },
-  { labelEn: "Potassium", labelHe: "אשלגן", minKey: "potassiumMinMg", maxKey: "potassiumMaxMg", unit: "mg" },
-  { labelEn: "Magnesium", labelHe: "מגנזיום", minKey: "magnesiumMinMg", maxKey: "magnesiumMaxMg", unit: "mg" },
-  { labelEn: "Calcium", labelHe: "סידן", minKey: "calciumMinMg", maxKey: "calciumMaxMg", unit: "mg" },
-  { labelEn: "Iron", labelHe: "ברזל", minKey: "ironMinMg", maxKey: "ironMaxMg", unit: "mg" },
-  { labelEn: "Zinc", labelHe: "אבץ", minKey: "zincMinMg", maxKey: "zincMaxMg", unit: "mg" },
-  { labelEn: "Vitamin C", labelHe: "ויטמין C", minKey: "vitCMinMg", maxKey: "vitCMaxMg", unit: "mg" },
-  { labelEn: "Vitamin B12", labelHe: "ויטמין B12", minKey: "vitB12MinMcg", maxKey: "vitB12MaxMcg", unit: "mcg" },
-  { labelEn: "Vitamin D", labelHe: "ויטמין D", minKey: "vitDMinMcg", maxKey: "vitDMaxMcg", unit: "mcg" },
-  { labelEn: "Saturated Fat", labelHe: "שומן רווי", minKey: "satFatMinG", maxKey: "satFatMaxG", unit: "g" },
-  { labelEn: "Omega-3", labelHe: "אומגה 3", minKey: "omega3MinG", maxKey: "omega3MaxG", unit: "g" },
-];
-
-function exerciseSummary(payload: TargetGenerationPayload): string {
-  return payload.exerciseTargets
-    .map((entry) => `${entry.modality} ${entry.frequencyPerWeek}x/${entry.durationMinutesPerSession}min`)
-    .sort()
-    .join(", ");
-}
-
-function habitsSummary(payload: TargetGenerationPayload): string {
-  return [...payload.habitsDo, ...payload.habitsDont]
-    .map((habit) => habit.habitInstruction)
-    .sort()
-    .join(" | ");
-}
-
-/** Compares every quantifiable field (all nutrient ranges, exercise plan,
- * habits, goal metadata) between two target payloads - deliberately excludes
- * free-text fields that can vary cosmetically (aiRationaleExplanation,
- * confidence, assumptions) even when the actual targets are unchanged. */
-function computeTargetsDiff(before: TargetGenerationPayload, after: TargetGenerationPayload, locale: AppLocale): MetricDiffRow[] {
-  const rows: MetricDiffRow[] = [];
-  const n = (value: number) => formatNumberForLocale(value, locale, { maximumFractionDigits: 1 });
-
-  for (const field of NUTRIENT_DIFF_FIELDS) {
-    const beforeMin = before[field.minKey] as number;
-    const beforeMax = before[field.maxKey] as number;
-    const afterMin = after[field.minKey] as number;
-    const afterMax = after[field.maxKey] as number;
-    if (beforeMin === afterMin && beforeMax === afterMax) continue;
-    rows.push({
-      labelEn: field.labelEn,
-      labelHe: field.labelHe,
-      before: `${n(beforeMin)}–${n(beforeMax)} ${field.unit}`,
-      after: `${n(afterMin)}–${n(afterMax)} ${field.unit}`,
-    });
-  }
-
-  const beforeExercise = exerciseSummary(before);
-  const afterExercise = exerciseSummary(after);
-  if (beforeExercise !== afterExercise) {
-    rows.push({ labelEn: "Exercise plan", labelHe: "תכנית פעילות", before: beforeExercise, after: afterExercise });
-  }
-
-  const beforeHabits = habitsSummary(before);
-  const afterHabits = habitsSummary(after);
-  if (beforeHabits !== afterHabits) {
-    rows.push({
-      labelEn: "Habits",
-      labelHe: "הרגלים",
-      before: tr(locale, `${before.habitsDo.length + before.habitsDont.length} habits`, `${before.habitsDo.length + before.habitsDont.length} הרגלים`),
-      after: tr(locale, `${after.habitsDo.length + after.habitsDont.length} habits (changed)`, `${after.habitsDo.length + after.habitsDont.length} הרגלים (השתנו)`),
-    });
-  }
-
-  if (before.goalType !== after.goalType) {
-    rows.push({ labelEn: "Goal type", labelHe: "סוג מטרה", before: before.goalType, after: after.goalType });
-  }
-  if (before.targetWeightKg !== after.targetWeightKg) {
-    rows.push({
-      labelEn: "Target weight",
-      labelHe: "משקל יעד",
-      before: before.targetWeightKg === null ? tr(locale, "None", "ללא") : `${n(before.targetWeightKg)} kg`,
-      after: after.targetWeightKg === null ? tr(locale, "None", "ללא") : `${n(after.targetWeightKg)} kg`,
-    });
-  }
-  if (before.durationDays !== after.durationDays) {
-    rows.push({
-      labelEn: "Duration",
-      labelHe: "משך",
-      before: before.durationDays === null ? tr(locale, "None", "ללא") : `${before.durationDays} ${tr(locale, "days", "ימים")}`,
-      after: after.durationDays === null ? tr(locale, "None", "ללא") : `${after.durationDays} ${tr(locale, "days", "ימים")}`,
-    });
-  }
-
-  return rows;
 }
 
 export function TargetsWorkspace({
@@ -224,16 +121,7 @@ export function TargetsWorkspace({
 
             {mode === "adjust" && pendingPreview ? (
               diffRows.length ? (
-                <div className="rounded-lg border border-teal-200 bg-teal-50 p-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-teal-800">{tr(locale, "What changed", "מה השתנה")}</p>
-                  <ul className="mt-2 space-y-1 text-sm text-teal-900">
-                    {diffRows.map((row) => (
-                      <li key={row.labelEn}>
-                        <span className="font-medium">{tr(locale, row.labelEn, row.labelHe)}:</span> {row.before} → {row.after}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+                <TargetsDiffTable rows={diffRows} locale={locale} />
               ) : (
                 <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
                   {tr(

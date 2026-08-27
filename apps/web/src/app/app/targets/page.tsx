@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { generateTargetsPayload, hasAiTargetsConsent } from "@/app/app/targets/actions";
+import { TargetsChatWorkspace } from "@/components/targets-chat-workspace";
 import { TargetsWorkspace } from "@/components/targets-workspace";
 import { GuardedLink, UnsavedPreviewProvider } from "@/components/unsaved-preview-context";
 import { getAiExtractionConfig } from "@/lib/ai/env";
@@ -92,15 +93,16 @@ export default async function TargetsPage() {
     }
   }
 
+  const aiConfig = getAiExtractionConfig();
+  const hasAiChatAvailable = aiConfig ? await hasAiTargetsConsent({ supabase, userId: user.id }) : false;
+
   if (!activeTargetProfile) {
-    const aiConfig = getAiExtractionConfig();
-    const hasConsent = aiConfig ? await hasAiTargetsConsent({ supabase, userId: user.id }) : false;
     const { payload, source, heuristicReason } = await generateTargetsPayload({
       goalText: "",
       profile,
       locale,
       aiConfig,
-      hasConsent,
+      hasConsent: hasAiChatAvailable,
     });
     initialPreview = { goalText: "", source, payload };
     initialWarning = source === "heuristic" ? heuristicReason ?? undefined : undefined;
@@ -189,14 +191,24 @@ export default async function TargetsPage() {
               </p>
             ) : null}
 
-            <TargetsWorkspace
-              key={activeTargetProfile.id}
-              locale={locale}
-              mode="adjust"
-              maintenanceCalories={maintenanceCalories}
-              currentPayload={mapTargetProfileRowToPayload(activeTargetProfile)}
-              profileChanges={profileChanges}
-            />
+            {hasAiChatAvailable ? (
+              <TargetsChatWorkspace
+                key={activeTargetProfile.id}
+                locale={locale}
+                maintenanceCalories={maintenanceCalories}
+                currentPayload={mapTargetProfileRowToPayload(activeTargetProfile)}
+                profileChanges={profileChanges}
+              />
+            ) : (
+              <TargetsWorkspace
+                key={activeTargetProfile.id}
+                locale={locale}
+                mode="adjust"
+                maintenanceCalories={maintenanceCalories}
+                currentPayload={mapTargetProfileRowToPayload(activeTargetProfile)}
+                profileChanges={profileChanges}
+              />
+            )}
           </div>
         )}
       </section>
