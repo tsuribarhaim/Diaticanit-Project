@@ -129,6 +129,8 @@ export function formatMeasurementUnit(unit: string, locale: AppLocale): string {
   if (token === "ml") return "מ\"ל";
   if (token === "l") return "ליטר";
   if (token === "min" || token === "minutes") return "דקות";
+  if (token === "mcg") return "מק\"ג";
+  if (token === "kcal") return "קק\"ל";
   return unit;
 }
 

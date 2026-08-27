@@ -83,13 +83,15 @@ export default async function DailyReportPage({
     ).data?.preferred_language,
   );
 
-  const { data: activeGoal } = await supabase
-    .from("user_goals")
-    .select("id, protein_target_g, hydration_target_l")
+  // Daily-report entries no longer compare against scalar targets; the active
+  // target profile stores min/max ranges instead. We compare against the
+  // minimum of each range here (protein_min_g / water_min_ml) as a reasonable
+  // "did you hit at least the floor" signal for this simple status badge.
+  const { data: activeTargetProfile } = await supabase
+    .from("user_target_profiles")
+    .select("id, protein_min_g, water_min_ml")
     .eq("user_id", user.id)
     .eq("is_active", true)
-    .order("created_at", { ascending: false })
-    .limit(1)
     .maybeSingle();
 
   let reportsError: Error | null = null;
@@ -213,11 +215,11 @@ export default async function DailyReportPage({
         ) : (
           <div className="mt-4 space-y-4">
             {reports.map((report) => {
-              const proteinStatus = activeGoal?.protein_target_g
-                ? compareRatio(Number(report.protein_g), Number(activeGoal.protein_target_g))
+              const proteinStatus = activeTargetProfile?.protein_min_g
+                ? compareRatio(Number(report.protein_g), Number(activeTargetProfile.protein_min_g))
                 : "yellow";
-              const hydrationTargetMl = activeGoal?.hydration_target_l
-                ? Number(activeGoal.hydration_target_l) * 1000
+              const hydrationTargetMl = activeTargetProfile?.water_min_ml
+                ? Number(activeTargetProfile.water_min_ml)
                 : 0;
               const hydrationStatus = hydrationTargetMl
                 ? compareRatio(Number(report.water_ml), hydrationTargetMl)
