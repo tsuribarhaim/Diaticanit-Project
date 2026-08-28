@@ -58,6 +58,7 @@ export function TargetsWorkspace({
   initialWarning,
   currentPayload,
   profileChanges,
+  firstName,
 }: {
   locale: AppLocale;
   maintenanceCalories: number;
@@ -66,6 +67,7 @@ export function TargetsWorkspace({
   initialWarning?: string;
   currentPayload?: TargetGenerationPayload;
   profileChanges?: ProfileDiffRow[];
+  firstName?: string | null;
 }) {
   const router = useRouter();
   const initialGenerateState: TargetsActionState = initialPreview
@@ -142,7 +144,7 @@ export function TargetsWorkspace({
               )
             ) : null}
 
-            <TargetProfileView payload={displayedPayload} locale={locale} maintenanceCalories={maintenanceCalories} />
+            <TargetProfileView payload={displayedPayload} locale={locale} maintenanceCalories={maintenanceCalories} firstName={firstName} />
 
             {pendingPreview ? (
               <form action={lockFormAction} className="space-y-2">

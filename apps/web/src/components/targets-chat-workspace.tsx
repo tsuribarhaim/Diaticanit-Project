@@ -49,11 +49,13 @@ export function TargetsChatWorkspace({
   maintenanceCalories,
   currentPayload,
   profileChanges,
+  firstName,
 }: {
   locale: AppLocale;
   maintenanceCalories: number;
   currentPayload: TargetGenerationPayload;
   profileChanges?: ProfileDiffRow[];
+  firstName?: string | null;
 }) {
   const router = useRouter();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -354,7 +356,7 @@ export function TargetsChatWorkspace({
           )
         ) : null}
 
-        <TargetProfileView payload={displayedPayload} locale={locale} maintenanceCalories={maintenanceCalories} />
+        <TargetProfileView payload={displayedPayload} locale={locale} maintenanceCalories={maintenanceCalories} firstName={firstName} />
 
         {pendingPreview ? (
           <form action={lockFormAction} className="space-y-2">

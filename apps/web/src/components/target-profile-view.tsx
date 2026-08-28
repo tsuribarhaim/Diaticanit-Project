@@ -122,18 +122,23 @@ export function TargetProfileView({
   payload,
   locale,
   maintenanceCalories,
+  firstName,
 }: {
   payload: TargetGenerationPayload;
   locale: AppLocale;
   maintenanceCalories: number;
+  firstName?: string | null;
 }) {
   const riskAlert = evaluateEnergyImbalanceRisk({ payload, maintenanceCalories, locale });
+  const userTargetsTitle = firstName
+    ? tr(locale, `${firstName}'s Targets`, `היעדים של ${firstName}`)
+    : tr(locale, "User Targets", "יעדי המשתמש");
 
   return (
     <div className="space-y-6">
       {payload.aiRationaleExplanation ? (
         <div className="rounded-xl border border-teal-200 bg-teal-50 p-4 text-sm text-teal-900">
-          <p className="font-semibold">{tr(locale, "Coaching explanation", "הסבר אימוני")}</p>
+          <p className="font-semibold">{tr(locale, "Description", "הסבר")}</p>
           <p className="mt-1">{payload.aiRationaleExplanation}</p>
         </div>
       ) : null}
@@ -202,7 +207,7 @@ export function TargetProfileView({
 
       {payload.userTargets.length ? (
         <div>
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tr(locale, "User Targets", "יעדי המשתמש")}</h3>
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{userTargetsTitle}</h3>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             {payload.userTargets.map((entry, index) => (
               <div

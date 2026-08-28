@@ -31,7 +31,7 @@ export default async function TargetsPage() {
   const { data: profileRow, error: profileError } = await supabase
     .from("user_profile")
     .select(
-      "age, gender, biological_sex, height_cm, weight_kg, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_schedule_by_modality, habits, pregnancy_lactation_status, hot_climate_or_heavy_sweating, preferred_language",
+      "first_name, age, gender, biological_sex, height_cm, weight_kg, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_schedule_by_modality, habits, pregnancy_lactation_status, hot_climate_or_heavy_sweating, preferred_language",
     )
     .eq("user_id", user.id)
     .maybeSingle();
@@ -148,6 +148,7 @@ export default async function TargetsPage() {
                 maintenanceCalories={maintenanceCalories}
                 initialPreview={initialPreview ?? undefined}
                 initialWarning={initialWarning}
+                firstName={profileRow.first_name ?? null}
               />
             </div>
           </>
@@ -193,6 +194,7 @@ export default async function TargetsPage() {
                 maintenanceCalories={maintenanceCalories}
                 currentPayload={mapTargetProfileRowToPayload(activeTargetProfile)}
                 profileChanges={profileChanges}
+                firstName={profileRow.first_name ?? null}
               />
             ) : (
               <TargetsWorkspace
@@ -202,6 +204,7 @@ export default async function TargetsPage() {
                 maintenanceCalories={maintenanceCalories}
                 currentPayload={mapTargetProfileRowToPayload(activeTargetProfile)}
                 profileChanges={profileChanges}
+                firstName={profileRow.first_name ?? null}
               />
             )}
           </div>
