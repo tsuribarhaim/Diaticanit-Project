@@ -712,6 +712,30 @@ export function generateHeuristicTargetProfileFromAnalysis({
   const { habitsDo, habitsDont } = buildHabits(profile, goalType, locale);
   const exerciseTargets = buildExerciseTargets(profile, goalType, locale);
 
+  let sodiumMinMg = 1500;
+  let sodiumMaxMg = 2300;
+  const addedSugarMinG = 0;
+  let addedSugarMaxG = 25;
+
+  if (profile.medical_conditions.includes("hypertension")) {
+    sodiumMinMg = 1200;
+    sodiumMaxMg = 1500;
+    assumptions.push(tr(
+      locale,
+      "Hypertension noted: sodium range tightened to a lower-sodium target (1,200-1,500 mg).",
+      "אותר יתר לחץ דם: טווח הנתרן הוקטן ליעד דל-נתרן (1,200-1,500 מ\"ג).",
+    ));
+  }
+
+  if (profile.medical_conditions.includes("diabetes")) {
+    addedSugarMaxG = 15;
+    assumptions.push(tr(
+      locale,
+      "Diabetes noted: added sugar ceiling lowered to support blood sugar stability.",
+      "אותרה סוכרת: תקרת הסוכר המוסף הופחתה לתמיכה ביציבות רמת הסוכר בדם.",
+    ));
+  }
+
   const aiRationaleExplanation = tr(
     locale,
     `These ranges are a general adult reference plan for a "${goalType.replace(/_/g, " ")}" goal, scaled to your weight, height, age, and activity level. They are informational only and not a substitute for personalized clinical or dietitian advice.`,
@@ -735,10 +759,10 @@ export function generateHeuristicTargetProfileFromAnalysis({
     fatsMaxG,
     fiberMinG: 28,
     fiberMaxG: 38,
-    sodiumMinMg: 1500,
-    sodiumMaxMg: 2300,
-    addedSugarMinG: 0,
-    addedSugarMaxG: 25,
+    sodiumMinMg,
+    sodiumMaxMg,
+    addedSugarMinG,
+    addedSugarMaxG,
     waterMinMl,
     waterMaxMl,
 
@@ -934,6 +958,17 @@ function joinedOrNone(values: string[], locale: AppLocale): string {
   return values.length ? [...values].sort().join(", ") : tr(locale, "None", "ללא");
 }
 
+function exerciseScheduleSummary(
+  schedule: ProfileForTargets["exercise_schedule_by_modality"],
+  locale: AppLocale,
+): string {
+  if (!schedule) return tr(locale, "None", "ללא");
+  const entries = Object.entries(schedule)
+    .map(([modality, value]) => `${modality} ${value.days_per_week}x/${value.minutes_per_session}min`)
+    .sort();
+  return entries.length ? entries.join(", ") : tr(locale, "None", "ללא");
+}
+
 /** Compares the target-relevant fields of two profile snapshots and returns
  * only the ones that changed, for the "your profile changed" banner. */
 export function computeProfileDiff(before: ProfileForTargets, after: ProfileForTargets, locale: AppLocale): ProfileDiffRow[] {
@@ -983,6 +1018,13 @@ export function computeProfileDiff(before: ProfileForTargets, after: ProfileForT
     joinedOrNone(before.exercise_modalities, locale),
     joinedOrNone(after.exercise_modalities, locale),
   );
+  addIfChanged(
+    "Exercise schedule",
+    "לו\"ז פעילות",
+    exerciseScheduleSummary(before.exercise_schedule_by_modality, locale),
+    exerciseScheduleSummary(after.exercise_schedule_by_modality, locale),
+  );
+  addIfChanged("Habits", "הרגלים", joinedOrNone(before.habits, locale), joinedOrNone(after.habits, locale));
   addIfChanged(
     "Pregnancy / lactation status",
     "סטטוס היריון / הנקה",

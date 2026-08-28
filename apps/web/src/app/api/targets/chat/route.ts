@@ -46,13 +46,14 @@ export async function POST(request: NextRequest) {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  let body: { message?: unknown; chatHistory?: unknown };
+  let body: { message?: unknown; chatHistory?: unknown; action?: unknown };
   try {
     body = await request.json();
   } catch {
     return new Response("Invalid request body", { status: 400 });
   }
 
+  const action = body.action === "update_targets" ? "update_targets" : "chat";
   const userMessage = typeof body.message === "string" ? body.message.trim().slice(0, 1000) : "";
   const chatHistory: ChatMessage[] = Array.isArray(body.chatHistory)
     ? body.chatHistory
@@ -63,8 +64,12 @@ export async function POST(request: NextRequest) {
         .slice(-20)
     : [];
 
-  if (!userMessage) {
+  if (action === "chat" && !userMessage) {
     return new Response("Message is required", { status: 400 });
+  }
+
+  if (action === "update_targets" && chatHistory.length === 0) {
+    return new Response("Chat history is required to update targets", { status: 400 });
   }
 
   const aiConfig = getAiExtractionConfig();
@@ -104,6 +109,49 @@ export async function POST(request: NextRequest) {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
+        if (action === "update_targets") {
+          const conversationText = chatHistory
+            .map((entry) => `${entry.role === "user" ? "User" : "Assistant"}: ${entry.content}`)
+            .join("\n");
+          const goalText = `Based on the following conversation with the user, update their daily targets accordingly:\n\n${conversationText}`;
+
+          controller.enqueue(sseEvent({ type: "status", status: "generating_targets" }));
+
+          let targetsPayload;
+          let source: "ai" | "heuristic" = "heuristic";
+          let warning: string | undefined;
+
+          try {
+            const result = await generateTargetsPayload({
+              goalText,
+              profile,
+              locale,
+              aiConfig,
+              hasConsent,
+              currentTargets,
+            });
+            targetsPayload = result.payload;
+            source = result.source;
+            warning = result.heuristicReason ?? undefined;
+          } catch (error) {
+            logServerError("targets.chat", "targets_generation_failed", {
+              userId: user.id,
+              error: error instanceof Error ? error.message : "Unknown error",
+            });
+            controller.enqueue(
+              sseEvent({ type: "error", message: "Could not update your targets. Please try again." }),
+            );
+            controller.enqueue(sseEvent({ type: "done" }));
+            controller.close();
+            return;
+          }
+
+          controller.enqueue(sseEvent({ type: "targets", payload: targetsPayload, source, warning }));
+          controller.enqueue(sseEvent({ type: "done" }));
+          controller.close();
+          return;
+        }
+
         const upstream = await openChatReplyStream({
           config: aiConfig,
           locale,
@@ -150,38 +198,6 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        controller.enqueue(sseEvent({ type: "status", status: "generating_targets" }));
-
-        let targetsPayload;
-        let source: "ai" | "heuristic" = "heuristic";
-        let warning: string | undefined;
-
-        try {
-          const result = await generateTargetsPayload({
-            goalText: userMessage,
-            profile,
-            locale,
-            aiConfig,
-            hasConsent,
-            currentTargets,
-          });
-          targetsPayload = result.payload;
-          source = result.source;
-          warning = result.heuristicReason ?? undefined;
-        } catch (error) {
-          logServerError("targets.chat", "targets_generation_failed", {
-            userId: user.id,
-            error: error instanceof Error ? error.message : "Unknown error",
-          });
-          controller.enqueue(
-            sseEvent({ type: "error", message: "Could not recalculate your targets. Please try again." }),
-          );
-          controller.enqueue(sseEvent({ type: "done" }));
-          controller.close();
-          return;
-        }
-
-        controller.enqueue(sseEvent({ type: "targets", payload: targetsPayload, source, warning }));
         controller.enqueue(sseEvent({ type: "done" }));
         controller.close();
       } catch (error) {

@@ -3,7 +3,7 @@
 import { useActionState, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { lockTargetsAction, type TargetsActionState } from "@/app/app/targets/actions";
+import { dismissProfileChangeAction, lockTargetsAction, type TargetsActionState } from "@/app/app/targets/actions";
 import { LockSubmitButton } from "@/components/targets-workspace";
 import { TargetProfileView } from "@/components/target-profile-view";
 import { TargetsDiffTable } from "@/components/targets-diff-table";
@@ -13,8 +13,23 @@ import { computeTargetsDiff } from "@/lib/targets-diff";
 import type { ProfileDiffRow, TargetGenerationPayload } from "@/lib/targets";
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
+type SseEvent =
+  | { type: "token"; text: string }
+  | { type: "status"; status: "generating_targets" }
+  | { type: "targets"; payload: TargetGenerationPayload; source: "ai" | "heuristic"; warning?: string }
+  | { type: "error"; message: string }
+  | { type: "done" };
 
 const STREAM_INACTIVITY_TIMEOUT_MS = 20000;
+
+function Spinner({ className }: { className: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+    </svg>
+  );
+}
 
 function ChatSendButton({ locale, disabled }: { locale: AppLocale; disabled: boolean }) {
   return (
@@ -46,9 +61,12 @@ export function TargetsChatWorkspace({
   const [isStreaming, setIsStreaming] = useState(false);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
-  const [lastFailedMessage, setLastFailedMessage] = useState<string | null>(null);
+  const [retryAction, setRetryAction] = useState<(() => void) | null>(null);
   const [isGeneratingTargets, setIsGeneratingTargets] = useState(false);
+  const [awaitingDecisionAt, setAwaitingDecisionAt] = useState<number | null>(null);
+  const [decidedAt, setDecidedAt] = useState<Record<number, "updated" | "ignored">>({});
   const [pendingPreview, setPendingPreview] = useState<{ source: "ai" | "heuristic"; payload: TargetGenerationPayload } | null>(null);
+  const [isDismissingProfileChange, setIsDismissingProfileChange] = useState(false);
   const [lockState, lockFormAction] = useActionState(lockTargetsAction, {} as TargetsActionState);
   const { setHasUnsavedPreview } = useUnsavedPreview();
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -74,21 +92,17 @@ export function TargetsChatWorkspace({
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages]);
+  }, [messages, awaitingDecisionAt]);
 
-  async function sendMessage(text: string) {
-    const trimmed = text.trim();
-    if (!trimmed || isStreaming) return;
-
-    setStreamError(null);
-    setLastFailedMessage(null);
-    setIsGeneratingTargets(false);
-    const historyForRequest = messages;
-    const userMessage: ChatMessage = { role: "user", content: trimmed };
-    setMessages((previous) => [...previous, userMessage, { role: "assistant", content: "" }]);
-    setInputValue("");
-    setIsStreaming(true);
-
+  async function runStream(
+    requestBody: Record<string, unknown>,
+    handlers: {
+      onToken?: (text: string) => void;
+      onStatus?: (status: string) => void;
+      onTargets?: (payload: TargetGenerationPayload, source: "ai" | "heuristic", warning?: string) => void;
+      onErrorEvent?: (message: string) => void;
+    },
+  ): Promise<{ ok: boolean; receivedAnything: boolean; errorMessage: string | null }> {
     const controller = new AbortController();
     abortRef.current = controller;
 
@@ -98,7 +112,6 @@ export function TargetsChatWorkspace({
       timeoutId = setTimeout(() => controller.abort("timeout"), STREAM_INACTIVITY_TIMEOUT_MS);
     };
 
-    let assistantText = "";
     let receivedAnything = false;
 
     try {
@@ -106,7 +119,7 @@ export function TargetsChatWorkspace({
       const response = await fetch("/api/targets/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: trimmed, chatHistory: historyForRequest }),
+        body: JSON.stringify(requestBody),
         signal: controller.signal,
       });
 
@@ -138,69 +151,158 @@ export function TargetsChatWorkspace({
           const jsonText = line.slice("data:".length).trim();
           if (!jsonText) continue;
 
-          const event = JSON.parse(jsonText) as
-            | { type: "token"; text: string }
-            | { type: "status"; status: "generating_targets" }
-            | { type: "targets"; payload: TargetGenerationPayload; source: "ai" | "heuristic"; warning?: string }
-            | { type: "error"; message: string }
-            | { type: "done" };
+          const event = JSON.parse(jsonText) as SseEvent;
 
           if (event.type === "token") {
-            assistantText += event.text;
-            setMessages((previous) => {
-              const next = [...previous];
-              next[next.length - 1] = { role: "assistant", content: assistantText };
-              return next;
-            });
+            handlers.onToken?.(event.text);
           } else if (event.type === "status" && event.status === "generating_targets") {
-            setIsGeneratingTargets(true);
+            handlers.onStatus?.(event.status);
           } else if (event.type === "targets") {
-            setIsGeneratingTargets(false);
-            setPendingPreview({ source: event.source, payload: event.payload });
-            if (event.warning) {
-              setStreamError(event.warning);
-            }
+            handlers.onTargets?.(event.payload, event.source, event.warning);
           } else if (event.type === "error") {
-            setIsGeneratingTargets(false);
-            setStreamError(event.message);
+            handlers.onErrorEvent?.(event.message);
           }
         }
       }
+
+      clearTimeout(timeoutId!);
+      abortRef.current = null;
+      return { ok: true, receivedAnything, errorMessage: null };
     } catch (error) {
+      clearTimeout(timeoutId!);
+      abortRef.current = null;
+
       const isTimeout = (error as Error).name === "AbortError" && controller.signal.reason === "timeout";
       const isUserAbort = (error as Error).name === "AbortError" && !isTimeout;
+      if (isUserAbort) {
+        return { ok: false, receivedAnything, errorMessage: null };
+      }
 
-      if (!isUserAbort) {
-        const isNetworkError = error instanceof TypeError;
-        const message = isTimeout
+      const isNetworkError = error instanceof TypeError;
+      const errorMessage = isTimeout
+        ? tr(
+            locale,
+            "This is taking longer than expected. If you're on a phone, make sure it's on the same Wi-Fi network as this computer — tap retry to try again.",
+            "זה לוקח יותר זמן מהצפוי. אם אתם משתמשים בטלפון, ודאו שהוא מחובר לאותה רשת Wi-Fi כמו המחשב הזה - יש ללחוץ על ניסיון חוזר.",
+          )
+        : isNetworkError
           ? tr(
               locale,
-              "This is taking longer than expected. If you're on a phone, make sure it's on the same Wi-Fi network as this computer — tap retry to try again.",
-              "זה לוקח יותר זמן מהצפוי. אם אתם משתמשים בטלפון, ודאו שהוא מחובר לאותה רשת Wi-Fi כמו המחשב הזה - יש ללחוץ על ניסיון חוזר.",
+              "Couldn't reach the server. If you're on a phone, make sure it's on the same Wi-Fi network as this computer, then retry.",
+              "לא ניתן להתחבר לשרת. אם אתם משתמשים בטלפון, ודאו שהוא מחובר לאותה רשת Wi-Fi כמו המחשב הזה, ולאחר מכן נסו שוב.",
             )
-          : isNetworkError
-            ? tr(
-                locale,
-                "Couldn't reach the server. If you're on a phone, make sure it's on the same Wi-Fi network as this computer, then retry.",
-                "לא ניתן להתחבר לשרת. אם אתם משתמשים בטלפון, ודאו שהוא מחובר לאותה רשת Wi-Fi כמו המחשב הזה, ולאחר מכן נסו שוב.",
-              )
-            : error instanceof Error
-              ? error.message
-              : tr(locale, "The chat request failed. Please try again.", "בקשת הצ'אט נכשלה. יש לנסות שוב.");
+          : error instanceof Error
+            ? error.message
+            : tr(locale, "The chat request failed. Please try again.", "בקשת הצ'אט נכשלה. יש לנסות שוב.");
 
-        setStreamError(message);
+      return { ok: false, receivedAnything, errorMessage };
+    }
+  }
 
-        if (!assistantText && !receivedAnything) {
-          setLastFailedMessage(trimmed);
-          setMessages((previous) => previous.slice(0, -1));
+  async function sendMessage(text: string) {
+    const trimmed = text.trim();
+    if (!trimmed || isStreaming) return;
+
+    setStreamError(null);
+    setRetryAction(null);
+    setAwaitingDecisionAt(null);
+    const historyForRequest = messages;
+    const assistantIndex = messages.length + 1;
+    setMessages((previous) => [...previous, { role: "user", content: trimmed }, { role: "assistant", content: "" }]);
+    setInputValue("");
+    setIsStreaming(true);
+
+    let assistantText = "";
+    const result = await runStream(
+      { action: "chat", message: trimmed, chatHistory: historyForRequest },
+      {
+        onToken: (text) => {
+          assistantText += text;
+          setMessages((previous) => {
+            const next = [...previous];
+            next[next.length - 1] = { role: "assistant", content: assistantText };
+            return next;
+          });
+        },
+      },
+    );
+
+    if (!result.ok) {
+      if (result.errorMessage) {
+        setStreamError(result.errorMessage);
+      }
+      if (!assistantText && !result.receivedAnything) {
+        setMessages((previous) => previous.slice(0, -1));
+        if (result.errorMessage) {
+          setRetryAction(() => () => sendMessage(trimmed));
         }
       }
-    } finally {
-      clearTimeout(timeoutId!);
-      setIsStreaming(false);
-      setIsGeneratingTargets(false);
-      abortRef.current = null;
+    } else if (assistantText) {
+      setAwaitingDecisionAt(assistantIndex);
     }
+
+    setIsStreaming(false);
+  }
+
+  async function requestTargetsUpdate(history: ChatMessage[], decisionIndex?: number) {
+    if (isStreaming || history.length === 0) return;
+
+    setStreamError(null);
+    setRetryAction(null);
+    setIsStreaming(true);
+    setIsGeneratingTargets(true);
+
+    const result = await runStream(
+      { action: "update_targets", chatHistory: history },
+      {
+        onTargets: (payload, source, warning) => {
+          setPendingPreview({ source, payload });
+          if (warning) setStreamError(warning);
+        },
+        onErrorEvent: (message) => setStreamError(message),
+      },
+    );
+
+    if (result.ok) {
+      if (decisionIndex !== undefined) {
+        setDecidedAt((previous) => ({ ...previous, [decisionIndex]: "updated" }));
+        setAwaitingDecisionAt(null);
+      }
+    } else if (result.errorMessage) {
+      setStreamError(result.errorMessage);
+      setRetryAction(() => () => requestTargetsUpdate(history, decisionIndex));
+    }
+
+    setIsGeneratingTargets(false);
+    setIsStreaming(false);
+  }
+
+  function handleRecalculateFromProfileChange() {
+    if (isStreaming || !profileChanges?.length) return;
+    const changesText = profileChanges
+      .map((row) => `${tr(locale, row.labelEn, row.labelHe)}: ${row.before} → ${row.after}`)
+      .join("; ");
+    const noteText = tr(
+      locale,
+      `My profile changed (${changesText}). Please review whether this affects my targets - especially any medical, safety, or dietary implications - and update accordingly.`,
+      `הפרופיל שלי השתנה (${changesText}). נא לבדוק אם יש לכך השפעה על היעדים שלי - בפרט השלכות רפואיות, בטיחותיות או תזונתיות - ולעדכן בהתאם.`,
+    );
+    const updatedHistory: ChatMessage[] = [...messages, { role: "user", content: noteText }];
+    setMessages(updatedHistory);
+    setAwaitingDecisionAt(null);
+    void requestTargetsUpdate(updatedHistory);
+  }
+
+  async function handleSkipProfileChange() {
+    if (isStreaming || isDismissingProfileChange) return;
+    setIsDismissingProfileChange(true);
+    const result = await dismissProfileChangeAction();
+    setIsDismissingProfileChange(false);
+    if (result.error) {
+      setStreamError(result.error);
+      return;
+    }
+    router.refresh();
   }
 
   const displayedPayload = pendingPreview?.payload ?? currentPayload;
@@ -223,11 +325,8 @@ export function TargetsChatWorkspace({
 
         {isGeneratingTargets ? (
           <div className="flex items-center gap-2 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800">
-            <svg className="h-4 w-4 shrink-0 animate-spin text-teal-700" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-            </svg>
-            <span>{tr(locale, "Updating your targets based on the reply above...", "מעדכן את היעדים שלך בהתאם לתשובה שלמעלה...")}</span>
+            <Spinner className="h-4 w-4 shrink-0 animate-spin text-teal-700" />
+            <span>{tr(locale, "Updating your targets based on the conversation...", "מעדכן את היעדים שלך בהתאם לשיחה...")}</span>
           </div>
         ) : null}
 
@@ -267,10 +366,7 @@ export function TargetsChatWorkspace({
           <span>{tr(locale, "Calories", "קלוריות")}: {displayedPayload.caloriesMin}–{displayedPayload.caloriesMax} kcal</span>
           {isGeneratingTargets ? (
             <span className="flex items-center gap-1 rounded-full border border-teal-300 bg-teal-50 px-2 py-0.5 text-teal-700">
-              <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-              </svg>
+              <Spinner className="h-3 w-3 animate-spin" />
               {tr(locale, "Updating...", "מעדכן...")}
             </span>
           ) : pendingPreview ? (
@@ -292,14 +388,24 @@ export function TargetsChatWorkspace({
                 </li>
               ))}
             </ul>
-            <button
-              type="button"
-              onClick={() => sendMessage(tr(locale, "My profile changed - please recalculate my targets.", "הפרופיל שלי השתנה - יש לחשב מחדש את היעדים שלי."))}
-              disabled={isStreaming}
-              className="mt-3 inline-flex items-center justify-center rounded-xl bg-amber-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-800"
-            >
-              {tr(locale, "Recalculate now", "לחישוב מחדש")}
-            </button>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handleRecalculateFromProfileChange}
+                disabled={isStreaming || isDismissingProfileChange}
+                className="inline-flex items-center justify-center rounded-xl bg-amber-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-800"
+              >
+                {tr(locale, "Recalculate now", "לחישוב מחדש")}
+              </button>
+              <button
+                type="button"
+                onClick={handleSkipProfileChange}
+                disabled={isStreaming || isDismissingProfileChange}
+                className="inline-flex items-center justify-center rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-800 disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-100"
+              >
+                {isDismissingProfileChange ? tr(locale, "Skipping...", "מדלג...") : tr(locale, "Skip", "דילוג")}
+              </button>
+            </div>
           </div>
         ) : null}
 
@@ -310,13 +416,13 @@ export function TargetsChatWorkspace({
               <p className="text-sm text-slate-500">
                 {tr(
                   locale,
-                  "Ask for a change, e.g. \"reduce my workout days to 2 times a week\".",
-                  "בקשו שינוי, לדוגמה \"להפחית את ימי האימון שלי לפעמיים בשבוע\".",
+                  "Ask a question or describe a change, e.g. \"reduce my workout days to 2 times a week\". Chatting won't change anything by itself - you'll always get to choose.",
+                  "שאלו שאלה או תארו שינוי, לדוגמה \"להפחית את ימי האימון שלי לפעמיים בשבוע\". שיחה בלבד לא תשנה דבר - תמיד תוכלו לבחור בעצמכם.",
                 )}
               </p>
             ) : null}
             {messages.map((message, index) => (
-              <div key={index} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div key={index} className={`flex flex-col ${message.role === "user" ? "items-end" : "items-start"}`}>
                 <div
                   className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
                     message.role === "user" ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-800"
@@ -324,15 +430,44 @@ export function TargetsChatWorkspace({
                 >
                   {message.content || (isStreaming && index === messages.length - 1 ? "…" : "")}
                 </div>
+
+                {message.role === "assistant" && index === awaitingDecisionAt ? (
+                  <div className="mt-1.5 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => requestTargetsUpdate(messages, index)}
+                      disabled={isStreaming}
+                      className="rounded-lg bg-teal-700 px-2.5 py-1 text-xs font-semibold text-white hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      {tr(locale, "Update Targets", "עדכון היעדים")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDecidedAt((previous) => ({ ...previous, [index]: "ignored" }));
+                        setAwaitingDecisionAt(null);
+                      }}
+                      disabled={isStreaming}
+                      className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      {tr(locale, "Ignore", "התעלמות")}
+                    </button>
+                  </div>
+                ) : null}
+
+                {message.role === "assistant" && decidedAt[index] ? (
+                  <p className="mt-1 text-xs text-slate-400">
+                    {decidedAt[index] === "updated"
+                      ? tr(locale, "Targets updated", "היעדים עודכנו")
+                      : tr(locale, "Suggestion ignored", "ההצעה נדחתה")}
+                  </p>
+                ) : null}
               </div>
             ))}
             {isGeneratingTargets ? (
               <div className="flex justify-start">
                 <div className="flex items-center gap-2 rounded-2xl bg-slate-100 px-3 py-2 text-xs text-slate-600">
-                  <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-                  </svg>
+                  <Spinner className="h-3.5 w-3.5 animate-spin" />
                   {tr(locale, "Updating your targets...", "מעדכן את היעדים שלך...")}
                 </div>
               </div>
@@ -343,10 +478,10 @@ export function TargetsChatWorkspace({
           {streamError ? (
             <div className="flex items-center justify-between gap-2 border-t border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
               <span>{streamError}</span>
-              {lastFailedMessage ? (
+              {retryAction ? (
                 <button
                   type="button"
-                  onClick={() => sendMessage(lastFailedMessage)}
+                  onClick={() => retryAction()}
                   className="shrink-0 rounded-lg border border-rose-300 bg-white px-2 py-1 font-semibold text-rose-700 hover:bg-rose-100"
                 >
                   {tr(locale, "Retry", "ניסיון חוזר")}
