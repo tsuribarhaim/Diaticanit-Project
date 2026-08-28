@@ -23,7 +23,6 @@ import { createClient } from "@/lib/supabase/server";
 export type ProfileUpdateActionState = {
   error?: string;
   fieldErrors?: Array<{ field: string; message: string }>;
-  success?: string;
 };
 
 const LOCALE_COOKIE = "phc_locale";
@@ -505,7 +504,5 @@ export async function updateProfileAction(
     maxAge: 60 * 60 * 24 * 365,
   });
 
-  return {
-    success: tr(locale, "Profile updated successfully.", "הפרופיל עודכן בהצלחה."),
-  };
+  redirect("/app/profile");
 }

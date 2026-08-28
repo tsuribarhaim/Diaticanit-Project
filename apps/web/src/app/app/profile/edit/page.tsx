@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { ProfileEditForm } from "@/components/profile-edit-form";
@@ -78,20 +77,10 @@ export default async function ProfileEditPage() {
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-10">
       <section className="rounded-2xl border border-slate-200 bg-white p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "Edit profile", "עריכת פרופיל")}</h1>
-            <p className="mt-3 text-sm text-slate-600">
-              {tr(locale, "Update your health profile details.", "עדכון פרטי הפרופיל הבריאותי שלך.")}
-            </p>
-          </div>
-          <Link
-            href="/app/daily-report/defaults"
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
-          >
-            {tr(locale, "Report defaults", "ברירות מחדל לדיווח")}
-          </Link>
-        </div>
+        <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "Edit profile", "עריכת פרופיל")}</h1>
+        <p className="mt-3 text-sm text-slate-600">
+          {tr(locale, "Update your health profile details.", "עדכון פרטי הפרופיל הבריאותי שלך.")}
+        </p>
         <ProfileEditForm defaults={formDefaults} locale={locale} maxDateOfBirth={maxDateOfBirth} />
       </section>
     </main>
