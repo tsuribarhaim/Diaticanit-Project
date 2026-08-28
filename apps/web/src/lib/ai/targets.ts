@@ -265,6 +265,7 @@ export async function generateTargetsWithAi({
   profile,
   locale,
   currentTargets,
+  medicalDocumentsContext,
 }: {
   config: AiExtractionConfig;
   goalText: string;
@@ -276,6 +277,10 @@ export async function generateTargetsWithAi({
    * consistency changes (e.g. lower workout frequency -> lower calorie
    * ceiling), instead of generating a fresh plan from scratch. */
   currentTargets?: TargetGenerationPayload;
+  /** Extracted findings from the user's uploaded medical documents (e.g. lab
+   * results), when any are available - see buildMedicalDocumentsContextRules
+   * for how the model is instructed to weigh these. */
+  medicalDocumentsContext?: string;
 }): Promise<TargetGenerationPayload> {
   if (config.provider === "github") {
     throw new Error(
@@ -295,6 +300,16 @@ export async function generateTargetsWithAi({
         "If the requested change would create an unsafe or unbalanced combination (e.g. reducing exercise while keeping calories at the same level), proactively adjust the DEPENDENT values (e.g. lower the calorie range) to keep the plan coherent, and explain that adjustment in global_coaching_explanation. This does not apply to target_weight_kg itself - that must stay a literal translation of goal_text per the rule above, not something you adjust for safety.",
         "Do not treat a vague goal_text (e.g. \"please recalculate\" or \"my profile changed\") as a reason to leave everything unchanged - in that case, the safety review against the current profile IS the request.",
         "current_active_targets.user_targets holds the user's previously tracked asks. Carry forward any still-relevant ones, add a new entry for whatever this request newly asks for, and update the value of an existing entry instead of duplicating it if this request changes the same thing (e.g. a new weight-loss amount replaces the old \"Lose weight\" value rather than adding a second one).",
+      ]
+    : [];
+
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const medicalDocumentsContextLines = medicalDocumentsContext
+    ? [
+        `today's date: ${todayIso}`,
+        "medical_documents_context (extracted findings from documents the user uploaded, e.g. blood tests):",
+        medicalDocumentsContext,
+        "MEDICAL DOCUMENT RULES: judge for yourself, per finding, whether it's still valid/relevant enough to factor into today's targets. Weigh the observed/report date (or, when no report date was found, the upload date as a rough proxy) against today's date and against how quickly that specific kind of marker typically changes. Judge the AGE PLAINLY against today's date - a gap of several years is old regardless of how the number itself reads, and must not be described as \"recent\" or \"current\". As a concrete anchor: blood glucose, lipids (cholesterol/LDL/HDL/triglycerides), and HbA1c are typically only meaningful for roughly 6-12 months and should usually be treated as stale beyond about 2 years; something like blood type or a genetic result never goes stale. If multiple documents cover the same topic, prioritize the most recent, most relevant one rather than mechanically averaging them. Only let a finding influence the numeric ranges or habits when it is both genuinely relevant to nutrition/exercise/sleep/hydration and judged valid. In global_coaching_explanation, state the finding's actual date (or age) plainly, briefly mention which specific medical finding(s) you factored in AND why (or, if you judged a finding or document too stale or not relevant to use, say so explicitly instead) - do not silently ignore something without mentioning it, and do not mischaracterize an old date as recent.",
       ]
     : [];
 
@@ -337,6 +352,7 @@ export async function generateTargetsWithAi({
           "- Address the user directly in second person (\"you\"/\"your\") in every text field. Never refer to the user in third person (\"he\", \"she\", \"his\", \"her\", or the user's inferred gender) even when their biological_sex is known.",
           "- In Hebrew specifically, prefer gender-neutral or mixed-form second-person phrasing (e.g. \"שלך\", \"את/ה\") over a gendered third-person construction like \"בשל מצבו הרפואי\" or \"בשל מצבה הרפואי\" — write \"בשל המצב הרפואי שלך\" instead.",
           ...adjustmentContextLines,
+          ...medicalDocumentsContextLines,
           "user_profile:",
           buildProfileSummary(profile),
           "goal_text:",

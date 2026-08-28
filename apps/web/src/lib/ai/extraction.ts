@@ -13,6 +13,7 @@ const aiComponentSchema = z.object({
 });
 
 const aiResponseSchema = z.object({
+  report_date: z.string().trim().max(20).optional(),
   components: z.array(aiComponentSchema).max(120),
 });
 
@@ -74,6 +75,12 @@ function mapAiComponents(rawComponents: z.infer<typeof aiComponentSchema>[]): Ai
   return Array.from(deduped.values());
 }
 
+function parseReportDate(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
 export async function extractComponentsWithAi({
   config,
   documentText,
@@ -82,7 +89,7 @@ export async function extractComponentsWithAi({
   config: AiExtractionConfig;
   documentText: string;
   defaultCategory: string;
-}): Promise<AiExtractedComponent[]> {
+}): Promise<{ components: AiExtractedComponent[]; reportDate: string | null }> {
   if (config.provider === "github") {
     throw new Error(
       "GitHub Models endpoint is retired. Switch AI_EXTRACTION_PROVIDER to openai or custom (Azure OpenAI Foundry).",
@@ -105,8 +112,9 @@ export async function extractComponentsWithAi({
         role: "user",
         content: [
           "Return JSON with this shape:",
-          '{"components":[{"category":"string","component_name":"string","measured_value":number,"unit":"string","reference_min":number,"reference_max":number,"confidence":number}]}',
+          '{"report_date":"string","components":[{"category":"string","component_name":"string","measured_value":number,"unit":"string","reference_min":number,"reference_max":number,"confidence":number}]}',
           "Rules:",
+          "- report_date: the date this report/test was actually performed or issued, as stated in the document itself (e.g. a \"collection date\", \"report date\", or similar) in YYYY-MM-DD format. Omit it entirely if no such date appears in the text - never guess or use today's date.",
           "- Use numeric measured_value only.",
           "- If category is unclear, use the default category provided.",
           "- reference_min/reference_max can be omitted when unknown.",
@@ -173,5 +181,5 @@ export async function extractComponentsWithAi({
       : "";
 
   const parsed = aiResponseSchema.parse(parseJsonPayload(contentText));
-  return mapAiComponents(parsed.components);
+  return { components: mapAiComponents(parsed.components), reportDate: parseReportDate(parsed.report_date) };
 }

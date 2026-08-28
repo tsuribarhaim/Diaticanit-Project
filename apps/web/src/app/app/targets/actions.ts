@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
+import { prepareMedicalContextForTargets } from "@/app/app/documents/actions";
 import { generateTargetsWithAi, NoActionableChangeError } from "@/lib/ai/targets";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { normalizeLocale } from "@/lib/locale";
@@ -62,6 +63,8 @@ export async function generateTargetsPayload({
   aiConfig,
   hasConsent,
   currentTargets,
+  supabase,
+  userId,
 }: {
   goalText: string;
   profile: ProfileForTargets;
@@ -72,6 +75,12 @@ export async function generateTargetsPayload({
    * plan rather than a fresh generation; ignored by the heuristic fallback
    * (which is a simplified, non-AI path). */
   currentTargets?: TargetGenerationPayload;
+  /** When provided alongside userId, the user's uploaded medical documents
+   * are auto-extracted (if pending) and factored into the AI generation.
+   * Omitted callers simply skip document context (no supabase/userId
+   * available, or AI generation isn't in play). */
+  supabase?: Awaited<ReturnType<typeof createClient>>;
+  userId?: string;
 }): Promise<{
   payload: TargetGenerationPayload;
   source: "ai" | "heuristic";
@@ -91,7 +100,25 @@ export async function generateTargetsPayload({
 
   if (aiConfig && hasConsent) {
     try {
-      payload = await generateTargetsWithAi({ config: aiConfig, goalText, profile, locale, currentTargets });
+      const medicalDocumentsContext =
+        supabase && userId
+          ? await prepareMedicalContextForTargets({ supabase, userId }).catch((error) => {
+              logServerError("targets.generate", "medical_context_failed", {
+                userId,
+                error: error instanceof Error ? error.message : "Unknown error",
+              });
+              return null;
+            })
+          : null;
+
+      payload = await generateTargetsWithAi({
+        config: aiConfig,
+        goalText,
+        profile,
+        locale,
+        currentTargets,
+        medicalDocumentsContext: medicalDocumentsContext ?? undefined,
+      });
       source = "ai";
     } catch (error) {
       if (error instanceof NoActionableChangeError) {
@@ -198,6 +225,8 @@ export async function generateTargetsAction(
     aiConfig,
     hasConsent,
     currentTargets,
+    supabase,
+    userId: user.id,
   });
 
   if (safetyRejectionMessage || notActionableMessage) {

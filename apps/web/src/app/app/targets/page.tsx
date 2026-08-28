@@ -103,6 +103,8 @@ export default async function TargetsPage() {
       locale,
       aiConfig,
       hasConsent: hasAiChatAvailable,
+      supabase,
+      userId: user.id,
     });
     // A baseline generation from profile data alone (no explicit user ask)
     // should never trip the weight-safety check, but fall back to a plain

@@ -129,6 +129,8 @@ export async function POST(request: NextRequest) {
               aiConfig,
               hasConsent,
               currentTargets,
+              supabase,
+              userId: user.id,
             });
 
             if (result.safetyRejectionMessage || result.notActionableMessage) {
