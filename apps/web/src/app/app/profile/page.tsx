@@ -517,10 +517,10 @@ export default async function ProfilePage() {
             {tr(locale, "Edit profile", "עריכת פרופיל")}
           </Link>
           <Link
-            href="/app"
+            href="/app/daily-report/defaults"
             className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
           >
-            {tr(locale, "Back to dashboard", "חזרה ללוח הבקרה")}
+            {tr(locale, "Report defaults", "ברירות מחדל לדיווח")}
           </Link>
         </div>
       </section>

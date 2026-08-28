@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import {
@@ -285,17 +284,9 @@ export default async function DocumentExtractionPage({
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-6 py-10">
       <section className="rounded-2xl border border-slate-200 bg-white p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "Extraction review", "סקירת חילוץ")}</h1>
-            <p className="mt-2 text-sm text-slate-600">{documentRow.file_name}</p>
-          </div>
-          <Link
-            href="/app/profile"
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
-          >
-            {tr(locale, "Back to profile", "חזרה לפרופיל")}
-          </Link>
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "Extraction review", "סקירת חילוץ")}</h1>
+          <p className="mt-2 text-sm text-slate-600">{documentRow.file_name}</p>
         </div>
 
         <div className="mt-4 rounded-lg bg-slate-50 p-4 text-sm text-slate-700">

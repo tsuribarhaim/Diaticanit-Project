@@ -3,7 +3,6 @@ import { redirect } from "next/navigation";
 import { generateTargetsPayload, hasAiTargetsConsent } from "@/app/app/targets/actions";
 import { TargetsChatWorkspace } from "@/components/targets-chat-workspace";
 import { TargetsWorkspace } from "@/components/targets-workspace";
-import { GuardedLink, UnsavedPreviewProvider } from "@/components/unsaved-preview-context";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { formatDateTimeForLocale, normalizeLocale, tr } from "@/lib/locale";
 import { createClient } from "@/lib/supabase/server";
@@ -109,32 +108,17 @@ export default async function TargetsPage() {
   }
 
   return (
-    <UnsavedPreviewProvider>
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 py-10">
       <section className="rounded-2xl border border-slate-200 bg-white p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "Targets", "יעדים")}</h1>
-            <p className="mt-2 text-sm text-slate-600">
-              {tr(
-                locale,
-                "Your personalized daily nutrition, exercise, and habit targets.",
-                "יעדי התזונה, הפעילות וההרגלים היומיים המותאמים אישית שלך.",
-              )}
-            </p>
-          </div>
-
-          <GuardedLink
-            href="/app"
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
-            confirmMessage={tr(
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "Targets", "יעדים")}</h1>
+          <p className="mt-2 text-sm text-slate-600">
+            {tr(
               locale,
-              "You have a generated target plan that hasn't been locked in yet. Leave this page anyway?",
-              "יש לך תכנית יעדים שנוצרה אך טרם ננעלה. לעזוב את הדף בכל זאת?",
+              "Your personalized daily nutrition, exercise, and habit targets.",
+              "יעדי התזונה, הפעילות וההרגלים היומיים המותאמים אישית שלך.",
             )}
-          >
-            {tr(locale, "Back to dashboard", "חזרה ללוח הבקרה")}
-          </GuardedLink>
+          </p>
         </div>
 
         {!activeTargetProfile ? (
@@ -213,6 +197,5 @@ export default async function TargetsPage() {
         )}
       </section>
     </main>
-    </UnsavedPreviewProvider>
   );
 }
