@@ -266,8 +266,9 @@ export async function generateTargetsWithAi({
         "This is an ADJUSTMENT request against an already-locked target plan, not a fresh generation.",
         "current_active_targets (JSON):",
         JSON.stringify(currentTargets),
-        "Change ONLY what the goal_text below asks for. Keep every other range, exercise entry, and habit as close to the current values as reasonable.",
+        "Change what the goal_text below asks for, plus anything the current profile now requires for safety (see the mandatory safety review rule above) - keep every other range, exercise entry, and habit as close to the current values as reasonable.",
         "If the requested change would create an unsafe or unbalanced combination (e.g. reducing exercise while keeping calories at the same level), proactively adjust the dependent values (e.g. lower the calorie range) to keep the plan coherent, and explain that adjustment in global_coaching_explanation.",
+        "Do not treat a vague goal_text (e.g. \"please recalculate\" or \"my profile changed\") as a reason to leave everything unchanged - in that case, the safety review against the current profile IS the request.",
       ]
     : [];
 
@@ -298,6 +299,7 @@ export async function generateTargetsWithAi({
           "Rules:",
           "- Base all ranges on standard adult Dietary Reference Intake (DRI) style ranges, scaled to the user's profile. This is general guidance, not a clinical diagnosis.",
           "- Respect any allergies, medical conditions, medications, and dietary preference when shaping habits and exercise notes (e.g. avoid recommending foods that conflict with a stated allergy).",
+          "- MANDATORY SAFETY REVIEW: check the numeric ranges themselves (not just habit text) against the user's medical conditions. In particular: hypertension calls for a tighter, lower sodium range (roughly 1,200-1,500 mg rather than a generic 1,500-2,300 mg); diabetes calls for a lower added-sugar ceiling (roughly 15 g rather than a generic 25 g). Apply comparable, clinically-reasonable tightening for any other stated condition that has an established dietary implication. This review applies even when it is not the explicit subject of goal_text.",
           "- exercise_targets: 2 to 4 entries. search_keywords must be short YouTube search phrases only (e.g. \"beginner resistance training routine\") — NEVER include a URL or a specific video title/link, since direct AI-suggested links are unreliable.",
           "- habits_do and habits_dont: 2 to 4 entries each, each with a short actionable instruction and a one-sentence rationale.",
           "- confidence must be between 0 and 1.",

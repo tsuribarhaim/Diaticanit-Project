@@ -712,6 +712,30 @@ export function generateHeuristicTargetProfileFromAnalysis({
   const { habitsDo, habitsDont } = buildHabits(profile, goalType, locale);
   const exerciseTargets = buildExerciseTargets(profile, goalType, locale);
 
+  let sodiumMinMg = 1500;
+  let sodiumMaxMg = 2300;
+  const addedSugarMinG = 0;
+  let addedSugarMaxG = 25;
+
+  if (profile.medical_conditions.includes("hypertension")) {
+    sodiumMinMg = 1200;
+    sodiumMaxMg = 1500;
+    assumptions.push(tr(
+      locale,
+      "Hypertension noted: sodium range tightened to a lower-sodium target (1,200-1,500 mg).",
+      "אותר יתר לחץ דם: טווח הנתרן הוקטן ליעד דל-נתרן (1,200-1,500 מ\"ג).",
+    ));
+  }
+
+  if (profile.medical_conditions.includes("diabetes")) {
+    addedSugarMaxG = 15;
+    assumptions.push(tr(
+      locale,
+      "Diabetes noted: added sugar ceiling lowered to support blood sugar stability.",
+      "אותרה סוכרת: תקרת הסוכר המוסף הופחתה לתמיכה ביציבות רמת הסוכר בדם.",
+    ));
+  }
+
   const aiRationaleExplanation = tr(
     locale,
     `These ranges are a general adult reference plan for a "${goalType.replace(/_/g, " ")}" goal, scaled to your weight, height, age, and activity level. They are informational only and not a substitute for personalized clinical or dietitian advice.`,
@@ -735,10 +759,10 @@ export function generateHeuristicTargetProfileFromAnalysis({
     fatsMaxG,
     fiberMinG: 28,
     fiberMaxG: 38,
-    sodiumMinMg: 1500,
-    sodiumMaxMg: 2300,
-    addedSugarMinG: 0,
-    addedSugarMaxG: 25,
+    sodiumMinMg,
+    sodiumMaxMg,
+    addedSugarMinG,
+    addedSugarMaxG,
     waterMinMl,
     waterMaxMl,
 

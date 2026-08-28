@@ -277,11 +277,14 @@ export function TargetsChatWorkspace({
   }
 
   function handleRecalculateFromProfileChange() {
-    if (isStreaming) return;
+    if (isStreaming || !profileChanges?.length) return;
+    const changesText = profileChanges
+      .map((row) => `${tr(locale, row.labelEn, row.labelHe)}: ${row.before} → ${row.after}`)
+      .join("; ");
     const noteText = tr(
       locale,
-      "My profile changed - please recalculate my targets.",
-      "הפרופיל שלי השתנה - יש לחשב מחדש את היעדים שלי.",
+      `My profile changed (${changesText}). Please review whether this affects my targets - especially any medical, safety, or dietary implications - and update accordingly.`,
+      `הפרופיל שלי השתנה (${changesText}). נא לבדוק אם יש לכך השפעה על היעדים שלי - בפרט השלכות רפואיות, בטיחותיות או תזונתיות - ולעדכן בהתאם.`,
     );
     const updatedHistory: ChatMessage[] = [...messages, { role: "user", content: noteText }];
     setMessages(updatedHistory);
