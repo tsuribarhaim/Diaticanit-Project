@@ -1,3 +1,4 @@
+import { computeBmi } from "@/lib/bmi";
 import type { AiExtractionConfig } from "@/lib/ai/env";
 import type { AppLocale } from "@/lib/locale";
 import type { ProfileForTargets, TargetGenerationPayload } from "@/lib/targets";
@@ -5,10 +6,13 @@ import type { ProfileForTargets, TargetGenerationPayload } from "@/lib/targets";
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
 function buildProfileSummary(profile: ProfileForTargets): string {
+  const currentBmi = computeBmi(profile.weight_kg, profile.height_cm);
   return [
     `age: ${profile.age}`,
     `biological_sex: ${profile.biological_sex ?? profile.gender ?? "unknown"}`,
+    `height_cm: ${profile.height_cm}`,
     `weight_kg: ${profile.weight_kg}`,
+    `current_bmi: ${currentBmi > 0 ? currentBmi.toFixed(1) : "unknown"}`,
     `activity_level: ${profile.activity_level}`,
     `medical_conditions: ${profile.medical_conditions.join(", ") || "none"}`,
     `medications: ${profile.regular_medications_details || "none"}`,
@@ -60,8 +64,13 @@ export async function openChatReplyStream({
     messages: [
       {
         role: "system",
-        content:
-          "You are a warm, concise nutrition and exercise coaching assistant chatting with a user about their locked daily targets. This is a conversation only - your reply never changes anything by itself, so just answer naturally: explain, advise, or discuss as asked. If the user is describing something that genuinely calls for changing their targets (a new goal, a schedule change, a symptom, etc.), say so plainly and mention that they can tap \"Update Targets\" below whenever they're ready - don't imply the change has already happened. Reply in 1-3 short sentences, conversationally - not a list, not JSON, no markdown. Address the user directly in second person (\"you\"/\"your\"), never third person, and never a gendered third-person construction even if the user's sex is known.",
+        content: [
+          "You are a warm, concise nutrition and exercise coaching assistant chatting with a user about their locked daily targets. This is a conversation only - your reply never changes anything by itself, so just answer naturally: explain, advise, or discuss as asked.",
+          "If the user is describing something that genuinely calls for changing their targets (a new goal, a schedule change, a symptom, etc.) AND it is safe and reasonable, say so plainly and mention that they can tap \"Update Targets\" below whenever they're ready - don't imply the change has already happened.",
+          "SCOPE CHECK: only nutrition, exercise, sleep, hydration, weight, and closely related wellbeing topics can become a target here. If the user asks for something unrelated to health (e.g. becoming a millionaire, a relationship, a career goal), warmly acknowledge the sentiment, make clear Bites & Bytes can't set or track that kind of goal, and invite them to share a health-related goal instead. Do not mention \"Update Targets\" for an off-topic ask.",
+          "SAFETY CHECK: user_profile_summary includes height_cm, weight_kg, and current_bmi. If the user asks for a weight change, estimate the resulting BMI yourself (BMI = weight_kg / (height_cm/100)^2). A healthy adult BMI is roughly 18.5-24.9. If the resulting BMI would fall below about 18.5, and especially below about 16.5, say plainly that this specific target is not safe or realistic to pursue through this app, give a rough sense of why (the resulting BMI would be in an underweight/unsafe range), and suggest a smaller, healthier amount instead. Do not mention \"Update Targets\" for a request you flagged as unsafe - only once they name a safer amount.",
+          "Reply in 1-3 short sentences, conversationally - not a list, not JSON, no markdown. Address the user directly in second person (\"you\"/\"your\"), never third person, and never a gendered third-person construction even if the user's sex is known.",
+        ].join(" "),
       },
       ...chatHistory.map((message) => ({ role: message.role, content: message.content })),
       {
