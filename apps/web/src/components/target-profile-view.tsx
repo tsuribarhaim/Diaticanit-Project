@@ -133,6 +133,9 @@ export function TargetProfileView({
   const userTargetsTitle = firstName
     ? tr(locale, `${firstName}'s Targets`, `היעדים של ${firstName}`)
     : tr(locale, "User Targets", "יעדי המשתמש");
+  const additionalSuggestionsTitle = firstName
+    ? tr(locale, `Additional Suggestions for ${firstName}`, `הצעות נוספות עבור ${firstName}`)
+    : tr(locale, "Additional Suggestions", "הצעות נוספות");
 
   return (
     <div className="space-y-6">
@@ -222,36 +225,39 @@ export function TargetProfileView({
         </div>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div>
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-700">{tr(locale, "Do", "לעשות")}</h3>
-          <div className="mt-3 space-y-3">
-            {payload.habitsDo.map((habit) => (
-              <div key={habit.id} className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-                <p className="text-sm font-medium text-emerald-900">{habit.habitInstruction}</p>
-                <details className="mt-1">
-                  <summary className="cursor-pointer text-xs font-semibold text-emerald-700">{tr(locale, "Why?", "למה?")}</summary>
-                  <p className="mt-1 text-xs text-emerald-800">{habit.rationale}</p>
-                </details>
-              </div>
-            ))}
+      <details className="rounded-xl border border-slate-200 bg-white p-4">
+        <summary className="cursor-pointer text-sm font-semibold text-teal-700">{additionalSuggestionsTitle}</summary>
+        <div className="mt-3 grid gap-4 sm:grid-cols-2">
+          <div>
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-700">{tr(locale, "Do", "לעשות")}</h3>
+            <div className="mt-3 space-y-3">
+              {payload.habitsDo.map((habit) => (
+                <div key={habit.id} className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                  <p className="text-sm font-medium text-emerald-900">{habit.habitInstruction}</p>
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-xs font-semibold text-emerald-700">{tr(locale, "Why?", "למה?")}</summary>
+                    <p className="mt-1 text-xs text-emerald-800">{habit.rationale}</p>
+                  </details>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-rose-700">{tr(locale, "Don't do", "להימנע")}</h3>
+            <div className="mt-3 space-y-3">
+              {payload.habitsDont.map((habit) => (
+                <div key={habit.id} className="rounded-xl border border-rose-200 bg-rose-50 p-3">
+                  <p className="text-sm font-medium text-rose-900">{habit.habitInstruction}</p>
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-xs font-semibold text-rose-700">{tr(locale, "Why?", "למה?")}</summary>
+                    <p className="mt-1 text-xs text-rose-800">{habit.rationale}</p>
+                  </details>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
-        <div>
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-rose-700">{tr(locale, "Don't do", "להימנע")}</h3>
-          <div className="mt-3 space-y-3">
-            {payload.habitsDont.map((habit) => (
-              <div key={habit.id} className="rounded-xl border border-rose-200 bg-rose-50 p-3">
-                <p className="text-sm font-medium text-rose-900">{habit.habitInstruction}</p>
-                <details className="mt-1">
-                  <summary className="cursor-pointer text-xs font-semibold text-rose-700">{tr(locale, "Why?", "למה?")}</summary>
-                  <p className="mt-1 text-xs text-rose-800">{habit.rationale}</p>
-                </details>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+      </details>
     </div>
   );
 }
