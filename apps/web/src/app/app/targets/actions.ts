@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { generateTargetsWithAi } from "@/lib/ai/targets";
+import { generateTargetsWithAi, NoActionableChangeError } from "@/lib/ai/targets";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { normalizeLocale } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
@@ -80,6 +80,10 @@ export async function generateTargetsPayload({
    * BMI into an unsafe zone; callers must not treat `payload` as a valid
    * preview/adjustment when this is present. */
   safetyRejectionMessage?: string;
+  /** Set when the model determined the adjustment request didn't describe
+   * any concrete, in-scope health change to make; same handling as
+   * safetyRejectionMessage - do not treat `payload` as valid. */
+  notActionableMessage?: string;
 }> {
   let heuristicReason: string | null = null;
   let payload: TargetGenerationPayload | null = null;
@@ -90,6 +94,15 @@ export async function generateTargetsPayload({
       payload = await generateTargetsWithAi({ config: aiConfig, goalText, profile, locale, currentTargets });
       source = "ai";
     } catch (error) {
+      if (error instanceof NoActionableChangeError) {
+        return {
+          payload: currentTargets ?? generateHeuristicTargetProfile({ freeText: goalText, profile, locale }),
+          source: "ai",
+          heuristicReason: null,
+          notActionableMessage: error.message,
+        };
+      }
+
       heuristicReason = "AI generation failed at runtime; heuristic fallback was used.";
       logServerError("targets.generate", "ai_generation_failed", {
         error: error instanceof Error ? error.message : "Unknown AI targets generation error",
@@ -178,7 +191,7 @@ export async function generateTargetsAction(
 
   const aiConfig = getAiExtractionConfig();
   const hasConsent = aiConfig ? await hasAiTargetsConsent({ supabase, userId: user.id }) : false;
-  const { payload, source, heuristicReason, safetyRejectionMessage } = await generateTargetsPayload({
+  const { payload, source, heuristicReason, safetyRejectionMessage, notActionableMessage } = await generateTargetsPayload({
     goalText: parsedInput.data.freeText,
     profile,
     locale,
@@ -187,8 +200,8 @@ export async function generateTargetsAction(
     currentTargets,
   });
 
-  if (safetyRejectionMessage) {
-    return { error: safetyRejectionMessage };
+  if (safetyRejectionMessage || notActionableMessage) {
+    return { error: safetyRejectionMessage ?? notActionableMessage };
   }
 
   return {

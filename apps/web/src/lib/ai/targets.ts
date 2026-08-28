@@ -4,6 +4,13 @@ import type { AiExtractionConfig } from "@/lib/ai/env";
 import type { AppLocale } from "@/lib/locale";
 import type { ExerciseTargetEntry, HabitEntry, ProfileForTargets, TargetGenerationPayload, TargetGoalType, UserTargetEntry } from "@/lib/targets";
 
+/** Thrown when the model determines goal_text (an adjustment request against
+ * an already-locked plan) doesn't describe any concrete, in-scope health
+ * change to apply - as opposed to a generation failure, this should not fall
+ * back to the heuristic generator, since that would silently mask the signal
+ * with an unrelated baseline payload. */
+export class NoActionableChangeError extends Error {}
+
 const numberFromUnknown = z.preprocess((value) => {
   if (typeof value === "number") return value;
   if (typeof value === "string") {
@@ -34,6 +41,9 @@ const aiUserTargetEntrySchema = z.object({
 });
 
 const aiTargetsSchema = z.object({
+  no_actionable_change: z.boolean().optional().default(false),
+  no_actionable_change_reason: z.string().trim().max(300).optional().default(""),
+
   goal_type: z.enum(["weight_loss", "weight_gain", "maintain", "general"]),
   target_weight_kg: numberFromUnknown.optional(),
   duration_days: numberFromUnknown.optional(),
@@ -280,6 +290,7 @@ export async function generateTargetsWithAi({
         "This is an ADJUSTMENT request against an already-locked target plan, not a fresh generation.",
         "current_active_targets (JSON):",
         JSON.stringify(currentTargets),
+        "NO-ACTIONABLE-CHANGE CHECK (adjustment requests only): if goal_text (the conversation transcript) does not describe any concrete, in-scope health/nutrition/exercise/sleep/hydration/weight change to make - e.g. it's off-topic (a career, financial, or relationship goal), pure small talk, a question you already answered conversationally, or too vague to translate into a number - set no_actionable_change to true, put a short plain-language reason in no_actionable_change_reason (in the reply language), and you may leave every other field as a best-effort copy of current_active_targets since it will be discarded. Do not set this just because the request happens to be unsafe (that has its own handling below) - only when there is genuinely nothing concrete and in-scope to apply.",
         "Change what the goal_text below asks for, plus anything the current profile now requires for safety (see the mandatory safety review rule above) - keep every other range, exercise entry, and habit as close to the current values as reasonable.",
         "If the requested change would create an unsafe or unbalanced combination (e.g. reducing exercise while keeping calories at the same level), proactively adjust the DEPENDENT values (e.g. lower the calorie range) to keep the plan coherent, and explain that adjustment in global_coaching_explanation. This does not apply to target_weight_kg itself - that must stay a literal translation of goal_text per the rule above, not something you adjust for safety.",
         "Do not treat a vague goal_text (e.g. \"please recalculate\" or \"my profile changed\") as a reason to leave everything unchanged - in that case, the safety review against the current profile IS the request.",
@@ -301,7 +312,8 @@ export async function generateTargetsWithAi({
         role: "user",
         content: [
           "Return strict JSON with exactly this shape (all numeric fields are plain numbers, all ranges must have min <= max):",
-          '{"goal_type":"weight_loss|weight_gain|maintain|general","target_weight_kg":number,"duration_days":number,"blood_balance_focus":boolean,"sleep_focus":boolean,',
+          '{"no_actionable_change":boolean,"no_actionable_change_reason":"string",',
+          '"goal_type":"weight_loss|weight_gain|maintain|general","target_weight_kg":number,"duration_days":number,"blood_balance_focus":boolean,"sleep_focus":boolean,',
           '"calories_min":number,"calories_max":number,"protein_min_g":number,"protein_max_g":number,"carbs_min_g":number,"carbs_max_g":number,"fats_min_g":number,"fats_max_g":number,',
           '"fiber_min_g":number,"fiber_max_g":number,"sodium_min_mg":number,"sodium_max_mg":number,"added_sugar_min_g":number,"added_sugar_max_g":number,"water_min_ml":number,"water_max_ml":number,',
           '"potassium_min_mg":number,"potassium_max_mg":number,"magnesium_min_mg":number,"magnesium_max_mg":number,"calcium_min_mg":number,"calcium_max_mg":number,"iron_min_mg":number,"iron_max_mg":number,',
@@ -386,5 +398,12 @@ export async function generateTargetsWithAi({
       : "";
 
   const parsed = aiTargetsSchema.parse(parseJsonPayload(contentText));
+
+  if (currentTargets && parsed.no_actionable_change) {
+    throw new NoActionableChangeError(
+      parsed.no_actionable_change_reason || "The message didn't describe a specific health-related change to apply.",
+    );
+  }
+
   return mapAiTargetsResponse(parsed);
 }
