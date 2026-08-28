@@ -129,7 +129,19 @@ export async function POST(request: NextRequest) {
               aiConfig,
               hasConsent,
               currentTargets,
+              supabase,
+              userId: user.id,
             });
+
+            if (result.safetyRejectionMessage || result.notActionableMessage) {
+              controller.enqueue(
+                sseEvent({ type: "error", message: result.safetyRejectionMessage ?? result.notActionableMessage }),
+              );
+              controller.enqueue(sseEvent({ type: "done" }));
+              controller.close();
+              return;
+            }
+
             targetsPayload = result.payload;
             source = result.source;
             warning = result.heuristicReason ?? undefined;
@@ -170,6 +182,55 @@ export async function POST(request: NextRequest) {
         const decoder = new TextDecoder();
         let buffer = "";
 
+        // The model is instructed to prefix its reply with a machine-parsed
+        // "ACTIONABLE " / "INFO " marker (stripped before the user sees it),
+        // so the client can offer "Update Targets" only when this specific
+        // reply actually called for one - without a second AI round-trip.
+        const MARKER_ACTIONABLE = "ACTIONABLE ";
+        const MARKER_INFO = "INFO ";
+        const MAX_MARKER_BUFFER = 12;
+        let markerResolved = false;
+        let markerPending = "";
+
+        function emitToken(text: string) {
+          if (text) controller.enqueue(sseEvent({ type: "token", text }));
+        }
+
+        function handleToken(token: string) {
+          if (markerResolved) {
+            emitToken(token);
+            return;
+          }
+
+          markerPending += token;
+
+          if (markerPending.startsWith(MARKER_ACTIONABLE)) {
+            controller.enqueue(sseEvent({ type: "actionable", value: true }));
+            markerResolved = true;
+            emitToken(markerPending.slice(MARKER_ACTIONABLE.length));
+            markerPending = "";
+            return;
+          }
+
+          if (markerPending.startsWith(MARKER_INFO)) {
+            controller.enqueue(sseEvent({ type: "actionable", value: false }));
+            markerResolved = true;
+            emitToken(markerPending.slice(MARKER_INFO.length));
+            markerPending = "";
+            return;
+          }
+
+          const stillPossible = MARKER_ACTIONABLE.startsWith(markerPending) || MARKER_INFO.startsWith(markerPending);
+          if (!stillPossible || markerPending.length >= MAX_MARKER_BUFFER) {
+            // The model didn't follow the marker format - fail safe (no
+            // "Update Targets" offered) and surface whatever it said.
+            controller.enqueue(sseEvent({ type: "actionable", value: false }));
+            markerResolved = true;
+            emitToken(markerPending);
+            markerPending = "";
+          }
+        }
+
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -190,12 +251,17 @@ export async function POST(request: NextRequest) {
               };
               const token = parsed.choices?.[0]?.delta?.content;
               if (token) {
-                controller.enqueue(sseEvent({ type: "token", text: token }));
+                handleToken(token);
               }
             } catch {
               // Ignore malformed/partial SSE frames from the upstream provider.
             }
           }
+        }
+
+        if (!markerResolved) {
+          controller.enqueue(sseEvent({ type: "actionable", value: false }));
+          emitToken(markerPending);
         }
 
         controller.enqueue(sseEvent({ type: "done" }));

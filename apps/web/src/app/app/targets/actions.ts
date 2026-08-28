@@ -3,11 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { generateTargetsWithAi } from "@/lib/ai/targets";
+import { prepareMedicalContextForTargets } from "@/app/app/documents/actions";
+import { generateTargetsWithAi, NoActionableChangeError } from "@/lib/ai/targets";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { normalizeLocale } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import {
+  evaluateTargetWeightSafety,
   generateHeuristicTargetProfile,
   mapTargetProfileRowToPayload,
   TARGET_PROFILE_COLUMNS,
@@ -61,6 +63,8 @@ export async function generateTargetsPayload({
   aiConfig,
   hasConsent,
   currentTargets,
+  supabase,
+  userId,
 }: {
   goalText: string;
   profile: ProfileForTargets;
@@ -71,16 +75,61 @@ export async function generateTargetsPayload({
    * plan rather than a fresh generation; ignored by the heuristic fallback
    * (which is a simplified, non-AI path). */
   currentTargets?: TargetGenerationPayload;
-}): Promise<{ payload: TargetGenerationPayload; source: "ai" | "heuristic"; heuristicReason: string | null }> {
+  /** When provided alongside userId, the user's uploaded medical documents
+   * are auto-extracted (if pending) and factored into the AI generation.
+   * Omitted callers simply skip document context (no supabase/userId
+   * available, or AI generation isn't in play). */
+  supabase?: Awaited<ReturnType<typeof createClient>>;
+  userId?: string;
+}): Promise<{
+  payload: TargetGenerationPayload;
+  source: "ai" | "heuristic";
+  heuristicReason: string | null;
+  /** Set when the generated payload's target weight would push the user's
+   * BMI into an unsafe zone; callers must not treat `payload` as a valid
+   * preview/adjustment when this is present. */
+  safetyRejectionMessage?: string;
+  /** Set when the model determined the adjustment request didn't describe
+   * any concrete, in-scope health change to make; same handling as
+   * safetyRejectionMessage - do not treat `payload` as valid. */
+  notActionableMessage?: string;
+}> {
   let heuristicReason: string | null = null;
   let payload: TargetGenerationPayload | null = null;
   let source: "ai" | "heuristic" = "heuristic";
 
   if (aiConfig && hasConsent) {
     try {
-      payload = await generateTargetsWithAi({ config: aiConfig, goalText, profile, locale, currentTargets });
+      const medicalDocumentsContext =
+        supabase && userId
+          ? await prepareMedicalContextForTargets({ supabase, userId }).catch((error) => {
+              logServerError("targets.generate", "medical_context_failed", {
+                userId,
+                error: error instanceof Error ? error.message : "Unknown error",
+              });
+              return null;
+            })
+          : null;
+
+      payload = await generateTargetsWithAi({
+        config: aiConfig,
+        goalText,
+        profile,
+        locale,
+        currentTargets,
+        medicalDocumentsContext: medicalDocumentsContext ?? undefined,
+      });
       source = "ai";
     } catch (error) {
+      if (error instanceof NoActionableChangeError) {
+        return {
+          payload: currentTargets ?? generateHeuristicTargetProfile({ freeText: goalText, profile, locale }),
+          source: "ai",
+          heuristicReason: null,
+          notActionableMessage: error.message,
+        };
+      }
+
       heuristicReason = "AI generation failed at runtime; heuristic fallback was used.";
       logServerError("targets.generate", "ai_generation_failed", {
         error: error instanceof Error ? error.message : "Unknown AI targets generation error",
@@ -96,7 +145,9 @@ export async function generateTargetsPayload({
     payload = generateHeuristicTargetProfile({ freeText: goalText, profile, locale });
   }
 
-  return { payload, source, heuristicReason };
+  const safetyRejectionMessage = evaluateTargetWeightSafety(payload, profile, locale) ?? undefined;
+
+  return { payload, source, heuristicReason, safetyRejectionMessage };
 }
 
 function toProfileForTargets(profile: Record<string, unknown>): ProfileForTargets {
@@ -167,14 +218,20 @@ export async function generateTargetsAction(
 
   const aiConfig = getAiExtractionConfig();
   const hasConsent = aiConfig ? await hasAiTargetsConsent({ supabase, userId: user.id }) : false;
-  const { payload, source, heuristicReason } = await generateTargetsPayload({
+  const { payload, source, heuristicReason, safetyRejectionMessage, notActionableMessage } = await generateTargetsPayload({
     goalText: parsedInput.data.freeText,
     profile,
     locale,
     aiConfig,
     hasConsent,
     currentTargets,
+    supabase,
+    userId: user.id,
   });
+
+  if (safetyRejectionMessage || notActionableMessage) {
+    return { error: safetyRejectionMessage ?? notActionableMessage };
+  }
 
   return {
     success: "Targets generated. Review the preview below before locking it in.",
@@ -310,6 +367,10 @@ export async function lockTargetsAction(
       id: entry.id,
       habit_instruction: entry.habitInstruction,
       rationale: entry.rationale,
+    })),
+    user_targets: parsedPayload.userTargets.map((entry) => ({
+      label: entry.label,
+      value: entry.value,
     })),
 
     ai_rationale_explanation: parsedPayload.aiRationaleExplanation,

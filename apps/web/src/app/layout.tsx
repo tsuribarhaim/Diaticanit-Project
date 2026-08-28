@@ -9,7 +9,13 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className="h-full antialiased">
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {children}
+        <footer className="mt-auto border-t border-slate-200 bg-white py-4 text-center text-xs text-slate-500">
+          <span className="font-semibold text-slate-700">Bites &amp; Bytes</span>
+          {" – Your 24/7 AI Health Companion"}
+        </footer>
+      </body>
     </html>
   );
 }

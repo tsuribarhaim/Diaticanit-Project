@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { signOutAction } from "@/app/app/actions";
@@ -53,7 +52,7 @@ export default async function AppHomePage() {
             </p>
             {environmentBadgeLabel ? <EnvironmentBadge label={environmentBadgeLabel} /> : null}
           </div>
-          <h1 className="mt-1 text-2xl font-bold text-slate-900">{tr(locale, "Dashboard", "לוח בקרה")}</h1>
+          <h1 className="mt-1 text-2xl font-bold text-slate-900">{tr(locale, "Home", "בית")}</h1>
         </div>
 
         <div className="flex items-center gap-3">
@@ -108,36 +107,6 @@ export default async function AppHomePage() {
             </dd>
           </div>
         </dl>
-      </section>
-
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
-        <h2 className="text-lg font-semibold text-slate-900">{tr(locale, "Next routes", "ניווט מהיר")}</h2>
-        <div className="mt-4 flex flex-wrap gap-3">
-          <Link
-            href="/app/profile"
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-          >
-            {tr(locale, "Profile", "פרופיל")}
-          </Link>
-          <Link
-            href="/app/targets"
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-          >
-            {tr(locale, "Targets", "יעדים")}
-          </Link>
-          <Link
-            href="/app/daily-report"
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-          >
-            {tr(locale, "User daily report", "דיווח יומי")}
-          </Link>
-          <Link
-            href="/app/daily-report/defaults"
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-          >
-            {tr(locale, "Report defaults", "ברירות מחדל לדיווח")}
-          </Link>
-        </div>
       </section>
     </main>
   );

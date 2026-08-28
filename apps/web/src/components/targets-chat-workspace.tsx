@@ -15,10 +15,17 @@ import type { ProfileDiffRow, TargetGenerationPayload } from "@/lib/targets";
 type ChatMessage = { role: "user" | "assistant"; content: string };
 type SseEvent =
   | { type: "token"; text: string }
+  | { type: "actionable"; value: boolean }
   | { type: "status"; status: "generating_targets" }
   | { type: "targets"; payload: TargetGenerationPayload; source: "ai" | "heuristic"; warning?: string }
   | { type: "error"; message: string }
   | { type: "done" };
+
+type Decision = {
+  messageIndex: number;
+  actionable: boolean;
+  status: "pending" | "updated" | "ignored";
+};
 
 const STREAM_INACTIVITY_TIMEOUT_MS = 20000;
 
@@ -49,11 +56,13 @@ export function TargetsChatWorkspace({
   maintenanceCalories,
   currentPayload,
   profileChanges,
+  firstName,
 }: {
   locale: AppLocale;
   maintenanceCalories: number;
   currentPayload: TargetGenerationPayload;
   profileChanges?: ProfileDiffRow[];
+  firstName?: string | null;
 }) {
   const router = useRouter();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -63,8 +72,7 @@ export function TargetsChatWorkspace({
   const [streamError, setStreamError] = useState<string | null>(null);
   const [retryAction, setRetryAction] = useState<(() => void) | null>(null);
   const [isGeneratingTargets, setIsGeneratingTargets] = useState(false);
-  const [awaitingDecisionAt, setAwaitingDecisionAt] = useState<number | null>(null);
-  const [decidedAt, setDecidedAt] = useState<Record<number, "updated" | "ignored">>({});
+  const [decision, setDecision] = useState<Decision | null>(null);
   const [pendingPreview, setPendingPreview] = useState<{ source: "ai" | "heuristic"; payload: TargetGenerationPayload } | null>(null);
   const [isDismissingProfileChange, setIsDismissingProfileChange] = useState(false);
   const [lockState, lockFormAction] = useActionState(lockTargetsAction, {} as TargetsActionState);
@@ -92,12 +100,13 @@ export function TargetsChatWorkspace({
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, awaitingDecisionAt]);
+  }, [messages]);
 
   async function runStream(
     requestBody: Record<string, unknown>,
     handlers: {
       onToken?: (text: string) => void;
+      onActionable?: (value: boolean) => void;
       onStatus?: (status: string) => void;
       onTargets?: (payload: TargetGenerationPayload, source: "ai" | "heuristic", warning?: string) => void;
       onErrorEvent?: (message: string) => void;
@@ -155,6 +164,8 @@ export function TargetsChatWorkspace({
 
           if (event.type === "token") {
             handlers.onToken?.(event.text);
+          } else if (event.type === "actionable") {
+            handlers.onActionable?.(event.value);
           } else if (event.type === "status" && event.status === "generating_targets") {
             handlers.onStatus?.(event.status);
           } else if (event.type === "targets") {
@@ -205,7 +216,7 @@ export function TargetsChatWorkspace({
 
     setStreamError(null);
     setRetryAction(null);
-    setAwaitingDecisionAt(null);
+    setDecision(null);
     const historyForRequest = messages;
     const assistantIndex = messages.length + 1;
     setMessages((previous) => [...previous, { role: "user", content: trimmed }, { role: "assistant", content: "" }]);
@@ -213,6 +224,7 @@ export function TargetsChatWorkspace({
     setIsStreaming(true);
 
     let assistantText = "";
+    let actionable = false;
     const result = await runStream(
       { action: "chat", message: trimmed, chatHistory: historyForRequest },
       {
@@ -223,6 +235,9 @@ export function TargetsChatWorkspace({
             next[next.length - 1] = { role: "assistant", content: assistantText };
             return next;
           });
+        },
+        onActionable: (value) => {
+          actionable = value;
         },
       },
     );
@@ -238,46 +253,68 @@ export function TargetsChatWorkspace({
         }
       }
     } else if (assistantText) {
-      setAwaitingDecisionAt(assistantIndex);
+      setDecision({ messageIndex: assistantIndex, actionable, status: "pending" });
     }
 
     setIsStreaming(false);
   }
 
-  async function requestTargetsUpdate(history: ChatMessage[], decisionIndex?: number) {
-    if (isStreaming || history.length === 0) return;
+  /** Core network call for applying whatever the conversation currently
+   * asks for - shared by the persistent decision area and the profile-
+   * staleness "Recalculate now" trigger, neither of which manage decision
+   * bookkeeping themselves. */
+  async function requestTargetsUpdate(
+    history: ChatMessage[],
+  ): Promise<{ ok: boolean; semanticErrorMessage: string | null }> {
+    if (isStreaming || history.length === 0) return { ok: false, semanticErrorMessage: null };
 
     setStreamError(null);
     setRetryAction(null);
     setIsStreaming(true);
     setIsGeneratingTargets(true);
 
+    let receivedTargets = false;
+    let semanticErrorMessage: string | null = null;
+
     const result = await runStream(
       { action: "update_targets", chatHistory: history },
       {
         onTargets: (payload, source, warning) => {
+          receivedTargets = true;
           setPendingPreview({ source, payload });
           if (warning) setStreamError(warning);
         },
-        onErrorEvent: (message) => setStreamError(message),
+        onErrorEvent: (message) => {
+          semanticErrorMessage = message;
+          setStreamError(message);
+        },
       },
     );
 
-    if (result.ok) {
-      if (decisionIndex !== undefined) {
-        setDecidedAt((previous) => ({ ...previous, [decisionIndex]: "updated" }));
-        setAwaitingDecisionAt(null);
-      }
-    } else if (result.errorMessage) {
-      setStreamError(result.errorMessage);
-      setRetryAction(() => () => requestTargetsUpdate(history, decisionIndex));
-    }
-
     setIsGeneratingTargets(false);
     setIsStreaming(false);
+
+    return { ok: result.ok && receivedTargets, semanticErrorMessage: semanticErrorMessage ?? result.errorMessage ?? null };
   }
 
-  function handleRecalculateFromProfileChange() {
+  async function handleUpdateTargetsDecision() {
+    if (!decision || decision.status !== "pending" || !decision.actionable) return;
+    const history = messages;
+    const outcome = await requestTargetsUpdate(history);
+    if (outcome.ok) {
+      setDecision((previous) => (previous ? { ...previous, status: "updated" } : previous));
+    } else if (!outcome.semanticErrorMessage) {
+      // A genuine connection/timeout failure (not a server-explained
+      // rejection) - offer to retry the exact same request.
+      setRetryAction(() => () => handleUpdateTargetsDecision());
+    }
+  }
+
+  function handleIgnoreDecision() {
+    setDecision((previous) => (previous ? { ...previous, status: "ignored" } : previous));
+  }
+
+  async function handleRecalculateFromProfileChange() {
     if (isStreaming || !profileChanges?.length) return;
     const changesText = profileChanges
       .map((row) => `${tr(locale, row.labelEn, row.labelHe)}: ${row.before} → ${row.after}`)
@@ -289,8 +326,11 @@ export function TargetsChatWorkspace({
     );
     const updatedHistory: ChatMessage[] = [...messages, { role: "user", content: noteText }];
     setMessages(updatedHistory);
-    setAwaitingDecisionAt(null);
-    void requestTargetsUpdate(updatedHistory);
+    setDecision(null);
+    const outcome = await requestTargetsUpdate(updatedHistory);
+    if (!outcome.ok && !outcome.semanticErrorMessage) {
+      setRetryAction(() => () => handleRecalculateFromProfileChange());
+    }
   }
 
   async function handleSkipProfileChange() {
@@ -344,7 +384,7 @@ export function TargetsChatWorkspace({
           )
         ) : null}
 
-        <TargetProfileView payload={displayedPayload} locale={locale} maintenanceCalories={maintenanceCalories} />
+        <TargetProfileView payload={displayedPayload} locale={locale} maintenanceCalories={maintenanceCalories} firstName={firstName} />
 
         {pendingPreview ? (
           <form action={lockFormAction} className="space-y-2">
@@ -430,38 +470,6 @@ export function TargetsChatWorkspace({
                 >
                   {message.content || (isStreaming && index === messages.length - 1 ? "…" : "")}
                 </div>
-
-                {message.role === "assistant" && index === awaitingDecisionAt ? (
-                  <div className="mt-1.5 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => requestTargetsUpdate(messages, index)}
-                      disabled={isStreaming}
-                      className="rounded-lg bg-teal-700 px-2.5 py-1 text-xs font-semibold text-white hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                      {tr(locale, "Update Targets", "עדכון היעדים")}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDecidedAt((previous) => ({ ...previous, [index]: "ignored" }));
-                        setAwaitingDecisionAt(null);
-                      }}
-                      disabled={isStreaming}
-                      className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                      {tr(locale, "Ignore", "התעלמות")}
-                    </button>
-                  </div>
-                ) : null}
-
-                {message.role === "assistant" && decidedAt[index] ? (
-                  <p className="mt-1 text-xs text-slate-400">
-                    {decidedAt[index] === "updated"
-                      ? tr(locale, "Targets updated", "היעדים עודכנו")
-                      : tr(locale, "Suggestion ignored", "ההצעה נדחתה")}
-                  </p>
-                ) : null}
               </div>
             ))}
             {isGeneratingTargets ? (
@@ -517,6 +525,36 @@ export function TargetsChatWorkspace({
             <ChatSendButton locale={locale} disabled={isStreaming || !inputValue.trim()} />
           </form>
         </div>
+
+        {decision && decision.status === "pending" && decision.actionable ? (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-teal-200 bg-teal-50 p-3">
+            <p className="text-sm text-teal-900">
+              {tr(locale, "Apply the change from your last message?", "להחיל את השינוי מההודעה האחרונה שלך?")}
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={handleUpdateTargetsDecision}
+                disabled={isStreaming}
+                className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {tr(locale, "Update Targets", "עדכון היעדים")}
+              </button>
+              <button
+                type="button"
+                onClick={handleIgnoreDecision}
+                disabled={isStreaming}
+                className="rounded-lg border border-teal-300 bg-white px-3 py-1.5 text-sm font-semibold text-teal-700 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {tr(locale, "Ignore", "התעלמות")}
+              </button>
+            </div>
+          </div>
+        ) : decision && decision.status === "updated" ? (
+          <p className="mt-3 text-xs text-slate-400">{tr(locale, "Targets updated from your last request.", "היעדים עודכנו בהתאם לבקשתך האחרונה.")}</p>
+        ) : decision && decision.status === "ignored" ? (
+          <p className="mt-3 text-xs text-slate-400">{tr(locale, "Suggestion ignored.", "ההצעה נדחתה.")}</p>
+        ) : null}
       </div>
     </div>
   );

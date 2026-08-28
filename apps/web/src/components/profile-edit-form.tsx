@@ -396,7 +396,6 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [draft, setDraft] = useState<ProfileEditDraft>(() => createInitialDraft(defaults));
   const selectedExerciseModalities = getScheduledModalities(draft.exercise_modalities);
-  const hasClientBlockingError = Boolean(clientError || allergyError || consentError);
   const exerciseSummary = computeExerciseSummaryFromDraft(
     selectedExerciseModalities,
     draft.exercise_schedule_by_modality,
@@ -1129,19 +1128,13 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
           {clientError}
         </p>
       ) : null}
-      {state.success && !hasClientBlockingError ? (
-        <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          {state.success}
-        </p>
-      ) : null}
-
       <div className="flex flex-col gap-3 sm:flex-row">
         <SaveButton locale={locale} canSubmit={draft.accept_ai_extraction} />
         <Link
           href="/app/profile"
           className="inline-flex w-full items-center justify-center rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-100"
         >
-          {tr(locale, "Back to profile", "חזרה לפרופיל")}
+          {tr(locale, "Disregard", "התעלמות")}
         </Link>
       </div>
     </form>

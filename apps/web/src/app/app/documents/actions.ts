@@ -57,7 +57,7 @@ type ComponentRule = {
 };
 
 type ExtractionStrategy = "auto" | "heuristic-only" | "ai-only";
-type ExtractionMode = "auto" | "heuristic" | "ai";
+export type ExtractionMode = "auto" | "heuristic" | "ai";
 
 function modeUsedMarker(mode: Exclude<ExtractionMode, "auto">): string {
   return mode === "ai" ? "mode-ai-used" : "mode-heuristic-used";
@@ -1317,6 +1317,7 @@ async function processQueuedExtraction({
 
   let extractedComponents: SeedComponent[] = [];
   let usedDemoFallback = false;
+  let reportDate: string | null = null;
 
   const extractedTextResult = await extractTextFromDocument({
     supabase,
@@ -1351,14 +1352,15 @@ async function processQueuedExtraction({
       if (hasConsent) {
         aiAttempted = true;
         try {
-          const aiComponents = await extractComponentsWithAi({
+          const aiExtraction = await extractComponentsWithAi({
             config: aiConfig,
             documentText: extractedTextResult.text,
             defaultCategory: documentRow.category,
           });
 
-          if (aiComponents.length) {
-            extractedComponents = aiComponents;
+          if (aiExtraction.components.length) {
+            extractedComponents = aiExtraction.components;
+            reportDate = aiExtraction.reportDate;
             aiUsedOutput = true;
             selectedParserVersion = `ai-${aiConfig.provider}-v1`;
           } else {
@@ -1435,6 +1437,7 @@ async function processQueuedExtraction({
         status: computeComponentStatusForStorage(component),
         confidence: component.confidence,
         source_line: component.source_line,
+        observed_at: reportDate,
       })),
     );
 
@@ -1606,40 +1609,37 @@ export async function uploadDocumentAction(
   return { success: "Document uploaded successfully." };
 }
 
-export async function requestExtractionAction(formData: FormData): Promise<void> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/auth/sign-in");
-  }
-
-  const documentId = formData.get("document_id")?.toString();
-  const extractionModeRaw = formData.get("extraction_mode")?.toString() ?? "ai";
-  const extractionMode: ExtractionMode =
-    extractionModeRaw === "heuristic" || extractionModeRaw === "ai" || extractionModeRaw === "auto"
-      ? extractionModeRaw
-      : "ai";
-  if (!documentId) {
-    return;
-  }
-
+/**
+ * Core extraction runner, shared by the user-triggered form action below and
+ * any other caller (e.g. target generation auto-extracting a pending
+ * document) that needs to run/await extraction directly without a FormData
+ * round-trip.
+ */
+export async function runDocumentExtraction({
+  supabase,
+  userId,
+  documentId,
+  extractionMode,
+}: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  userId: string;
+  documentId: string;
+  extractionMode: ExtractionMode;
+}): Promise<{ ok: boolean; error?: string }> {
   const { data: doc, error: docError } = await supabase
     .from("user_documents")
     .select("id, extraction_status")
     .eq("id", documentId)
-    .eq("user_id", user.id)
+    .eq("user_id", userId)
     .maybeSingle();
 
   if (docError || !doc) {
     logServerError("documents.requestExtraction", "document_fetch_failed", {
-      userId: user.id,
+      userId,
       documentId,
       error: docError?.message,
     });
-    return;
+    return { ok: false, error: docError?.message ?? "Document not found." };
   }
 
   const isValidStatus = documentExtractionStatuses.includes(
@@ -1654,7 +1654,7 @@ export async function requestExtractionAction(formData: FormData): Promise<void>
   if (fromStatus === "not_started" || fromStatus === "failed") {
     const queueResult = await transitionDocumentExtractionStatus({
       supabase,
-      userId: user.id,
+      userId,
       documentId,
       fromStatus,
       nextStatus: "queued",
@@ -1662,13 +1662,13 @@ export async function requestExtractionAction(formData: FormData): Promise<void>
 
     if (!queueResult.ok) {
       logServerError("documents.requestExtraction", "status_transition_failed", {
-        userId: user.id,
+        userId,
         documentId,
         fromStatus,
         nextStatus: "queued",
         error: queueResult.error,
       });
-      return;
+      return { ok: false, error: queueResult.error };
     }
 
     processingStartStatus = "queued";
@@ -1678,11 +1678,11 @@ export async function requestExtractionAction(formData: FormData): Promise<void>
     processingStartStatus = fromStatus;
   } else {
     logServerError("documents.requestExtraction", "unsupported_start_status", {
-      userId: user.id,
+      userId,
       documentId,
       fromStatus,
     });
-    return;
+    return { ok: false, error: "Unsupported extraction status." };
   }
 
   const runExtraction = async ({
@@ -1699,13 +1699,13 @@ export async function requestExtractionAction(formData: FormData): Promise<void>
     const { data: existingReports, error: existingReportsError } = await supabase
       .from("extracted_reports")
       .select("id, parser_version")
-      .eq("user_id", user.id)
+      .eq("user_id", userId)
       .eq("document_id", documentId)
       .order("created_at", { ascending: false });
 
     if (existingReportsError) {
       logServerError("documents.requestExtraction", "load_existing_reports_failed", {
-        userId: user.id,
+        userId,
         documentId,
         strategy,
         error: existingReportsError.message,
@@ -1728,14 +1728,14 @@ export async function requestExtractionAction(formData: FormData): Promise<void>
         .from("extracted_reports")
         .delete()
         .in("id", staleReportIds)
-        .eq("user_id", user.id);
+        .eq("user_id", userId);
     }
 
     if (!reportId) {
       const { data: insertedReport, error: insertReportError } = await supabase
         .from("extracted_reports")
         .insert({
-          user_id: user.id,
+          user_id: userId,
           document_id: documentId,
           status: "queued",
         })
@@ -1744,7 +1744,7 @@ export async function requestExtractionAction(formData: FormData): Promise<void>
 
       if (insertReportError || !insertedReport?.id) {
         logServerError("documents.requestExtraction", "seed_report_insert_failed", {
-          userId: user.id,
+          userId,
           documentId,
           strategy,
           error: insertReportError?.message ?? "Missing report id after insert",
@@ -1770,11 +1770,11 @@ export async function requestExtractionAction(formData: FormData): Promise<void>
         extracted_at: null,
       })
       .eq("id", reportId)
-      .eq("user_id", user.id);
+      .eq("user_id", userId);
 
     const processingResult = await processQueuedExtraction({
       supabase,
-      userId: user.id,
+      userId,
       documentId,
       reportId,
       fromStatus: startStatus,
@@ -1788,7 +1788,7 @@ export async function requestExtractionAction(formData: FormData): Promise<void>
     }
 
     logServerError("documents.requestExtraction", "process_queued_failed", {
-      userId: user.id,
+      userId,
       documentId,
       reportId,
       strategy,
@@ -1798,7 +1798,7 @@ export async function requestExtractionAction(formData: FormData): Promise<void>
     if (markDocumentFailedOnError) {
       await transitionDocumentExtractionStatus({
         supabase,
-        userId: user.id,
+        userId,
         documentId,
         fromStatus: "processing",
         nextStatus: "failed",
@@ -1815,27 +1815,29 @@ export async function requestExtractionAction(formData: FormData): Promise<void>
         summary_bullets: [],
       })
       .eq("id", reportId)
-      .eq("user_id", user.id);
+      .eq("user_id", userId);
 
     return { ok: false, reportId, error: processingResult.error };
   };
 
+  let outcome: { ok: boolean; reportId: string | null; error?: string };
+
   if (extractionMode === "heuristic") {
-    await runExtraction({
+    outcome = await runExtraction({
       strategy: "heuristic-only",
       startStatus: processingStartStatus,
       markDocumentFailedOnError: true,
       mode: "heuristic",
     });
   } else if (extractionMode === "ai") {
-    await runExtraction({
+    outcome = await runExtraction({
       strategy: "ai-only",
       startStatus: processingStartStatus,
       markDocumentFailedOnError: true,
       mode: "ai",
     });
   } else {
-    await runExtraction({
+    outcome = await runExtraction({
       strategy: "auto",
       startStatus: processingStartStatus,
       markDocumentFailedOnError: true,
@@ -1843,9 +1845,150 @@ export async function requestExtractionAction(formData: FormData): Promise<void>
     });
   }
 
+  return { ok: outcome.ok, error: outcome.error };
+}
+
+export async function requestExtractionAction(formData: FormData): Promise<void> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/sign-in");
+  }
+
+  const documentId = formData.get("document_id")?.toString();
+  const extractionModeRaw = formData.get("extraction_mode")?.toString() ?? "ai";
+  const extractionMode: ExtractionMode =
+    extractionModeRaw === "heuristic" || extractionModeRaw === "ai" || extractionModeRaw === "auto"
+      ? extractionModeRaw
+      : "ai";
+  if (!documentId) {
+    return;
+  }
+
+  await runDocumentExtraction({ supabase, userId: user.id, documentId, extractionMode });
+
   revalidatePath("/app/documents");
   revalidatePath("/app/profile");
   revalidatePath(`/app/documents/${documentId}/extraction`);
+}
+
+const MAX_MEDICAL_CONTEXT_CHARS = 6000;
+const MAX_COMPONENTS_PER_DOCUMENT = 30;
+
+/**
+ * Builds a compact text summary of the user's uploaded medical documents for
+ * inclusion in the target-generation AI prompt: auto-triggers extraction for
+ * any document that hasn't been extracted yet, then formats each document's
+ * extracted findings (with whatever dating info is available) so the model
+ * can judge relevance/validity itself rather than the app pre-filtering.
+ * Returns null when the user has no usable extracted document data.
+ */
+export async function prepareMedicalContextForTargets({
+  supabase,
+  userId,
+}: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  userId: string;
+}): Promise<string | null> {
+  const { data: documents, error: documentsError } = await supabase
+    .from("user_documents")
+    .select("id, category, file_name, created_at, extraction_status")
+    .eq("user_id", userId)
+    .eq("status", "uploaded")
+    .order("created_at", { ascending: false });
+
+  if (documentsError || !documents?.length) {
+    return null;
+  }
+
+  const pendingDocuments = documents.filter(
+    (doc) => doc.extraction_status !== "extracted" && doc.extraction_status !== "needs_review",
+  );
+
+  for (const doc of pendingDocuments) {
+    await runDocumentExtraction({ supabase, userId, documentId: doc.id, extractionMode: "auto" });
+  }
+
+  const documentIds = documents.map((doc) => doc.id);
+  const { data: reports, error: reportsError } = await supabase
+    .from("extracted_reports")
+    .select("id, document_id, summary_bullets, summary_overall_status, extracted_at")
+    .eq("user_id", userId)
+    .in("document_id", documentIds)
+    .in("status", ["extracted", "needs_review"])
+    .order("created_at", { ascending: false });
+
+  if (reportsError || !reports?.length) {
+    return null;
+  }
+
+  // Keep only the latest report per document.
+  const latestReportByDocument = new Map<string, (typeof reports)[number]>();
+  for (const report of reports) {
+    if (!latestReportByDocument.has(report.document_id)) {
+      latestReportByDocument.set(report.document_id, report);
+    }
+  }
+  const latestReports = Array.from(latestReportByDocument.values());
+  const reportIds = latestReports.map((report) => report.id);
+
+  const { data: components } = await supabase
+    .from("extracted_components")
+    .select("report_id, category, component_name, measured_value, unit, reference_min, reference_max, status, observed_at")
+    .in("report_id", reportIds);
+
+  const componentsByReport = new Map<string, typeof components>();
+  for (const component of components ?? []) {
+    const list = componentsByReport.get(component.report_id) ?? [];
+    if (list.length < MAX_COMPONENTS_PER_DOCUMENT) {
+      list.push(component);
+    }
+    componentsByReport.set(component.report_id, list);
+  }
+
+  const documentById = new Map(documents.map((doc) => [doc.id, doc]));
+  const blocks: string[] = [];
+
+  for (const report of latestReports) {
+    const doc = documentById.get(report.document_id);
+    if (!doc) continue;
+
+    const reportComponents = componentsByReport.get(report.id) ?? [];
+    const lines = [
+      `Document: "${doc.file_name}" (category: ${doc.category}, uploaded: ${doc.created_at?.slice(0, 10) ?? "unknown"})`,
+    ];
+
+    if (report.summary_bullets?.length) {
+      lines.push(`Summary: ${report.summary_bullets.join("; ")}`);
+    }
+
+    if (reportComponents.length) {
+      lines.push("Findings:");
+      for (const component of reportComponents) {
+        const refRange =
+          component.reference_min || component.reference_max
+            ? ` (reference ${component.reference_min ?? "?"}-${component.reference_max ?? "?"})`
+            : "";
+        const observed = component.observed_at
+          ? `observed ${component.observed_at.slice(0, 10)}`
+          : `no report date found, upload date is the only available proxy`;
+        lines.push(
+          `- ${component.component_name}: ${component.measured_value ?? "?"} ${component.unit ?? ""}${refRange}, status ${component.status} (${observed})`,
+        );
+      }
+    }
+
+    blocks.push(lines.join("\n"));
+  }
+
+  if (!blocks.length) {
+    return null;
+  }
+
+  return blocks.join("\n\n").slice(0, MAX_MEDICAL_CONTEXT_CHARS);
 }
 
 export async function deleteDocumentAction(formData: FormData): Promise<void> {

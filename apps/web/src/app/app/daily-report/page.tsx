@@ -182,12 +182,6 @@ export default async function DailyReportPage({
             >
               {tr(locale, "Manage defaults", "ניהול ברירות מחדל")}
             </Link>
-            <Link
-              href="/app"
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
-            >
-              {tr(locale, "Back to dashboard", "חזרה ללוח הבקרה")}
-            </Link>
           </div>
         </div>
 

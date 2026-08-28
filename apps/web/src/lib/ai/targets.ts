@@ -2,7 +2,14 @@ import { z } from "zod";
 
 import type { AiExtractionConfig } from "@/lib/ai/env";
 import type { AppLocale } from "@/lib/locale";
-import type { ExerciseTargetEntry, HabitEntry, ProfileForTargets, TargetGenerationPayload, TargetGoalType } from "@/lib/targets";
+import type { ExerciseTargetEntry, HabitEntry, ProfileForTargets, TargetGenerationPayload, TargetGoalType, UserTargetEntry } from "@/lib/targets";
+
+/** Thrown when the model determines goal_text (an adjustment request against
+ * an already-locked plan) doesn't describe any concrete, in-scope health
+ * change to apply - as opposed to a generation failure, this should not fall
+ * back to the heuristic generator, since that would silently mask the signal
+ * with an unrelated baseline payload. */
+export class NoActionableChangeError extends Error {}
 
 const numberFromUnknown = z.preprocess((value) => {
   if (typeof value === "number") return value;
@@ -28,7 +35,15 @@ const aiHabitEntrySchema = z.object({
   rationale: z.string().trim().min(1).max(500),
 });
 
+const aiUserTargetEntrySchema = z.object({
+  label: z.string().trim().min(1).max(80),
+  value: z.string().trim().min(1).max(80),
+});
+
 const aiTargetsSchema = z.object({
+  no_actionable_change: z.boolean().optional().default(false),
+  no_actionable_change_reason: z.string().trim().max(300).optional().default(""),
+
   goal_type: z.enum(["weight_loss", "weight_gain", "maintain", "general"]),
   target_weight_kg: numberFromUnknown.optional(),
   duration_days: numberFromUnknown.optional(),
@@ -76,6 +91,7 @@ const aiTargetsSchema = z.object({
   exercise_targets: z.array(aiExerciseTargetSchema).max(6).optional().default([]),
   habits_do: z.array(aiHabitEntrySchema).max(6).optional().default([]),
   habits_dont: z.array(aiHabitEntrySchema).max(6).optional().default([]),
+  user_targets: z.array(aiUserTargetEntrySchema).max(8).optional().default([]),
 
   global_coaching_explanation: z.string().trim().max(1000).optional().default(""),
   confidence: numberFromUnknown.optional(),
@@ -135,6 +151,13 @@ function toHabitEntries(items: z.infer<typeof aiHabitEntrySchema>[]): HabitEntry
     id: item.id,
     habitInstruction: item.habit_instruction,
     rationale: item.rationale,
+  }));
+}
+
+function toUserTargets(items: z.infer<typeof aiUserTargetEntrySchema>[]): UserTargetEntry[] {
+  return items.slice(0, 8).map((item) => ({
+    label: item.label,
+    value: item.value,
   }));
 }
 
@@ -206,6 +229,7 @@ function mapAiTargetsResponse(raw: z.infer<typeof aiTargetsSchema>): TargetGener
     exerciseTargets: toExerciseTargets(raw.exercise_targets),
     habitsDo: toHabitEntries(raw.habits_do),
     habitsDont: toHabitEntries(raw.habits_dont),
+    userTargets: toUserTargets(raw.user_targets),
 
     aiRationaleExplanation: raw.global_coaching_explanation,
     confidence: clamp(raw.confidence ?? 0.75, 0.3, 0.97),
@@ -241,6 +265,7 @@ export async function generateTargetsWithAi({
   profile,
   locale,
   currentTargets,
+  medicalDocumentsContext,
 }: {
   config: AiExtractionConfig;
   goalText: string;
@@ -252,6 +277,10 @@ export async function generateTargetsWithAi({
    * consistency changes (e.g. lower workout frequency -> lower calorie
    * ceiling), instead of generating a fresh plan from scratch. */
   currentTargets?: TargetGenerationPayload;
+  /** Extracted findings from the user's uploaded medical documents (e.g. lab
+   * results), when any are available - see buildMedicalDocumentsContextRules
+   * for how the model is instructed to weigh these. */
+  medicalDocumentsContext?: string;
 }): Promise<TargetGenerationPayload> {
   if (config.provider === "github") {
     throw new Error(
@@ -266,9 +295,21 @@ export async function generateTargetsWithAi({
         "This is an ADJUSTMENT request against an already-locked target plan, not a fresh generation.",
         "current_active_targets (JSON):",
         JSON.stringify(currentTargets),
+        "NO-ACTIONABLE-CHANGE CHECK (adjustment requests only): if goal_text (the conversation transcript) does not describe any concrete, in-scope health/nutrition/exercise/sleep/hydration/weight change to make - e.g. it's off-topic (a career, financial, or relationship goal), pure small talk, a question you already answered conversationally, or too vague to translate into a number - set no_actionable_change to true, put a short plain-language reason in no_actionable_change_reason (in the reply language), and you may leave every other field as a best-effort copy of current_active_targets since it will be discarded. Do not set this just because the request happens to be unsafe (that has its own handling below) - only when there is genuinely nothing concrete and in-scope to apply.",
         "Change what the goal_text below asks for, plus anything the current profile now requires for safety (see the mandatory safety review rule above) - keep every other range, exercise entry, and habit as close to the current values as reasonable.",
-        "If the requested change would create an unsafe or unbalanced combination (e.g. reducing exercise while keeping calories at the same level), proactively adjust the dependent values (e.g. lower the calorie range) to keep the plan coherent, and explain that adjustment in global_coaching_explanation.",
+        "If the requested change would create an unsafe or unbalanced combination (e.g. reducing exercise while keeping calories at the same level), proactively adjust the DEPENDENT values (e.g. lower the calorie range) to keep the plan coherent, and explain that adjustment in global_coaching_explanation. This does not apply to target_weight_kg itself - that must stay a literal translation of goal_text per the rule above, not something you adjust for safety.",
         "Do not treat a vague goal_text (e.g. \"please recalculate\" or \"my profile changed\") as a reason to leave everything unchanged - in that case, the safety review against the current profile IS the request.",
+        "current_active_targets.user_targets holds the user's previously tracked asks. Carry forward any still-relevant ones, add a new entry for whatever this request newly asks for, and update the value of an existing entry instead of duplicating it if this request changes the same thing (e.g. a new weight-loss amount replaces the old \"Lose weight\" value rather than adding a second one).",
+      ]
+    : [];
+
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const medicalDocumentsContextLines = medicalDocumentsContext
+    ? [
+        `today's date: ${todayIso}`,
+        "medical_documents_context (extracted findings from documents the user uploaded, e.g. blood tests):",
+        medicalDocumentsContext,
+        "MEDICAL DOCUMENT RULES: judge for yourself, per finding, whether it's still valid/relevant enough to factor into today's targets. Weigh the observed/report date (or, when no report date was found, the upload date as a rough proxy) against today's date and against how quickly that specific kind of marker typically changes. Judge the AGE PLAINLY against today's date - a gap of several years is old regardless of how the number itself reads, and must not be described as \"recent\" or \"current\". As a concrete anchor: blood glucose, lipids (cholesterol/LDL/HDL/triglycerides), and HbA1c are typically only meaningful for roughly 6-12 months and should usually be treated as stale beyond about 2 years; something like blood type or a genetic result never goes stale. If multiple documents cover the same topic, prioritize the most recent, most relevant one rather than mechanically averaging them. Only let a finding influence the numeric ranges or habits when it is both genuinely relevant to nutrition/exercise/sleep/hydration and judged valid. In global_coaching_explanation, state the finding's actual date (or age) plainly, briefly mention which specific medical finding(s) you factored in AND why (or, if you judged a finding or document too stale or not relevant to use, say so explicitly instead) - do not silently ignore something without mentioning it, and do not mischaracterize an old date as recent.",
       ]
     : [];
 
@@ -286,7 +327,8 @@ export async function generateTargetsWithAi({
         role: "user",
         content: [
           "Return strict JSON with exactly this shape (all numeric fields are plain numbers, all ranges must have min <= max):",
-          '{"goal_type":"weight_loss|weight_gain|maintain|general","target_weight_kg":number,"duration_days":number,"blood_balance_focus":boolean,"sleep_focus":boolean,',
+          '{"no_actionable_change":boolean,"no_actionable_change_reason":"string",',
+          '"goal_type":"weight_loss|weight_gain|maintain|general","target_weight_kg":number,"duration_days":number,"blood_balance_focus":boolean,"sleep_focus":boolean,',
           '"calories_min":number,"calories_max":number,"protein_min_g":number,"protein_max_g":number,"carbs_min_g":number,"carbs_max_g":number,"fats_min_g":number,"fats_max_g":number,',
           '"fiber_min_g":number,"fiber_max_g":number,"sodium_min_mg":number,"sodium_max_mg":number,"added_sugar_min_g":number,"added_sugar_max_g":number,"water_min_ml":number,"water_max_ml":number,',
           '"potassium_min_mg":number,"potassium_max_mg":number,"magnesium_min_mg":number,"magnesium_max_mg":number,"calcium_min_mg":number,"calcium_max_mg":number,"iron_min_mg":number,"iron_max_mg":number,',
@@ -295,18 +337,22 @@ export async function generateTargetsWithAi({
           '"exercise_targets":[{"modality":"string","frequency_per_week":number,"duration_minutes_per_session":number,"ai_adjustment_note":"string","search_keywords":["string"]}],',
           '"habits_do":[{"id":"string","habit_instruction":"string","rationale":"string"}],',
           '"habits_dont":[{"id":"string","habit_instruction":"string","rationale":"string"}],',
+          '"user_targets":[{"label":"string","value":"string"}],',
           '"global_coaching_explanation":"string","confidence":number}',
           "Rules:",
+          "- target_weight_kg and duration_days must be a FAITHFUL, literal translation of what goal_text actually asks for (e.g. \"lose 5kg\" against a known current weight, or an explicit target weight) - never silently substitute a different, \"safer\" number of your own choosing, even if the literal ask looks medically unwise. The application runs its own independent, deterministic safety check on target_weight_kg after you respond and will reject the whole request if it's unsafe; your job here is accurate translation, not moderation. If goal_text does not state or imply a weight/duration change, leave the current value(s) unchanged.",
           "- Base all ranges on standard adult Dietary Reference Intake (DRI) style ranges, scaled to the user's profile. This is general guidance, not a clinical diagnosis.",
           "- Respect any allergies, medical conditions, medications, and dietary preference when shaping habits and exercise notes (e.g. avoid recommending foods that conflict with a stated allergy).",
           "- MANDATORY SAFETY REVIEW: check the numeric ranges themselves (not just habit text) against the user's medical conditions. In particular: hypertension calls for a tighter, lower sodium range (roughly 1,200-1,500 mg rather than a generic 1,500-2,300 mg); diabetes calls for a lower added-sugar ceiling (roughly 15 g rather than a generic 25 g). Apply comparable, clinically-reasonable tightening for any other stated condition that has an established dietary implication. This review applies even when it is not the explicit subject of goal_text.",
           "- exercise_targets: 2 to 4 entries. search_keywords must be short YouTube search phrases only (e.g. \"beginner resistance training routine\") — NEVER include a URL or a specific video title/link, since direct AI-suggested links are unreliable.",
           "- habits_do and habits_dont: 2 to 4 entries each, each with a short actionable instruction and a one-sentence rationale.",
+          "- user_targets: 0 to 5 entries. For each concrete, health-relevant ask the user actually made in goal_text (e.g. losing/gaining a specific amount of weight, a sleep-duration goal, a hydration goal, a step-count goal), add one entry with a short clean label (e.g. \"Target weight\", \"Lose weight\", \"Sleep duration\") and a short concrete value (e.g. \"62 kg\", \"2 kg\", \"8 hours\"). Only include asks that are genuinely about health, nutrition, exercise, sleep, or a related wellbeing topic and that you judged safe to apply; silently omit anything irrelevant, unsafe, or too vague to state as a concrete value. Do not invent entries the user didn't ask for - leave user_targets empty if goal_text has no concrete ask.",
           "- confidence must be between 0 and 1.",
-          `- Write every text field (ai_adjustment_note, habit_instruction, rationale, global_coaching_explanation) entirely in ${languageName}. Do not mix languages within a field.`,
+          `- Write every text field (ai_adjustment_note, habit_instruction, rationale, global_coaching_explanation, user_targets label/value) entirely in ${languageName}. Do not mix languages within a field.`,
           "- Address the user directly in second person (\"you\"/\"your\") in every text field. Never refer to the user in third person (\"he\", \"she\", \"his\", \"her\", or the user's inferred gender) even when their biological_sex is known.",
           "- In Hebrew specifically, prefer gender-neutral or mixed-form second-person phrasing (e.g. \"שלך\", \"את/ה\") over a gendered third-person construction like \"בשל מצבו הרפואי\" or \"בשל מצבה הרפואי\" — write \"בשל המצב הרפואי שלך\" instead.",
           ...adjustmentContextLines,
+          ...medicalDocumentsContextLines,
           "user_profile:",
           buildProfileSummary(profile),
           "goal_text:",
@@ -368,5 +414,12 @@ export async function generateTargetsWithAi({
       : "";
 
   const parsed = aiTargetsSchema.parse(parseJsonPayload(contentText));
+
+  if (currentTargets && parsed.no_actionable_change) {
+    throw new NoActionableChangeError(
+      parsed.no_actionable_change_reason || "The message didn't describe a specific health-related change to apply.",
+    );
+  }
+
   return mapAiTargetsResponse(parsed);
 }

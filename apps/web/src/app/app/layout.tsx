@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+import { AppNav } from "@/components/app-nav";
+import { UnsavedPreviewProvider } from "@/components/unsaved-preview-context";
 import { directionForLocale, normalizeLocale } from "@/lib/locale";
 import { createClient } from "@/lib/supabase/server";
 
@@ -27,7 +29,10 @@ export default async function ProtectedAppLayout({
 
   return (
     <div lang={locale} dir={directionForLocale(locale)}>
-      {children}
+      <UnsavedPreviewProvider>
+        {user ? <AppNav locale={locale} /> : null}
+        {children}
+      </UnsavedPreviewProvider>
     </div>
   );
 }

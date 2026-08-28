@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { BMI_GOOD_MIN, classifyBmi, computeBmi } from "@/lib/bmi";
 import type { AppLocale } from "@/lib/locale";
 import { formatNumberForLocale, tr } from "@/lib/locale";
 import { activityLevelOptions } from "@/lib/profile";
@@ -7,7 +8,7 @@ import { activityLevelOptions } from "@/lib/profile";
 /** Column list for selecting a full `user_target_profiles` row, shared by
  * every query site so `mapTargetProfileRowToPayload` always gets what it needs. */
 export const TARGET_PROFILE_COLUMNS =
-  "id, raw_goal_text, goal_type, target_weight_kg, duration_days, blood_balance_focus, sleep_focus, calories_min, calories_max, protein_min_g, protein_max_g, carbs_min_g, carbs_max_g, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, sodium_min_mg, sodium_max_mg, added_sugar_min_g, added_sugar_max_g, water_min_ml, water_max_ml, potassium_min_mg, potassium_max_mg, magnesium_min_mg, magnesium_max_mg, calcium_min_mg, calcium_max_mg, iron_min_mg, iron_max_mg, zinc_min_mg, zinc_max_mg, vit_c_min_mg, vit_c_max_mg, vit_b12_min_mcg, vit_b12_max_mcg, vit_d_min_mcg, vit_d_max_mcg, sat_fat_min_g, sat_fat_max_g, omega3_min_g, omega3_max_g, exercise_targets, habits_do, habits_dont, ai_rationale_explanation, translation_confidence, analysis_source, sys_start_date, profile_snapshot";
+  "id, raw_goal_text, goal_type, target_weight_kg, duration_days, blood_balance_focus, sleep_focus, calories_min, calories_max, protein_min_g, protein_max_g, carbs_min_g, carbs_max_g, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, sodium_min_mg, sodium_max_mg, added_sugar_min_g, added_sugar_max_g, water_min_ml, water_max_ml, potassium_min_mg, potassium_max_mg, magnesium_min_mg, magnesium_max_mg, calcium_min_mg, calcium_max_mg, iron_min_mg, iron_max_mg, zinc_min_mg, zinc_max_mg, vit_c_min_mg, vit_c_max_mg, vit_b12_min_mcg, vit_b12_max_mcg, vit_d_min_mcg, vit_d_max_mcg, sat_fat_min_g, sat_fat_max_g, omega3_min_g, omega3_max_g, exercise_targets, habits_do, habits_dont, user_targets, ai_rationale_explanation, translation_confidence, analysis_source, sys_start_date, profile_snapshot";
 
 export const targetGoalTypes = ["weight_loss", "weight_gain", "maintain", "general"] as const;
 export type TargetGoalType = (typeof targetGoalTypes)[number];
@@ -24,6 +25,11 @@ const habitEntrySchema = z.object({
   id: z.string().trim().min(1).max(60),
   habitInstruction: z.string().trim().min(1).max(300),
   rationale: z.string().trim().min(1).max(500),
+});
+
+const userTargetEntrySchema = z.object({
+  label: z.string().trim().min(1).max(80),
+  value: z.string().trim().min(1).max(80),
 });
 
 const numericRangePairs = [
@@ -100,6 +106,7 @@ export const targetGenerationPayloadSchema = z
     exerciseTargets: z.array(exerciseTargetEntrySchema).max(10),
     habitsDo: z.array(habitEntrySchema).max(10),
     habitsDont: z.array(habitEntrySchema).max(10),
+    userTargets: z.array(userTargetEntrySchema).max(10),
 
     aiRationaleExplanation: z.string().max(2000),
     confidence: z.number().min(0).max(1),
@@ -135,6 +142,14 @@ export type HabitEntry = {
   id: string;
   habitInstruction: string;
   rationale: string;
+};
+
+/** A user's own explicit ask (e.g. "Lose weight" -> "2 kg", "Improve sleep
+ * duration" -> "8 hours"), tracked separately from the structured targets so
+ * the Targets page can show what was actually requested. */
+export type UserTargetEntry = {
+  label: string;
+  value: string;
 };
 
 /**
@@ -189,6 +204,7 @@ export type TargetGenerationPayload = {
   exerciseTargets: ExerciseTargetEntry[];
   habitsDo: HabitEntry[];
   habitsDont: HabitEntry[];
+  userTargets: UserTargetEntry[];
 
   aiRationaleExplanation: string;
   confidence: number;
@@ -742,6 +758,20 @@ export function generateHeuristicTargetProfileFromAnalysis({
     `הטווחים הללו הם תכנית ייחוס כללית למבוגרים עבור מטרת "${goalType.replace(/_/g, " ")}", המותאמת למשקל, לגובה, לגיל ולרמת הפעילות שלך. המידע הוא לצרכי ידע בלבד ואינו תחליף לייעוץ קליני או תזונתי מותאם אישית.`,
   );
 
+  const userTargets: UserTargetEntry[] = [];
+  if (targetWeightKg !== null) {
+    userTargets.push({
+      label: tr(locale, "Target weight", "משקל יעד"),
+      value: `${formatNumberForLocale(targetWeightKg, locale, { maximumFractionDigits: 1 })} kg`,
+    });
+  }
+  if (durationDays !== null) {
+    userTargets.push({
+      label: tr(locale, "Duration", "משך"),
+      value: `${durationDays} ${tr(locale, "days", "ימים")}`,
+    });
+  }
+
   return {
     goalType,
     targetWeightKg,
@@ -771,6 +801,7 @@ export function generateHeuristicTargetProfileFromAnalysis({
     exerciseTargets,
     habitsDo,
     habitsDont,
+    userTargets,
 
     aiRationaleExplanation,
     confidence: clamp(analysis.confidence, 0.45, 0.85),
@@ -823,6 +854,7 @@ type TargetProfileDbRow = {
   exercise_targets: unknown;
   habits_do: unknown;
   habits_dont: unknown;
+  user_targets?: unknown;
   ai_rationale_explanation: string | null;
   translation_confidence: number | string | null;
 };
@@ -859,6 +891,19 @@ function normalizeHabitEntriesJson(value: unknown): HabitEntry[] {
       rationale: typeof record.rationale === "string" ? record.rationale : "",
     };
   });
+}
+
+function normalizeUserTargetsJson(value: unknown): UserTargetEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      const record = (item ?? {}) as Record<string, unknown>;
+      return {
+        label: typeof record.label === "string" ? record.label : "",
+        value: typeof record.value === "string" ? record.value : "",
+      };
+    })
+    .filter((entry) => entry.label && entry.value);
 }
 
 /** Maps a `user_target_profiles` DB row (snake_case) into the same shape the
@@ -912,6 +957,7 @@ export function mapTargetProfileRowToPayload(row: TargetProfileDbRow): TargetGen
     exerciseTargets: normalizeExerciseTargetsJson(row.exercise_targets),
     habitsDo: normalizeHabitEntriesJson(row.habits_do),
     habitsDont: normalizeHabitEntriesJson(row.habits_dont),
+    userTargets: normalizeUserTargetsJson(row.user_targets),
 
     aiRationaleExplanation: row.ai_rationale_explanation ?? "",
     confidence: toNum(row.translation_confidence, 0.5),
@@ -1039,4 +1085,35 @@ export function computeProfileDiff(before: ProfileForTargets, after: ProfileForT
   );
 
   return rows;
+}
+
+/** Guards against a generated target weight that would push the user's BMI
+ * into the unsafe (red/"out_of_range") underweight zone. Only fires for a
+ * genuine weight-LOSS direction (target below current weight) - a target
+ * above current weight is a different risk this check doesn't cover.
+ * Returns a user-facing rejection message, or null if the target is safe
+ * (or there isn't enough data - no height, or no target weight - to judge). */
+export function evaluateTargetWeightSafety(
+  payload: TargetGenerationPayload,
+  profile: ProfileForTargets,
+  locale: AppLocale,
+): string | null {
+  if (payload.targetWeightKg === null) return null;
+  if (payload.targetWeightKg >= profile.weight_kg) return null;
+  if (!profile.height_cm || profile.height_cm <= 0) return null;
+
+  const projectedBmi = computeBmi(payload.targetWeightKg, profile.height_cm);
+  if (projectedBmi <= 0) return null;
+
+  const zone = classifyBmi(projectedBmi);
+  if (zone !== "out_of_range" || projectedBmi >= BMI_GOOD_MIN) {
+    return null;
+  }
+
+  const bmiText = formatNumberForLocale(projectedBmi, locale, { maximumFractionDigits: 1 });
+  return tr(
+    locale,
+    `A target weight of ${formatNumberForLocale(payload.targetWeightKg, locale, { maximumFractionDigits: 1 })} kg would bring your BMI down to about ${bmiText}, which is in the unsafe underweight (red) zone. For your health and safety, this target was not applied - please ask for a smaller weight reduction or a different target weight.`,
+    `משקל יעד של ${formatNumberForLocale(payload.targetWeightKg, locale, { maximumFractionDigits: 1 })} ק"ג היה מוריד את ה-BMI שלך לכ-${bmiText}, שנמצא באזור לא בטוח של תת-משקל (אדום). לשמירה על בריאותך ובטיחותך, היעד לא הוחל - נא לבקש הפחתת משקל קטנה יותר או משקל יעד אחר.`,
+  );
 }

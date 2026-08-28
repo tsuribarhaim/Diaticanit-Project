@@ -59,20 +59,22 @@ function MetricRowView({ row, locale }: { row: MetricRow; locale: AppLocale }) {
         <p className="text-xs uppercase tracking-wide text-slate-500">{reference.nameLabel[locale]}</p>
         <p className="mt-1 text-lg font-semibold text-slate-900">{rangeText}</p>
       </div>
-      <details className="relative">
-        <summary
+      <div className="group relative">
+        <span
+          tabIndex={0}
+          role="button"
           aria-label={tr(locale, "More information", "מידע נוסף")}
-          className="flex h-7 w-7 cursor-pointer list-none items-center justify-center rounded-full border border-slate-300 text-xs font-bold text-slate-600 hover:bg-slate-100"
+          className="flex h-7 w-7 cursor-help items-center justify-center rounded-full border border-slate-300 text-xs font-bold text-slate-600 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
         >
           ?
-        </summary>
-        <div className="absolute end-0 z-10 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-3 text-start text-xs text-slate-700 shadow-lg">
-          <p className="font-semibold text-slate-900">{tr(locale, "Role", "תפקיד")}</p>
+        </span>
+        <div className="invisible absolute end-0 z-10 mt-2 w-64 rounded-xl border border-amber-300 bg-amber-50 p-3 text-start text-xs text-amber-900 opacity-0 shadow-lg transition-opacity duration-150 group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
+          <p className="font-semibold text-amber-900">{tr(locale, "Role", "תפקיד")}</p>
           <p className="mt-1">{reference.roleDescription[locale]}</p>
-          <p className="mt-2 font-semibold text-slate-900">{tr(locale, "Food examples", "דוגמאות מזון")}</p>
+          <p className="mt-2 font-semibold text-amber-900">{tr(locale, "Food examples", "דוגמאות מזון")}</p>
           <p className="mt-1">{reference.foodExamples[locale]}</p>
         </div>
-      </details>
+      </div>
     </div>
   );
 }
@@ -120,18 +122,26 @@ export function TargetProfileView({
   payload,
   locale,
   maintenanceCalories,
+  firstName,
 }: {
   payload: TargetGenerationPayload;
   locale: AppLocale;
   maintenanceCalories: number;
+  firstName?: string | null;
 }) {
   const riskAlert = evaluateEnergyImbalanceRisk({ payload, maintenanceCalories, locale });
+  const userTargetsTitle = firstName
+    ? tr(locale, `${firstName}'s Targets`, `היעדים של ${firstName}`)
+    : tr(locale, "User Targets", "יעדי המשתמש");
+  const additionalSuggestionsTitle = firstName
+    ? tr(locale, `Additional Suggestions for ${firstName}`, `הצעות נוספות עבור ${firstName}`)
+    : tr(locale, "Additional Suggestions", "הצעות נוספות");
 
   return (
     <div className="space-y-6">
       {payload.aiRationaleExplanation ? (
         <div className="rounded-xl border border-teal-200 bg-teal-50 p-4 text-sm text-teal-900">
-          <p className="font-semibold">{tr(locale, "Coaching explanation", "הסבר אימוני")}</p>
+          <p className="font-semibold">{tr(locale, "Description", "הסבר")}</p>
           <p className="mt-1">{payload.aiRationaleExplanation}</p>
         </div>
       ) : null}
@@ -198,36 +208,56 @@ export function TargetProfileView({
         )}
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      {payload.userTargets.length ? (
         <div>
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-700">{tr(locale, "Do", "לעשות")}</h3>
-          <div className="mt-3 space-y-3">
-            {payload.habitsDo.map((habit) => (
-              <div key={habit.id} className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-                <p className="text-sm font-medium text-emerald-900">{habit.habitInstruction}</p>
-                <details className="mt-1">
-                  <summary className="cursor-pointer text-xs font-semibold text-emerald-700">{tr(locale, "Why?", "למה?")}</summary>
-                  <p className="mt-1 text-xs text-emerald-800">{habit.rationale}</p>
-                </details>
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{userTargetsTitle}</h3>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {payload.userTargets.map((entry, index) => (
+              <div
+                key={`${entry.label}-${index}`}
+                className="flex items-center justify-between gap-3 rounded-xl border border-teal-200 bg-teal-50 p-3"
+              >
+                <p className="text-sm font-medium text-teal-900">{entry.label}</p>
+                <p className="text-sm font-semibold text-teal-900">{entry.value}</p>
               </div>
             ))}
           </div>
         </div>
-        <div>
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-rose-700">{tr(locale, "Don't do", "להימנע")}</h3>
-          <div className="mt-3 space-y-3">
-            {payload.habitsDont.map((habit) => (
-              <div key={habit.id} className="rounded-xl border border-rose-200 bg-rose-50 p-3">
-                <p className="text-sm font-medium text-rose-900">{habit.habitInstruction}</p>
-                <details className="mt-1">
-                  <summary className="cursor-pointer text-xs font-semibold text-rose-700">{tr(locale, "Why?", "למה?")}</summary>
-                  <p className="mt-1 text-xs text-rose-800">{habit.rationale}</p>
-                </details>
-              </div>
-            ))}
+      ) : null}
+
+      <details className="rounded-xl border border-slate-200 bg-white p-4">
+        <summary className="cursor-pointer text-sm font-semibold text-teal-700">{additionalSuggestionsTitle}</summary>
+        <div className="mt-3 grid gap-4 sm:grid-cols-2">
+          <div>
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-700">{tr(locale, "Do", "לעשות")}</h3>
+            <div className="mt-3 space-y-3">
+              {payload.habitsDo.map((habit) => (
+                <div key={habit.id} className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                  <p className="text-sm font-medium text-emerald-900">{habit.habitInstruction}</p>
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-xs font-semibold text-emerald-700">{tr(locale, "Why?", "למה?")}</summary>
+                    <p className="mt-1 text-xs text-emerald-800">{habit.rationale}</p>
+                  </details>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-rose-700">{tr(locale, "Don't do", "להימנע")}</h3>
+            <div className="mt-3 space-y-3">
+              {payload.habitsDont.map((habit) => (
+                <div key={habit.id} className="rounded-xl border border-rose-200 bg-rose-50 p-3">
+                  <p className="text-sm font-medium text-rose-900">{habit.habitInstruction}</p>
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-xs font-semibold text-rose-700">{tr(locale, "Why?", "למה?")}</summary>
+                    <p className="mt-1 text-xs text-rose-800">{habit.rationale}</p>
+                  </details>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
-      </div>
+      </details>
     </div>
   );
 }
