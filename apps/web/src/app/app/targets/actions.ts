@@ -333,3 +333,52 @@ export async function lockTargetsAction(
 
   return { success: "Targets approved and locked in." };
 }
+
+/**
+ * Acknowledges a detected profile change without recalculating: re-baselines
+ * the active target profile's stored snapshot to the current profile, so the
+ * staleness banner stops firing for this specific drift while the locked
+ * target numbers themselves are left untouched.
+ */
+export async function dismissProfileChangeAction(): Promise<{ error?: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/sign-in");
+  }
+
+  const { data: profileRow } = await supabase
+    .from("user_profile")
+    .select(
+      "age, gender, biological_sex, height_cm, weight_kg, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_schedule_by_modality, habits, pregnancy_lactation_status, hot_climate_or_heavy_sweating",
+    )
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (!profileRow) {
+    return { error: "Profile not found." };
+  }
+
+  const profileSnapshot = toProfileForTargets(profileRow);
+
+  const { error } = await supabase
+    .from("user_target_profiles")
+    .update({ profile_snapshot: profileSnapshot })
+    .eq("user_id", user.id)
+    .eq("is_active", true);
+
+  if (error) {
+    logServerError("targets.dismissProfileChange", "snapshot_update_failed", {
+      userId: user.id,
+      error: error.message,
+    });
+    return { error: error.message };
+  }
+
+  revalidatePath("/app/targets");
+
+  return {};
+}

@@ -3,7 +3,7 @@
 import { useActionState, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { lockTargetsAction, type TargetsActionState } from "@/app/app/targets/actions";
+import { dismissProfileChangeAction, lockTargetsAction, type TargetsActionState } from "@/app/app/targets/actions";
 import { LockSubmitButton } from "@/components/targets-workspace";
 import { TargetProfileView } from "@/components/target-profile-view";
 import { TargetsDiffTable } from "@/components/targets-diff-table";
@@ -66,6 +66,7 @@ export function TargetsChatWorkspace({
   const [awaitingDecisionAt, setAwaitingDecisionAt] = useState<number | null>(null);
   const [decidedAt, setDecidedAt] = useState<Record<number, "updated" | "ignored">>({});
   const [pendingPreview, setPendingPreview] = useState<{ source: "ai" | "heuristic"; payload: TargetGenerationPayload } | null>(null);
+  const [isDismissingProfileChange, setIsDismissingProfileChange] = useState(false);
   const [lockState, lockFormAction] = useActionState(lockTargetsAction, {} as TargetsActionState);
   const { setHasUnsavedPreview } = useUnsavedPreview();
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -292,6 +293,18 @@ export function TargetsChatWorkspace({
     void requestTargetsUpdate(updatedHistory);
   }
 
+  async function handleSkipProfileChange() {
+    if (isStreaming || isDismissingProfileChange) return;
+    setIsDismissingProfileChange(true);
+    const result = await dismissProfileChangeAction();
+    setIsDismissingProfileChange(false);
+    if (result.error) {
+      setStreamError(result.error);
+      return;
+    }
+    router.refresh();
+  }
+
   const displayedPayload = pendingPreview?.payload ?? currentPayload;
   const diffRows = pendingPreview ? computeTargetsDiff(currentPayload, pendingPreview.payload, locale) : [];
   const isNoChanges = Boolean(pendingPreview) && diffRows.length === 0;
@@ -375,14 +388,24 @@ export function TargetsChatWorkspace({
                 </li>
               ))}
             </ul>
-            <button
-              type="button"
-              onClick={handleRecalculateFromProfileChange}
-              disabled={isStreaming}
-              className="mt-3 inline-flex items-center justify-center rounded-xl bg-amber-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-800"
-            >
-              {tr(locale, "Recalculate now", "לחישוב מחדש")}
-            </button>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handleRecalculateFromProfileChange}
+                disabled={isStreaming || isDismissingProfileChange}
+                className="inline-flex items-center justify-center rounded-xl bg-amber-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-800"
+              >
+                {tr(locale, "Recalculate now", "לחישוב מחדש")}
+              </button>
+              <button
+                type="button"
+                onClick={handleSkipProfileChange}
+                disabled={isStreaming || isDismissingProfileChange}
+                className="inline-flex items-center justify-center rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-800 disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-100"
+              >
+                {isDismissingProfileChange ? tr(locale, "Skipping...", "מדלג...") : tr(locale, "Skip", "דילוג")}
+              </button>
+            </div>
           </div>
         ) : null}
 

@@ -958,6 +958,17 @@ function joinedOrNone(values: string[], locale: AppLocale): string {
   return values.length ? [...values].sort().join(", ") : tr(locale, "None", "ללא");
 }
 
+function exerciseScheduleSummary(
+  schedule: ProfileForTargets["exercise_schedule_by_modality"],
+  locale: AppLocale,
+): string {
+  if (!schedule) return tr(locale, "None", "ללא");
+  const entries = Object.entries(schedule)
+    .map(([modality, value]) => `${modality} ${value.days_per_week}x/${value.minutes_per_session}min`)
+    .sort();
+  return entries.length ? entries.join(", ") : tr(locale, "None", "ללא");
+}
+
 /** Compares the target-relevant fields of two profile snapshots and returns
  * only the ones that changed, for the "your profile changed" banner. */
 export function computeProfileDiff(before: ProfileForTargets, after: ProfileForTargets, locale: AppLocale): ProfileDiffRow[] {
@@ -1007,6 +1018,13 @@ export function computeProfileDiff(before: ProfileForTargets, after: ProfileForT
     joinedOrNone(before.exercise_modalities, locale),
     joinedOrNone(after.exercise_modalities, locale),
   );
+  addIfChanged(
+    "Exercise schedule",
+    "לו\"ז פעילות",
+    exerciseScheduleSummary(before.exercise_schedule_by_modality, locale),
+    exerciseScheduleSummary(after.exercise_schedule_by_modality, locale),
+  );
+  addIfChanged("Habits", "הרגלים", joinedOrNone(before.habits, locale), joinedOrNone(after.habits, locale));
   addIfChanged(
     "Pregnancy / lactation status",
     "סטטוס היריון / הנקה",
