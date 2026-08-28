@@ -252,22 +252,32 @@ export function TargetsChatWorkspace({
     setIsStreaming(true);
     setIsGeneratingTargets(true);
 
+    let receivedTargets = false;
+    let semanticErrorMessage: string | null = null;
+
     const result = await runStream(
       { action: "update_targets", chatHistory: history },
       {
         onTargets: (payload, source, warning) => {
+          receivedTargets = true;
           setPendingPreview({ source, payload });
           if (warning) setStreamError(warning);
         },
-        onErrorEvent: (message) => setStreamError(message),
+        onErrorEvent: (message) => {
+          semanticErrorMessage = message;
+          setStreamError(message);
+        },
       },
     );
 
-    if (result.ok) {
+    if (result.ok && receivedTargets) {
       if (decisionIndex !== undefined) {
         setDecidedAt((previous) => ({ ...previous, [decisionIndex]: "updated" }));
         setAwaitingDecisionAt(null);
       }
+    } else if (semanticErrorMessage) {
+      // A rejection the server explained (e.g. an unsafe target) - retrying
+      // the same request would just fail the same way, so no retry action.
     } else if (result.errorMessage) {
       setStreamError(result.errorMessage);
       setRetryAction(() => () => requestTargetsUpdate(history, decisionIndex));

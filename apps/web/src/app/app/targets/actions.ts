@@ -8,6 +8,7 @@ import { getAiExtractionConfig } from "@/lib/ai/env";
 import { normalizeLocale } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import {
+  evaluateTargetWeightSafety,
   generateHeuristicTargetProfile,
   mapTargetProfileRowToPayload,
   TARGET_PROFILE_COLUMNS,
@@ -71,7 +72,15 @@ export async function generateTargetsPayload({
    * plan rather than a fresh generation; ignored by the heuristic fallback
    * (which is a simplified, non-AI path). */
   currentTargets?: TargetGenerationPayload;
-}): Promise<{ payload: TargetGenerationPayload; source: "ai" | "heuristic"; heuristicReason: string | null }> {
+}): Promise<{
+  payload: TargetGenerationPayload;
+  source: "ai" | "heuristic";
+  heuristicReason: string | null;
+  /** Set when the generated payload's target weight would push the user's
+   * BMI into an unsafe zone; callers must not treat `payload` as a valid
+   * preview/adjustment when this is present. */
+  safetyRejectionMessage?: string;
+}> {
   let heuristicReason: string | null = null;
   let payload: TargetGenerationPayload | null = null;
   let source: "ai" | "heuristic" = "heuristic";
@@ -96,7 +105,9 @@ export async function generateTargetsPayload({
     payload = generateHeuristicTargetProfile({ freeText: goalText, profile, locale });
   }
 
-  return { payload, source, heuristicReason };
+  const safetyRejectionMessage = evaluateTargetWeightSafety(payload, profile, locale) ?? undefined;
+
+  return { payload, source, heuristicReason, safetyRejectionMessage };
 }
 
 function toProfileForTargets(profile: Record<string, unknown>): ProfileForTargets {
@@ -167,7 +178,7 @@ export async function generateTargetsAction(
 
   const aiConfig = getAiExtractionConfig();
   const hasConsent = aiConfig ? await hasAiTargetsConsent({ supabase, userId: user.id }) : false;
-  const { payload, source, heuristicReason } = await generateTargetsPayload({
+  const { payload, source, heuristicReason, safetyRejectionMessage } = await generateTargetsPayload({
     goalText: parsedInput.data.freeText,
     profile,
     locale,
@@ -175,6 +186,10 @@ export async function generateTargetsAction(
     hasConsent,
     currentTargets,
   });
+
+  if (safetyRejectionMessage) {
+    return { error: safetyRejectionMessage };
+  }
 
   return {
     success: "Targets generated. Review the preview below before locking it in.",
@@ -310,6 +325,10 @@ export async function lockTargetsAction(
       id: entry.id,
       habit_instruction: entry.habitInstruction,
       rationale: entry.rationale,
+    })),
+    user_targets: parsedPayload.userTargets.map((entry) => ({
+      label: entry.label,
+      value: entry.value,
     })),
 
     ai_rationale_explanation: parsedPayload.aiRationaleExplanation,

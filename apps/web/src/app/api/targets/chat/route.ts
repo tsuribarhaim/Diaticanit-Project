@@ -130,6 +130,14 @@ export async function POST(request: NextRequest) {
               hasConsent,
               currentTargets,
             });
+
+            if (result.safetyRejectionMessage) {
+              controller.enqueue(sseEvent({ type: "error", message: result.safetyRejectionMessage }));
+              controller.enqueue(sseEvent({ type: "done" }));
+              controller.close();
+              return;
+            }
+
             targetsPayload = result.payload;
             source = result.source;
             warning = result.heuristicReason ?? undefined;

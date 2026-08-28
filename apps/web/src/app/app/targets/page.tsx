@@ -9,6 +9,7 @@ import { createClient } from "@/lib/supabase/server";
 import {
   computeProfileDiff,
   estimateMaintenanceCalories,
+  generateHeuristicTargetProfile,
   mapTargetProfileRowToPayload,
   parseProfileSnapshot,
   TARGET_PROFILE_COLUMNS,
@@ -96,13 +97,23 @@ export default async function TargetsPage() {
   const hasAiChatAvailable = aiConfig ? await hasAiTargetsConsent({ supabase, userId: user.id }) : false;
 
   if (!activeTargetProfile) {
-    const { payload, source, heuristicReason } = await generateTargetsPayload({
+    const generated = await generateTargetsPayload({
       goalText: "",
       profile,
       locale,
       aiConfig,
       hasConsent: hasAiChatAvailable,
     });
+    // A baseline generation from profile data alone (no explicit user ask)
+    // should never trip the weight-safety check, but fall back to a plain
+    // heuristic bake if it somehow does, rather than failing the page.
+    const { payload, source, heuristicReason } = generated.safetyRejectionMessage
+      ? {
+          payload: generateHeuristicTargetProfile({ freeText: "", profile, locale }),
+          source: "heuristic" as const,
+          heuristicReason: generated.safetyRejectionMessage,
+        }
+      : generated;
     initialPreview = { goalText: "", source, payload };
     initialWarning = source === "heuristic" ? heuristicReason ?? undefined : undefined;
   }

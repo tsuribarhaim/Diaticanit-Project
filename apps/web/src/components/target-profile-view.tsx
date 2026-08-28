@@ -200,6 +200,23 @@ export function TargetProfileView({
         )}
       </div>
 
+      {payload.userTargets.length ? (
+        <div>
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tr(locale, "User Targets", "יעדי המשתמש")}</h3>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {payload.userTargets.map((entry, index) => (
+              <div
+                key={`${entry.label}-${index}`}
+                className="flex items-center justify-between gap-3 rounded-xl border border-teal-200 bg-teal-50 p-3"
+              >
+                <p className="text-sm font-medium text-teal-900">{entry.label}</p>
+                <p className="text-sm font-semibold text-teal-900">{entry.value}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-700">{tr(locale, "Do", "לעשות")}</h3>

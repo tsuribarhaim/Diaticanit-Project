@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { AiExtractionConfig } from "@/lib/ai/env";
 import type { AppLocale } from "@/lib/locale";
-import type { ExerciseTargetEntry, HabitEntry, ProfileForTargets, TargetGenerationPayload, TargetGoalType } from "@/lib/targets";
+import type { ExerciseTargetEntry, HabitEntry, ProfileForTargets, TargetGenerationPayload, TargetGoalType, UserTargetEntry } from "@/lib/targets";
 
 const numberFromUnknown = z.preprocess((value) => {
   if (typeof value === "number") return value;
@@ -26,6 +26,11 @@ const aiHabitEntrySchema = z.object({
   id: z.string().trim().min(1).max(60),
   habit_instruction: z.string().trim().min(1).max(300),
   rationale: z.string().trim().min(1).max(500),
+});
+
+const aiUserTargetEntrySchema = z.object({
+  label: z.string().trim().min(1).max(80),
+  value: z.string().trim().min(1).max(80),
 });
 
 const aiTargetsSchema = z.object({
@@ -76,6 +81,7 @@ const aiTargetsSchema = z.object({
   exercise_targets: z.array(aiExerciseTargetSchema).max(6).optional().default([]),
   habits_do: z.array(aiHabitEntrySchema).max(6).optional().default([]),
   habits_dont: z.array(aiHabitEntrySchema).max(6).optional().default([]),
+  user_targets: z.array(aiUserTargetEntrySchema).max(8).optional().default([]),
 
   global_coaching_explanation: z.string().trim().max(1000).optional().default(""),
   confidence: numberFromUnknown.optional(),
@@ -135,6 +141,13 @@ function toHabitEntries(items: z.infer<typeof aiHabitEntrySchema>[]): HabitEntry
     id: item.id,
     habitInstruction: item.habit_instruction,
     rationale: item.rationale,
+  }));
+}
+
+function toUserTargets(items: z.infer<typeof aiUserTargetEntrySchema>[]): UserTargetEntry[] {
+  return items.slice(0, 8).map((item) => ({
+    label: item.label,
+    value: item.value,
   }));
 }
 
@@ -206,6 +219,7 @@ function mapAiTargetsResponse(raw: z.infer<typeof aiTargetsSchema>): TargetGener
     exerciseTargets: toExerciseTargets(raw.exercise_targets),
     habitsDo: toHabitEntries(raw.habits_do),
     habitsDont: toHabitEntries(raw.habits_dont),
+    userTargets: toUserTargets(raw.user_targets),
 
     aiRationaleExplanation: raw.global_coaching_explanation,
     confidence: clamp(raw.confidence ?? 0.75, 0.3, 0.97),
@@ -269,6 +283,7 @@ export async function generateTargetsWithAi({
         "Change what the goal_text below asks for, plus anything the current profile now requires for safety (see the mandatory safety review rule above) - keep every other range, exercise entry, and habit as close to the current values as reasonable.",
         "If the requested change would create an unsafe or unbalanced combination (e.g. reducing exercise while keeping calories at the same level), proactively adjust the dependent values (e.g. lower the calorie range) to keep the plan coherent, and explain that adjustment in global_coaching_explanation.",
         "Do not treat a vague goal_text (e.g. \"please recalculate\" or \"my profile changed\") as a reason to leave everything unchanged - in that case, the safety review against the current profile IS the request.",
+        "current_active_targets.user_targets holds the user's previously tracked asks. Carry forward any still-relevant ones, add a new entry for whatever this request newly asks for, and update the value of an existing entry instead of duplicating it if this request changes the same thing (e.g. a new weight-loss amount replaces the old \"Lose weight\" value rather than adding a second one).",
       ]
     : [];
 
@@ -295,6 +310,7 @@ export async function generateTargetsWithAi({
           '"exercise_targets":[{"modality":"string","frequency_per_week":number,"duration_minutes_per_session":number,"ai_adjustment_note":"string","search_keywords":["string"]}],',
           '"habits_do":[{"id":"string","habit_instruction":"string","rationale":"string"}],',
           '"habits_dont":[{"id":"string","habit_instruction":"string","rationale":"string"}],',
+          '"user_targets":[{"label":"string","value":"string"}],',
           '"global_coaching_explanation":"string","confidence":number}',
           "Rules:",
           "- Base all ranges on standard adult Dietary Reference Intake (DRI) style ranges, scaled to the user's profile. This is general guidance, not a clinical diagnosis.",
@@ -302,8 +318,9 @@ export async function generateTargetsWithAi({
           "- MANDATORY SAFETY REVIEW: check the numeric ranges themselves (not just habit text) against the user's medical conditions. In particular: hypertension calls for a tighter, lower sodium range (roughly 1,200-1,500 mg rather than a generic 1,500-2,300 mg); diabetes calls for a lower added-sugar ceiling (roughly 15 g rather than a generic 25 g). Apply comparable, clinically-reasonable tightening for any other stated condition that has an established dietary implication. This review applies even when it is not the explicit subject of goal_text.",
           "- exercise_targets: 2 to 4 entries. search_keywords must be short YouTube search phrases only (e.g. \"beginner resistance training routine\") — NEVER include a URL or a specific video title/link, since direct AI-suggested links are unreliable.",
           "- habits_do and habits_dont: 2 to 4 entries each, each with a short actionable instruction and a one-sentence rationale.",
+          "- user_targets: 0 to 5 entries. For each concrete, health-relevant ask the user actually made in goal_text (e.g. losing/gaining a specific amount of weight, a sleep-duration goal, a hydration goal, a step-count goal), add one entry with a short clean label (e.g. \"Target weight\", \"Lose weight\", \"Sleep duration\") and a short concrete value (e.g. \"62 kg\", \"2 kg\", \"8 hours\"). Only include asks that are genuinely about health, nutrition, exercise, sleep, or a related wellbeing topic and that you judged safe to apply; silently omit anything irrelevant, unsafe, or too vague to state as a concrete value. Do not invent entries the user didn't ask for - leave user_targets empty if goal_text has no concrete ask.",
           "- confidence must be between 0 and 1.",
-          `- Write every text field (ai_adjustment_note, habit_instruction, rationale, global_coaching_explanation) entirely in ${languageName}. Do not mix languages within a field.`,
+          `- Write every text field (ai_adjustment_note, habit_instruction, rationale, global_coaching_explanation, user_targets label/value) entirely in ${languageName}. Do not mix languages within a field.`,
           "- Address the user directly in second person (\"you\"/\"your\") in every text field. Never refer to the user in third person (\"he\", \"she\", \"his\", \"her\", or the user's inferred gender) even when their biological_sex is known.",
           "- In Hebrew specifically, prefer gender-neutral or mixed-form second-person phrasing (e.g. \"שלך\", \"את/ה\") over a gendered third-person construction like \"בשל מצבו הרפואי\" or \"בשל מצבה הרפואי\" — write \"בשל המצב הרפואי שלך\" instead.",
           ...adjustmentContextLines,

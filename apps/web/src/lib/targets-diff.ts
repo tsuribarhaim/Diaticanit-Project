@@ -44,6 +44,13 @@ function habitsSummary(payload: TargetGenerationPayload): string {
     .join(" | ");
 }
 
+function userTargetsSummary(payload: TargetGenerationPayload): string {
+  return payload.userTargets
+    .map((entry) => `${entry.label}: ${entry.value}`)
+    .sort()
+    .join(" | ");
+}
+
 /** Compares every quantifiable field (all nutrient ranges, exercise plan,
  * habits, goal metadata) between two target payloads - deliberately excludes
  * free-text fields that can vary cosmetically (aiRationaleExplanation,
@@ -80,6 +87,17 @@ export function computeTargetsDiff(before: TargetGenerationPayload, after: Targe
       labelHe: "הרגלים",
       before: tr(locale, `${before.habitsDo.length + before.habitsDont.length} habits`, `${before.habitsDo.length + before.habitsDont.length} הרגלים`),
       after: tr(locale, `${after.habitsDo.length + after.habitsDont.length} habits (changed)`, `${after.habitsDo.length + after.habitsDont.length} הרגלים (השתנו)`),
+    });
+  }
+
+  const beforeUserTargets = userTargetsSummary(before);
+  const afterUserTargets = userTargetsSummary(after);
+  if (beforeUserTargets !== afterUserTargets) {
+    rows.push({
+      labelEn: "User Targets",
+      labelHe: "יעדי המשתמש",
+      before: beforeUserTargets || tr(locale, "None", "ללא"),
+      after: afterUserTargets || tr(locale, "None", "ללא"),
     });
   }
 
