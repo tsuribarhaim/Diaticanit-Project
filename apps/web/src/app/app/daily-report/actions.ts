@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { dailyReportInputSchema, parseDailyReportText } from "@/lib/daily-report";
+import { CHART_EXTRA_METRIC_IDS, type DailyReportChartExtraMetric, type DailyReportChartPreferences } from "@/lib/daily-report-chart-preferences";
 import { parseDailyReportPhotoWithAi, parseDailyReportWithAi } from "@/lib/ai/daily-report";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { logServerError } from "@/lib/server-log";
@@ -990,4 +991,40 @@ export async function addReportToDefaultsAction(formData: FormData): Promise<voi
   revalidatePath("/app/daily-report/defaults");
 
   redirect(buildDailyReportRedirectPath({ notice: "Report was added to defaults." }));
+}
+
+export async function updateDailyReportChartPreferencesAction(formData: FormData): Promise<void> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/sign-in");
+  }
+
+  const extraMetrics = formData
+    .getAll("extra_metric")
+    .map((value) => value.toString())
+    .filter((id): id is DailyReportChartExtraMetric => CHART_EXTRA_METRIC_IDS.includes(id as DailyReportChartExtraMetric));
+  const showWeightTrend = formData.get("show_weight_trend")?.toString() === "on";
+
+  const preferences: DailyReportChartPreferences = { extraMetrics, showWeightTrend };
+
+  const { error } = await supabase
+    .from("user_profile")
+    .update({ daily_report_chart_preferences: preferences })
+    .eq("user_id", user.id);
+
+  if (error) {
+    logServerError("dailyReport.chartPreferences", "update_failed", {
+      userId: user.id,
+      error: error.message,
+    });
+    redirect(buildDailyReportRedirectPath({ error: "Could not save your chart preferences." }));
+  }
+
+  revalidatePath("/app/daily-report");
+
+  redirect(buildDailyReportRedirectPath({ notice: "Chart preferences saved." }));
 }

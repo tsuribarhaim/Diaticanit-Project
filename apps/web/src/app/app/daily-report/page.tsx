@@ -6,9 +6,12 @@ import {
   confirmDailyReportAction,
   deleteDailyReportAction,
   retryDailyReportWithAiAction,
+  updateDailyReportChartPreferencesAction,
 } from "@/app/app/daily-report/actions";
 import { DailyReportForm } from "@/components/daily-report-form";
 import { DailyReportProgressRings, type RingMetric } from "@/components/daily-report-progress-rings";
+import { DailyReportWeightTrend, type WeightPoint } from "@/components/daily-report-weight-trend";
+import { CHART_EXTRA_METRIC_IDS, normalizeDailyReportChartPreferences, type DailyReportChartExtraMetric } from "@/lib/daily-report-chart-preferences";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { formatDateTimeForLocale, formatMeasurementUnit, formatNumberForLocale, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { createClient } from "@/lib/supabase/server";
@@ -49,6 +52,13 @@ function statusClasses(status: "green" | "yellow" | "red") {
   return "border-rose-200 bg-rose-50 text-rose-800";
 }
 
+const extraMetricLabels: Record<DailyReportChartExtraMetric, { en: string; he: string }> = {
+  magnesium: { en: "Magnesium", he: "מגנזיום" },
+  potassium: { en: "Potassium", he: "אשלגן" },
+  iron: { en: "Iron", he: "ברזל" },
+  zinc: { en: "Zinc", he: "אבץ" },
+};
+
 function compareRatio(value: number, target: number): "green" | "yellow" | "red" {
   if (target <= 0) return "yellow";
   const ratio = value / target;
@@ -74,15 +84,14 @@ export default async function DailyReportPage({
 
   const aiAvailable = Boolean(getAiExtractionConfig());
 
-  const locale = normalizeLocale(
-    (
-      await supabase
-        .from("user_profile")
-        .select("preferred_language")
-        .eq("user_id", user.id)
-        .maybeSingle()
-    ).data?.preferred_language,
-  );
+  const { data: profileRow } = await supabase
+    .from("user_profile")
+    .select("preferred_language, daily_report_chart_preferences")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  const locale = normalizeLocale(profileRow?.preferred_language);
+  const chartPreferences = normalizeDailyReportChartPreferences(profileRow?.daily_report_chart_preferences);
 
   // Daily-report entries no longer compare against scalar targets; the active
   // target profile stores min/max ranges instead. We compare against the
@@ -91,7 +100,7 @@ export default async function DailyReportPage({
   const { data: activeTargetProfile } = await supabase
     .from("user_target_profiles")
     .select(
-      "id, protein_min_g, protein_max_g, water_min_ml, water_max_ml, calories_min, calories_max, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g",
+      "id, protein_min_g, protein_max_g, water_min_ml, water_max_ml, calories_min, calories_max, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, magnesium_min_mg, magnesium_max_mg, potassium_min_mg, potassium_max_mg, iron_min_mg, iron_max_mg, zinc_min_mg, zinc_max_mg",
     )
     .eq("user_id", user.id)
     .eq("is_active", true)
@@ -112,7 +121,7 @@ export default async function DailyReportPage({
 
   const { data: todaysReports } = await supabase
     .from("user_daily_reports")
-    .select("calories_kcal, protein_g, fat_g, fiber_g, water_ml")
+    .select("calories_kcal, protein_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg")
     .eq("user_id", user.id)
     .gte("report_at", todayStartIso)
     .lt("report_at", todayEndIso);
@@ -124,8 +133,12 @@ export default async function DailyReportPage({
       fatG: acc.fatG + Number(row.fat_g ?? 0),
       fiberG: acc.fiberG + Number(row.fiber_g ?? 0),
       waterMl: acc.waterMl + Number(row.water_ml ?? 0),
+      magnesiumMg: acc.magnesiumMg + Number(row.magnesium_mg ?? 0),
+      potassiumMg: acc.potassiumMg + Number(row.potassium_mg ?? 0),
+      ironMg: acc.ironMg + Number(row.iron_mg ?? 0),
+      zincMg: acc.zincMg + Number(row.zinc_mg ?? 0),
     }),
-    { caloriesKcal: 0, proteinG: 0, fatG: 0, fiberG: 0, waterMl: 0 },
+    { caloriesKcal: 0, proteinG: 0, fatG: 0, fiberG: 0, waterMl: 0, magnesiumMg: 0, potassiumMg: 0, ironMg: 0, zincMg: 0 },
   );
 
   const ringMetrics: RingMetric[] = [
@@ -175,6 +188,65 @@ export default async function DailyReportPage({
       unit: "ml",
     },
   ];
+
+  const extraMetricDefinitions: Record<DailyReportChartExtraMetric, RingMetric> = {
+    magnesium: {
+      id: "magnesium",
+      labelEn: "Magnesium",
+      labelHe: "מגנזיום",
+      total: todaysTotals.magnesiumMg,
+      min: Number(activeTargetProfile?.magnesium_min_mg ?? 0),
+      max: Number(activeTargetProfile?.magnesium_max_mg ?? 0),
+      unit: "mg",
+    },
+    potassium: {
+      id: "potassium",
+      labelEn: "Potassium",
+      labelHe: "אשלגן",
+      total: todaysTotals.potassiumMg,
+      min: Number(activeTargetProfile?.potassium_min_mg ?? 0),
+      max: Number(activeTargetProfile?.potassium_max_mg ?? 0),
+      unit: "mg",
+    },
+    iron: {
+      id: "iron",
+      labelEn: "Iron",
+      labelHe: "ברזל",
+      total: todaysTotals.ironMg,
+      min: Number(activeTargetProfile?.iron_min_mg ?? 0),
+      max: Number(activeTargetProfile?.iron_max_mg ?? 0),
+      unit: "mg",
+    },
+    zinc: {
+      id: "zinc",
+      labelEn: "Zinc",
+      labelHe: "אבץ",
+      total: todaysTotals.zincMg,
+      min: Number(activeTargetProfile?.zinc_min_mg ?? 0),
+      max: Number(activeTargetProfile?.zinc_max_mg ?? 0),
+      unit: "mg",
+    },
+  };
+
+  for (const metricId of chartPreferences.extraMetrics) {
+    ringMetrics.push(extraMetricDefinitions[metricId]);
+  }
+
+  let weightHistory: WeightPoint[] = [];
+  if (chartPreferences.showWeightTrend) {
+    const thirtyDaysAgoIso = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: weightRows } = await supabase
+      .from("user_daily_reports")
+      .select("report_at, reported_weight_kg")
+      .eq("user_id", user.id)
+      .not("reported_weight_kg", "is", null)
+      .gte("report_at", thirtyDaysAgoIso)
+      .order("report_at", { ascending: true });
+
+    weightHistory = (weightRows ?? [])
+      .filter((row) => row.reported_weight_kg !== null)
+      .map((row) => ({ date: row.report_at, weightKg: Number(row.reported_weight_kg) }));
+  }
 
   let reportsError: Error | null = null;
   let reports:
@@ -284,9 +356,57 @@ export default async function DailyReportPage({
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
         <h2 className="text-lg font-semibold text-slate-900">{tr(locale, "Today's progress", "ההתקדמות שלך היום")}</h2>
         {activeTargetProfile ? (
-          <div className="mt-4">
-            <DailyReportProgressRings locale={locale} metrics={ringMetrics} />
-          </div>
+          <>
+            <div className="mt-4">
+              <DailyReportProgressRings locale={locale} metrics={ringMetrics} />
+            </div>
+
+            {chartPreferences.showWeightTrend ? (
+              <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3">
+                <p className="text-xs font-semibold text-slate-800">{tr(locale, "Weight trend (last 30 days)", "מגמת משקל (30 הימים האחרונים)")}</p>
+                <div className="mt-2">
+                  <DailyReportWeightTrend locale={locale} points={weightHistory} />
+                </div>
+              </div>
+            ) : null}
+
+            <details className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <summary className="cursor-pointer text-sm font-semibold text-teal-700">
+                {tr(locale, "Customize charts", "התאמת התרשימים")}
+              </summary>
+              <form action={updateDailyReportChartPreferencesAction} className="mt-3 space-y-3">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {CHART_EXTRA_METRIC_IDS.map((metricId) => (
+                    <label key={metricId} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        name="extra_metric"
+                        value={metricId}
+                        defaultChecked={chartPreferences.extraMetrics.includes(metricId)}
+                        className="h-4 w-4 accent-teal-700"
+                      />
+                      {tr(locale, extraMetricLabels[metricId].en, extraMetricLabels[metricId].he)}
+                    </label>
+                  ))}
+                  <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      name="show_weight_trend"
+                      defaultChecked={chartPreferences.showWeightTrend}
+                      className="h-4 w-4 accent-teal-700"
+                    />
+                    {tr(locale, "Weight trend", "מגמת משקל")}
+                  </label>
+                </div>
+                <button
+                  type="submit"
+                  className="rounded-lg bg-teal-700 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-800"
+                >
+                  {tr(locale, "Save chart preferences", "שמירת העדפות תרשימים")}
+                </button>
+              </form>
+            </details>
+          </>
         ) : (
           <p className="mt-3 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600">
             {tr(
