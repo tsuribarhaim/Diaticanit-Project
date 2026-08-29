@@ -68,7 +68,6 @@ export function DailyReportForm({
   const [reportText, setReportText] = useState("");
   const [selectedDefaults, setSelectedDefaults] = useState<Record<string, boolean>>({});
   const [reportAtValue, setReportAtValue] = useState("");
-  const [parseMode, setParseMode] = useState<"heuristic" | "ai">("heuristic");
   const [mealPhotoPreview, setMealPhotoPreview] = useState<string | null>(null);
   const [mealPhotoName, setMealPhotoName] = useState<string | null>(null);
   const mealPhotoInputRef = useRef<HTMLInputElement | null>(null);
@@ -162,18 +161,17 @@ export function DailyReportForm({
           <label htmlFor="daily-report-text" className="text-sm font-medium text-slate-700">
             {tr(locale, "Daily report (free text, optional)", "דיווח יומי (טקסט חופשי, אופציונלי)")}
           </label>
-          <button
-            type="button"
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => mealPhotoInputRef.current?.click()}
-            disabled={!aiAvailable}
+          <label
+            htmlFor="meal-photo-input"
             aria-label={tr(locale, "Take or upload a photo of your plate", "צילום או העלאת תמונת הצלחת")}
             title={
               aiAvailable
                 ? tr(locale, "Take or upload a photo of your plate", "צילום או העלאת תמונת הצלחת")
                 : tr(locale, "AI mode is currently unavailable in this environment.", "מצב AI אינו זמין כרגע בסביבה זו.")
             }
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-teal-300 text-teal-700 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-teal-300 text-teal-700 focus-within:outline-none focus-within:ring-2 focus-within:ring-teal-600 ${
+              aiAvailable ? "cursor-pointer hover:bg-teal-50" : "cursor-not-allowed opacity-50"
+            }`}
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -189,10 +187,11 @@ export function DailyReportForm({
               <path d="M9 3h6l1.5 3H20a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h3.5L9 3Z" />
               <circle cx="12" cy="13" r="3.5" />
             </svg>
-          </button>
+          </label>
         </div>
         <input
           ref={mealPhotoInputRef}
+          id="meal-photo-input"
           type="file"
           name="meal_photo"
           accept="image/*"
@@ -264,17 +263,13 @@ export function DailyReportForm({
               )}
         </p>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          <label
-            className={`rounded-lg border px-3 py-2 text-sm ${parseMode === "heuristic" ? "border-teal-300 bg-teal-50" : "border-slate-200 bg-white"}`}
-            onClick={() => setParseMode("heuristic")}
-          >
+          <label className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm has-[:checked]:border-teal-300 has-[:checked]:bg-teal-50">
             <span className="flex items-start gap-2">
               <input
                 type="radio"
                 name="parse_mode"
                 value="heuristic"
-                checked={parseMode === "heuristic"}
-                onChange={() => setParseMode("heuristic")}
+                defaultChecked
                 disabled={Boolean(mealPhotoPreview)}
                 className="mt-0.5 h-4 w-4 accent-teal-700"
               />
@@ -285,20 +280,13 @@ export function DailyReportForm({
             </span>
           </label>
           <label
-            className={`rounded-lg border px-3 py-2 text-sm ${
-              parseMode === "ai" ? "border-teal-300 bg-teal-50" : "border-slate-200 bg-white"
-            } ${!aiAvailable ? "opacity-70" : ""}`}
-            onClick={() => {
-              if (aiAvailable) setParseMode("ai");
-            }}
+            className={`rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm has-[:checked]:border-teal-300 has-[:checked]:bg-teal-50 ${!aiAvailable ? "opacity-70" : ""}`}
           >
             <span className="flex items-start gap-2">
               <input
                 type="radio"
                 name="parse_mode"
                 value="ai"
-                checked={parseMode === "ai"}
-                onChange={() => setParseMode("ai")}
                 disabled={!aiAvailable || Boolean(mealPhotoPreview)}
                 className="mt-0.5 h-4 w-4 accent-teal-700"
               />
