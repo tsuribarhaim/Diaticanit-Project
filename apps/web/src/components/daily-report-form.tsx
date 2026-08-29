@@ -196,7 +196,7 @@ export function DailyReportForm({
           capture="environment"
           disabled={!aiAvailable}
           onChange={(event) => handleMealPhotoChange(event.target.files?.[0] ?? null)}
-          className="hidden"
+          className="sr-only"
         />
         <textarea
           name="report_text"
