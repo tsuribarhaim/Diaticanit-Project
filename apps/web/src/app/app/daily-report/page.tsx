@@ -97,9 +97,15 @@ export default async function DailyReportPage({
     .eq("is_active", true)
     .maybeSingle();
 
-  // "Today" has no per-user timezone concept yet - bucketed by UTC calendar
-  // day, matching the only other day-bucketing precedent in this file
-  // (addReportToDefaultsAction's fallback default name).
+  // TODO(daily-report-redesign): "Today" has no per-user timezone concept
+  // yet, so it's bucketed by UTC calendar day (matching the only other
+  // day-bucketing precedent in this file, addReportToDefaultsAction's
+  // fallback default name). For users far from UTC this "day" boundary
+  // won't line up with local midnight. Revisit once the full Daily
+  // Reporting redesign (all phases) is done - likely needs a stored
+  // per-user timezone (e.g. on user_profile) plumbed through every
+  // day-bucketing site (this file, addReportToDefaultsAction, and any new
+  // historical day/week view from a later phase).
   const now = new Date();
   const todayStartIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
   const todayEndIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString();
