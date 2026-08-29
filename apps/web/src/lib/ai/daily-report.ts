@@ -25,6 +25,7 @@ const aiFoodItemSchema = z.object({
   proteinG: numberFromUnknown,
   carbsG: numberFromUnknown,
   fatG: numberFromUnknown,
+  fiberG: numberFromUnknown,
   waterMl: numberFromUnknown,
   magnesiumMg: numberFromUnknown,
   potassiumMg: numberFromUnknown,
@@ -43,6 +44,7 @@ const aiMetricsSchema = z.object({
   proteinG: numberFromUnknown,
   carbsG: numberFromUnknown,
   fatG: numberFromUnknown,
+  fiberG: numberFromUnknown,
   waterMl: numberFromUnknown,
   magnesiumMg: numberFromUnknown,
   potassiumMg: numberFromUnknown,
@@ -100,6 +102,7 @@ function toFoodItems(items: z.infer<typeof aiFoodItemSchema>[]): ParsedFoodItem[
     proteinG: round(clamp(item.proteinG, 0, 2000), 2),
     carbsG: round(clamp(item.carbsG, 0, 2000), 2),
     fatG: round(clamp(item.fatG, 0, 2000), 2),
+    fiberG: round(clamp(item.fiberG, 0, 200), 2),
     waterMl: round(clamp(item.waterMl, 0, 20000), 2),
     magnesiumMg: round(clamp(item.magnesiumMg, 0, 5000), 2),
     potassiumMg: round(clamp(item.potassiumMg, 0, 10000), 2),
@@ -128,6 +131,7 @@ function computeMetrics({
     proteinG: 0,
     carbsG: 0,
     fatG: 0,
+    fiberG: 0,
     waterMl: 0,
     magnesiumMg: 0,
     potassiumMg: 0,
@@ -142,6 +146,7 @@ function computeMetrics({
     totals.proteinG += item.proteinG;
     totals.carbsG += item.carbsG;
     totals.fatG += item.fatG;
+    totals.fiberG += item.fiberG;
     totals.waterMl += item.waterMl;
     totals.magnesiumMg += item.magnesiumMg;
     totals.potassiumMg += item.potassiumMg;
@@ -159,6 +164,7 @@ function computeMetrics({
     proteinG: round(totals.proteinG),
     carbsG: round(totals.carbsG),
     fatG: round(totals.fatG),
+    fiberG: round(totals.fiberG),
     waterMl: round(totals.waterMl),
     magnesiumMg: round(totals.magnesiumMg),
     potassiumMg: round(totals.potassiumMg),
@@ -264,6 +270,7 @@ async function callDailyReportChatCompletion({
         proteinG: round(clamp(metricsFromAi.proteinG, 0, 2000), 2),
         carbsG: round(clamp(metricsFromAi.carbsG, 0, 2000), 2),
         fatG: round(clamp(metricsFromAi.fatG, 0, 2000), 2),
+        fiberG: round(clamp(metricsFromAi.fiberG, 0, 200), 2),
         waterMl: round(clamp(metricsFromAi.waterMl, 0, 20000), 2),
         magnesiumMg: round(clamp(metricsFromAi.magnesiumMg, 0, 5000), 2),
         potassiumMg: round(clamp(metricsFromAi.potassiumMg, 0, 10000), 2),
@@ -312,7 +319,7 @@ export async function parseDailyReportWithAi({
         role: "user",
         content: [
           "Return strict JSON with this shape:",
-          '{"confidence":number,"requiresConfirmation":boolean,"foodItems":[{"name":"string","quantity":number,"unit":"string","caloriesKcal":number,"proteinG":number,"carbsG":number,"fatG":number,"waterMl":number,"magnesiumMg":number,"potassiumMg":number,"ironMg":number,"zincMg":number}],"exerciseItems":[{"name":"string","minutes":number,"estimatedBurnKcal":number}],"metrics":{"caloriesKcal":number,"proteinG":number,"carbsG":number,"fatG":number,"waterMl":number,"magnesiumMg":number,"potassiumMg":number,"ironMg":number,"zincMg":number,"exerciseMinutes":number,"estimatedBurnKcal":number}}',
+          '{"confidence":number,"requiresConfirmation":boolean,"foodItems":[{"name":"string","quantity":number,"unit":"string","caloriesKcal":number,"proteinG":number,"carbsG":number,"fatG":number,"fiberG":number,"waterMl":number,"magnesiumMg":number,"potassiumMg":number,"ironMg":number,"zincMg":number}],"exerciseItems":[{"name":"string","minutes":number,"estimatedBurnKcal":number}],"metrics":{"caloriesKcal":number,"proteinG":number,"carbsG":number,"fatG":number,"fiberG":number,"waterMl":number,"magnesiumMg":number,"potassiumMg":number,"ironMg":number,"zincMg":number,"exerciseMinutes":number,"estimatedBurnKcal":number}}',
           "Rules:",
           "- Use only non-negative numbers.",
           "- Include reasonable estimates when exact values are unclear.",
@@ -361,7 +368,7 @@ export async function parseDailyReportPhotoWithAi({
             text: [
               "Look at the attached photo and identify each distinct food or drink item visible.",
               "Return strict JSON with this shape:",
-              '{"confidence":number,"requiresConfirmation":boolean,"foodItems":[{"name":"string","quantity":number,"unit":"string","caloriesKcal":number,"proteinG":number,"carbsG":number,"fatG":number,"waterMl":number,"magnesiumMg":number,"potassiumMg":number,"ironMg":number,"zincMg":number}],"exerciseItems":[],"metrics":{"caloriesKcal":number,"proteinG":number,"carbsG":number,"fatG":number,"waterMl":number,"magnesiumMg":number,"potassiumMg":number,"ironMg":number,"zincMg":number,"exerciseMinutes":number,"estimatedBurnKcal":number}}',
+              '{"confidence":number,"requiresConfirmation":boolean,"foodItems":[{"name":"string","quantity":number,"unit":"string","caloriesKcal":number,"proteinG":number,"carbsG":number,"fatG":number,"fiberG":number,"waterMl":number,"magnesiumMg":number,"potassiumMg":number,"ironMg":number,"zincMg":number}],"exerciseItems":[],"metrics":{"caloriesKcal":number,"proteinG":number,"carbsG":number,"fatG":number,"fiberG":number,"waterMl":number,"magnesiumMg":number,"potassiumMg":number,"ironMg":number,"zincMg":number,"exerciseMinutes":number,"estimatedBurnKcal":number}}',
               "Rules:",
               "- Estimate realistic portion sizes from visual cues (plate size, utensils, packaging).",
               "- Use only non-negative numbers.",

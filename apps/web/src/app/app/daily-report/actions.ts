@@ -27,6 +27,7 @@ type ParsedFoodItem = {
   proteinG: number;
   carbsG: number;
   fatG: number;
+  fiberG: number;
   waterMl: number;
   magnesiumMg: number;
   potassiumMg: number;
@@ -45,6 +46,7 @@ type DailyReportMetrics = {
   proteinG: number;
   carbsG: number;
   fatG: number;
+  fiberG: number;
   waterMl: number;
   magnesiumMg: number;
   potassiumMg: number;
@@ -114,6 +116,7 @@ function emptyParseResult(): DailyParseResult {
       proteinG: 0,
       carbsG: 0,
       fatG: 0,
+      fiberG: 0,
       waterMl: 0,
       magnesiumMg: 0,
       potassiumMg: 0,
@@ -368,6 +371,7 @@ export async function saveDailyReportAction(
     proteinG: number;
     carbsG: number;
     fatG: number;
+    fiberG: number;
     waterMl: number;
     magnesiumMg: number;
     potassiumMg: number;
@@ -387,7 +391,7 @@ export async function saveDailyReportAction(
     const { data: defaultsRows } = await supabase
       .from("user_default_items")
       .select(
-        "id, name, kind, default_quantity, default_unit, parse_confidence, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal",
+        "id, name, kind, default_quantity, default_unit, parse_confidence, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal",
       )
       .eq("user_id", user.id)
       .in("id", selectedDefaultIds)
@@ -408,6 +412,7 @@ export async function saveDailyReportAction(
           proteinG: round(toNumber(item.protein_g) * scale),
           carbsG: round(toNumber(item.carbs_g) * scale),
           fatG: round(toNumber(item.fat_g) * scale),
+          fiberG: round(toNumber(item.fiber_g) * scale),
           waterMl: round(toNumber(item.water_ml) * scale),
           magnesiumMg: round(toNumber(item.magnesium_mg) * scale),
           potassiumMg: round(toNumber(item.potassium_mg) * scale),
@@ -434,6 +439,7 @@ export async function saveDailyReportAction(
       mergedMetrics.proteinG += cachedMetrics.proteinG;
       mergedMetrics.carbsG += cachedMetrics.carbsG;
       mergedMetrics.fatG += cachedMetrics.fatG;
+      mergedMetrics.fiberG += cachedMetrics.fiberG;
       mergedMetrics.waterMl += cachedMetrics.waterMl;
       mergedMetrics.magnesiumMg += cachedMetrics.magnesiumMg;
       mergedMetrics.potassiumMg += cachedMetrics.potassiumMg;
@@ -457,6 +463,7 @@ export async function saveDailyReportAction(
           proteinG: cachedMetrics.proteinG,
           carbsG: cachedMetrics.carbsG,
           fatG: cachedMetrics.fatG,
+          fiberG: cachedMetrics.fiberG,
           waterMl: cachedMetrics.waterMl,
           magnesiumMg: cachedMetrics.magnesiumMg,
           potassiumMg: cachedMetrics.potassiumMg,
@@ -480,6 +487,7 @@ export async function saveDailyReportAction(
     proteinG: round(mergedMetrics.proteinG),
     carbsG: round(mergedMetrics.carbsG),
     fatG: round(mergedMetrics.fatG),
+    fiberG: round(mergedMetrics.fiberG),
     waterMl: round(mergedMetrics.waterMl),
     magnesiumMg: round(mergedMetrics.magnesiumMg),
     potassiumMg: round(mergedMetrics.potassiumMg),
@@ -526,6 +534,7 @@ export async function saveDailyReportAction(
     protein_g: mergedMetrics.proteinG,
     carbs_g: mergedMetrics.carbsG,
     fat_g: mergedMetrics.fatG,
+    fiber_g: mergedMetrics.fiberG,
     water_ml: mergedMetrics.waterMl,
     magnesium_mg: mergedMetrics.magnesiumMg,
     potassium_mg: mergedMetrics.potassiumMg,
@@ -691,7 +700,7 @@ export async function retryDailyReportWithAiAction(formData: FormData): Promise<
     const { data: defaultsRows } = await supabase
       .from("user_default_items")
       .select(
-        "id, default_quantity, parse_confidence, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal",
+        "id, default_quantity, parse_confidence, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal",
       )
       .eq("user_id", user.id)
       .in("id", snapshotIds);
@@ -712,6 +721,7 @@ export async function retryDailyReportWithAiAction(formData: FormData): Promise<
           proteinG: round(toNumber(matchedDefault.protein_g) * scale),
           carbsG: round(toNumber(matchedDefault.carbs_g) * scale),
           fatG: round(toNumber(matchedDefault.fat_g) * scale),
+          fiberG: round(toNumber(matchedDefault.fiber_g) * scale),
           waterMl: round(toNumber(matchedDefault.water_ml) * scale),
           magnesiumMg: round(toNumber(matchedDefault.magnesium_mg) * scale),
           potassiumMg: round(toNumber(matchedDefault.potassium_mg) * scale),
@@ -738,6 +748,7 @@ export async function retryDailyReportWithAiAction(formData: FormData): Promise<
       mergedMetrics.proteinG += cachedMetrics.proteinG;
       mergedMetrics.carbsG += cachedMetrics.carbsG;
       mergedMetrics.fatG += cachedMetrics.fatG;
+      mergedMetrics.fiberG += cachedMetrics.fiberG;
       mergedMetrics.waterMl += cachedMetrics.waterMl;
       mergedMetrics.magnesiumMg += cachedMetrics.magnesiumMg;
       mergedMetrics.potassiumMg += cachedMetrics.potassiumMg;
@@ -761,6 +772,7 @@ export async function retryDailyReportWithAiAction(formData: FormData): Promise<
           proteinG: cachedMetrics.proteinG,
           carbsG: cachedMetrics.carbsG,
           fatG: cachedMetrics.fatG,
+          fiberG: cachedMetrics.fiberG,
           waterMl: cachedMetrics.waterMl,
           magnesiumMg: cachedMetrics.magnesiumMg,
           potassiumMg: cachedMetrics.potassiumMg,
@@ -776,6 +788,7 @@ export async function retryDailyReportWithAiAction(formData: FormData): Promise<
     proteinG: round(mergedMetrics.proteinG),
     carbsG: round(mergedMetrics.carbsG),
     fatG: round(mergedMetrics.fatG),
+    fiberG: round(mergedMetrics.fiberG),
     waterMl: round(mergedMetrics.waterMl),
     magnesiumMg: round(mergedMetrics.magnesiumMg),
     potassiumMg: round(mergedMetrics.potassiumMg),
@@ -801,6 +814,7 @@ export async function retryDailyReportWithAiAction(formData: FormData): Promise<
       protein_g: mergedMetrics.proteinG,
       carbs_g: mergedMetrics.carbsG,
       fat_g: mergedMetrics.fatG,
+      fiber_g: mergedMetrics.fiberG,
       water_ml: mergedMetrics.waterMl,
       magnesium_mg: mergedMetrics.magnesiumMg,
       potassium_mg: mergedMetrics.potassiumMg,
@@ -924,7 +938,7 @@ export async function addReportToDefaultsAction(formData: FormData): Promise<voi
   const { data: reportRow, error: reportError } = await supabase
     .from("user_daily_reports")
     .select(
-      "id, report_at, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal, parse_mode, parser_version, parse_confidence",
+      "id, report_at, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal, parse_mode, parser_version, parse_confidence",
     )
     .eq("id", reportId)
     .eq("user_id", user.id)
@@ -953,6 +967,7 @@ export async function addReportToDefaultsAction(formData: FormData): Promise<voi
       protein_g: round(toNumber(reportRow.protein_g)),
       carbs_g: round(toNumber(reportRow.carbs_g)),
       fat_g: round(toNumber(reportRow.fat_g)),
+      fiber_g: round(toNumber(reportRow.fiber_g)),
       water_ml: round(toNumber(reportRow.water_ml)),
       magnesium_mg: round(toNumber(reportRow.magnesium_mg)),
       potassium_mg: round(toNumber(reportRow.potassium_mg)),

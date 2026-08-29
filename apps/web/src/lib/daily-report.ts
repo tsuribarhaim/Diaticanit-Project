@@ -16,6 +16,7 @@ export type ParsedFoodItem = {
   proteinG: number;
   carbsG: number;
   fatG: number;
+  fiberG: number;
   waterMl: number;
   magnesiumMg: number;
   potassiumMg: number;
@@ -34,6 +35,7 @@ export type DailyReportMetrics = {
   proteinG: number;
   carbsG: number;
   fatG: number;
+  fiberG: number;
   waterMl: number;
   magnesiumMg: number;
   potassiumMg: number;
@@ -58,6 +60,7 @@ type FoodProfile = {
   proteinG: number;
   carbsG: number;
   fatG: number;
+  fiberG: number;
   waterMl: number;
   magnesiumMg: number;
   potassiumMg: number;
@@ -73,6 +76,7 @@ const foodProfiles: FoodProfile[] = [
     proteinG: 0.5,
     carbsG: 25,
     fatG: 0.3,
+    fiberG: 4.4,
     waterMl: 0,
     magnesiumMg: 9,
     potassiumMg: 195,
@@ -86,6 +90,7 @@ const foodProfiles: FoodProfile[] = [
     proteinG: 6.3,
     carbsG: 0.6,
     fatG: 5.3,
+    fiberG: 0,
     waterMl: 0,
     magnesiumMg: 5,
     potassiumMg: 63,
@@ -99,6 +104,7 @@ const foodProfiles: FoodProfile[] = [
     proteinG: 1.3,
     carbsG: 27,
     fatG: 0.4,
+    fiberG: 3.1,
     waterMl: 0,
     magnesiumMg: 32,
     potassiumMg: 422,
@@ -112,6 +118,7 @@ const foodProfiles: FoodProfile[] = [
     proteinG: 31,
     carbsG: 0,
     fatG: 3.6,
+    fiberG: 0,
     waterMl: 0,
     magnesiumMg: 29,
     potassiumMg: 256,
@@ -125,6 +132,7 @@ const foodProfiles: FoodProfile[] = [
     proteinG: 4.3,
     carbsG: 45,
     fatG: 0.4,
+    fiberG: 0.6,
     waterMl: 0,
     magnesiumMg: 19,
     potassiumMg: 55,
@@ -247,6 +255,7 @@ export function parseDailyReportText({
         proteinG: 0,
         carbsG: 0,
         fatG: 0,
+        fiberG: 0,
         waterMl: hydration.waterMl,
         magnesiumMg: 0,
         potassiumMg: 0,
@@ -268,6 +277,7 @@ export function parseDailyReportText({
             proteinG: round(profile.proteinG * quantity),
             carbsG: round(profile.carbsG * quantity),
             fatG: round(profile.fatG * quantity),
+            fiberG: round(profile.fiberG * quantity),
             waterMl: round(profile.waterMl * quantity),
             magnesiumMg: round(profile.magnesiumMg * quantity),
             potassiumMg: round(profile.potassiumMg * quantity),
@@ -308,6 +318,7 @@ export function parseDailyReportText({
     proteinG: 0,
     carbsG: 0,
     fatG: 0,
+    fiberG: 0,
     waterMl: 0,
     magnesiumMg: 0,
     potassiumMg: 0,
@@ -322,6 +333,7 @@ export function parseDailyReportText({
     totals.proteinG += item.proteinG;
     totals.carbsG += item.carbsG;
     totals.fatG += item.fatG;
+    totals.fiberG += item.fiberG;
     totals.waterMl += item.waterMl;
     totals.magnesiumMg += item.magnesiumMg;
     totals.potassiumMg += item.potassiumMg;
@@ -347,6 +359,7 @@ export function parseDailyReportText({
       proteinG: round(totals.proteinG),
       carbsG: round(totals.carbsG),
       fatG: round(totals.fatG),
+      fiberG: round(totals.fiberG),
       waterMl: round(totals.waterMl),
       magnesiumMg: round(totals.magnesiumMg),
       potassiumMg: round(totals.potassiumMg),

@@ -8,6 +8,7 @@ import {
   retryDailyReportWithAiAction,
 } from "@/app/app/daily-report/actions";
 import { DailyReportForm } from "@/components/daily-report-form";
+import { DailyReportProgressRings, type RingMetric } from "@/components/daily-report-progress-rings";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { formatDateTimeForLocale, formatMeasurementUnit, formatNumberForLocale, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { createClient } from "@/lib/supabase/server";
@@ -89,10 +90,85 @@ export default async function DailyReportPage({
   // "did you hit at least the floor" signal for this simple status badge.
   const { data: activeTargetProfile } = await supabase
     .from("user_target_profiles")
-    .select("id, protein_min_g, water_min_ml")
+    .select(
+      "id, protein_min_g, protein_max_g, water_min_ml, water_max_ml, calories_min, calories_max, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g",
+    )
     .eq("user_id", user.id)
     .eq("is_active", true)
     .maybeSingle();
+
+  // "Today" has no per-user timezone concept yet - bucketed by UTC calendar
+  // day, matching the only other day-bucketing precedent in this file
+  // (addReportToDefaultsAction's fallback default name).
+  const now = new Date();
+  const todayStartIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+  const todayEndIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString();
+
+  const { data: todaysReports } = await supabase
+    .from("user_daily_reports")
+    .select("calories_kcal, protein_g, fat_g, fiber_g, water_ml")
+    .eq("user_id", user.id)
+    .gte("report_at", todayStartIso)
+    .lt("report_at", todayEndIso);
+
+  const todaysTotals = (todaysReports ?? []).reduce(
+    (acc, row) => ({
+      caloriesKcal: acc.caloriesKcal + Number(row.calories_kcal ?? 0),
+      proteinG: acc.proteinG + Number(row.protein_g ?? 0),
+      fatG: acc.fatG + Number(row.fat_g ?? 0),
+      fiberG: acc.fiberG + Number(row.fiber_g ?? 0),
+      waterMl: acc.waterMl + Number(row.water_ml ?? 0),
+    }),
+    { caloriesKcal: 0, proteinG: 0, fatG: 0, fiberG: 0, waterMl: 0 },
+  );
+
+  const ringMetrics: RingMetric[] = [
+    {
+      id: "calories",
+      labelEn: "Calories",
+      labelHe: "קלוריות",
+      total: todaysTotals.caloriesKcal,
+      min: Number(activeTargetProfile?.calories_min ?? 0),
+      max: Number(activeTargetProfile?.calories_max ?? 0),
+      unit: "kcal",
+    },
+    {
+      id: "protein",
+      labelEn: "Protein",
+      labelHe: "חלבון",
+      total: todaysTotals.proteinG,
+      min: Number(activeTargetProfile?.protein_min_g ?? 0),
+      max: Number(activeTargetProfile?.protein_max_g ?? 0),
+      unit: "g",
+    },
+    {
+      id: "fats",
+      labelEn: "Fats",
+      labelHe: "שומנים",
+      total: todaysTotals.fatG,
+      min: Number(activeTargetProfile?.fats_min_g ?? 0),
+      max: Number(activeTargetProfile?.fats_max_g ?? 0),
+      unit: "g",
+    },
+    {
+      id: "fiber",
+      labelEn: "Dietary Fiber",
+      labelHe: "סיבים תזונתיים",
+      total: todaysTotals.fiberG,
+      min: Number(activeTargetProfile?.fiber_min_g ?? 0),
+      max: Number(activeTargetProfile?.fiber_max_g ?? 0),
+      unit: "g",
+    },
+    {
+      id: "water",
+      labelEn: "Fluid / Water",
+      labelHe: "נוזלים / מים",
+      total: todaysTotals.waterMl,
+      min: Number(activeTargetProfile?.water_min_ml ?? 0),
+      max: Number(activeTargetProfile?.water_max_ml ?? 0),
+      unit: "ml",
+    },
+  ];
 
   let reportsError: Error | null = null;
   let reports:
@@ -197,6 +273,23 @@ export default async function DailyReportPage({
         ) : null}
 
         <DailyReportForm defaultItems={defaultItems ?? []} aiAvailable={aiAvailable} locale={locale} />
+      </section>
+
+      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
+        <h2 className="text-lg font-semibold text-slate-900">{tr(locale, "Today's progress", "ההתקדמות שלך היום")}</h2>
+        {activeTargetProfile ? (
+          <div className="mt-4">
+            <DailyReportProgressRings locale={locale} metrics={ringMetrics} />
+          </div>
+        ) : (
+          <p className="mt-3 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600">
+            {tr(
+              locale,
+              "Lock in your daily targets first to see today's progress here.",
+              "יש לנעול את היעדים היומיים שלך תחילה כדי לראות כאן את ההתקדמות של היום.",
+            )}
+          </p>
+        )}
       </section>
 
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
