@@ -332,12 +332,19 @@ export async function parseDailyReportPhotoWithAi({
   imageBase64,
   mimeType,
   weightKg,
+  noteText,
 }: {
   config: AiExtractionConfig;
   imageBase64: string;
   mimeType: string;
   weightKg: number;
+  /** Optional free-text note the user typed alongside the photo (e.g. "no
+   * dressing", "diet soda not regular") - treated as a correction/clarifying
+   * hint on top of the visual estimate, not a separate report. */
+  noteText?: string;
 }): Promise<DailyReportParseResult> {
+  const trimmedNote = noteText?.trim().slice(0, 500) || "";
+
   return callDailyReportChatCompletion({
     config,
     messages: [
@@ -361,6 +368,11 @@ export async function parseDailyReportPhotoWithAi({
               "- exerciseItems must always be an empty array; this is a food photo only.",
               "- Photo-based estimates are inherently uncertain: keep confidence at 0.6 or below unless the meal is very simple and fully visible.",
               "- requiresConfirmation must always be true.",
+              ...(trimmedNote
+                ? [
+                    `- The user also added this note alongside the photo: "${trimmedNote}". Treat it as a correction or clarifying hint (e.g. an ingredient to add/remove, a substitution, a quantity) on top of what you see, not as a separate report to parse independently.`,
+                  ]
+                : []),
               `weightKg: ${Number.isFinite(weightKg) ? weightKg : 0}`,
             ].join("\n"),
           },
