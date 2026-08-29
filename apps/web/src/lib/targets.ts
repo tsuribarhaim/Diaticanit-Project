@@ -111,6 +111,7 @@ export const targetGenerationPayloadSchema = z
     aiRationaleExplanation: z.string().max(2000),
     confidence: z.number().min(0).max(1),
     assumptions: z.array(z.string().max(500)).max(20),
+    profileDiscrepancyMessage: z.string().max(500).optional().default(""),
   })
   .superRefine((data, ctx) => {
     numericRangePairs.forEach(([minKey, maxKey]) => {
@@ -209,6 +210,13 @@ export type TargetGenerationPayload = {
   aiRationaleExplanation: string;
   confidence: number;
   assumptions: string[];
+
+  /** Set when the AI noticed the free-text goal/chat input states something
+   * that contradicts a specific stored profile field (age, pregnancy status,
+   * a medical condition, etc.) - advisory only, never blocks generation.
+   * Empty string when there's no detected discrepancy, or for
+   * heuristic-sourced payloads (no AI judgment available). */
+  profileDiscrepancyMessage: string;
 };
 
 export type ProfileForTargets = {
@@ -806,6 +814,7 @@ export function generateHeuristicTargetProfileFromAnalysis({
     aiRationaleExplanation,
     confidence: clamp(analysis.confidence, 0.45, 0.85),
     assumptions,
+    profileDiscrepancyMessage: "",
   };
 }
 
@@ -962,6 +971,7 @@ export function mapTargetProfileRowToPayload(row: TargetProfileDbRow): TargetGen
     aiRationaleExplanation: row.ai_rationale_explanation ?? "",
     confidence: toNum(row.translation_confidence, 0.5),
     assumptions: [],
+    profileDiscrepancyMessage: "",
   };
 }
 

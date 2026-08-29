@@ -271,10 +271,10 @@ export async function saveDailyReportAction(
     .map((value) => value.toString())
     .filter(Boolean);
   const mealPhotoEntry = formData.get("meal_photo");
-  const mealPhotoFile =
-    requestedParseMode === "ai_photo" && mealPhotoEntry instanceof File && mealPhotoEntry.size > 0
-      ? mealPhotoEntry
-      : null;
+  // A photo attached via the camera icon takes priority over whatever
+  // heuristic/AI text mode is selected - the mode radios only apply when no
+  // photo is present.
+  const mealPhotoFile = mealPhotoEntry instanceof File && mealPhotoEntry.size > 0 ? mealPhotoEntry : null;
 
   if (!reportText && selectedDefaultIds.length === 0 && !mealPhotoFile) {
     return { error: "Add free text, a meal photo, select at least one default, or a combination." };
@@ -336,6 +336,7 @@ export async function saveDailyReportAction(
         imageBase64,
         mimeType: mealPhotoFile.type,
         weightKg: Number(profile.weight_kg),
+        noteText: reportText || undefined,
       });
       modeUsedForReport = "ai_photo";
       parserVersionUsed = `daily-ai-photo-${aiConfig.provider}-v1`;

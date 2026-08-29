@@ -95,6 +95,7 @@ const aiTargetsSchema = z.object({
 
   global_coaching_explanation: z.string().trim().max(1000).optional().default(""),
   confidence: numberFromUnknown.optional(),
+  profile_discrepancy_message: z.string().trim().max(300).optional().default(""),
 });
 
 function round(value: number, digits = 1): number {
@@ -234,6 +235,7 @@ function mapAiTargetsResponse(raw: z.infer<typeof aiTargetsSchema>): TargetGener
     aiRationaleExplanation: raw.global_coaching_explanation,
     confidence: clamp(raw.confidence ?? 0.75, 0.3, 0.97),
     assumptions: [],
+    profileDiscrepancyMessage: raw.profile_discrepancy_message,
   };
 }
 
@@ -338,7 +340,7 @@ export async function generateTargetsWithAi({
           '"habits_do":[{"id":"string","habit_instruction":"string","rationale":"string"}],',
           '"habits_dont":[{"id":"string","habit_instruction":"string","rationale":"string"}],',
           '"user_targets":[{"label":"string","value":"string"}],',
-          '"global_coaching_explanation":"string","confidence":number}',
+          '"global_coaching_explanation":"string","confidence":number,"profile_discrepancy_message":"string"}',
           "Rules:",
           "- target_weight_kg and duration_days must be a FAITHFUL, literal translation of what goal_text actually asks for (e.g. \"lose 5kg\" against a known current weight, or an explicit target weight) - never silently substitute a different, \"safer\" number of your own choosing, even if the literal ask looks medically unwise. The application runs its own independent, deterministic safety check on target_weight_kg after you respond and will reject the whole request if it's unsafe; your job here is accurate translation, not moderation. If goal_text does not state or imply a weight/duration change, leave the current value(s) unchanged.",
           "- Base all ranges on standard adult Dietary Reference Intake (DRI) style ranges, scaled to the user's profile. This is general guidance, not a clinical diagnosis.",
@@ -348,6 +350,7 @@ export async function generateTargetsWithAi({
           "- habits_do and habits_dont: 2 to 4 entries each, each with a short actionable instruction and a one-sentence rationale.",
           "- user_targets: 0 to 5 entries. For each concrete, health-relevant ask the user actually made in goal_text (e.g. losing/gaining a specific amount of weight, a sleep-duration goal, a hydration goal, a step-count goal), add one entry with a short clean label (e.g. \"Target weight\", \"Lose weight\", \"Sleep duration\") and a short concrete value (e.g. \"62 kg\", \"2 kg\", \"8 hours\"). Only include asks that are genuinely about health, nutrition, exercise, sleep, or a related wellbeing topic and that you judged safe to apply; silently omit anything irrelevant, unsafe, or too vague to state as a concrete value. Do not invent entries the user didn't ask for - leave user_targets empty if goal_text has no concrete ask.",
           "- confidence must be between 0 and 1.",
+          "- PROFILE CONSISTENCY CHECK: compare goal_text against user_profile. If goal_text clearly states something that factually contradicts a specific profile field (e.g. the user states an age that doesn't match user_profile's age, says they are no longer pregnant while user_profile marks them as pregnant, mentions a medical condition or medication that isn't reflected in user_profile, or similar), set profile_discrepancy_message to one short plain-language sentence describing the specific mismatch (in the reply language) so the app can alert the user to review their profile or their input - name both the profile's value and what goal_text stated. Leave profile_discrepancy_message empty when there is no clear, specific factual contradiction (do not flag vague, ambiguous, or merely-updated-over-time statements). This check never blocks generation and is independent of the no_actionable_change and safety checks - still generate the best targets you can even when a discrepancy is flagged.",
           `- Write every text field (ai_adjustment_note, habit_instruction, rationale, global_coaching_explanation, user_targets label/value) entirely in ${languageName}. Do not mix languages within a field.`,
           "- Address the user directly in second person (\"you\"/\"your\") in every text field. Never refer to the user in third person (\"he\", \"she\", \"his\", \"her\", or the user's inferred gender) even when their biological_sex is known.",
           "- In Hebrew specifically, prefer gender-neutral or mixed-form second-person phrasing (e.g. \"שלך\", \"את/ה\") over a gendered third-person construction like \"בשל מצבו הרפואי\" or \"בשל מצבה הרפואי\" — write \"בשל המצב הרפואי שלך\" instead.",
