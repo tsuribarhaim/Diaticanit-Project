@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { dailyReportInputSchema, parseDailyReportText } from "@/lib/daily-report";
+import { dailyReportInputSchema, detectDangerousSubstance, parseDailyReportText } from "@/lib/daily-report";
 import { CHART_EXTRA_METRIC_IDS, type DailyReportChartExtraMetric, type DailyReportChartPreferences } from "@/lib/daily-report-chart-preferences";
 import { parseDailyReportPhotoWithAi, parseDailyReportWithAi } from "@/lib/ai/daily-report";
 import { getAiExtractionConfig } from "@/lib/ai/env";
@@ -63,6 +63,8 @@ type DailyParseResult = {
   metrics: DailyReportMetrics;
   foodItems: ParsedFoodItem[];
   exerciseItems: ParsedExerciseItem[];
+  isDangerous?: boolean;
+  dangerReason?: string;
 };
 
 type SelectedDefaultSnapshot = {
@@ -296,6 +298,13 @@ export async function saveDailyReportAction(
     if (!parsedInput.success) {
       return { error: parsedInput.error.issues[0]?.message ?? "Invalid report input." };
     }
+
+    const dangerousTerm = detectDangerousSubstance(reportText);
+    if (dangerousTerm) {
+      return {
+        error: `⚠️ "${dangerousTerm}" is not food or a beverage and can be dangerous to consume. This entry was not saved. If you actually consumed this, please seek medical attention or contact a poison control center right away.`,
+      };
+    }
   }
 
   const { data: profile, error: profileError } = await supabase
@@ -362,6 +371,14 @@ export async function saveDailyReportAction(
       error: message,
     });
     return { error: message };
+  }
+
+  if (parsedResult.isDangerous) {
+    return {
+      error:
+        parsedResult.dangerReason ||
+        "⚠️ This entry describes something that isn't food or a beverage and can be dangerous to consume. This entry was not saved. If you actually consumed this, please seek medical attention or contact a poison control center right away.",
+    };
   }
 
   const defaultFoodItems: Array<{
@@ -652,6 +669,15 @@ export async function retryDailyReportWithAiAction(formData: FormData): Promise<
     redirect(buildDailyReportRedirectPath({ error: "AI retry requires free-text content in the report." }));
   }
 
+  const dangerousTerm = detectDangerousSubstance(reportText);
+  if (dangerousTerm) {
+    redirect(
+      buildDailyReportRedirectPath({
+        error: `⚠️ "${dangerousTerm}" is not food or a beverage and can be dangerous to consume. AI retry was not performed. If you actually consumed this, please seek medical attention or contact a poison control center right away.`,
+      }),
+    );
+  }
+
   const selectedDefaultsSnapshot = normalizeSelectedDefaultsSnapshot((reportRow as { selected_defaults?: unknown }).selected_defaults);
 
   const { data: profile, error: profileError } = await supabase
@@ -688,6 +714,16 @@ export async function retryDailyReportWithAiAction(formData: FormData): Promise<
       error: message,
     });
     redirect(buildDailyReportRedirectPath({ error: message }));
+  }
+
+  if (aiParsed.isDangerous) {
+    redirect(
+      buildDailyReportRedirectPath({
+        error:
+          aiParsed.dangerReason ||
+          "⚠️ This entry describes something that isn't food or a beverage and can be dangerous to consume. AI retry was not performed. If you actually consumed this, please seek medical attention or contact a poison control center right away.",
+      }),
+    );
   }
 
   const finalConfidence = Math.min(0.98, round(aiParsed.confidence, 4));

@@ -8,6 +8,73 @@ export const dailyReportInputSchema = z.object({
     .max(2000, "Daily report must be 2000 characters or less."),
 });
 
+/**
+ * Deterministic, always-on guard against clearly dangerous/inedible
+ * substances (not merely unusual food choices) - runs regardless of
+ * translation mode or AI availability, since it must never depend on an AI
+ * call succeeding. AI-mode parsing layers a second, more nuanced judgment
+ * call on top of this for paraphrased/less literal mentions.
+ */
+const DANGEROUS_SUBSTANCE_TERMS = [
+  "fuel",
+  "gasoline",
+  "petrol",
+  "diesel",
+  "kerosene",
+  "antifreeze",
+  "bleach",
+  "detergent",
+  "dish soap",
+  "laundry soap",
+  "ammonia",
+  "drain cleaner",
+  "pesticide",
+  "insecticide",
+  "rat poison",
+  "poison",
+  "battery acid",
+  "motor oil",
+  "paint thinner",
+  "nail polish remover",
+  "acetone",
+  "lighter fluid",
+  "methanol",
+  "rubbing alcohol",
+  "superglue",
+  "bug spray",
+  "weed killer",
+  "herbicide",
+  "דלק",
+  "בנזין",
+  "סולר",
+  "נוזל קירור",
+  "נוזל למניעת קיפאון",
+  "אקונומיקה",
+  "חומר ניקוי",
+  "אמוניה",
+  "פותח סתימות",
+  "רעל",
+  "קוטל חרקים",
+  "סוללה",
+  "סוללות",
+  "שמן מנוע",
+  "מדלל צבע",
+  "מסיר לק",
+  "אצטון",
+  "נוזל מצתים",
+  "מתנול",
+  "אלכוהול לשפשוף",
+  "דבק תעשייתי",
+  "תרסיס נגד חרקים",
+  "קוטל עשבים",
+];
+
+export function detectDangerousSubstance(text: string): string | null {
+  const lowered = text.toLowerCase();
+  const match = DANGEROUS_SUBSTANCE_TERMS.find((term) => lowered.includes(term.toLowerCase()));
+  return match ?? null;
+}
+
 export type ParsedFoodItem = {
   name: string;
   quantity: number;
@@ -51,6 +118,11 @@ export type DailyReportParseResult = {
   metrics: DailyReportMetrics;
   foodItems: ParsedFoodItem[];
   exerciseItems: ParsedExerciseItem[];
+  /** AI-judged (never set by the heuristic parser, which relies solely on
+   * detectDangerousSubstance against the raw text): true when what's
+   * described isn't actually food/drink and would be dangerous to consume. */
+  isDangerous?: boolean;
+  dangerReason?: string;
 };
 
 type FoodProfile = {
