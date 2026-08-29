@@ -157,9 +157,11 @@ export function DailyReportForm({
         </div>
       </section>
 
-      <label className="block">
-        <span className="mb-1 flex items-center justify-between gap-2">
-          <span className="text-sm font-medium text-slate-700">{tr(locale, "Daily report (free text, optional)", "דיווח יומי (טקסט חופשי, אופציונלי)")}</span>
+      <div className="block">
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <label htmlFor="daily-report-text" className="text-sm font-medium text-slate-700">
+            {tr(locale, "Daily report (free text, optional)", "דיווח יומי (טקסט חופשי, אופציונלי)")}
+          </label>
           <button
             type="button"
             onClick={() => mealPhotoInputRef.current?.click()}
@@ -187,7 +189,7 @@ export function DailyReportForm({
               <circle cx="12" cy="13" r="3.5" />
             </svg>
           </button>
-        </span>
+        </div>
         <input
           ref={mealPhotoInputRef}
           type="file"
@@ -199,6 +201,7 @@ export function DailyReportForm({
           className="sr-only"
         />
         <textarea
+          id="daily-report-text"
           name="report_text"
           maxLength={REPORT_MAX_LENGTH}
           rows={5}
@@ -242,7 +245,7 @@ export function DailyReportForm({
             </button>
           </div>
         ) : null}
-      </label>
+      </div>
 
       <section className={`rounded-xl border border-slate-200 bg-slate-50 p-3 ${mealPhotoPreview ? "opacity-60" : ""}`}>
         <h3 className="text-sm font-semibold text-slate-800">{tr(locale, "Translation mode", "מצב תרגום")}</h3>
