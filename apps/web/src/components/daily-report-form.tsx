@@ -164,6 +164,7 @@ export function DailyReportForm({
           </label>
           <button
             type="button"
+            onMouseDown={(event) => event.preventDefault()}
             onClick={() => mealPhotoInputRef.current?.click()}
             disabled={!aiAvailable}
             aria-label={tr(locale, "Take or upload a photo of your plate", "צילום או העלאת תמונת הצלחת")}
