@@ -71,6 +71,7 @@ export function DailyReportForm({
   const [mealPhotoPreview, setMealPhotoPreview] = useState<string | null>(null);
   const [mealPhotoName, setMealPhotoName] = useState<string | null>(null);
   const mealPhotoInputRef = useRef<HTMLInputElement | null>(null);
+  const mealPhotoGalleryInputRef = useRef<HTMLInputElement | null>(null);
   const currentLocalDateTime = useMemo(() => getLocalDateTimeValue(new Date()), []);
 
   function handleMealPhotoChange(file: File | null) {
@@ -81,8 +82,26 @@ export function DailyReportForm({
     setMealPhotoName(file ? file.name : null);
   }
 
+  /**
+   * The "choose from gallery/files" input intentionally has no `name` of its
+   * own, since a second same-named file input would add a second, empty
+   * FormData entry that could shadow the real one. Instead, its selection is
+   * copied into the canonical meal_photo input via DataTransfer so form
+   * submission always reads the right file regardless of which picker the
+   * user used.
+   */
+  function handleGalleryPhotoChange(file: File | null) {
+    if (file && mealPhotoInputRef.current) {
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      mealPhotoInputRef.current.files = transfer.files;
+    }
+    handleMealPhotoChange(file);
+  }
+
   function clearMealPhoto() {
     if (mealPhotoInputRef.current) mealPhotoInputRef.current.value = "";
+    if (mealPhotoGalleryInputRef.current) mealPhotoGalleryInputRef.current.value = "";
     handleMealPhotoChange(null);
   }
 
@@ -161,34 +180,73 @@ export function DailyReportForm({
           <label htmlFor="daily-report-text" className="text-sm font-medium text-slate-700">
             {tr(locale, "Daily report (free text, optional)", "דיווח יומי (טקסט חופשי, אופציונלי)")}
           </label>
-          <label
-            htmlFor="meal-photo-input"
-            aria-label={tr(locale, "Take or upload a photo of your plate", "צילום או העלאת תמונת הצלחת")}
-            title={
-              aiAvailable
-                ? tr(locale, "Take or upload a photo of your plate", "צילום או העלאת תמונת הצלחת")
-                : tr(locale, "AI mode is currently unavailable in this environment.", "מצב AI אינו זמין כרגע בסביבה זו.")
-            }
-            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-teal-300 text-teal-700 focus-within:outline-none focus-within:ring-2 focus-within:ring-teal-600 ${
-              aiAvailable ? "cursor-pointer hover:bg-teal-50" : "cursor-not-allowed opacity-50"
-            }`}
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="h-4 w-4"
-              aria-hidden="true"
+          <div className="flex shrink-0 items-center gap-1.5">
+            <label
+              htmlFor="meal-photo-input"
+              aria-label={tr(locale, "Take a photo of your plate", "צילום תמונה של הצלחת")}
+              title={
+                aiAvailable
+                  ? tr(locale, "Take a photo of your plate", "צילום תמונה של הצלחת")
+                  : tr(locale, "AI mode is currently unavailable in this environment.", "מצב AI אינו זמין כרגע בסביבה זו.")
+              }
+              className={`flex h-8 w-8 items-center justify-center rounded-full border border-teal-300 text-teal-700 focus-within:outline-none focus-within:ring-2 focus-within:ring-teal-600 ${
+                aiAvailable ? "cursor-pointer hover:bg-teal-50" : "cursor-not-allowed opacity-50"
+              }`}
             >
-              <path d="M9 3h6l1.5 3H20a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h3.5L9 3Z" />
-              <circle cx="12" cy="13" r="3.5" />
-            </svg>
-          </label>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-4 w-4"
+                aria-hidden="true"
+              >
+                <path d="M9 3h6l1.5 3H20a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h3.5L9 3Z" />
+                <circle cx="12" cy="13" r="3.5" />
+              </svg>
+            </label>
+            <label
+              htmlFor="meal-photo-gallery-input"
+              aria-label={tr(locale, "Choose an existing photo or file", "בחירת תמונה או קובץ קיים")}
+              title={
+                aiAvailable
+                  ? tr(locale, "Choose an existing photo or file", "בחירת תמונה או קובץ קיים")
+                  : tr(locale, "AI mode is currently unavailable in this environment.", "מצב AI אינו זמין כרגע בסביבה זו.")
+              }
+              className={`flex h-8 w-8 items-center justify-center rounded-full border border-teal-300 text-teal-700 focus-within:outline-none focus-within:ring-2 focus-within:ring-teal-600 ${
+                aiAvailable ? "cursor-pointer hover:bg-teal-50" : "cursor-not-allowed opacity-50"
+              }`}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-4 w-4"
+                aria-hidden="true"
+              >
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <path d="m21 15-5-5L5 21" />
+              </svg>
+            </label>
+          </div>
         </div>
+        <input
+          ref={mealPhotoGalleryInputRef}
+          id="meal-photo-gallery-input"
+          type="file"
+          accept="image/*"
+          disabled={!aiAvailable}
+          onChange={(event) => handleGalleryPhotoChange(event.target.files?.[0] ?? null)}
+          className="sr-only"
+        />
         <input
           ref={mealPhotoInputRef}
           id="meal-photo-input"
