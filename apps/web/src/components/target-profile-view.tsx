@@ -1,3 +1,4 @@
+import { GuardedLink } from "@/components/unsaved-preview-context";
 import { formatExerciseModality, formatMeasurementUnit, formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
 import { getNutrientReference } from "@/lib/nutrient-reference";
 import type { TargetGenerationPayload } from "@/lib/targets";
@@ -139,6 +140,24 @@ export function TargetProfileView({
 
   return (
     <div className="space-y-6">
+      {payload.profileDiscrepancyMessage ? (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+          <p className="font-semibold">{tr(locale, "Discrepancy noticed", "אי-התאמה שזוהתה")}</p>
+          <p className="mt-1">{payload.profileDiscrepancyMessage}</p>
+          <GuardedLink
+            href="/app/profile/edit"
+            confirmMessage={tr(
+              locale,
+              "You have a generated target plan that hasn't been locked in yet. Leave this page anyway?",
+              "יש לך תכנית יעדים שנוצרה אך טרם ננעלה. לעזוב את הדף בכל זאת?",
+            )}
+            className="mt-2 inline-block font-semibold text-amber-900 underline hover:text-amber-700"
+          >
+            {tr(locale, "Update your profile", "עדכון הפרופיל שלך")}
+          </GuardedLink>
+        </div>
+      ) : null}
+
       {payload.aiRationaleExplanation ? (
         <div className="rounded-xl border border-teal-200 bg-teal-50 p-4 text-sm text-teal-900">
           <p className="font-semibold">{tr(locale, "Description", "הסבר")}</p>
