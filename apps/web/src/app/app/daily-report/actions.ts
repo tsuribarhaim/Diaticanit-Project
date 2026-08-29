@@ -7,6 +7,7 @@ import { dailyReportInputSchema, detectDangerousSubstance, parseDailyReportText 
 import { CHART_EXTRA_METRIC_IDS, type DailyReportChartExtraMetric, type DailyReportChartPreferences } from "@/lib/daily-report-chart-preferences";
 import { parseDailyReportPhotoWithAi, parseDailyReportWithAi } from "@/lib/ai/daily-report";
 import { getAiExtractionConfig } from "@/lib/ai/env";
+import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
 
@@ -206,14 +207,57 @@ function extractReportedWeightFromText(reportText: string): number | null {
   return null;
 }
 
+async function resolveDailyReportLocale(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+): Promise<AppLocale> {
+  const { data } = await supabase
+    .from("user_profile")
+    .select("preferred_language")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  return normalizeLocale(data?.preferred_language);
+}
+
+function buildDangerousTermMessage(locale: AppLocale, term: string, context: "save" | "retry"): string {
+  const notSaved = tr(
+    locale,
+    context === "save" ? "This entry was not saved." : "AI retry was not performed.",
+    context === "save" ? "הדיווח לא נשמר." : "ניתוח ה-AI לא בוצע.",
+  );
+
+  return tr(
+    locale,
+    `⚠️ "${term}" is not food or a beverage and can be dangerous to consume. ${notSaved} If you actually consumed this, please seek medical attention or contact a poison control center right away.`,
+    `⚠️ "${term}" אינו מזון או משקה ועלול להיות מסוכן לצריכה. ${notSaved} אם אכן צרכת זאת, פנה/י מיד לעזרה רפואית או למרכז המידע לארס והרעלות.`,
+  );
+}
+
+function buildGenericDangerousMessage(locale: AppLocale, context: "save" | "retry"): string {
+  const notSaved = tr(
+    locale,
+    context === "save" ? "This entry was not saved." : "AI retry was not performed.",
+    context === "save" ? "הדיווח לא נשמר." : "ניתוח ה-AI לא בוצע.",
+  );
+
+  return tr(
+    locale,
+    `⚠️ This entry describes something that isn't food or a beverage and can be dangerous to consume. ${notSaved} If you actually consumed this, please seek medical attention or contact a poison control center right away.`,
+    `⚠️ הדיווח מתאר משהו שאינו מזון או משקה ועלול להיות מסוכן לצריכה. ${notSaved} אם אכן צרכת זאת, פנה/י מיד לעזרה רפואית או למרכז המידע לארס והרעלות.`,
+  );
+}
+
 async function parseReportTextByMode({
   reportText,
   weightKg,
   mode,
+  locale,
 }: {
   reportText: string;
   weightKg: number;
   mode: DailyReportParseMode;
+  locale: AppLocale;
 }): Promise<{
   result: DailyParseResult;
   modeUsed: DailyReportParseMode;
@@ -237,6 +281,7 @@ async function parseReportTextByMode({
       config: aiConfig,
       reportText,
       weightKg,
+      locale,
     });
 
     return {
@@ -268,6 +313,8 @@ export async function saveDailyReportAction(
   if (!user) {
     redirect("/auth/sign-in");
   }
+
+  const locale = await resolveDailyReportLocale(supabase, user.id);
 
   const reportTextRaw = formData.get("report_text")?.toString() ?? "";
   const reportText = reportTextRaw.trim();
@@ -301,9 +348,7 @@ export async function saveDailyReportAction(
 
     const dangerousTerm = detectDangerousSubstance(reportText);
     if (dangerousTerm) {
-      return {
-        error: `⚠️ "${dangerousTerm}" is not food or a beverage and can be dangerous to consume. This entry was not saved. If you actually consumed this, please seek medical attention or contact a poison control center right away.`,
-      };
+      return { error: buildDangerousTermMessage(locale, dangerousTerm, "save") };
     }
   }
 
@@ -350,6 +395,7 @@ export async function saveDailyReportAction(
         mimeType: mealPhotoFile.type,
         weightKg: Number(profile.weight_kg),
         noteText: reportText || undefined,
+        locale,
       });
       modeUsedForReport = "ai_photo";
       parserVersionUsed = `daily-ai-photo-${aiConfig.provider}-v1`;
@@ -358,6 +404,7 @@ export async function saveDailyReportAction(
         reportText,
         weightKg: Number(profile.weight_kg),
         mode: requestedParseMode === "ai_photo" ? "heuristic" : requestedParseMode,
+        locale,
       });
       parsedResult = parsedByMode.result;
       modeUsedForReport = parsedByMode.modeUsed;
@@ -375,9 +422,7 @@ export async function saveDailyReportAction(
 
   if (parsedResult.isDangerous) {
     return {
-      error:
-        parsedResult.dangerReason ||
-        "⚠️ This entry describes something that isn't food or a beverage and can be dangerous to consume. This entry was not saved. If you actually consumed this, please seek medical attention or contact a poison control center right away.",
+      error: parsedResult.dangerReason || buildGenericDangerousMessage(locale, "save"),
     };
   }
 
@@ -633,6 +678,8 @@ export async function retryDailyReportWithAiAction(formData: FormData): Promise<
     redirect("/auth/sign-in");
   }
 
+  const locale = await resolveDailyReportLocale(supabase, user.id);
+
   const reportId = formData.get("report_id")?.toString();
   if (!reportId) {
     redirect(buildDailyReportRedirectPath({ error: "Missing report id for AI retry." }));
@@ -673,7 +720,7 @@ export async function retryDailyReportWithAiAction(formData: FormData): Promise<
   if (dangerousTerm) {
     redirect(
       buildDailyReportRedirectPath({
-        error: `⚠️ "${dangerousTerm}" is not food or a beverage and can be dangerous to consume. AI retry was not performed. If you actually consumed this, please seek medical attention or contact a poison control center right away.`,
+        error: buildDangerousTermMessage(locale, dangerousTerm, "retry"),
       }),
     );
   }
@@ -705,6 +752,7 @@ export async function retryDailyReportWithAiAction(formData: FormData): Promise<
       config: aiConfig,
       reportText,
       weightKg: Number(profile.weight_kg),
+      locale,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "AI retry failed.";
@@ -719,9 +767,7 @@ export async function retryDailyReportWithAiAction(formData: FormData): Promise<
   if (aiParsed.isDangerous) {
     redirect(
       buildDailyReportRedirectPath({
-        error:
-          aiParsed.dangerReason ||
-          "⚠️ This entry describes something that isn't food or a beverage and can be dangerous to consume. AI retry was not performed. If you actually consumed this, please seek medical attention or contact a poison control center right away.",
+        error: aiParsed.dangerReason || buildGenericDangerousMessage(locale, "retry"),
       }),
     );
   }
