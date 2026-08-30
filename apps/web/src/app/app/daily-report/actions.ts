@@ -274,7 +274,13 @@ async function parseReportTextByMode({
   if (mode === "ai") {
     const aiConfig = getAiExtractionConfig();
     if (!aiConfig) {
-      throw new Error("AI mode is unavailable. Configure AI extraction settings first.");
+      throw new Error(
+        tr(
+          locale,
+          "AI mode is unavailable. Configure AI extraction settings first.",
+          "מצב AI אינו זמין. יש להגדיר תחילה את הגדרות ה-AI.",
+        ),
+      );
     }
 
     const aiResult = await parseDailyReportWithAi({
@@ -330,11 +336,19 @@ export async function saveDailyReportAction(
   const mealPhotoFile = mealPhotoEntry instanceof File && mealPhotoEntry.size > 0 ? mealPhotoEntry : null;
 
   if (!reportText && selectedDefaultIds.length === 0 && !mealPhotoFile) {
-    return { error: "Add free text, a meal photo, select at least one default, or a combination." };
+    return {
+      error: tr(
+        locale,
+        "Add free text, a meal photo, select at least one default, or a combination.",
+        "יש להוסיף טקסט חופשי, תמונת ארוחה, לבחור לפחות ברירת מחדל אחת, או שילוב ביניהם.",
+      ),
+    };
   }
 
   if (reportText.length > 2000) {
-    return { error: "Daily report must be 2000 characters or less." };
+    return {
+      error: tr(locale, "Daily report must be 2000 characters or less.", "הדיווח היומי חייב להיות עד 2000 תווים."),
+    };
   }
 
   if (reportText.length > 0) {
@@ -343,7 +357,13 @@ export async function saveDailyReportAction(
     });
 
     if (!parsedInput.success) {
-      return { error: parsedInput.error.issues[0]?.message ?? "Invalid report input." };
+      return {
+        error: tr(
+          locale,
+          "Please add more details in your daily report.",
+          "יש להוסיף פרטים נוספים לדיווח היומי.",
+        ),
+      };
     }
 
     const dangerousTerm = detectDangerousSubstance(reportText);
@@ -359,7 +379,13 @@ export async function saveDailyReportAction(
     .maybeSingle();
 
   if (profileError || !profile) {
-    return { error: "Please complete profile details before logging daily reports." };
+    return {
+      error: tr(
+        locale,
+        "Please complete profile details before logging daily reports.",
+        "יש להשלים את פרטי הפרופיל לפני רישום דיווחים יומיים.",
+      ),
+    };
   }
 
   const { data: activeTargetProfile } = await supabase
@@ -376,15 +402,23 @@ export async function saveDailyReportAction(
   try {
     if (mealPhotoFile) {
       if (!ALLOWED_MEAL_PHOTO_TYPES.includes(mealPhotoFile.type)) {
-        throw new Error("Meal photo must be a JPEG, PNG, or WEBP image.");
+        throw new Error(
+          tr(locale, "Meal photo must be a JPEG, PNG, or WEBP image.", "תמונת הארוחה חייבת להיות מסוג JPEG, PNG או WEBP."),
+        );
       }
       if (mealPhotoFile.size > MAX_MEAL_PHOTO_BYTES) {
-        throw new Error("Meal photo must be 10 MB or smaller.");
+        throw new Error(tr(locale, "Meal photo must be 10 MB or smaller.", "תמונת הארוחה חייבת להיות עד 10MB."));
       }
 
       const aiConfig = getAiExtractionConfig();
       if (!aiConfig) {
-        throw new Error("AI mode is unavailable. Configure AI extraction settings first.");
+        throw new Error(
+          tr(
+            locale,
+            "AI mode is unavailable. Configure AI extraction settings first.",
+            "מצב AI אינו זמין. יש להגדיר תחילה את הגדרות ה-AI.",
+          ),
+        );
       }
 
       const imageBase64 = Buffer.from(await mealPhotoFile.arrayBuffer()).toString("base64");
@@ -411,7 +445,8 @@ export async function saveDailyReportAction(
       parserVersionUsed = parsedByMode.parserVersion;
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to parse daily report.";
+    const message =
+      error instanceof Error ? error.message : tr(locale, "Failed to parse daily report.", "פענוח הדיווח היומי נכשל.");
     logServerError("dailyReport.save", "parse_failed", {
       userId: user.id,
       mode: requestedParseMode,
@@ -578,7 +613,9 @@ export async function saveDailyReportAction(
       enteredReportedWeightKg < 20 ||
       enteredReportedWeightKg > 400)
   ) {
-    return { error: "Reported weight must be between 20 and 400 kg." };
+    return {
+      error: tr(locale, "Reported weight must be between 20 and 400 kg.", "המשקל המדווח חייב להיות בין 20 ל-400 ק\"ג."),
+    };
   }
 
   const status = requiresConfirmation ? "needs_confirmation" : "confirmed";
@@ -656,16 +693,40 @@ export async function saveDailyReportAction(
   revalidatePath("/app/daily-report");
   revalidatePath("/app/targets");
 
-  const modeLabel = modeUsedForReport === "ai" ? "AI" : modeUsedForReport === "ai_photo" ? "AI photo" : "heuristic";
+  const modeLabel =
+    modeUsedForReport === "ai"
+      ? "AI"
+      : modeUsedForReport === "ai_photo"
+        ? tr(locale, "AI photo", "AI (תמונה)")
+        : tr(locale, "heuristic", "יוריסטי");
   const weightNotice = reportedWeightNotPersisted
-    ? " Reported weight was not saved because migration db/migrations/012_phase4_daily_reports_reported_weight.sql is not applied yet."
+    ? " " +
+      tr(
+        locale,
+        "Reported weight was not saved because migration db/migrations/012_phase4_daily_reports_reported_weight.sql is not applied yet.",
+        "המשקל שדווח לא נשמר מכיוון שהמיגרציה db/migrations/012_phase4_daily_reports_reported_weight.sql עדיין לא הוחלה.",
+      )
     : "";
 
   if (requiresConfirmation) {
-    return { success: `Daily report saved with ${modeLabel} mode. Confirmation is required before this entry affects plan comparison.${weightNotice}` };
+    return {
+      success:
+        tr(
+          locale,
+          `Daily report saved with ${modeLabel} mode. Confirmation is required before this entry affects plan comparison.`,
+          `הדיווח היומי נשמר במצב ${modeLabel}. נדרש אישור לפני שהרשומה הזו תשפיע על השוואת התוכנית.`,
+        ) + weightNotice,
+    };
   }
 
-  return { success: `Daily report saved with ${modeLabel} mode and included in plan comparison.${weightNotice}` };
+  return {
+    success:
+      tr(
+        locale,
+        `Daily report saved with ${modeLabel} mode and included in plan comparison.`,
+        `הדיווח היומי נשמר במצב ${modeLabel} ונכלל בהשוואת התוכנית.`,
+      ) + weightNotice,
+  };
 }
 
 export async function retryDailyReportWithAiAction(formData: FormData): Promise<void> {
@@ -682,7 +743,11 @@ export async function retryDailyReportWithAiAction(formData: FormData): Promise<
 
   const reportId = formData.get("report_id")?.toString();
   if (!reportId) {
-    redirect(buildDailyReportRedirectPath({ error: "Missing report id for AI retry." }));
+    redirect(
+      buildDailyReportRedirectPath({
+        error: tr(locale, "Missing report id for AI retry.", "מזהה הדיווח חסר עבור ניסיון AI חוזר."),
+      }),
+    );
   }
 
   const reportRowWithDefaults = await supabase
@@ -708,12 +773,24 @@ export async function retryDailyReportWithAiAction(formData: FormData): Promise<
   }
 
   if (reportError || !reportRow) {
-    redirect(buildDailyReportRedirectPath({ error: "Daily report not found for AI retry." }));
+    redirect(
+      buildDailyReportRedirectPath({
+        error: tr(locale, "Daily report not found for AI retry.", "הדיווח היומי לא נמצא עבור ניסיון AI חוזר."),
+      }),
+    );
   }
 
   const reportText = reportRow.raw_report_text?.trim() ?? "";
   if (!reportText) {
-    redirect(buildDailyReportRedirectPath({ error: "AI retry requires free-text content in the report." }));
+    redirect(
+      buildDailyReportRedirectPath({
+        error: tr(
+          locale,
+          "AI retry requires free-text content in the report.",
+          "ניסיון AI חוזר דורש תוכן טקסט חופשי בדיווח.",
+        ),
+      }),
+    );
   }
 
   const dangerousTerm = detectDangerousSubstance(reportText);
@@ -734,7 +811,11 @@ export async function retryDailyReportWithAiAction(formData: FormData): Promise<
     .maybeSingle();
 
   if (profileError || !profile) {
-    redirect(buildDailyReportRedirectPath({ error: "Profile details are required before AI retry." }));
+    redirect(
+      buildDailyReportRedirectPath({
+        error: tr(locale, "Profile details are required before AI retry.", "פרטי הפרופיל נדרשים לפני ניסיון AI חוזר."),
+      }),
+    );
   }
 
   let aiParsed: DailyParseResult;
@@ -743,7 +824,15 @@ export async function retryDailyReportWithAiAction(formData: FormData): Promise<
   try {
     const aiConfig = getAiExtractionConfig();
     if (!aiConfig) {
-      redirect(buildDailyReportRedirectPath({ error: "AI mode is unavailable. Configure AI extraction settings first." }));
+      redirect(
+        buildDailyReportRedirectPath({
+          error: tr(
+            locale,
+            "AI mode is unavailable. Configure AI extraction settings first.",
+            "מצב AI אינו זמין. יש להגדיר תחילה את הגדרות ה-AI.",
+          ),
+        }),
+      );
     }
 
     aiParserVersion = `daily-ai-${aiConfig.provider}-v1`;
@@ -755,7 +844,7 @@ export async function retryDailyReportWithAiAction(formData: FormData): Promise<
       locale,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "AI retry failed.";
+    const message = error instanceof Error ? error.message : tr(locale, "AI retry failed.", "ניסיון AI חוזר נכשל.");
     logServerError("dailyReport.retryAi", "parse_failed", {
       userId: user.id,
       reportId,
@@ -919,13 +1008,25 @@ export async function retryDailyReportWithAiAction(formData: FormData): Promise<
       reportId,
       error: updateError.message,
     });
-    redirect(buildDailyReportRedirectPath({ error: "AI retry completed but saving failed." }));
+    redirect(
+      buildDailyReportRedirectPath({
+        error: tr(locale, "AI retry completed but saving failed.", "ניסיון AI חוזר הושלם אך השמירה נכשלה."),
+      }),
+    );
   }
 
   revalidatePath("/app/daily-report");
   revalidatePath("/app/targets");
 
-  redirect(buildDailyReportRedirectPath({ notice: "AI retry completed. Please confirm the updated entry before it affects plan comparison." }));
+  redirect(
+    buildDailyReportRedirectPath({
+      notice: tr(
+        locale,
+        "AI retry completed. Please confirm the updated entry before it affects plan comparison.",
+        "ניסיון AI חוזר הושלם. יש לאשר את הרשומה המעודכנת לפני שהיא תשפיע על השוואת התוכנית.",
+      ),
+    }),
+  );
 }
 
 export async function confirmDailyReportAction(formData: FormData): Promise<void> {
@@ -1010,12 +1111,18 @@ export async function addReportToDefaultsAction(formData: FormData): Promise<voi
     redirect("/auth/sign-in");
   }
 
+  const locale = await resolveDailyReportLocale(supabase, user.id);
+
   const reportId = formData.get("report_id")?.toString();
   const customNameRaw = formData.get("default_name")?.toString() ?? "";
   const customName = customNameRaw.trim();
 
   if (!reportId) {
-    redirect(buildDailyReportRedirectPath({ error: "Missing report id for adding default." }));
+    redirect(
+      buildDailyReportRedirectPath({
+        error: tr(locale, "Missing report id for adding default.", "מזהה הדיווח חסר להוספת ברירת מחדל."),
+      }),
+    );
   }
 
   const { data: reportRow, error: reportError } = await supabase
@@ -1028,7 +1135,11 @@ export async function addReportToDefaultsAction(formData: FormData): Promise<voi
     .maybeSingle();
 
   if (reportError || !reportRow) {
-    redirect(buildDailyReportRedirectPath({ error: "Daily report not found for default creation." }));
+    redirect(
+      buildDailyReportRedirectPath({
+        error: tr(locale, "Daily report not found for default creation.", "הדיווח היומי לא נמצא ליצירת ברירת מחדל."),
+      }),
+    );
   }
 
   const fallbackName = `Saved report ${new Date(reportRow.report_at).toISOString().slice(0, 10)}`;
@@ -1066,13 +1177,19 @@ export async function addReportToDefaultsAction(formData: FormData): Promise<voi
       reportId,
       error: insertError.message,
     });
-    redirect(buildDailyReportRedirectPath({ error: "Could not add this report to defaults." }));
+    redirect(
+      buildDailyReportRedirectPath({
+        error: tr(locale, "Could not add this report to defaults.", "לא ניתן להוסיף דיווח זה לברירות המחדל."),
+      }),
+    );
   }
 
   revalidatePath("/app/daily-report");
   revalidatePath("/app/daily-report/defaults");
 
-  redirect(buildDailyReportRedirectPath({ notice: "Report was added to defaults." }));
+  redirect(
+    buildDailyReportRedirectPath({ notice: tr(locale, "Report was added to defaults.", "הדיווח נוסף לברירות המחדל.") }),
+  );
 }
 
 export async function updateDailyReportChartPreferencesAction(formData: FormData): Promise<void> {
@@ -1084,6 +1201,8 @@ export async function updateDailyReportChartPreferencesAction(formData: FormData
   if (!user) {
     redirect("/auth/sign-in");
   }
+
+  const locale = await resolveDailyReportLocale(supabase, user.id);
 
   const extraMetrics = formData
     .getAll("extra_metric")
@@ -1103,10 +1222,14 @@ export async function updateDailyReportChartPreferencesAction(formData: FormData
       userId: user.id,
       error: error.message,
     });
-    redirect(buildDailyReportRedirectPath({ error: "Could not save your chart preferences." }));
+    redirect(
+      buildDailyReportRedirectPath({
+        error: tr(locale, "Could not save your chart preferences.", "לא ניתן היה לשמור את העדפות התרשים שלך."),
+      }),
+    );
   }
 
   revalidatePath("/app/daily-report");
 
-  redirect(buildDailyReportRedirectPath({ notice: "Chart preferences saved." }));
+  redirect(buildDailyReportRedirectPath({ notice: tr(locale, "Chart preferences saved.", "העדפות התרשים נשמרו.") }));
 }

@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  let body: { message?: unknown; chatHistory?: unknown };
+  let body: { message?: unknown; chatHistory?: unknown; imageBase64?: unknown; mimeType?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -38,9 +38,11 @@ export async function POST(request: NextRequest) {
         )
         .slice(-20)
     : [];
+  const imageBase64 = typeof body.imageBase64 === "string" && body.imageBase64 ? body.imageBase64 : undefined;
+  const mimeType = typeof body.mimeType === "string" && body.mimeType ? body.mimeType : undefined;
 
-  if (!userMessage) {
-    return new Response("Message is required", { status: 400 });
+  if (!userMessage && !imageBase64) {
+    return new Response("Message or photo is required", { status: 400 });
   }
 
   const aiConfig = getAiExtractionConfig();
@@ -64,6 +66,8 @@ export async function POST(request: NextRequest) {
           locale,
           chatHistory,
           userMessage,
+          imageBase64,
+          mimeType,
         });
 
         if (!upstream.ok || !upstream.body) {
