@@ -11,7 +11,7 @@ import { DailyReportWeightTrend, type WeightPoint } from "@/components/daily-rep
 import { CHART_EXTRA_METRIC_IDS, normalizeDailyReportChartPreferences, type DailyReportChartExtraMetric } from "@/lib/daily-report-chart-preferences";
 import { getTodaysDailyReportTotals } from "@/lib/daily-report";
 import { getAiExtractionConfig } from "@/lib/ai/env";
-import { formatDateTimeForLocale, formatMeasurementUnit, formatNumberForLocale, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
+import { formatDateForLocale, formatDateTimeForLocale, formatMeasurementUnit, formatNumberForLocale, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -70,12 +70,6 @@ function buildEntrySummary(parsedItems: unknown, parsedExercises: unknown, local
   return parts.join(" · ");
 }
 
-function statusClasses(status: "green" | "yellow" | "red") {
-  if (status === "green") return "border-emerald-200 bg-emerald-50 text-emerald-800";
-  if (status === "yellow") return "border-amber-200 bg-amber-50 text-amber-800";
-  return "border-rose-200 bg-rose-50 text-rose-800";
-}
-
 const extraMetricLabels: Record<DailyReportChartExtraMetric, { en: string; he: string }> = {
   magnesium: { en: "Magnesium", he: "מגנזיום" },
   potassium: { en: "Potassium", he: "אשלגן" },
@@ -91,20 +85,28 @@ const extraMetricLabels: Record<DailyReportChartExtraMetric, { en: string; he: s
   omega3: { en: "Omega-3", he: "אומגה 3" },
 };
 
-function compareRatio(value: number, target: number): "green" | "yellow" | "red" {
-  if (target <= 0) return "yellow";
-  const ratio = value / target;
-  if (ratio >= 1) return "green";
-  if (ratio >= 0.7) return "yellow";
-  return "red";
+function getUtcDateStringToday(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** Parses a YYYY-MM-DD search param into a valid UTC calendar-day string,
+ * falling back to today for anything missing or malformed (e.g. a stale/
+ * tampered query string) rather than letting an invalid date reach the
+ * query below. */
+function parseSelectedDateParam(value: string | undefined): string {
+  if (value && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(new Date(`${value}T00:00:00Z`).getTime())) {
+    return value;
+  }
+  return getUtcDateStringToday();
 }
 
 export default async function DailyReportPage({
   searchParams,
 }: {
-  searchParams: Promise<{ notice?: string; error?: string }>;
+  searchParams: Promise<{ notice?: string; error?: string; date?: string }>;
 }) {
   const resolvedSearchParams = await searchParams;
+  const selectedDate = parseSelectedDateParam(resolvedSearchParams.date);
   const supabase = await createClient();
   const {
     data: { user },
@@ -353,14 +355,19 @@ export default async function DailyReportPage({
       }>
     | null = null;
 
+  const selectedDayStartIso = new Date(`${selectedDate}T00:00:00.000Z`).toISOString();
+  const selectedDayEndIso = new Date(new Date(`${selectedDate}T00:00:00.000Z`).getTime() + 24 * 60 * 60 * 1000).toISOString();
+
   const reportsWithWeight = await supabase
     .from("user_daily_reports")
     .select(
       "id, raw_report_text, report_at, parse_confidence, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal, reported_weight_kg, parsed_items, parsed_exercises",
     )
     .eq("user_id", user.id)
-    .order("report_at", { ascending: false })
-    .limit(20);
+    .gte("report_at", selectedDayStartIso)
+    .lt("report_at", selectedDayEndIso)
+    .order("report_at", { ascending: true })
+    .limit(200);
 
   if (reportsWithWeight.error && isMissingReportedWeightColumn(reportsWithWeight.error.message)) {
     const reportsWithoutWeight = await supabase
@@ -369,8 +376,10 @@ export default async function DailyReportPage({
         "id, raw_report_text, report_at, parse_confidence, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal, parsed_items, parsed_exercises",
       )
       .eq("user_id", user.id)
-      .order("report_at", { ascending: false })
-      .limit(20);
+      .gte("report_at", selectedDayStartIso)
+      .lt("report_at", selectedDayEndIso)
+      .order("report_at", { ascending: true })
+      .limit(200);
 
     reportsError = reportsWithoutWeight.error;
     reports = (reportsWithoutWeight.data ?? []).map((item) => ({ ...item, reported_weight_kg: null }));
@@ -489,24 +498,34 @@ export default async function DailyReportPage({
       </section>
 
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
-        <h2 className="text-lg font-semibold text-slate-900">{tr(locale, "Recent entries", "רשומות אחרונות")}</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold text-slate-900">
+            {tr(locale, "Your Reports as of", "הדיווחים שלך ליום")} {formatDateForLocale(`${selectedDate}T00:00:00.000Z`, locale)}
+          </h2>
+          <form method="GET" className="flex items-center gap-2">
+            <input
+              type="date"
+              name="date"
+              defaultValue={selectedDate}
+              max={getUtcDateStringToday()}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none ring-teal-600 focus:ring-2"
+            />
+            <button
+              type="submit"
+              className="rounded-lg border border-teal-300 px-3 py-1.5 text-sm font-medium text-teal-700 hover:bg-teal-50"
+            >
+              {tr(locale, "View", "הצגה")}
+            </button>
+          </form>
+        </div>
 
         {!reports?.length ? (
           <p className="mt-3 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600">
-            {tr(locale, "No reports yet. Add your first free-text daily report above.", "אין עדיין דיווחים. אפשר להוסיף דיווח יומי ראשון למעלה.")}
+            {tr(locale, "No reports for this date.", "אין דיווחים לתאריך זה.")}
           </p>
         ) : (
           <div className="mt-4 space-y-4">
             {reports.map((report) => {
-              const proteinStatus = activeTargetProfile?.protein_min_g
-                ? compareRatio(Number(report.protein_g), Number(activeTargetProfile.protein_min_g))
-                : "yellow";
-              const hydrationTargetMl = activeTargetProfile?.water_min_ml
-                ? Number(activeTargetProfile.water_min_ml)
-                : 0;
-              const hydrationStatus = hydrationTargetMl
-                ? compareRatio(Number(report.water_ml), hydrationTargetMl)
-                : "yellow";
               const entrySummary = buildEntrySummary(report.parsed_items, report.parsed_exercises, locale);
               const fullConversation = report.raw_report_text?.trim() ?? "";
 
@@ -518,14 +537,6 @@ export default async function DailyReportPage({
                         {formatDateTimeForLocale(report.report_at, locale)}
                       </p>
                       <p className="mt-1 text-xs text-slate-600">{tr(locale, "Confidence", "רמת ביטחון")}: {formatConfidence(report.parse_confidence, locale)}</p>
-                    </div>
-                    <div className="flex gap-2">
-                      <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClasses(proteinStatus)}`}>
-                        {tr(locale, "Protein", "חלבון")}
-                      </span>
-                      <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClasses(hydrationStatus)}`}>
-                        {tr(locale, "Hydration", "נוזלים")}
-                      </span>
                     </div>
                   </div>
 
