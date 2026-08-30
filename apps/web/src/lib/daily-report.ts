@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import type { createClient } from "@/lib/supabase/server";
+
 export const dailyReportInputSchema = z.object({
   reportText: z
     .string()
@@ -7,6 +9,73 @@ export const dailyReportInputSchema = z.object({
     .min(8, "Please add more details in your daily report.")
     .max(2000, "Daily report must be 2000 characters or less."),
 });
+
+/**
+ * Deterministic, always-on guard against clearly dangerous/inedible
+ * substances (not merely unusual food choices) - runs regardless of
+ * translation mode or AI availability, since it must never depend on an AI
+ * call succeeding. AI-mode parsing layers a second, more nuanced judgment
+ * call on top of this for paraphrased/less literal mentions.
+ */
+const DANGEROUS_SUBSTANCE_TERMS = [
+  "fuel",
+  "gasoline",
+  "petrol",
+  "diesel",
+  "kerosene",
+  "antifreeze",
+  "bleach",
+  "detergent",
+  "dish soap",
+  "laundry soap",
+  "ammonia",
+  "drain cleaner",
+  "pesticide",
+  "insecticide",
+  "rat poison",
+  "poison",
+  "battery acid",
+  "motor oil",
+  "paint thinner",
+  "nail polish remover",
+  "acetone",
+  "lighter fluid",
+  "methanol",
+  "rubbing alcohol",
+  "superglue",
+  "bug spray",
+  "weed killer",
+  "herbicide",
+  "דלק",
+  "בנזין",
+  "סולר",
+  "נוזל קירור",
+  "נוזל למניעת קיפאון",
+  "אקונומיקה",
+  "חומר ניקוי",
+  "אמוניה",
+  "פותח סתימות",
+  "רעל",
+  "קוטל חרקים",
+  "סוללה",
+  "סוללות",
+  "שמן מנוע",
+  "מדלל צבע",
+  "מסיר לק",
+  "אצטון",
+  "נוזל מצתים",
+  "מתנול",
+  "אלכוהול לשפשוף",
+  "דבק תעשייתי",
+  "תרסיס נגד חרקים",
+  "קוטל עשבים",
+];
+
+export function detectDangerousSubstance(text: string): string | null {
+  const lowered = text.toLowerCase();
+  const match = DANGEROUS_SUBSTANCE_TERMS.find((term) => lowered.includes(term.toLowerCase()));
+  return match ?? null;
+}
 
 export type ParsedFoodItem = {
   name: string;
@@ -16,11 +85,20 @@ export type ParsedFoodItem = {
   proteinG: number;
   carbsG: number;
   fatG: number;
+  fiberG: number;
   waterMl: number;
   magnesiumMg: number;
   potassiumMg: number;
   ironMg: number;
   zincMg: number;
+  sodiumMg: number;
+  addedSugarG: number;
+  calciumMg: number;
+  vitCMg: number;
+  vitB12Mcg: number;
+  vitDMcg: number;
+  satFatG: number;
+  omega3G: number;
 };
 
 export type ParsedExerciseItem = {
@@ -34,14 +112,120 @@ export type DailyReportMetrics = {
   proteinG: number;
   carbsG: number;
   fatG: number;
+  fiberG: number;
   waterMl: number;
   magnesiumMg: number;
   potassiumMg: number;
   ironMg: number;
   zincMg: number;
+  sodiumMg: number;
+  addedSugarG: number;
+  calciumMg: number;
+  vitCMg: number;
+  vitB12Mcg: number;
+  vitDMcg: number;
+  satFatG: number;
+  omega3G: number;
   exerciseMinutes: number;
   estimatedBurnKcal: number;
 };
+
+const EMPTY_METRICS: DailyReportMetrics = {
+  caloriesKcal: 0,
+  proteinG: 0,
+  carbsG: 0,
+  fatG: 0,
+  fiberG: 0,
+  waterMl: 0,
+  magnesiumMg: 0,
+  potassiumMg: 0,
+  ironMg: 0,
+  zincMg: 0,
+  sodiumMg: 0,
+  addedSugarG: 0,
+  calciumMg: 0,
+  vitCMg: 0,
+  vitB12Mcg: 0,
+  vitDMcg: 0,
+  satFatG: 0,
+  omega3G: 0,
+  exerciseMinutes: 0,
+  estimatedBurnKcal: 0,
+};
+
+/**
+ * "Today" has no per-user timezone concept yet, so it's bucketed by UTC
+ * calendar day (matching the only other day-bucketing precedent in this
+ * codebase). For users far from UTC this "day" boundary won't line up with
+ * local midnight - revisit once the Daily Reporting redesign needs a stored
+ * per-user timezone plumbed through every day-bucketing site.
+ */
+export async function getTodaysDailyReportTotals({
+  supabase,
+  userId,
+}: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  userId: string;
+}): Promise<DailyReportMetrics> {
+  const now = new Date();
+  const todayStartIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+  const todayEndIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString();
+
+  return getDailyReportTotalsForRange({ supabase, userId, rangeStartIso: todayStartIso, rangeEndIso: todayEndIso });
+}
+
+/** Same aggregation as getTodaysDailyReportTotals, but for an arbitrary
+ * UTC day range - lets the Daily Report page's progress rings track
+ * whatever date the user is currently browsing instead of always today. */
+export async function getDailyReportTotalsForRange({
+  supabase,
+  userId,
+  rangeStartIso,
+  rangeEndIso,
+}: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  userId: string;
+  rangeStartIso: string;
+  rangeEndIso: string;
+}): Promise<DailyReportMetrics> {
+  const todayStartIso = rangeStartIso;
+  const todayEndIso = rangeEndIso;
+
+  const { data: todaysReports } = await supabase
+    .from("user_daily_reports")
+    .select(
+      "calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, sodium_mg, added_sugar_g, calcium_mg, vit_c_mg, vit_b12_mcg, vit_d_mcg, sat_fat_g, omega3_g, exercise_minutes, estimated_burn_kcal",
+    )
+    .eq("user_id", userId)
+    .gte("report_at", todayStartIso)
+    .lt("report_at", todayEndIso);
+
+  return (todaysReports ?? []).reduce(
+    (acc, row) => ({
+      caloriesKcal: acc.caloriesKcal + Number(row.calories_kcal ?? 0),
+      proteinG: acc.proteinG + Number(row.protein_g ?? 0),
+      carbsG: acc.carbsG + Number(row.carbs_g ?? 0),
+      fatG: acc.fatG + Number(row.fat_g ?? 0),
+      fiberG: acc.fiberG + Number(row.fiber_g ?? 0),
+      waterMl: acc.waterMl + Number(row.water_ml ?? 0),
+      magnesiumMg: acc.magnesiumMg + Number(row.magnesium_mg ?? 0),
+      potassiumMg: acc.potassiumMg + Number(row.potassium_mg ?? 0),
+      ironMg: acc.ironMg + Number(row.iron_mg ?? 0),
+      zincMg: acc.zincMg + Number(row.zinc_mg ?? 0),
+      sodiumMg: acc.sodiumMg + Number(row.sodium_mg ?? 0),
+      addedSugarG: acc.addedSugarG + Number(row.added_sugar_g ?? 0),
+      calciumMg: acc.calciumMg + Number(row.calcium_mg ?? 0),
+      vitCMg: acc.vitCMg + Number(row.vit_c_mg ?? 0),
+      vitB12Mcg: acc.vitB12Mcg + Number(row.vit_b12_mcg ?? 0),
+      vitDMcg: acc.vitDMcg + Number(row.vit_d_mcg ?? 0),
+      satFatG: acc.satFatG + Number(row.sat_fat_g ?? 0),
+      omega3G: acc.omega3G + Number(row.omega3_g ?? 0),
+      exerciseMinutes: acc.exerciseMinutes + Number(row.exercise_minutes ?? 0),
+      estimatedBurnKcal: acc.estimatedBurnKcal + Number(row.estimated_burn_kcal ?? 0),
+    }),
+    { ...EMPTY_METRICS },
+  );
+}
 
 export type DailyReportParseResult = {
   confidence: number;
@@ -49,6 +233,11 @@ export type DailyReportParseResult = {
   metrics: DailyReportMetrics;
   foodItems: ParsedFoodItem[];
   exerciseItems: ParsedExerciseItem[];
+  /** AI-judged (never set by the heuristic parser, which relies solely on
+   * detectDangerousSubstance against the raw text): true when what's
+   * described isn't actually food/drink and would be dangerous to consume. */
+  isDangerous?: boolean;
+  dangerReason?: string;
 };
 
 type FoodProfile = {
@@ -58,11 +247,20 @@ type FoodProfile = {
   proteinG: number;
   carbsG: number;
   fatG: number;
+  fiberG: number;
   waterMl: number;
   magnesiumMg: number;
   potassiumMg: number;
   ironMg: number;
   zincMg: number;
+  sodiumMg: number;
+  addedSugarG: number;
+  calciumMg: number;
+  vitCMg: number;
+  vitB12Mcg: number;
+  vitDMcg: number;
+  satFatG: number;
+  omega3G: number;
 };
 
 const foodProfiles: FoodProfile[] = [
@@ -73,11 +271,20 @@ const foodProfiles: FoodProfile[] = [
     proteinG: 0.5,
     carbsG: 25,
     fatG: 0.3,
+    fiberG: 4.4,
     waterMl: 0,
     magnesiumMg: 9,
     potassiumMg: 195,
     ironMg: 0.2,
     zincMg: 0.1,
+    sodiumMg: 2,
+    addedSugarG: 0,
+    calciumMg: 11,
+    vitCMg: 8.4,
+    vitB12Mcg: 0,
+    vitDMcg: 0,
+    satFatG: 0.05,
+    omega3G: 0.01,
   },
   {
     aliases: ["egg", "eggs", "boiled egg", "boilled egg", "boilled eggs", "boiled eggs", "ביצה", "ביצים", "ביצה קשה", "ביצים קשות"],
@@ -86,11 +293,20 @@ const foodProfiles: FoodProfile[] = [
     proteinG: 6.3,
     carbsG: 0.6,
     fatG: 5.3,
+    fiberG: 0,
     waterMl: 0,
     magnesiumMg: 5,
     potassiumMg: 63,
     ironMg: 0.9,
     zincMg: 0.6,
+    sodiumMg: 62,
+    addedSugarG: 0,
+    calciumMg: 25,
+    vitCMg: 0,
+    vitB12Mcg: 0.6,
+    vitDMcg: 1.1,
+    satFatG: 1.6,
+    omega3G: 0.04,
   },
   {
     aliases: ["banana", "bananas", "בננה", "בננות"],
@@ -99,11 +315,20 @@ const foodProfiles: FoodProfile[] = [
     proteinG: 1.3,
     carbsG: 27,
     fatG: 0.4,
+    fiberG: 3.1,
     waterMl: 0,
     magnesiumMg: 32,
     potassiumMg: 422,
     ironMg: 0.3,
     zincMg: 0.2,
+    sodiumMg: 1,
+    addedSugarG: 0,
+    calciumMg: 6,
+    vitCMg: 10.3,
+    vitB12Mcg: 0,
+    vitDMcg: 0,
+    satFatG: 0.1,
+    omega3G: 0.03,
   },
   {
     aliases: ["chicken breast", "grilled chicken", "chicken", "עוף", "חזה עוף", "עוף בגריל"],
@@ -112,11 +337,20 @@ const foodProfiles: FoodProfile[] = [
     proteinG: 31,
     carbsG: 0,
     fatG: 3.6,
+    fiberG: 0,
     waterMl: 0,
     magnesiumMg: 29,
     potassiumMg: 256,
     ironMg: 1,
     zincMg: 1,
+    sodiumMg: 74,
+    addedSugarG: 0,
+    calciumMg: 15,
+    vitCMg: 0,
+    vitB12Mcg: 0.3,
+    vitDMcg: 0.1,
+    satFatG: 1,
+    omega3G: 0.05,
   },
   {
     aliases: ["rice", "white rice", "brown rice", "אורז", "אורז לבן", "אורז מלא"],
@@ -125,11 +359,20 @@ const foodProfiles: FoodProfile[] = [
     proteinG: 4.3,
     carbsG: 45,
     fatG: 0.4,
+    fiberG: 0.6,
     waterMl: 0,
     magnesiumMg: 19,
     potassiumMg: 55,
     ironMg: 1.9,
     zincMg: 0.8,
+    sodiumMg: 2,
+    addedSugarG: 0,
+    calciumMg: 16,
+    vitCMg: 0,
+    vitB12Mcg: 0,
+    vitDMcg: 0,
+    satFatG: 0.1,
+    omega3G: 0.02,
   },
 ];
 
@@ -247,11 +490,20 @@ export function parseDailyReportText({
         proteinG: 0,
         carbsG: 0,
         fatG: 0,
+        fiberG: 0,
         waterMl: hydration.waterMl,
         magnesiumMg: 0,
         potassiumMg: 0,
         ironMg: 0,
         zincMg: 0,
+        sodiumMg: 0,
+        addedSugarG: 0,
+        calciumMg: 0,
+        vitCMg: 0,
+        vitB12Mcg: 0,
+        vitDMcg: 0,
+        satFatG: 0,
+        omega3G: 0,
       });
       matchedFood = true;
       recognizedSignals += 1;
@@ -268,11 +520,20 @@ export function parseDailyReportText({
             proteinG: round(profile.proteinG * quantity),
             carbsG: round(profile.carbsG * quantity),
             fatG: round(profile.fatG * quantity),
+            fiberG: round(profile.fiberG * quantity),
             waterMl: round(profile.waterMl * quantity),
             magnesiumMg: round(profile.magnesiumMg * quantity),
             potassiumMg: round(profile.potassiumMg * quantity),
             ironMg: round(profile.ironMg * quantity),
             zincMg: round(profile.zincMg * quantity),
+            sodiumMg: round(profile.sodiumMg * quantity),
+            addedSugarG: round(profile.addedSugarG * quantity),
+            calciumMg: round(profile.calciumMg * quantity),
+            vitCMg: round(profile.vitCMg * quantity),
+            vitB12Mcg: round(profile.vitB12Mcg * quantity),
+            vitDMcg: round(profile.vitDMcg * quantity),
+            satFatG: round(profile.satFatG * quantity),
+            omega3G: round(profile.omega3G * quantity),
           });
           matchedFood = true;
           recognizedSignals += 1;
@@ -303,30 +564,27 @@ export function parseDailyReportText({
     }
   }
 
-  const totals: DailyReportMetrics = {
-    caloriesKcal: 0,
-    proteinG: 0,
-    carbsG: 0,
-    fatG: 0,
-    waterMl: 0,
-    magnesiumMg: 0,
-    potassiumMg: 0,
-    ironMg: 0,
-    zincMg: 0,
-    exerciseMinutes: 0,
-    estimatedBurnKcal: 0,
-  };
+  const totals: DailyReportMetrics = { ...EMPTY_METRICS };
 
   for (const item of foodItems) {
     totals.caloriesKcal += item.caloriesKcal;
     totals.proteinG += item.proteinG;
     totals.carbsG += item.carbsG;
     totals.fatG += item.fatG;
+    totals.fiberG += item.fiberG;
     totals.waterMl += item.waterMl;
     totals.magnesiumMg += item.magnesiumMg;
     totals.potassiumMg += item.potassiumMg;
     totals.ironMg += item.ironMg;
     totals.zincMg += item.zincMg;
+    totals.sodiumMg += item.sodiumMg;
+    totals.addedSugarG += item.addedSugarG;
+    totals.calciumMg += item.calciumMg;
+    totals.vitCMg += item.vitCMg;
+    totals.vitB12Mcg += item.vitB12Mcg;
+    totals.vitDMcg += item.vitDMcg;
+    totals.satFatG += item.satFatG;
+    totals.omega3G += item.omega3G;
   }
 
   for (const item of exerciseItems) {
@@ -347,11 +605,20 @@ export function parseDailyReportText({
       proteinG: round(totals.proteinG),
       carbsG: round(totals.carbsG),
       fatG: round(totals.fatG),
+      fiberG: round(totals.fiberG),
       waterMl: round(totals.waterMl),
       magnesiumMg: round(totals.magnesiumMg),
       potassiumMg: round(totals.potassiumMg),
       ironMg: round(totals.ironMg),
       zincMg: round(totals.zincMg),
+      sodiumMg: round(totals.sodiumMg),
+      addedSugarG: round(totals.addedSugarG),
+      calciumMg: round(totals.calciumMg),
+      vitCMg: round(totals.vitCMg),
+      vitB12Mcg: round(totals.vitB12Mcg),
+      vitDMcg: round(totals.vitDMcg),
+      satFatG: round(totals.satFatG),
+      omega3G: round(totals.omega3G),
       exerciseMinutes: Math.round(totals.exerciseMinutes),
       estimatedBurnKcal: round(totals.estimatedBurnKcal),
     },

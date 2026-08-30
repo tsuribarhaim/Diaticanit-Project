@@ -22,7 +22,12 @@ export function AppNav({ locale }: { locale: AppLocale }) {
     {
       href: "/app/daily-report",
       label: tr(locale, "Daily Report", "דיווח יומי"),
-      isActive: pathname?.startsWith("/app/daily-report") ?? false,
+      isActive: pathname === "/app/daily-report",
+    },
+    {
+      href: "/app/daily-report/defaults",
+      label: tr(locale, "Manage defaults", "ניהול ברירות מחדל"),
+      isActive: pathname?.startsWith("/app/daily-report/defaults") ?? false,
     },
   ];
 
