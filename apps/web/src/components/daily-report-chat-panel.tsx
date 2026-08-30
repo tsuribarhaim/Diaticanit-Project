@@ -64,10 +64,23 @@ export function DailyReportChatPanel({
   const abortRef = useRef<AbortController | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const photoGalleryInputRef = useRef<HTMLInputElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const hasSentOnceRef = useRef(false);
 
   useEffect(() => {
     return () => abortRef.current?.abort();
   }, []);
+
+  /** Once the assistant's reply finishes streaming, the textarea re-enables
+   * (it's disabled while streaming) - focus needs to wait for that same
+   * render to commit, so this can't just call .focus() inline after
+   * setIsStreaming(false). Skipped on mount (hasSentOnceRef starts false)
+   * so opening the page doesn't unexpectedly steal focus. */
+  useEffect(() => {
+    if (!isStreaming && hasSentOnceRef.current) {
+      textareaRef.current?.focus();
+    }
+  }, [isStreaming]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -87,6 +100,7 @@ export function DailyReportChatPanel({
 
     setStreamError(null);
     setRetryAction(null);
+    hasSentOnceRef.current = true;
     const historyForRequest = messages;
     const userContent = trimmed || tr(locale, "(attached a photo)", "(תמונה מצורפת)");
     setMessages((previous) => [
@@ -342,6 +356,7 @@ export function DailyReportChatPanel({
             </svg>
           </label>
           <textarea
+            ref={textareaRef}
             value={inputValue}
             onChange={(event) => setInputValue(event.target.value)}
             onKeyDown={(event) => {
