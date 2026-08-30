@@ -7,6 +7,7 @@ import {
   saveDailyReportAction,
   type DailyReportActionState,
 } from "@/app/app/daily-report/actions";
+import { DailyReportChatPanel } from "@/components/daily-report-chat-panel";
 import type { AppLocale } from "@/lib/locale";
 import { formatDefaultItemKind, formatDefaultItemName, formatDefaultUnit, tr } from "@/lib/locale";
 
@@ -66,6 +67,7 @@ export function DailyReportForm({
 }) {
   const [state, formAction] = useActionState(saveDailyReportAction, initialState);
   const [reportText, setReportText] = useState("");
+  const [entryMode, setEntryMode] = useState<"quick" | "chat">("quick");
   const defaultsSearchInputRef = useRef<HTMLInputElement | null>(null);
   const defaultsGridRef = useRef<HTMLDivElement | null>(null);
   const defaultsSelectedCountRef = useRef<HTMLSpanElement | null>(null);
@@ -208,6 +210,15 @@ export function DailyReportForm({
     handleMealPhotoChange(null);
   }
 
+  /** Chat never saves anything itself - it hands its composed description
+   * back here so the exact same free-text textarea (and everything that
+   * depends on it: safety gate, heuristic/AI parsing, save action) handles
+   * it exactly as if the user had typed it directly. */
+  function handleLogChatEntry(composedText: string) {
+    setReportText((previous) => (previous ? `${previous} ${composedText}` : composedText));
+    setEntryMode("quick");
+  }
+
   const reportLength = reportText.length;
   const reportCharsLeft = REPORT_MAX_LENGTH - reportLength;
 
@@ -256,7 +267,34 @@ export function DailyReportForm({
         </div>
       </section>
 
-      <div className="block">
+      {aiAvailable ? (
+        <div className="flex gap-2 text-sm font-medium">
+          <button
+            type="button"
+            onClick={() => setEntryMode("quick")}
+            className={`rounded-lg px-3 py-1.5 ${
+              entryMode === "quick" ? "bg-teal-700 text-white" : "border border-slate-300 text-slate-700 hover:bg-slate-100"
+            }`}
+          >
+            {tr(locale, "Quick entry", "רישום מהיר")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setEntryMode("chat")}
+            className={`rounded-lg px-3 py-1.5 ${
+              entryMode === "chat" ? "bg-teal-700 text-white" : "border border-slate-300 text-slate-700 hover:bg-slate-100"
+            }`}
+          >
+            {tr(locale, "Chat about your day", "צ'אט על היום שלך")}
+          </button>
+        </div>
+      ) : null}
+
+      {entryMode === "chat" && aiAvailable ? (
+        <DailyReportChatPanel locale={locale} onLogEntry={handleLogChatEntry} />
+      ) : null}
+
+      <div className={entryMode === "chat" ? "hidden" : "block"}>
         <div className="mb-1 flex items-center justify-between gap-2">
           <label htmlFor="daily-report-text" className="text-sm font-medium text-slate-700">
             {tr(locale, "Daily report (free text, optional)", "דיווח יומי (טקסט חופשי, אופציונלי)")}
@@ -386,7 +424,11 @@ export function DailyReportForm({
         ) : null}
       </div>
 
-      <section className={`rounded-xl border border-slate-200 bg-slate-50 p-3 ${mealPhotoPreview ? "opacity-60" : ""}`}>
+      <section
+        className={`rounded-xl border border-slate-200 bg-slate-50 p-3 ${mealPhotoPreview ? "opacity-60" : ""} ${
+          entryMode === "chat" ? "hidden" : ""
+        }`}
+      >
         <h3 className="text-sm font-semibold text-slate-800">{tr(locale, "Translation mode", "מצב תרגום")}</h3>
         <p className="mt-1 text-xs text-slate-600">
           {mealPhotoPreview
