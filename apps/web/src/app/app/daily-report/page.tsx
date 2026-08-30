@@ -366,7 +366,7 @@ export default async function DailyReportPage({
     .eq("user_id", user.id)
     .gte("report_at", selectedDayStartIso)
     .lt("report_at", selectedDayEndIso)
-    .order("report_at", { ascending: true })
+    .order("report_at", { ascending: false })
     .limit(200);
 
   if (reportsWithWeight.error && isMissingReportedWeightColumn(reportsWithWeight.error.message)) {
@@ -378,7 +378,7 @@ export default async function DailyReportPage({
       .eq("user_id", user.id)
       .gte("report_at", selectedDayStartIso)
       .lt("report_at", selectedDayEndIso)
-      .order("report_at", { ascending: true })
+      .order("report_at", { ascending: false })
       .limit(200);
 
     reportsError = reportsWithoutWeight.error;
