@@ -432,6 +432,7 @@ export async function saveDailyReportAction(
     estimatedBurnKcal: number;
   }> = [];
   const selectedDefaultsSnapshot: SelectedDefaultSnapshot[] = [];
+  const defaultConfidenceSamples: number[] = [];
 
   let mergedMetrics = { ...parsedResult.metrics };
 
@@ -477,6 +478,7 @@ export async function saveDailyReportAction(
           exerciseMinutes: Math.round(toNumber(item.exercise_minutes) * scale),
           estimatedBurnKcal: round(toNumber(item.estimated_burn_kcal) * scale),
         };
+        defaultConfidenceSamples.push(toNumber(item.parse_confidence, 0));
       } else {
         const fallbackParsed = parseDailyReportText({
           reportText: buildDefaultParseText({
@@ -489,6 +491,7 @@ export async function saveDailyReportAction(
         });
 
         cachedMetrics = fallbackParsed.metrics;
+        defaultConfidenceSamples.push(fallbackParsed.confidence);
       }
 
       mergedMetrics.caloriesKcal += cachedMetrics.caloriesKcal;
@@ -577,8 +580,27 @@ export async function saveDailyReportAction(
     estimatedBurnKcal: round(mergedMetrics.estimatedBurnKcal),
   };
 
-  const confidenceBoost = selectedDefaultIds.length > 0 ? Math.min(0.2, selectedDefaultIds.length * 0.05) : 0;
-  const finalConfidence = Math.min(0.98, round(parsedResult.confidence + confidenceBoost, 4));
+  /**
+   * The overall entry's confidence used to just be the free-text/photo
+   * parse's own confidence plus a flat +0.05-per-default "boost" - which
+   * meant a report built entirely from a default that was originally saved
+   * at, say, 90% confidence fell back to the empty-parse baseline (0.25)
+   * plus a token boost, showing as ~30% even though the reused data was
+   * exactly as trustworthy as when it was first parsed. Averaging in each
+   * contributing source's own confidence (the free-text/photo parse when
+   * there was one, and each selected default's real cached or freshly
+   * heuristic-parsed confidence) reflects what was actually used.
+   */
+  const hasMeaningfulTextOrPhotoParse = Boolean(mealPhotoFile) || reportText.length > 0;
+  const confidenceSamples = [
+    ...(hasMeaningfulTextOrPhotoParse ? [parsedResult.confidence] : []),
+    ...defaultConfidenceSamples,
+  ];
+  const averageConfidence =
+    confidenceSamples.length > 0
+      ? confidenceSamples.reduce((sum, value) => sum + value, 0) / confidenceSamples.length
+      : parsedResult.confidence;
+  const finalConfidence = Math.min(0.98, round(averageConfidence, 4));
   const requiresConfirmation = parsedResult.requiresConfirmation || finalConfidence < 0.72;
   const reportAtRaw = formData.get("report_at")?.toString().trim();
   const reportDate = reportAtRaw ? new Date(reportAtRaw) : null;
