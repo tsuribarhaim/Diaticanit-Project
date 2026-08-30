@@ -3,7 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { dailyReportInputSchema, detectDangerousSubstance, parseDailyReportText } from "@/lib/daily-report";
+import {
+  dailyReportInputSchema,
+  detectDangerousSubstance,
+  parseDailyReportText,
+  type DailyReportMetrics,
+  type DailyReportParseResult,
+} from "@/lib/daily-report";
 import { CHART_EXTRA_METRIC_IDS, type DailyReportChartExtraMetric, type DailyReportChartPreferences } from "@/lib/daily-report-chart-preferences";
 import { parseDailyReportPhotoWithAi, parseDailyReportWithAi } from "@/lib/ai/daily-report";
 import { getAiExtractionConfig } from "@/lib/ai/env";
@@ -21,52 +27,7 @@ type DailyReportParseMode = "heuristic" | "ai" | "ai_photo";
 const ALLOWED_MEAL_PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const MAX_MEAL_PHOTO_BYTES = 10 * 1024 * 1024;
 
-type ParsedFoodItem = {
-  name: string;
-  quantity: number;
-  unit: string;
-  caloriesKcal: number;
-  proteinG: number;
-  carbsG: number;
-  fatG: number;
-  fiberG: number;
-  waterMl: number;
-  magnesiumMg: number;
-  potassiumMg: number;
-  ironMg: number;
-  zincMg: number;
-};
-
-type ParsedExerciseItem = {
-  name: string;
-  minutes: number;
-  estimatedBurnKcal: number;
-};
-
-type DailyReportMetrics = {
-  caloriesKcal: number;
-  proteinG: number;
-  carbsG: number;
-  fatG: number;
-  fiberG: number;
-  waterMl: number;
-  magnesiumMg: number;
-  potassiumMg: number;
-  ironMg: number;
-  zincMg: number;
-  exerciseMinutes: number;
-  estimatedBurnKcal: number;
-};
-
-type DailyParseResult = {
-  confidence: number;
-  requiresConfirmation: boolean;
-  metrics: DailyReportMetrics;
-  foodItems: ParsedFoodItem[];
-  exerciseItems: ParsedExerciseItem[];
-  isDangerous?: boolean;
-  dangerReason?: string;
-};
+type DailyParseResult = DailyReportParseResult;
 
 type SelectedDefaultSnapshot = {
   id: string;
@@ -126,6 +87,14 @@ function emptyParseResult(): DailyParseResult {
       potassiumMg: 0,
       ironMg: 0,
       zincMg: 0,
+      sodiumMg: 0,
+      addedSugarG: 0,
+      calciumMg: 0,
+      vitCMg: 0,
+      vitB12Mcg: 0,
+      vitDMcg: 0,
+      satFatG: 0,
+      omega3G: 0,
       exerciseMinutes: 0,
       estimatedBurnKcal: 0,
     },
@@ -448,6 +417,14 @@ export async function saveDailyReportAction(
     potassiumMg: number;
     ironMg: number;
     zincMg: number;
+    sodiumMg: number;
+    addedSugarG: number;
+    calciumMg: number;
+    vitCMg: number;
+    vitB12Mcg: number;
+    vitDMcg: number;
+    satFatG: number;
+    omega3G: number;
   }> = [];
   const defaultExerciseItems: Array<{
     name: string;
@@ -462,7 +439,7 @@ export async function saveDailyReportAction(
     const { data: defaultsRows } = await supabase
       .from("user_default_items")
       .select(
-        "id, name, kind, default_quantity, default_unit, parse_confidence, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal",
+        "id, name, kind, default_quantity, default_unit, parse_confidence, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, sodium_mg, added_sugar_g, calcium_mg, vit_c_mg, vit_b12_mcg, vit_d_mcg, sat_fat_g, omega3_g, exercise_minutes, estimated_burn_kcal",
       )
       .eq("user_id", user.id)
       .in("id", selectedDefaultIds)
@@ -489,6 +466,14 @@ export async function saveDailyReportAction(
           potassiumMg: round(toNumber(item.potassium_mg) * scale),
           ironMg: round(toNumber(item.iron_mg) * scale),
           zincMg: round(toNumber(item.zinc_mg) * scale),
+          sodiumMg: round(toNumber(item.sodium_mg) * scale),
+          addedSugarG: round(toNumber(item.added_sugar_g) * scale),
+          calciumMg: round(toNumber(item.calcium_mg) * scale),
+          vitCMg: round(toNumber(item.vit_c_mg) * scale),
+          vitB12Mcg: round(toNumber(item.vit_b12_mcg) * scale),
+          vitDMcg: round(toNumber(item.vit_d_mcg) * scale),
+          satFatG: round(toNumber(item.sat_fat_g) * scale),
+          omega3G: round(toNumber(item.omega3_g) * scale),
           exerciseMinutes: Math.round(toNumber(item.exercise_minutes) * scale),
           estimatedBurnKcal: round(toNumber(item.estimated_burn_kcal) * scale),
         };
@@ -516,6 +501,14 @@ export async function saveDailyReportAction(
       mergedMetrics.potassiumMg += cachedMetrics.potassiumMg;
       mergedMetrics.ironMg += cachedMetrics.ironMg;
       mergedMetrics.zincMg += cachedMetrics.zincMg;
+      mergedMetrics.sodiumMg += cachedMetrics.sodiumMg;
+      mergedMetrics.addedSugarG += cachedMetrics.addedSugarG;
+      mergedMetrics.calciumMg += cachedMetrics.calciumMg;
+      mergedMetrics.vitCMg += cachedMetrics.vitCMg;
+      mergedMetrics.vitB12Mcg += cachedMetrics.vitB12Mcg;
+      mergedMetrics.vitDMcg += cachedMetrics.vitDMcg;
+      mergedMetrics.satFatG += cachedMetrics.satFatG;
+      mergedMetrics.omega3G += cachedMetrics.omega3G;
       mergedMetrics.exerciseMinutes += cachedMetrics.exerciseMinutes;
       mergedMetrics.estimatedBurnKcal += cachedMetrics.estimatedBurnKcal;
 
@@ -540,6 +533,14 @@ export async function saveDailyReportAction(
           potassiumMg: cachedMetrics.potassiumMg,
           ironMg: cachedMetrics.ironMg,
           zincMg: cachedMetrics.zincMg,
+          sodiumMg: cachedMetrics.sodiumMg,
+          addedSugarG: cachedMetrics.addedSugarG,
+          calciumMg: cachedMetrics.calciumMg,
+          vitCMg: cachedMetrics.vitCMg,
+          vitB12Mcg: cachedMetrics.vitB12Mcg,
+          vitDMcg: cachedMetrics.vitDMcg,
+          satFatG: cachedMetrics.satFatG,
+          omega3G: cachedMetrics.omega3G,
         });
       }
 
@@ -564,6 +565,14 @@ export async function saveDailyReportAction(
     potassiumMg: round(mergedMetrics.potassiumMg),
     ironMg: round(mergedMetrics.ironMg),
     zincMg: round(mergedMetrics.zincMg),
+    sodiumMg: round(mergedMetrics.sodiumMg),
+    addedSugarG: round(mergedMetrics.addedSugarG),
+    calciumMg: round(mergedMetrics.calciumMg),
+    vitCMg: round(mergedMetrics.vitCMg),
+    vitB12Mcg: round(mergedMetrics.vitB12Mcg),
+    vitDMcg: round(mergedMetrics.vitDMcg),
+    satFatG: round(mergedMetrics.satFatG),
+    omega3G: round(mergedMetrics.omega3G),
     exerciseMinutes: Math.round(mergedMetrics.exerciseMinutes),
     estimatedBurnKcal: round(mergedMetrics.estimatedBurnKcal),
   };
@@ -613,6 +622,14 @@ export async function saveDailyReportAction(
     potassium_mg: mergedMetrics.potassiumMg,
     iron_mg: mergedMetrics.ironMg,
     zinc_mg: mergedMetrics.zincMg,
+    sodium_mg: mergedMetrics.sodiumMg,
+    added_sugar_g: mergedMetrics.addedSugarG,
+    calcium_mg: mergedMetrics.calciumMg,
+    vit_c_mg: mergedMetrics.vitCMg,
+    vit_b12_mcg: mergedMetrics.vitB12Mcg,
+    vit_d_mcg: mergedMetrics.vitDMcg,
+    sat_fat_g: mergedMetrics.satFatG,
+    omega3_g: mergedMetrics.omega3G,
     exercise_minutes: mergedMetrics.exerciseMinutes,
     estimated_burn_kcal: mergedMetrics.estimatedBurnKcal,
     reported_weight_kg: reportedWeightKg,
@@ -741,7 +758,7 @@ export async function addReportToDefaultsAction(formData: FormData): Promise<voi
   const { data: reportRow, error: reportError } = await supabase
     .from("user_daily_reports")
     .select(
-      "id, report_at, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal, parse_mode, parser_version, parse_confidence",
+      "id, report_at, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, sodium_mg, added_sugar_g, calcium_mg, vit_c_mg, vit_b12_mcg, vit_d_mcg, sat_fat_g, omega3_g, exercise_minutes, estimated_burn_kcal, parse_mode, parser_version, parse_confidence",
     )
     .eq("id", reportId)
     .eq("user_id", user.id)
@@ -780,6 +797,14 @@ export async function addReportToDefaultsAction(formData: FormData): Promise<voi
       potassium_mg: round(toNumber(reportRow.potassium_mg)),
       iron_mg: round(toNumber(reportRow.iron_mg)),
       zinc_mg: round(toNumber(reportRow.zinc_mg)),
+      sodium_mg: round(toNumber(reportRow.sodium_mg)),
+      added_sugar_g: round(toNumber(reportRow.added_sugar_g)),
+      calcium_mg: round(toNumber(reportRow.calcium_mg)),
+      vit_c_mg: round(toNumber(reportRow.vit_c_mg)),
+      vit_b12_mcg: round(toNumber(reportRow.vit_b12_mcg)),
+      vit_d_mcg: round(toNumber(reportRow.vit_d_mcg)),
+      sat_fat_g: round(toNumber(reportRow.sat_fat_g)),
+      omega3_g: round(toNumber(reportRow.omega3_g)),
       exercise_minutes: Math.round(toNumber(reportRow.exercise_minutes)),
       estimated_burn_kcal: round(toNumber(reportRow.estimated_burn_kcal)),
     });

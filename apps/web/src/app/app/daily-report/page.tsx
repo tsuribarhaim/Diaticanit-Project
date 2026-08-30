@@ -81,6 +81,14 @@ const extraMetricLabels: Record<DailyReportChartExtraMetric, { en: string; he: s
   potassium: { en: "Potassium", he: "אשלגן" },
   iron: { en: "Iron", he: "ברזל" },
   zinc: { en: "Zinc", he: "אבץ" },
+  sodium: { en: "Sodium", he: "נתרן" },
+  addedSugar: { en: "Added Sugar", he: "סוכר מוסף" },
+  calcium: { en: "Calcium", he: "סידן" },
+  vitC: { en: "Vitamin C", he: "ויטמין C" },
+  vitB12: { en: "Vitamin B12", he: "ויטמין B12" },
+  vitD: { en: "Vitamin D", he: "ויטמין D" },
+  satFat: { en: "Saturated Fat", he: "שומן רווי" },
+  omega3: { en: "Omega-3", he: "אומגה 3" },
 };
 
 function compareRatio(value: number, target: number): "green" | "yellow" | "red" {
@@ -124,7 +132,7 @@ export default async function DailyReportPage({
   const { data: activeTargetProfile } = await supabase
     .from("user_target_profiles")
     .select(
-      "id, protein_min_g, protein_max_g, water_min_ml, water_max_ml, calories_min, calories_max, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, magnesium_min_mg, magnesium_max_mg, potassium_min_mg, potassium_max_mg, iron_min_mg, iron_max_mg, zinc_min_mg, zinc_max_mg",
+      "id, protein_min_g, protein_max_g, carbs_min_g, carbs_max_g, water_min_ml, water_max_ml, calories_min, calories_max, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, magnesium_min_mg, magnesium_max_mg, potassium_min_mg, potassium_max_mg, iron_min_mg, iron_max_mg, zinc_min_mg, zinc_max_mg, sodium_min_mg, sodium_max_mg, added_sugar_min_g, added_sugar_max_g, calcium_min_mg, calcium_max_mg, vit_c_min_mg, vit_c_max_mg, vit_b12_min_mcg, vit_b12_max_mcg, vit_d_min_mcg, vit_d_max_mcg, sat_fat_min_g, sat_fat_max_g, omega3_min_g, omega3_max_g",
     )
     .eq("user_id", user.id)
     .eq("is_active", true)
@@ -150,6 +158,15 @@ export default async function DailyReportPage({
       total: todaysTotals.proteinG,
       min: Number(activeTargetProfile?.protein_min_g ?? 0),
       max: Number(activeTargetProfile?.protein_max_g ?? 0),
+      unit: "g",
+    },
+    {
+      id: "carbs",
+      labelEn: "Carbs",
+      labelHe: "פחמימות",
+      total: todaysTotals.carbsG,
+      min: Number(activeTargetProfile?.carbs_min_g ?? 0),
+      max: Number(activeTargetProfile?.carbs_max_g ?? 0),
       unit: "g",
     },
     {
@@ -217,6 +234,78 @@ export default async function DailyReportPage({
       min: Number(activeTargetProfile?.zinc_min_mg ?? 0),
       max: Number(activeTargetProfile?.zinc_max_mg ?? 0),
       unit: "mg",
+    },
+    sodium: {
+      id: "sodium",
+      labelEn: "Sodium",
+      labelHe: "נתרן",
+      total: todaysTotals.sodiumMg,
+      min: Number(activeTargetProfile?.sodium_min_mg ?? 0),
+      max: Number(activeTargetProfile?.sodium_max_mg ?? 0),
+      unit: "mg",
+    },
+    addedSugar: {
+      id: "addedSugar",
+      labelEn: "Added Sugar",
+      labelHe: "סוכר מוסף",
+      total: todaysTotals.addedSugarG,
+      min: Number(activeTargetProfile?.added_sugar_min_g ?? 0),
+      max: Number(activeTargetProfile?.added_sugar_max_g ?? 0),
+      unit: "g",
+    },
+    calcium: {
+      id: "calcium",
+      labelEn: "Calcium",
+      labelHe: "סידן",
+      total: todaysTotals.calciumMg,
+      min: Number(activeTargetProfile?.calcium_min_mg ?? 0),
+      max: Number(activeTargetProfile?.calcium_max_mg ?? 0),
+      unit: "mg",
+    },
+    vitC: {
+      id: "vitC",
+      labelEn: "Vitamin C",
+      labelHe: "ויטמין C",
+      total: todaysTotals.vitCMg,
+      min: Number(activeTargetProfile?.vit_c_min_mg ?? 0),
+      max: Number(activeTargetProfile?.vit_c_max_mg ?? 0),
+      unit: "mg",
+    },
+    vitB12: {
+      id: "vitB12",
+      labelEn: "Vitamin B12",
+      labelHe: "ויטמין B12",
+      total: todaysTotals.vitB12Mcg,
+      min: Number(activeTargetProfile?.vit_b12_min_mcg ?? 0),
+      max: Number(activeTargetProfile?.vit_b12_max_mcg ?? 0),
+      unit: "mcg",
+    },
+    vitD: {
+      id: "vitD",
+      labelEn: "Vitamin D",
+      labelHe: "ויטמין D",
+      total: todaysTotals.vitDMcg,
+      min: Number(activeTargetProfile?.vit_d_min_mcg ?? 0),
+      max: Number(activeTargetProfile?.vit_d_max_mcg ?? 0),
+      unit: "mcg",
+    },
+    satFat: {
+      id: "satFat",
+      labelEn: "Saturated Fat",
+      labelHe: "שומן רווי",
+      total: todaysTotals.satFatG,
+      min: Number(activeTargetProfile?.sat_fat_min_g ?? 0),
+      max: Number(activeTargetProfile?.sat_fat_max_g ?? 0),
+      unit: "g",
+    },
+    omega3: {
+      id: "omega3",
+      labelEn: "Omega-3",
+      labelHe: "אומגה 3",
+      total: todaysTotals.omega3G,
+      min: Number(activeTargetProfile?.omega3_min_g ?? 0),
+      max: Number(activeTargetProfile?.omega3_max_g ?? 0),
+      unit: "g",
     },
   };
 
@@ -356,7 +445,7 @@ export default async function DailyReportPage({
                 {tr(locale, "Customize charts", "התאמת התרשימים")}
               </summary>
               <form action={updateDailyReportChartPreferencesAction} className="mt-3 space-y-3">
-                <div className="grid gap-2 sm:grid-cols-2">
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                   {CHART_EXTRA_METRIC_IDS.map((metricId) => (
                     <label key={metricId} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
                       <input

@@ -1,4 +1,17 @@
-export const CHART_EXTRA_METRIC_IDS = ["magnesium", "potassium", "iron", "zinc"] as const;
+export const CHART_EXTRA_METRIC_IDS = [
+  "magnesium",
+  "potassium",
+  "iron",
+  "zinc",
+  "sodium",
+  "addedSugar",
+  "calcium",
+  "vitC",
+  "vitB12",
+  "vitD",
+  "satFat",
+  "omega3",
+] as const;
 export type DailyReportChartExtraMetric = (typeof CHART_EXTRA_METRIC_IDS)[number];
 
 export type DailyReportChartPreferences = {

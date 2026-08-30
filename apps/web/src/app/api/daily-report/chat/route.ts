@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
   const { data: targetRow } = await supabase
     .from("user_target_profiles")
     .select(
-      "calories_min, calories_max, protein_min_g, protein_max_g, carbs_min_g, carbs_max_g, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, water_min_ml, water_max_ml",
+      "calories_min, calories_max, protein_min_g, protein_max_g, carbs_min_g, carbs_max_g, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, water_min_ml, water_max_ml, sodium_min_mg, sodium_max_mg, added_sugar_min_g, added_sugar_max_g, calcium_min_mg, calcium_max_mg, vit_c_min_mg, vit_c_max_mg, vit_b12_min_mcg, vit_b12_max_mcg, vit_d_min_mcg, vit_d_max_mcg, sat_fat_min_g, sat_fat_max_g, omega3_min_g, omega3_max_g",
     )
     .eq("user_id", user.id)
     .eq("is_active", true)

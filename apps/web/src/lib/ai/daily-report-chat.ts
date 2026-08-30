@@ -26,6 +26,22 @@ export type DailyReportChatTargets = {
   fiber_max_g: number | null;
   water_min_ml: number | null;
   water_max_ml: number | null;
+  sodium_min_mg: number | null;
+  sodium_max_mg: number | null;
+  added_sugar_min_g: number | null;
+  added_sugar_max_g: number | null;
+  calcium_min_mg: number | null;
+  calcium_max_mg: number | null;
+  vit_c_min_mg: number | null;
+  vit_c_max_mg: number | null;
+  vit_b12_min_mcg: number | null;
+  vit_b12_max_mcg: number | null;
+  vit_d_min_mcg: number | null;
+  vit_d_max_mcg: number | null;
+  sat_fat_min_g: number | null;
+  sat_fat_max_g: number | null;
+  omega3_min_g: number | null;
+  omega3_max_g: number | null;
 } | null;
 
 function buildProfileSummary(profile: DailyReportChatProfile): string {
@@ -49,6 +65,14 @@ function buildTargetsSummary(targets: DailyReportChatTargets): string {
     `fats: ${targets.fats_min_g ?? 0}-${targets.fats_max_g ?? 0} g`,
     `fiber: ${targets.fiber_min_g ?? 0}-${targets.fiber_max_g ?? 0} g`,
     `water: ${targets.water_min_ml ?? 0}-${targets.water_max_ml ?? 0} ml`,
+    `sodium: ${targets.sodium_min_mg ?? 0}-${targets.sodium_max_mg ?? 0} mg`,
+    `added sugar: ${targets.added_sugar_min_g ?? 0}-${targets.added_sugar_max_g ?? 0} g`,
+    `calcium: ${targets.calcium_min_mg ?? 0}-${targets.calcium_max_mg ?? 0} mg`,
+    `vitamin C: ${targets.vit_c_min_mg ?? 0}-${targets.vit_c_max_mg ?? 0} mg`,
+    `vitamin B12: ${targets.vit_b12_min_mcg ?? 0}-${targets.vit_b12_max_mcg ?? 0} mcg`,
+    `vitamin D: ${targets.vit_d_min_mcg ?? 0}-${targets.vit_d_max_mcg ?? 0} mcg`,
+    `saturated fat: ${targets.sat_fat_min_g ?? 0}-${targets.sat_fat_max_g ?? 0} g`,
+    `omega-3: ${targets.omega3_min_g ?? 0}-${targets.omega3_max_g ?? 0} g`,
   ].join("\n");
 }
 
@@ -60,6 +84,14 @@ function buildTodaysTotalsSummary(totals: DailyReportMetrics): string {
     `fats so far: ${totals.fatG} g`,
     `fiber so far: ${totals.fiberG} g`,
     `water so far: ${totals.waterMl} ml`,
+    `sodium so far: ${totals.sodiumMg} mg`,
+    `added sugar so far: ${totals.addedSugarG} g`,
+    `calcium so far: ${totals.calciumMg} mg`,
+    `vitamin C so far: ${totals.vitCMg} mg`,
+    `vitamin B12 so far: ${totals.vitB12Mcg} mcg`,
+    `vitamin D so far: ${totals.vitDMcg} mcg`,
+    `saturated fat so far: ${totals.satFatG} g`,
+    `omega-3 so far: ${totals.omega3G} g`,
     `exercise so far: ${totals.exerciseMinutes} minutes, ~${totals.estimatedBurnKcal} kcal burned`,
   ].join("\n");
 }
