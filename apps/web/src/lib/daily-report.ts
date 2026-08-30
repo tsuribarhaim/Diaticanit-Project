@@ -171,6 +171,26 @@ export async function getTodaysDailyReportTotals({
   const todayStartIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
   const todayEndIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString();
 
+  return getDailyReportTotalsForRange({ supabase, userId, rangeStartIso: todayStartIso, rangeEndIso: todayEndIso });
+}
+
+/** Same aggregation as getTodaysDailyReportTotals, but for an arbitrary
+ * UTC day range - lets the Daily Report page's progress rings track
+ * whatever date the user is currently browsing instead of always today. */
+export async function getDailyReportTotalsForRange({
+  supabase,
+  userId,
+  rangeStartIso,
+  rangeEndIso,
+}: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  userId: string;
+  rangeStartIso: string;
+  rangeEndIso: string;
+}): Promise<DailyReportMetrics> {
+  const todayStartIso = rangeStartIso;
+  const todayEndIso = rangeEndIso;
+
   const { data: todaysReports } = await supabase
     .from("user_daily_reports")
     .select(

@@ -9,7 +9,7 @@ import { DailyReportForm } from "@/components/daily-report-form";
 import { DailyReportProgressRings, type RingMetric } from "@/components/daily-report-progress-rings";
 import { DailyReportWeightTrend, type WeightPoint } from "@/components/daily-report-weight-trend";
 import { CHART_EXTRA_METRIC_IDS, normalizeDailyReportChartPreferences, type DailyReportChartExtraMetric } from "@/lib/daily-report-chart-preferences";
-import { getTodaysDailyReportTotals } from "@/lib/daily-report";
+import { getDailyReportTotalsForRange } from "@/lib/daily-report";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { formatDateForLocale, formatDateTimeForLocale, formatMeasurementUnit, formatNumberForLocale, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { createClient } from "@/lib/supabase/server";
@@ -70,6 +70,22 @@ function buildEntrySummary(parsedItems: unknown, parsedExercises: unknown, local
   return parts.join(" · ");
 }
 
+/**
+ * The stored transcript always uses neutral "User"/"Assistant" line prefixes
+ * regardless of locale (a stable internal format, also fed back into the AI
+ * as conversation history) - this swaps in the user's real name and a
+ * localized assistant label purely for display, so a Hebrew reader isn't
+ * confronted with English words anchoring each line to the left in an
+ * otherwise-RTL paragraph.
+ */
+function buildDisplayConversation(rawText: string, locale: AppLocale, userDisplayName: string): string {
+  const assistantLabel = tr(locale, "Assistant", "עוזר");
+  return rawText
+    .split("\n")
+    .map((line) => line.replace(/^User: /, `${userDisplayName}: `).replace(/^Assistant: /, `${assistantLabel}: `))
+    .join("\n");
+}
+
 const extraMetricLabels: Record<DailyReportChartExtraMetric, { en: string; he: string }> = {
   magnesium: { en: "Magnesium", he: "מגנזיום" },
   potassium: { en: "Potassium", he: "אשלגן" },
@@ -107,6 +123,8 @@ export default async function DailyReportPage({
 }) {
   const resolvedSearchParams = await searchParams;
   const selectedDate = parseSelectedDateParam(resolvedSearchParams.date);
+  const selectedDayStartIso = new Date(`${selectedDate}T00:00:00.000Z`).toISOString();
+  const selectedDayEndIso = new Date(new Date(`${selectedDate}T00:00:00.000Z`).getTime() + 24 * 60 * 60 * 1000).toISOString();
   const supabase = await createClient();
   const {
     data: { user },
@@ -120,11 +138,12 @@ export default async function DailyReportPage({
 
   const { data: profileRow } = await supabase
     .from("user_profile")
-    .select("preferred_language, daily_report_chart_preferences, weight_kg")
+    .select("preferred_language, daily_report_chart_preferences, weight_kg, first_name")
     .eq("user_id", user.id)
     .maybeSingle();
 
   const locale = normalizeLocale(profileRow?.preferred_language);
+  const userDisplayName = profileRow?.first_name?.trim() || tr(locale, "You", "אתה");
   const chartPreferences = normalizeDailyReportChartPreferences(profileRow?.daily_report_chart_preferences);
 
   // Daily-report entries no longer compare against scalar targets; the active
@@ -141,7 +160,12 @@ export default async function DailyReportPage({
     .maybeSingle();
 
   const now = new Date();
-  const todaysTotals = await getTodaysDailyReportTotals({ supabase, userId: user.id });
+  const todaysTotals = await getDailyReportTotalsForRange({
+    supabase,
+    userId: user.id,
+    rangeStartIso: selectedDayStartIso,
+    rangeEndIso: selectedDayEndIso,
+  });
 
   const ringMetrics: RingMetric[] = [
     {
@@ -355,9 +379,6 @@ export default async function DailyReportPage({
       }>
     | null = null;
 
-  const selectedDayStartIso = new Date(`${selectedDate}T00:00:00.000Z`).toISOString();
-  const selectedDayEndIso = new Date(new Date(`${selectedDate}T00:00:00.000Z`).getTime() + 24 * 60 * 60 * 1000).toISOString();
-
   const reportsWithWeight = await supabase
     .from("user_daily_reports")
     .select(
@@ -433,7 +454,26 @@ export default async function DailyReportPage({
       </section>
 
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
-        <h2 className="text-lg font-semibold text-slate-900">{tr(locale, "Today's progress", "ההתקדמות שלך היום")}</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold text-slate-900">
+            {tr(locale, "Your Progress as of", "ההתקדמות שלך ליום")} {formatDateForLocale(`${selectedDate}T00:00:00.000Z`, locale)}
+          </h2>
+          <form method="GET" className="flex items-center gap-2">
+            <input
+              type="date"
+              name="date"
+              defaultValue={selectedDate}
+              max={getUtcDateStringToday()}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none ring-teal-600 focus:ring-2"
+            />
+            <button
+              type="submit"
+              className="rounded-lg border border-teal-300 px-3 py-1.5 text-sm font-medium text-teal-700 hover:bg-teal-50"
+            >
+              {tr(locale, "View", "הצגה")}
+            </button>
+          </form>
+        </div>
         {activeTargetProfile ? (
           <>
             <div className="mt-4">
@@ -498,26 +538,9 @@ export default async function DailyReportPage({
       </section>
 
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold text-slate-900">
-            {tr(locale, "Your Reports as of", "הדיווחים שלך ליום")} {formatDateForLocale(`${selectedDate}T00:00:00.000Z`, locale)}
-          </h2>
-          <form method="GET" className="flex items-center gap-2">
-            <input
-              type="date"
-              name="date"
-              defaultValue={selectedDate}
-              max={getUtcDateStringToday()}
-              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none ring-teal-600 focus:ring-2"
-            />
-            <button
-              type="submit"
-              className="rounded-lg border border-teal-300 px-3 py-1.5 text-sm font-medium text-teal-700 hover:bg-teal-50"
-            >
-              {tr(locale, "View", "הצגה")}
-            </button>
-          </form>
-        </div>
+        <h2 className="text-lg font-semibold text-slate-900">
+          {tr(locale, "Your Reports as of", "הדיווחים שלך ליום")} {formatDateForLocale(`${selectedDate}T00:00:00.000Z`, locale)}
+        </h2>
 
         {!reports?.length ? (
           <p className="mt-3 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600">
@@ -549,8 +572,11 @@ export default async function DailyReportPage({
                       <summary className="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-700">
                         {tr(locale, "View full conversation", "הצגת השיחה המלאה")}
                       </summary>
-                      <p className="mt-2 whitespace-pre-line rounded-lg bg-white px-3 py-2 text-xs text-slate-600">
-                        {fullConversation}
+                      <p
+                        dir={locale === "he" ? "rtl" : "ltr"}
+                        className="mt-2 whitespace-pre-line rounded-lg bg-white px-3 py-2 text-xs text-slate-600"
+                      >
+                        {buildDisplayConversation(fullConversation, locale, userDisplayName)}
                       </p>
                     </details>
                   ) : null}
