@@ -334,7 +334,7 @@ export async function parseDailyReportWithAi({
           "- confidence must be between 0 and 1.",
           "- requiresConfirmation should be true when extraction is uncertain.",
           "- SAFETY CHECK: set isDangerous to true only when daily_report_text describes consuming something that is not actually food/drink and would be dangerous or harmful (e.g. fuel, gasoline, cleaning products, poison, batteries, or other inedible/hazardous items). If so, set dangerReason to a short plain-language explanation telling the user to seek medical attention if they actually consumed it. Do NOT set isDangerous for an implausible-but-harmless amount of real food (e.g. \"I ate 50 eggs\") - estimate those literally instead; isDangerous is only for genuinely non-food/hazardous substances.",
-          `- Write dangerReason entirely in ${languageName}. Do not mix languages within it.`,
+          `- Write dangerReason and every foodItems[].name / exerciseItems[].name entirely in ${languageName}, regardless of what language daily_report_text is written in. Do not mix languages within a single name.`,
           `weightKg: ${Number.isFinite(weightKg) ? weightKg : 0}`,
           "daily_report_text:",
           clippedText,
@@ -389,7 +389,7 @@ export async function parseDailyReportPhotoWithAi({
               "- Photo-based estimates are inherently uncertain: keep confidence at 0.6 or below unless the meal is very simple and fully visible.",
               "- requiresConfirmation must always be true.",
               "- SAFETY CHECK: set isDangerous to true only if the photo shows something that is not actually food/drink and would be dangerous or harmful to consume (e.g. a container of fuel, cleaning products, poison, batteries, or other inedible/hazardous items) - not merely an unappetizing or unusual but genuinely edible item. If so, set dangerReason to a short plain-language explanation telling the user to seek medical attention if they actually consumed it.",
-              `- Write dangerReason entirely in ${languageName}. Do not mix languages within it.`,
+              `- Write dangerReason and every foodItems[].name entirely in ${languageName}. Do not mix languages within a single name.`,
               ...(trimmedNote
                 ? [
                     `- The user also added this note alongside the photo: "${trimmedNote}". Treat it as a correction or clarifying hint (e.g. an ingredient to add/remove, a substitution, a quantity) on top of what you see, not as a separate report to parse independently.`,

@@ -51,7 +51,7 @@ function SubmitButton({ locale }: { locale: AppLocale }) {
       disabled={pending}
       className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800"
     >
-      {pending ? tr(locale, "Saving report...", "שומר דיווח...") : tr(locale, "Save daily report", "שמירת דיווח יומי")}
+      {pending ? tr(locale, "Saving...", "שומר...") : tr(locale, "Conclude & Report", "סיום ודיווח")}
     </button>
   );
 }
@@ -69,12 +69,31 @@ export function DailyReportForm({
 }) {
   const [state, formAction] = useActionState(saveDailyReportAction, initialState);
   const [reportText, setReportText] = useState("");
+  const [chatResetKey, setChatResetKey] = useState(0);
   const defaultsSearchInputRef = useRef<HTMLInputElement | null>(null);
   const defaultsGridRef = useRef<HTMLDivElement | null>(null);
   const defaultsSelectedCountRef = useRef<HTMLSpanElement | null>(null);
   const selectAllDefaultsButtonRef = useRef<HTMLButtonElement | null>(null);
   const clearDefaultsButtonRef = useRef<HTMLButtonElement | null>(null);
   const [reportAtValue, setReportAtValue] = useState(() => getLocalDateTimeValue(new Date()));
+
+  /** "Conclude & Report" both saves and starts a fresh conversation - the
+   * chat is a scratchpad for composing one report, not a running log, so
+   * once it's been translated and added to the list there's nothing left
+   * to keep. Adjusted during render (React's documented pattern for
+   * resetting state in response to a value change) rather than in an
+   * effect, and keyed on the `state` object itself (not state.success'
+   * text) since useActionState returns a new object on every action call
+   * even when two consecutive successes produce the exact same message. */
+  const [prevState, setPrevState] = useState(state);
+  if (state !== prevState) {
+    setPrevState(state);
+    if (state.success) {
+      setReportText("");
+      setReportAtValue(getLocalDateTimeValue(new Date()));
+      setChatResetKey((key) => key + 1);
+    }
+  }
 
   function handleTranscriptChange(text: string) {
     setReportText(text.slice(0, REPORT_MAX_LENGTH));
@@ -220,7 +239,7 @@ export function DailyReportForm({
               {reportCharsLeft} {tr(locale, "characters left", "תווים נותרו")}
             </span>
           </div>
-          <DailyReportChatPanel locale={locale} onTranscriptChange={handleTranscriptChange} />
+          <DailyReportChatPanel key={chatResetKey} locale={locale} onTranscriptChange={handleTranscriptChange} />
           <textarea name="report_text" value={reportText} readOnly hidden />
           <input type="hidden" name="parse_mode" value="ai" />
         </div>

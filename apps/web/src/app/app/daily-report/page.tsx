@@ -35,6 +35,41 @@ function formatConfidence(value: number | string | null, locale: AppLocale): str
   return `${formatNumberForLocale(Math.round(parsed * 100), locale)}%`;
 }
 
+type SummaryFoodItem = { name?: unknown; quantity?: unknown; unit?: unknown };
+type SummaryExerciseItem = { name?: unknown; minutes?: unknown };
+
+/**
+ * The recent-entries list shows a synthesized "what was consumed" line built
+ * from the already-parsed structured items, rather than the raw chat
+ * transcript - a back-and-forth conversation (clarifying questions,
+ * off-topic redirects, etc.) isn't a useful thing to scan in a food diary.
+ * The full transcript is still available via a "View full conversation"
+ * toggle for anyone who wants to double-check what was actually said.
+ */
+function buildEntrySummary(parsedItems: unknown, parsedExercises: unknown, locale: AppLocale): string {
+  const foodParts = (Array.isArray(parsedItems) ? (parsedItems as SummaryFoodItem[]) : [])
+    .map((item) => {
+      const name = typeof item.name === "string" ? item.name : "";
+      if (!name) return null;
+      const quantity = Number(item.quantity ?? 0);
+      const unit = typeof item.unit === "string" ? item.unit : "";
+      return quantity > 0 && unit ? `${name} (${formatNumber(quantity, locale, 1)} ${unit})` : name;
+    })
+    .filter((part): part is string => Boolean(part));
+
+  const exerciseParts = (Array.isArray(parsedExercises) ? (parsedExercises as SummaryExerciseItem[]) : [])
+    .map((item) => {
+      const name = typeof item.name === "string" ? item.name : "";
+      if (!name) return null;
+      const minutes = Number(item.minutes ?? 0);
+      return minutes > 0 ? `${name} (${formatNumber(minutes, locale, 0)} ${tr(locale, "min", "דק'")})` : name;
+    })
+    .filter((part): part is string => Boolean(part));
+
+  const parts = [...foodParts, ...exerciseParts];
+  return parts.join(" · ");
+}
+
 function statusClasses(status: "green" | "yellow" | "red") {
   if (status === "green") return "border-emerald-200 bg-emerald-50 text-emerald-800";
   if (status === "yellow") return "border-amber-200 bg-amber-50 text-amber-800";
@@ -224,13 +259,15 @@ export default async function DailyReportPage({
         exercise_minutes: number | null;
         estimated_burn_kcal: number | null;
         reported_weight_kg: number | null;
+        parsed_items: unknown;
+        parsed_exercises: unknown;
       }>
     | null = null;
 
   const reportsWithWeight = await supabase
     .from("user_daily_reports")
     .select(
-      "id, raw_report_text, report_at, parse_confidence, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal, reported_weight_kg",
+      "id, raw_report_text, report_at, parse_confidence, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal, reported_weight_kg, parsed_items, parsed_exercises",
     )
     .eq("user_id", user.id)
     .order("report_at", { ascending: false })
@@ -240,7 +277,7 @@ export default async function DailyReportPage({
     const reportsWithoutWeight = await supabase
       .from("user_daily_reports")
       .select(
-        "id, raw_report_text, report_at, parse_confidence, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal",
+        "id, raw_report_text, report_at, parse_confidence, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal, parsed_items, parsed_exercises",
       )
       .eq("user_id", user.id)
       .order("report_at", { ascending: false })
@@ -381,6 +418,8 @@ export default async function DailyReportPage({
               const hydrationStatus = hydrationTargetMl
                 ? compareRatio(Number(report.water_ml), hydrationTargetMl)
                 : "yellow";
+              const entrySummary = buildEntrySummary(report.parsed_items, report.parsed_exercises, locale);
+              const fullConversation = report.raw_report_text?.trim() ?? "";
 
               return (
                 <article key={report.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -402,8 +441,19 @@ export default async function DailyReportPage({
                   </div>
 
                   <p className="mt-3 rounded-lg bg-white px-3 py-2 text-sm text-slate-700">
-                    {report.raw_report_text?.trim() || tr(locale, "No free-text note provided. Entry created from selected defaults.", "לא הוזן טקסט חופשי. הרשומה נוצרה מברירות המחדל שנבחרו.")}
+                    {entrySummary || tr(locale, "No items recorded. Entry created from selected defaults.", "לא נרשמו פריטים. הרשומה נוצרה מברירות המחדל שנבחרו.")}
                   </p>
+
+                  {fullConversation ? (
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-700">
+                        {tr(locale, "View full conversation", "הצגת השיחה המלאה")}
+                      </summary>
+                      <p className="mt-2 whitespace-pre-line rounded-lg bg-white px-3 py-2 text-xs text-slate-600">
+                        {fullConversation}
+                      </p>
+                    </details>
+                  ) : null}
 
                   <div className="mt-3 grid gap-2 text-xs text-slate-700 sm:grid-cols-2 lg:grid-cols-4">
                     <p>{tr(locale, "Reported weight", "משקל מדווח")}: <span className="font-semibold text-slate-900">{report.reported_weight_kg === null ? tr(locale, "n/a", "לא זמין") : formatNumber(report.reported_weight_kg, locale, 2)}</span>{report.reported_weight_kg === null ? "" : ` ${formatMeasurementUnit("kg", locale)}`}</p>

@@ -269,8 +269,8 @@ export function DailyReportChatPanel({
             <p className="text-sm text-slate-500">
               {tr(
                 locale,
-                "Tell me what you ate, drank, or did for exercise today (or attach a photo), and I'll help fill in the details. When you're ready, tap \"Save daily report\" below.",
-                "ספרו לי מה אכלתם, שתיתם או עשיתם מבחינת פעילות גופנית היום (או צרפו תמונה), ואעזור להשלים את הפרטים. כשתהיו מוכנים, לחצו על \"שמירת דיווח יומי\" שלמטה.",
+                "Tell me what you ate, drank, or did for exercise today (or attach a photo), and I'll help fill in the details. When you're ready, tap \"Conclude & Report\" below.",
+                "ספרו לי מה אכלתם, שתיתם או עשיתם מבחינת פעילות גופנית היום (או צרפו תמונה), ואעזור להשלים את הפרטים. כשתהיו מוכנים, לחצו על \"סיום ודיווח\" שלמטה.",
               )}
             </p>
           ) : null}
