@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useActionState, useCallback, useEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 
 import {
@@ -60,10 +60,12 @@ export function DailyReportForm({
   defaultItems,
   aiAvailable,
   locale,
+  currentWeightKg,
 }: {
   defaultItems: DailyReportDefaultItem[];
   aiAvailable: boolean;
   locale: AppLocale;
+  currentWeightKg?: number | null;
 }) {
   const [state, formAction] = useActionState(saveDailyReportAction, initialState);
   const [reportText, setReportText] = useState("");
@@ -72,8 +74,7 @@ export function DailyReportForm({
   const defaultsSelectedCountRef = useRef<HTMLSpanElement | null>(null);
   const selectAllDefaultsButtonRef = useRef<HTMLButtonElement | null>(null);
   const clearDefaultsButtonRef = useRef<HTMLButtonElement | null>(null);
-  const [reportAtValue, setReportAtValue] = useState("");
-  const currentLocalDateTime = useMemo(() => getLocalDateTimeValue(new Date()), []);
+  const [reportAtValue, setReportAtValue] = useState(() => getLocalDateTimeValue(new Date()));
 
   function handleTranscriptChange(text: string) {
     setReportText(text.slice(0, REPORT_MAX_LENGTH));
@@ -183,48 +184,31 @@ export function DailyReportForm({
 
   return (
     <form action={formAction} className="mt-4 space-y-3">
-      <section className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-        <div className="flex flex-wrap items-end justify-between gap-2">
-          <label className="block flex-1 min-w-[220px]">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Report date and time (optional)", "תאריך ושעת דיווח (אופציונלי)")}</span>
-            <input
-              type="datetime-local"
-              name="report_at"
-              value={reportAtValue}
-              onChange={(event) => setReportAtValue(event.target.value)}
-              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
-            />
-          </label>
-          <label className="block flex-1 min-w-[220px]">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Current weight (optional)", "משקל נוכחי (אופציונלי)")}</span>
-            <input
-              type="number"
-              name="reported_weight_kg"
-              min="20"
-              max="400"
-              step="0.01"
-              placeholder={tr(locale, "e.g. 63.8", "לדוגמה: 63.8")}
-              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
-            />
-          </label>
-          <div className="flex gap-2 pb-0.5">
-            <button
-              type="button"
-              onClick={() => setReportAtValue(currentLocalDateTime)}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100"
-            >
-              {tr(locale, "Use now", "השתמש עכשיו")}
-            </button>
-            <button
-              type="button"
-              onClick={() => setReportAtValue("")}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100"
-            >
-              {tr(locale, "Clear time", "ניקוי זמן")}
-            </button>
-          </div>
-        </div>
-      </section>
+      <div className="flex flex-wrap gap-2">
+        <label className="block flex-1 min-w-[180px]">
+          <span className="mb-1 block text-xs font-medium text-slate-600">{tr(locale, "Date & time", "תאריך ושעה")}</span>
+          <input
+            type="datetime-local"
+            name="report_at"
+            value={reportAtValue}
+            onChange={(event) => setReportAtValue(event.target.value)}
+            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2"
+          />
+        </label>
+        <label className="block flex-1 min-w-[140px]">
+          <span className="mb-1 block text-xs font-medium text-slate-600">{tr(locale, "Weight (kg)", "משקל (ק\"ג)")}</span>
+          <input
+            type="number"
+            name="reported_weight_kg"
+            min="20"
+            max="400"
+            step="0.01"
+            defaultValue={currentWeightKg ?? undefined}
+            placeholder={tr(locale, "e.g. 63.8", "לדוגמה: 63.8")}
+            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2"
+          />
+        </label>
+      </div>
 
       {aiAvailable ? (
         <div className="block">

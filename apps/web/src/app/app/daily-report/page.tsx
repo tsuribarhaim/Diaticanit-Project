@@ -1,11 +1,8 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import {
   addReportToDefaultsAction,
-  confirmDailyReportAction,
   deleteDailyReportAction,
-  retryDailyReportWithAiAction,
   updateDailyReportChartPreferencesAction,
 } from "@/app/app/daily-report/actions";
 import { DailyReportForm } from "@/components/daily-report-form";
@@ -36,15 +33,6 @@ function formatConfidence(value: number | string | null, locale: AppLocale): str
   const parsed = Number(value ?? 0);
   if (!Number.isFinite(parsed)) return "0%";
   return `${formatNumberForLocale(Math.round(parsed * 100), locale)}%`;
-}
-
-function parseModeBadgeClasses(mode: string | null): string {
-  if (mode === "ai") return "border-indigo-200 bg-indigo-50 text-indigo-700";
-  return "border-slate-300 bg-slate-100 text-slate-700";
-}
-
-function parseModeLabel(mode: string | null, locale: AppLocale): string {
-  return mode === "ai" ? "AI" : tr(locale, "Heuristic", "יוריסטי");
 }
 
 function statusClasses(status: "green" | "yellow" | "red") {
@@ -87,7 +75,7 @@ export default async function DailyReportPage({
 
   const { data: profileRow } = await supabase
     .from("user_profile")
-    .select("preferred_language, daily_report_chart_preferences")
+    .select("preferred_language, daily_report_chart_preferences, weight_kg")
     .eq("user_id", user.id)
     .maybeSingle();
 
@@ -223,11 +211,7 @@ export default async function DailyReportPage({
         id: string;
         raw_report_text: string | null;
         report_at: string;
-        status: string;
         parse_confidence: number | null;
-        parse_mode: string | null;
-        parser_version: string | null;
-        requires_confirmation: boolean;
         calories_kcal: number | null;
         protein_g: number | null;
         carbs_g: number | null;
@@ -240,15 +224,13 @@ export default async function DailyReportPage({
         exercise_minutes: number | null;
         estimated_burn_kcal: number | null;
         reported_weight_kg: number | null;
-        parsed_items: unknown;
-        parsed_exercises: unknown;
       }>
     | null = null;
 
   const reportsWithWeight = await supabase
     .from("user_daily_reports")
     .select(
-      "id, raw_report_text, report_at, status, parse_confidence, parse_mode, parser_version, requires_confirmation, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal, reported_weight_kg, parsed_items, parsed_exercises",
+      "id, raw_report_text, report_at, parse_confidence, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal, reported_weight_kg",
     )
     .eq("user_id", user.id)
     .order("report_at", { ascending: false })
@@ -258,7 +240,7 @@ export default async function DailyReportPage({
     const reportsWithoutWeight = await supabase
       .from("user_daily_reports")
       .select(
-        "id, raw_report_text, report_at, status, parse_confidence, parse_mode, parser_version, requires_confirmation, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal, parsed_items, parsed_exercises",
+        "id, raw_report_text, report_at, parse_confidence, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal",
       )
       .eq("user_id", user.id)
       .order("report_at", { ascending: false })
@@ -287,39 +269,32 @@ export default async function DailyReportPage({
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-6 py-10">
       <section className="rounded-2xl border border-slate-200 bg-white p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "User daily report", "דיווח יומי")}</h1>
-            <p className="mt-2 text-sm text-slate-600">
-              {tr(
-                locale,
-                "Log food, hydration, and exercise in free text or with quick defaults. The system organizes key nutrients and activity metrics with timestamps.",
-                "תעדו אוכל, שתייה ופעילות בטקסט חופשי או בעזרת ברירות מחדל. המערכת מארגנת את המדדים התזונתיים והפעילות לפי זמן.",
-              )}
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <Link
-              href="/app/daily-report/defaults"
-              className="rounded-lg border border-teal-300 px-3 py-2 text-sm font-medium text-teal-700 hover:bg-teal-50"
-            >
-              {tr(locale, "Manage defaults", "ניהול ברירות מחדל")}
-            </Link>
-          </div>
-        </div>
+        <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "User daily report", "דיווח יומי")}</h1>
+        <p className="mt-1 text-sm text-slate-600">
+          {tr(
+            locale,
+            "Record your daily food, drinks, activity, and other data.",
+            "תעדו כאן את האוכל, השתייה, הפעילות והנתונים היומיים שלכם.",
+          )}
+        </p>
 
         {resolvedSearchParams.error ? (
-          <p className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
             {resolvedSearchParams.error}
           </p>
         ) : null}
         {resolvedSearchParams.notice ? (
-          <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
             {resolvedSearchParams.notice}
           </p>
         ) : null}
 
-        <DailyReportForm defaultItems={defaultItems ?? []} aiAvailable={aiAvailable} locale={locale} />
+        <DailyReportForm
+          defaultItems={defaultItems ?? []}
+          aiAvailable={aiAvailable}
+          locale={locale}
+          currentWeightKg={profileRow?.weight_kg ? Number(profileRow.weight_kg) : null}
+        />
       </section>
 
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
@@ -423,38 +398,12 @@ export default async function DailyReportPage({
                       <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClasses(hydrationStatus)}`}>
                         {tr(locale, "Hydration", "נוזלים")}
                       </span>
-                      {report.requires_confirmation ? (
-                        <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">
-                          {tr(locale, "Needs confirmation", "דורש אישור")}
-                        </span>
-                      ) : (
-                        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800">
-                          {tr(locale, "Confirmed", "מאושר")}
-                        </span>
-                      )}
                     </div>
                   </div>
 
                   <p className="mt-3 rounded-lg bg-white px-3 py-2 text-sm text-slate-700">
                     {report.raw_report_text?.trim() || tr(locale, "No free-text note provided. Entry created from selected defaults.", "לא הוזן טקסט חופשי. הרשומה נוצרה מברירות המחדל שנבחרו.")}
                   </p>
-
-                  <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-                    <span className={`rounded-full border px-2.5 py-1 font-medium ${parseModeBadgeClasses(report.parse_mode)}`}>
-                      {tr(locale, "Mode", "מצב")}: {parseModeLabel(report.parse_mode, locale)}
-                    </span>
-                    {report.parser_version ? (
-                      <span className="rounded-full border border-slate-300 bg-white px-2.5 py-1 font-medium text-slate-700">
-                        {tr(locale, "Parser", "מנוע")}: {report.parser_version}
-                      </span>
-                    ) : null}
-                    <span className="rounded-full border border-slate-300 bg-white px-2.5 py-1 font-medium text-slate-700">
-                      {tr(locale, "Food items", "פריטי אוכל")}: {Array.isArray(report.parsed_items) ? report.parsed_items.length : 0}
-                    </span>
-                    <span className="rounded-full border border-slate-300 bg-white px-2.5 py-1 font-medium text-slate-700">
-                      {tr(locale, "Exercise items", "פריטי פעילות")}: {Array.isArray(report.parsed_exercises) ? report.parsed_exercises.length : 0}
-                    </span>
-                  </div>
 
                   <div className="mt-3 grid gap-2 text-xs text-slate-700 sm:grid-cols-2 lg:grid-cols-4">
                     <p>{tr(locale, "Reported weight", "משקל מדווח")}: <span className="font-semibold text-slate-900">{report.reported_weight_kg === null ? tr(locale, "n/a", "לא זמין") : formatNumber(report.reported_weight_kg, locale, 2)}</span>{report.reported_weight_kg === null ? "" : ` ${formatMeasurementUnit("kg", locale)}`}</p>
@@ -469,30 +418,6 @@ export default async function DailyReportPage({
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {aiAvailable && report.raw_report_text?.trim() ? (
-                      <form action={retryDailyReportWithAiAction}>
-                        <input type="hidden" name="report_id" value={report.id} />
-                        <button
-                          type="submit"
-                          className="rounded-lg border border-indigo-300 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-50"
-                        >
-                          {tr(locale, "Retry with AI", "ניסיון חוזר עם AI")}
-                        </button>
-                      </form>
-                    ) : null}
-
-                    {report.requires_confirmation ? (
-                      <form action={confirmDailyReportAction}>
-                        <input type="hidden" name="report_id" value={report.id} />
-                        <button
-                          type="submit"
-                          className="rounded-lg border border-teal-300 px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50"
-                        >
-                          {tr(locale, "Confirm and include in progress", "אישור ושילוב בהתקדמות")}
-                        </button>
-                      </form>
-                    ) : null}
-
                     <details className="rounded-lg border border-cyan-200 bg-cyan-50/40 px-2 py-1">
                       <summary className="cursor-pointer list-none rounded-lg border border-cyan-300 px-3 py-2 text-xs font-semibold text-cyan-700 hover:bg-cyan-50">
                         {tr(locale, "Add to defaults", "הוספה לברירות מחדל")}
