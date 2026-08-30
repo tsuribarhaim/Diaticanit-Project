@@ -12,6 +12,7 @@ import { DailyReportForm } from "@/components/daily-report-form";
 import { DailyReportProgressRings, type RingMetric } from "@/components/daily-report-progress-rings";
 import { DailyReportWeightTrend, type WeightPoint } from "@/components/daily-report-weight-trend";
 import { CHART_EXTRA_METRIC_IDS, normalizeDailyReportChartPreferences, type DailyReportChartExtraMetric } from "@/lib/daily-report-chart-preferences";
+import { getTodaysDailyReportTotals } from "@/lib/daily-report";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { formatDateTimeForLocale, formatMeasurementUnit, formatNumberForLocale, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { createClient } from "@/lib/supabase/server";
@@ -106,40 +107,8 @@ export default async function DailyReportPage({
     .eq("is_active", true)
     .maybeSingle();
 
-  // TODO(daily-report-redesign): "Today" has no per-user timezone concept
-  // yet, so it's bucketed by UTC calendar day (matching the only other
-  // day-bucketing precedent in this file, addReportToDefaultsAction's
-  // fallback default name). For users far from UTC this "day" boundary
-  // won't line up with local midnight. Revisit once the full Daily
-  // Reporting redesign (all phases) is done - likely needs a stored
-  // per-user timezone (e.g. on user_profile) plumbed through every
-  // day-bucketing site (this file, addReportToDefaultsAction, and any new
-  // historical day/week view from a later phase).
   const now = new Date();
-  const todayStartIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
-  const todayEndIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString();
-
-  const { data: todaysReports } = await supabase
-    .from("user_daily_reports")
-    .select("calories_kcal, protein_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg")
-    .eq("user_id", user.id)
-    .gte("report_at", todayStartIso)
-    .lt("report_at", todayEndIso);
-
-  const todaysTotals = (todaysReports ?? []).reduce(
-    (acc, row) => ({
-      caloriesKcal: acc.caloriesKcal + Number(row.calories_kcal ?? 0),
-      proteinG: acc.proteinG + Number(row.protein_g ?? 0),
-      fatG: acc.fatG + Number(row.fat_g ?? 0),
-      fiberG: acc.fiberG + Number(row.fiber_g ?? 0),
-      waterMl: acc.waterMl + Number(row.water_ml ?? 0),
-      magnesiumMg: acc.magnesiumMg + Number(row.magnesium_mg ?? 0),
-      potassiumMg: acc.potassiumMg + Number(row.potassium_mg ?? 0),
-      ironMg: acc.ironMg + Number(row.iron_mg ?? 0),
-      zincMg: acc.zincMg + Number(row.zinc_mg ?? 0),
-    }),
-    { caloriesKcal: 0, proteinG: 0, fatG: 0, fiberG: 0, waterMl: 0, magnesiumMg: 0, potassiumMg: 0, ironMg: 0, zincMg: 0 },
-  );
+  const todaysTotals = await getTodaysDailyReportTotals({ supabase, userId: user.id });
 
   const ringMetrics: RingMetric[] = [
     {

@@ -1,8 +1,14 @@
 import type { NextRequest } from "next/server";
 
-import { openDailyReportChatReplyStream, type ChatMessage } from "@/lib/ai/daily-report-chat";
+import {
+  openDailyReportChatReplyStream,
+  type ChatMessage,
+  type DailyReportChatProfile,
+  type DailyReportChatTargets,
+} from "@/lib/ai/daily-report-chat";
 import { getAiExtractionConfig } from "@/lib/ai/env";
-import { normalizeLocale } from "@/lib/locale";
+import { getTodaysDailyReportTotals } from "@/lib/daily-report";
+import { normalizeLocale, tr } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
 
@@ -52,11 +58,33 @@ export async function POST(request: NextRequest) {
 
   const { data: profileRow } = await supabase
     .from("user_profile")
-    .select("preferred_language")
+    .select(
+      "preferred_language, dietary_preference, allergies, medical_conditions, medical_conditions_details, regular_medications_details, pregnancy_lactation_status",
+    )
     .eq("user_id", user.id)
     .maybeSingle();
 
   const locale = normalizeLocale(profileRow?.preferred_language);
+  const profile: DailyReportChatProfile = {
+    dietary_preference: profileRow?.dietary_preference ?? null,
+    allergies: Array.isArray(profileRow?.allergies) ? (profileRow.allergies as string[]) : null,
+    medical_conditions: Array.isArray(profileRow?.medical_conditions) ? (profileRow.medical_conditions as string[]) : null,
+    medical_conditions_details: profileRow?.medical_conditions_details ?? null,
+    regular_medications_details: profileRow?.regular_medications_details ?? null,
+    pregnancy_lactation_status: profileRow?.pregnancy_lactation_status ?? null,
+  };
+
+  const { data: targetRow } = await supabase
+    .from("user_target_profiles")
+    .select(
+      "calories_min, calories_max, protein_min_g, protein_max_g, carbs_min_g, carbs_max_g, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, water_min_ml, water_max_ml",
+    )
+    .eq("user_id", user.id)
+    .eq("is_active", true)
+    .maybeSingle();
+  const targets: DailyReportChatTargets = targetRow ?? null;
+
+  const todaysTotals = await getTodaysDailyReportTotals({ supabase, userId: user.id });
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -68,6 +96,9 @@ export async function POST(request: NextRequest) {
           userMessage,
           imageBase64,
           mimeType,
+          profile,
+          targets,
+          todaysTotals,
         });
 
         if (!upstream.ok || !upstream.body) {
@@ -162,7 +193,12 @@ export async function POST(request: NextRequest) {
           userId: user.id,
           error: error instanceof Error ? error.message : "Unknown error",
         });
-        controller.enqueue(sseEvent({ type: "error", message: "The chat connection failed. Please try again." }));
+        controller.enqueue(
+          sseEvent({
+            type: "error",
+            message: tr(locale, "The chat connection failed. Please try again.", "חיבור הצ'אט נכשל. יש לנסות שוב."),
+          }),
+        );
         controller.enqueue(sseEvent({ type: "done" }));
         controller.close();
       }

@@ -1,7 +1,68 @@
 import type { AiExtractionConfig } from "@/lib/ai/env";
+import type { DailyReportMetrics } from "@/lib/daily-report";
 import type { AppLocale } from "@/lib/locale";
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
+
+export type DailyReportChatProfile = {
+  dietary_preference: string | null;
+  allergies: string[] | null;
+  medical_conditions: string[] | null;
+  medical_conditions_details: string | null;
+  regular_medications_details: string | null;
+  pregnancy_lactation_status: string | null;
+};
+
+export type DailyReportChatTargets = {
+  calories_min: number | null;
+  calories_max: number | null;
+  protein_min_g: number | null;
+  protein_max_g: number | null;
+  carbs_min_g: number | null;
+  carbs_max_g: number | null;
+  fats_min_g: number | null;
+  fats_max_g: number | null;
+  fiber_min_g: number | null;
+  fiber_max_g: number | null;
+  water_min_ml: number | null;
+  water_max_ml: number | null;
+} | null;
+
+function buildProfileSummary(profile: DailyReportChatProfile): string {
+  return [
+    `dietary_preference: ${profile.dietary_preference ?? "unknown"}`,
+    `allergies: ${profile.allergies?.join(", ") || "none"}`,
+    `medical_conditions: ${profile.medical_conditions?.join(", ") || "none"}${
+      profile.medical_conditions_details ? ` (${profile.medical_conditions_details})` : ""
+    }`,
+    `medications: ${profile.regular_medications_details || "none"}`,
+    `pregnancy_lactation_status: ${profile.pregnancy_lactation_status ?? "none"}`,
+  ].join("\n");
+}
+
+function buildTargetsSummary(targets: DailyReportChatTargets): string {
+  if (!targets) return "no active targets set";
+  return [
+    `calories: ${targets.calories_min ?? 0}-${targets.calories_max ?? 0} kcal`,
+    `protein: ${targets.protein_min_g ?? 0}-${targets.protein_max_g ?? 0} g`,
+    `carbs: ${targets.carbs_min_g ?? 0}-${targets.carbs_max_g ?? 0} g`,
+    `fats: ${targets.fats_min_g ?? 0}-${targets.fats_max_g ?? 0} g`,
+    `fiber: ${targets.fiber_min_g ?? 0}-${targets.fiber_max_g ?? 0} g`,
+    `water: ${targets.water_min_ml ?? 0}-${targets.water_max_ml ?? 0} ml`,
+  ].join("\n");
+}
+
+function buildTodaysTotalsSummary(totals: DailyReportMetrics): string {
+  return [
+    `calories so far: ${totals.caloriesKcal} kcal`,
+    `protein so far: ${totals.proteinG} g`,
+    `carbs so far: ${totals.carbsG} g`,
+    `fats so far: ${totals.fatG} g`,
+    `fiber so far: ${totals.fiberG} g`,
+    `water so far: ${totals.waterMl} ml`,
+    `exercise so far: ${totals.exerciseMinutes} minutes, ~${totals.estimatedBurnKcal} kcal burned`,
+  ].join("\n");
+}
 
 /**
  * Opens a raw streaming chat-completions request for a conversational reply
@@ -21,6 +82,9 @@ export async function openDailyReportChatReplyStream({
   userMessage,
   imageBase64,
   mimeType,
+  profile,
+  targets,
+  todaysTotals,
 }: {
   config: AiExtractionConfig;
   locale: AppLocale;
@@ -30,12 +94,23 @@ export async function openDailyReportChatReplyStream({
    * turns since the reflection already happened once. */
   imageBase64?: string;
   mimeType?: string;
+  profile: DailyReportChatProfile;
+  targets: DailyReportChatTargets;
+  todaysTotals: DailyReportMetrics;
 }): Promise<Response> {
   const languageName = locale === "he" ? "Hebrew" : "English";
 
-  const userContentText = [`Reply in ${languageName} only.`, "user_message:", userMessage.slice(0, 1000) || "(no text, see attached photo)"].join(
-    "\n",
-  );
+  const userContentText = [
+    `Reply in ${languageName} only.`,
+    "user_profile_summary:",
+    buildProfileSummary(profile),
+    "daily_targets_summary:",
+    buildTargetsSummary(targets),
+    "todays_logged_totals_summary (already logged today, computed by the app - trust these numbers, don't ask the user to repeat them):",
+    buildTodaysTotalsSummary(todaysTotals),
+    "user_message:",
+    userMessage.slice(0, 1000) || "(no text, see attached photo)",
+  ].join("\n");
 
   const userMessageContent = imageBase64
     ? [
@@ -52,12 +127,13 @@ export async function openDailyReportChatReplyStream({
       {
         role: "system",
         content: [
-          "You are a warm, concise assistant helping a user log what they ate, drank, or exercised today in a Personal Health Companion app. This is a conversation only - your reply never saves anything by itself; the user saves whenever they choose using a separate Save button.",
-          "Ask brief clarifying questions when a food/drink/exercise item is missing a rough quantity or detail needed to estimate nutrition (e.g. how much, what size, how long) - one or two questions at a time, not a long checklist.",
-          "PHOTO CHECK: if this message includes an attached photo, look at it and identify each distinct food or drink item you can see, with a rough portion-size estimate, then ask only if something is genuinely unclear or you'd like the user to confirm a detail - otherwise say plainly that they can save it now as is. If the photo is too blurry, dark, cropped, or otherwise unclear to identify reliably, say so plainly and ask for a clearer photo or a text description instead - do not guess at an unreadable photo.",
-          "SCOPE CHECK: only what the user ate, drank, or did for exercise/activity today is in scope. If the user asks about something unrelated (targets, general chit-chat, unrelated advice), warmly redirect them to describe something they ate, drank, or did today instead.",
-          "SAFETY CHECK: if the user describes or the photo shows consuming something that is not actually food/drink and would be dangerous or harmful (e.g. fuel, cleaning products, poison, batteries, or other inedible/hazardous items), do not treat it as a loggable item - tell them plainly it is not food and, if they actually consumed it, to seek medical attention or contact a poison control center right away.",
-          "MARKER (required): your response must start with exactly one of the two literal tokens 'ACTIONABLE ' or 'INFO ' (the word, then a single space), before anything else - no exceptions, this is machine-parsed and stripped before the user ever sees it. Use 'ACTIONABLE ' when the conversation so far (this message plus prior turns, including any photo) describes at least one concrete food, drink, or exercise item with enough detail (item + rough quantity/duration) to log right now - this includes a clear, readable photo you just identified, even if you're also asking an optional follow-up question. Use 'INFO ' for everything else: an unclear/unreadable photo, a clarifying question with no loggable detail yet, an off-topic redirect, a safety warning, or small talk. Never write the word ACTIONABLE or INFO anywhere else in your reply.",
+          "You are a warm, concise assistant helping a user log what they ate, drank, or exercised today in a Personal Health Companion app, and helping them plan the rest of their day to meet their targets. This is a conversation only - your reply never saves anything by itself; the user saves whenever they choose using a separate Save button.",
+          "CONTEXT: every message includes user_profile_summary (dietary preference, allergies, medical conditions, pregnancy/lactation status), daily_targets_summary (this user's target ranges), and todays_logged_totals_summary (what they've already logged today so far, computed by the app). Always use this context instead of asking the user to repeat it - e.g. if they ask what to eat for lunch, compute their remaining needs yourself from daily_targets_summary minus todays_logged_totals_summary and suggest something concrete that fits, taking dietary_preference and allergies/medical_conditions into account.",
+          "SCOPE: in scope is (a) logging what the user ate/drank/exercised, and (b) planning/suggestion questions about nutrition, meals, hydration, or exercise for the rest of today, grounded in the context above. If the user asks about something unrelated to nutrition/exercise/health (e.g. a career goal, general chit-chat, changing their targets), warmly redirect them to describe something they ate/drank/did, or ask a nutrition/exercise planning question instead.",
+          "CLARIFYING QUESTIONS: ask brief clarifying questions when a food/drink/exercise item is missing a rough quantity or detail needed to estimate nutrition (e.g. how much, what size, how long) - one or two questions at a time, not a long checklist. Every time you ask such a question, also explicitly tell the user in the same reply that they don't have to answer - they can just save now and you'll use a reasonable estimate. Never leave a reply as a bare question with no mention that saving now is already fine.",
+          "PHOTO CHECK: if this message includes an attached photo, look at it and identify each distinct food or drink item you can see, with a rough portion-size estimate, then ask only if something is genuinely unclear or you'd like the user to confirm a detail (again, making clear saving now is already an option) - otherwise say plainly that they can save it now as is. If the photo is too blurry, dark, cropped, or otherwise unclear to identify reliably, say so plainly and ask for a clearer photo or a text description instead - do not guess at an unreadable photo.",
+          "SAFETY CHECK: if the user describes or the photo shows consuming something that is not actually food/drink and would be dangerous or harmful (e.g. fuel, cleaning products, poison, batteries, or other inedible/hazardous items), do not treat it as a loggable item - tell them plainly it is not food and, if they actually consumed it, to seek medical attention or contact a poison control center right away. Also take medical_conditions and allergies into account: flag plainly if a food they mention or you suggest conflicts with a listed allergy or condition.",
+          "MARKER (required): your response must start with exactly one of the two literal tokens 'ACTIONABLE ' or 'INFO ' (the word, then a single space), before anything else - no exceptions, this is machine-parsed and stripped before the user ever sees it. Use 'ACTIONABLE ' when the conversation so far (this message plus prior turns, including any photo) describes at least one concrete food, drink, or exercise item with enough detail (item + rough quantity/duration, or a clear photo) to log right now, even if you're also asking an optional follow-up question. Use 'INFO ' for everything else: an unclear/unreadable photo, a clarifying question with no loggable detail yet, a planning/suggestion answer with nothing new to log, an off-topic redirect, a safety warning, or small talk. Never write the word ACTIONABLE or INFO anywhere else in your reply.",
           "Reply in 1-3 short sentences, conversationally - not a list, not JSON, no markdown. Address the user directly in second person (\"you\"/\"your\"), never third person.",
         ].join(" "),
       },

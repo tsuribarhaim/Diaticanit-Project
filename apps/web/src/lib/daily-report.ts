@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import type { createClient } from "@/lib/supabase/server";
+
 export const dailyReportInputSchema = z.object({
   reportText: z
     .string()
@@ -111,6 +113,65 @@ export type DailyReportMetrics = {
   exerciseMinutes: number;
   estimatedBurnKcal: number;
 };
+
+/**
+ * "Today" has no per-user timezone concept yet, so it's bucketed by UTC
+ * calendar day (matching the only other day-bucketing precedent in this
+ * codebase). For users far from UTC this "day" boundary won't line up with
+ * local midnight - revisit once the Daily Reporting redesign needs a stored
+ * per-user timezone plumbed through every day-bucketing site.
+ */
+export async function getTodaysDailyReportTotals({
+  supabase,
+  userId,
+}: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  userId: string;
+}): Promise<DailyReportMetrics> {
+  const now = new Date();
+  const todayStartIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+  const todayEndIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString();
+
+  const { data: todaysReports } = await supabase
+    .from("user_daily_reports")
+    .select(
+      "calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal",
+    )
+    .eq("user_id", userId)
+    .gte("report_at", todayStartIso)
+    .lt("report_at", todayEndIso);
+
+  return (todaysReports ?? []).reduce(
+    (acc, row) => ({
+      caloriesKcal: acc.caloriesKcal + Number(row.calories_kcal ?? 0),
+      proteinG: acc.proteinG + Number(row.protein_g ?? 0),
+      carbsG: acc.carbsG + Number(row.carbs_g ?? 0),
+      fatG: acc.fatG + Number(row.fat_g ?? 0),
+      fiberG: acc.fiberG + Number(row.fiber_g ?? 0),
+      waterMl: acc.waterMl + Number(row.water_ml ?? 0),
+      magnesiumMg: acc.magnesiumMg + Number(row.magnesium_mg ?? 0),
+      potassiumMg: acc.potassiumMg + Number(row.potassium_mg ?? 0),
+      ironMg: acc.ironMg + Number(row.iron_mg ?? 0),
+      zincMg: acc.zincMg + Number(row.zinc_mg ?? 0),
+      exerciseMinutes: acc.exerciseMinutes + Number(row.exercise_minutes ?? 0),
+      estimatedBurnKcal: acc.estimatedBurnKcal + Number(row.estimated_burn_kcal ?? 0),
+    }),
+    {
+      caloriesKcal: 0,
+      proteinG: 0,
+      carbsG: 0,
+      fatG: 0,
+      fiberG: 0,
+      waterMl: 0,
+      magnesiumMg: 0,
+      potassiumMg: 0,
+      ironMg: 0,
+      zincMg: 0,
+      exerciseMinutes: 0,
+      estimatedBurnKcal: 0,
+    },
+  );
+}
 
 export type DailyReportParseResult = {
   confidence: number;
