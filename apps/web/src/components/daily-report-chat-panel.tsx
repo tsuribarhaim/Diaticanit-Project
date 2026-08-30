@@ -2,7 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { DailyReportDefaultsPicker, type DailyReportDefaultItem } from "@/components/daily-report-defaults-picker";
 import { tr, type AppLocale } from "@/lib/locale";
+
+export type { DailyReportDefaultItem };
 
 type ChatMessage = { role: "user" | "assistant"; content: string; imagePreviewUrl?: string };
 type SseEvent =
@@ -38,19 +41,21 @@ function readFileAsBase64(file: File): Promise<string> {
 /**
  * The sole way to describe a day's food/drink/exercise: a back-and-forth
  * conversation with the AI, which can also see an attached photo and
- * reflect on it immediately. This panel never saves anything itself - it
- * continuously reports the full transcript up to the parent via
- * onTranscriptChange, which keeps a hidden report_text field (and whatever
- * photo file is attached here) in sync so the page's single "Save daily
- * report" button - and everything it already does (safety gate, AI
- * parsing) - handles it exactly as if this had been typed/attached
- * directly into that field.
+ * reflect on it immediately, plus a compact picker for quick-adding saved
+ * defaults. This panel never saves anything itself - it continuously
+ * reports the full transcript up to the parent via onTranscriptChange,
+ * which keeps a hidden report_text field (and whatever photo/defaults are
+ * attached here) in sync so the page's single "Conclude & Report" button -
+ * and everything it already does (safety gate, AI parsing) - handles it
+ * exactly as if this had been typed/attached directly into that field.
  */
 export function DailyReportChatPanel({
   locale,
+  defaultItems,
   onTranscriptChange,
 }: {
   locale: AppLocale;
+  defaultItems: DailyReportDefaultItem[];
   onTranscriptChange: (text: string) => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -60,6 +65,7 @@ export function DailyReportChatPanel({
   const [retryAction, setRetryAction] = useState<(() => void) | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
+  const [defaultsSummary, setDefaultsSummary] = useState<string[]>([]);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
@@ -355,6 +361,9 @@ export function DailyReportChatPanel({
               <path d="m21 15-5-5L5 21" />
             </svg>
           </label>
+
+          <DailyReportDefaultsPicker locale={locale} defaultItems={defaultItems} onAdd={setDefaultsSummary} dropDirection="up" />
+
           <textarea
             ref={textareaRef}
             value={inputValue}
@@ -399,6 +408,12 @@ export function DailyReportChatPanel({
           >
             {tr(locale, "Remove", "הסרה")}
           </button>
+        </div>
+      ) : null}
+
+      {defaultsSummary.length ? (
+        <div className="border-t border-teal-200 bg-teal-50 px-3 py-2 text-xs text-teal-800">
+          {tr(locale, "From defaults", "מברירות מחדל")}: {defaultsSummary.join(", ")}
         </div>
       ) : null}
     </div>

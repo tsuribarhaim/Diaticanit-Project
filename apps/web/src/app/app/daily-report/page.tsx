@@ -568,11 +568,11 @@ export default async function DailyReportPage({
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <details className="rounded-lg border border-cyan-200 bg-cyan-50/40 px-2 py-1">
-                      <summary className="cursor-pointer list-none rounded-lg border border-cyan-300 px-3 py-2 text-xs font-semibold text-cyan-700 hover:bg-cyan-50">
+                    <details>
+                      <summary className="cursor-pointer list-none rounded-lg border border-cyan-300 px-3 py-2 text-xs font-semibold text-cyan-700 hover:bg-cyan-50 [&::-webkit-details-marker]:hidden">
                         {tr(locale, "Add to defaults", "הוספה לברירות מחדל")}
                       </summary>
-                      <form action={addReportToDefaultsAction} className="mt-2 flex flex-wrap items-center gap-2 px-1 pb-1">
+                      <form action={addReportToDefaultsAction} className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-cyan-200 bg-cyan-50/40 px-2 py-2">
                         <input type="hidden" name="report_id" value={report.id} />
                         <input
                           type="text"
