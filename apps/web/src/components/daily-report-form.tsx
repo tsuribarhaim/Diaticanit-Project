@@ -1,16 +1,15 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { useFormStatus } from "react-dom";
 
 import {
   saveDailyReportAction,
   type DailyReportActionState,
 } from "@/app/app/daily-report/actions";
 import { DailyReportChatPanel, type DailyReportDefaultItem } from "@/components/daily-report-chat-panel";
-import { DailyReportDefaultsPicker } from "@/components/daily-report-defaults-picker";
-import type { AppLocale } from "@/lib/locale";
-import { tr } from "@/lib/locale";
+import { DailyReportDefaultsPicker, type SelectedSavedListItem } from "@/components/daily-report-defaults-picker";
+import { SubmitButton } from "@/components/daily-report-submit-button";
+import { formatDefaultUnit, tr, type AppLocale } from "@/lib/locale";
 
 const initialState: DailyReportActionState = {};
 
@@ -21,20 +20,6 @@ function getLocalDateTimeValue(date: Date): string {
   copy.setSeconds(0, 0);
   const offsetMs = copy.getTimezoneOffset() * 60_000;
   return new Date(copy.getTime() - offsetMs).toISOString().slice(0, 16);
-}
-
-function SubmitButton({ locale }: { locale: AppLocale }) {
-  const { pending } = useFormStatus();
-
-  return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800"
-    >
-      {pending ? tr(locale, "Saving...", "שומר...") : tr(locale, "Conclude & Report", "סיום ודיווח")}
-    </button>
-  );
 }
 
 export function DailyReportForm({
@@ -52,7 +37,9 @@ export function DailyReportForm({
   const [reportText, setReportText] = useState("");
   const [chatResetKey, setChatResetKey] = useState(0);
   const [reportAtValue, setReportAtValue] = useState(() => getLocalDateTimeValue(new Date()));
-  const [fallbackDefaultsSummary, setFallbackDefaultsSummary] = useState<string[]>([]);
+  const [fallbackSelectedSavedListItems, setFallbackSelectedSavedListItems] = useState<SelectedSavedListItem[]>([]);
+  const initialWeightValue = currentWeightKg != null ? String(currentWeightKg) : "";
+  const [weightValue, setWeightValue] = useState(initialWeightValue);
 
   /** "Conclude & Report" both saves and starts a fresh conversation - the
    * chat is a scratchpad for composing one report, not a running log, so
@@ -108,10 +95,20 @@ export function DailyReportForm({
             min="20"
             max="400"
             step="0.01"
-            defaultValue={currentWeightKg ?? undefined}
+            value={weightValue}
+            onChange={(event) => setWeightValue(event.target.value)}
             placeholder={tr(locale, "e.g. 63.8", "לדוגמה: 63.8")}
             className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2"
           />
+          {weightValue.trim() && weightValue !== initialWeightValue ? (
+            <p className="mt-1 text-xs text-teal-700">
+              {tr(
+                locale,
+                "This will be recorded as today's weight when you conclude & report.",
+                "המשקל הזה יירשם כמשקל של היום עם סיום ודיווח.",
+              )}
+            </p>
+          ) : null}
         </label>
       </div>
 
@@ -130,6 +127,8 @@ export function DailyReportForm({
             locale={locale}
             defaultItems={defaultItems}
             onTranscriptChange={handleTranscriptChange}
+            saveError={state.error}
+            saveSuccess={state.success}
           />
           <textarea name="report_text" value={reportText} readOnly hidden />
           <input type="hidden" name="parse_mode" value="ai" />
@@ -140,11 +139,18 @@ export function DailyReportForm({
             <label htmlFor="daily-report-text" className="block text-sm font-medium text-slate-700">
               {tr(locale, "Daily report (free text, optional)", "דיווח יומי (טקסט חופשי, אופציונלי)")}
             </label>
-            <DailyReportDefaultsPicker locale={locale} defaultItems={defaultItems} onAdd={setFallbackDefaultsSummary} />
+            <DailyReportDefaultsPicker
+              locale={locale}
+              defaultItems={defaultItems}
+              onSelectionChange={setFallbackSelectedSavedListItems}
+            />
           </div>
-          {fallbackDefaultsSummary.length ? (
+          {fallbackSelectedSavedListItems.length ? (
             <p className="mb-1 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-xs text-teal-800">
-              {tr(locale, "From defaults", "מברירות מחדל")}: {fallbackDefaultsSummary.join(", ")}
+              {tr(locale, "From your saved list", "מהרשימה השמורה")}:{" "}
+              {fallbackSelectedSavedListItems
+                .map((item) => `${item.name} (${item.quantity} ${formatDefaultUnit(item.unit, locale)})`)
+                .join(", ")}
             </p>
           ) : null}
           <textarea
@@ -165,8 +171,8 @@ export function DailyReportForm({
             <span className="text-slate-500">
               {tr(
                 locale,
-                "AI mode (chat and photos) is currently unavailable in this environment - you can still save using free text or defaults.",
-                "מצב AI (צ'אט ותמונות) אינו זמין כרגע בסביבה זו - עדיין ניתן לשמור באמצעות טקסט חופשי או ברירות מחדל.",
+                "AI mode (chat and photos) is currently unavailable in this environment - you can still save using free text or your saved list.",
+                "מצב AI (צ'אט ותמונות) אינו זמין כרגע בסביבה זו - עדיין ניתן לשמור באמצעות טקסט חופשי או הרשימה השמורה.",
               )}
             </span>
             <span className={reportCharsLeft < 150 ? "font-medium text-amber-700" : "text-slate-500"}>
@@ -174,21 +180,23 @@ export function DailyReportForm({
             </span>
           </div>
           <input type="hidden" name="parse_mode" value="heuristic" />
+
+          {state.error ? (
+            <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              {state.error}
+            </p>
+          ) : null}
+          {state.success ? (
+            <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+              {state.success}
+            </p>
+          ) : null}
+
+          <div className="mt-3">
+            <SubmitButton locale={locale} />
+          </div>
         </div>
       )}
-
-      {state.error ? (
-        <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          {state.error}
-        </p>
-      ) : null}
-      {state.success ? (
-        <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          {state.success}
-        </p>
-      ) : null}
-
-      <SubmitButton locale={locale} />
     </form>
   );
 }

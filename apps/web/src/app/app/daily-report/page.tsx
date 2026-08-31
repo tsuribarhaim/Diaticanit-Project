@@ -8,7 +8,13 @@ import {
 import { DailyReportForm } from "@/components/daily-report-form";
 import { DailyReportProgressRings, type RingMetric } from "@/components/daily-report-progress-rings";
 import { DailyReportWeightTrend, type WeightPoint } from "@/components/daily-report-weight-trend";
-import { CHART_EXTRA_METRIC_IDS, normalizeDailyReportChartPreferences, type DailyReportChartExtraMetric } from "@/lib/daily-report-chart-preferences";
+import {
+  CHART_CORE_METRIC_IDS,
+  CHART_EXTRA_METRIC_IDS,
+  normalizeDailyReportChartPreferences,
+  type DailyReportChartCoreMetric,
+  type DailyReportChartExtraMetric,
+} from "@/lib/daily-report-chart-preferences";
 import { getDailyReportTotalsForRange } from "@/lib/daily-report";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { formatDateForLocale, formatDateTimeForLocale, formatMeasurementUnit, formatNumberForLocale, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
@@ -86,6 +92,15 @@ function buildDisplayConversation(rawText: string, locale: AppLocale, userDispla
     .join("\n");
 }
 
+const coreMetricLabels: Record<DailyReportChartCoreMetric, { en: string; he: string }> = {
+  calories: { en: "Calories", he: "קלוריות" },
+  protein: { en: "Protein", he: "חלבון" },
+  carbs: { en: "Carbs", he: "פחמימות" },
+  fats: { en: "Fats", he: "שומנים" },
+  fiber: { en: "Dietary Fiber", he: "סיבים תזונתיים" },
+  water: { en: "Fluid / Water", he: "נוזלים / מים" },
+};
+
 const extraMetricLabels: Record<DailyReportChartExtraMetric, { en: string; he: string }> = {
   magnesium: { en: "Magnesium", he: "מגנזיום" },
   potassium: { en: "Potassium", he: "אשלגן" },
@@ -146,6 +161,22 @@ export default async function DailyReportPage({
   const userDisplayName = profileRow?.first_name?.trim() || tr(locale, "You", "אתה");
   const chartPreferences = normalizeDailyReportChartPreferences(profileRow?.daily_report_chart_preferences);
 
+  // The weight field on the compose form should default to whatever the
+  // user most recently reported (any prior report, not just today's),
+  // falling back to their profile weight only if they've never reported one
+  // - otherwise it always shows the same static profile value regardless of
+  // what was actually last logged, which looks like weight entries aren't
+  // being saved at all.
+  const { data: lastWeightReport } = await supabase
+    .from("user_daily_reports")
+    .select("reported_weight_kg")
+    .eq("user_id", user.id)
+    .not("reported_weight_kg", "is", null)
+    .order("report_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const lastRecordedWeightKg = lastWeightReport?.reported_weight_kg ?? null;
+
   // Daily-report entries no longer compare against scalar targets; the active
   // target profile stores min/max ranges instead. We compare against the
   // minimum of each range here (protein_min_g / water_min_ml) as a reasonable
@@ -167,17 +198,25 @@ export default async function DailyReportPage({
     rangeEndIso: selectedDayEndIso,
   });
 
-  const ringMetrics: RingMetric[] = [
-    {
+  // Exercise burn offsets calories gained from food/drink - net can go
+  // negative on a day with heavy exercise and light intake, which is a
+  // legitimate value to show, not an error state. grossTotal is only
+  // attached when there was actually something to burn back, so a day with
+  // no exercise still shows a single plain number like before.
+  const netCaloriesKcal = Math.round(todaysTotals.caloriesKcal - todaysTotals.estimatedBurnKcal);
+
+  const coreMetricDefinitions: Record<DailyReportChartCoreMetric, RingMetric> = {
+    calories: {
       id: "calories",
       labelEn: "Calories",
       labelHe: "קלוריות",
-      total: todaysTotals.caloriesKcal,
+      total: netCaloriesKcal,
+      ...(todaysTotals.estimatedBurnKcal > 0 ? { grossTotal: todaysTotals.caloriesKcal } : {}),
       min: Number(activeTargetProfile?.calories_min ?? 0),
       max: Number(activeTargetProfile?.calories_max ?? 0),
       unit: "kcal",
     },
-    {
+    protein: {
       id: "protein",
       labelEn: "Protein",
       labelHe: "חלבון",
@@ -186,7 +225,7 @@ export default async function DailyReportPage({
       max: Number(activeTargetProfile?.protein_max_g ?? 0),
       unit: "g",
     },
-    {
+    carbs: {
       id: "carbs",
       labelEn: "Carbs",
       labelHe: "פחמימות",
@@ -195,7 +234,7 @@ export default async function DailyReportPage({
       max: Number(activeTargetProfile?.carbs_max_g ?? 0),
       unit: "g",
     },
-    {
+    fats: {
       id: "fats",
       labelEn: "Fats",
       labelHe: "שומנים",
@@ -204,7 +243,7 @@ export default async function DailyReportPage({
       max: Number(activeTargetProfile?.fats_max_g ?? 0),
       unit: "g",
     },
-    {
+    fiber: {
       id: "fiber",
       labelEn: "Dietary Fiber",
       labelHe: "סיבים תזונתיים",
@@ -213,7 +252,7 @@ export default async function DailyReportPage({
       max: Number(activeTargetProfile?.fiber_max_g ?? 0),
       unit: "g",
     },
-    {
+    water: {
       id: "water",
       labelEn: "Fluid / Water",
       labelHe: "נוזלים / מים",
@@ -222,7 +261,7 @@ export default async function DailyReportPage({
       max: Number(activeTargetProfile?.water_max_ml ?? 0),
       unit: "ml",
     },
-  ];
+  };
 
   const extraMetricDefinitions: Record<DailyReportChartExtraMetric, RingMetric> = {
     magnesium: {
@@ -335,9 +374,14 @@ export default async function DailyReportPage({
     },
   };
 
-  for (const metricId of chartPreferences.extraMetrics) {
-    ringMetrics.push(extraMetricDefinitions[metricId]);
-  }
+  // Built in canonical order (not the order the user happened to check
+  // boxes in, which `getAll()` would otherwise preserve) so the displayed
+  // ring order stays stable and predictable regardless of how the
+  // selection was saved.
+  const ringMetrics: RingMetric[] = [
+    ...CHART_CORE_METRIC_IDS.filter((id) => chartPreferences.coreMetrics.includes(id)).map((id) => coreMetricDefinitions[id]),
+    ...CHART_EXTRA_METRIC_IDS.filter((id) => chartPreferences.extraMetrics.includes(id)).map((id) => extraMetricDefinitions[id]),
+  ];
 
   let weightHistory: WeightPoint[] = [];
   if (chartPreferences.showWeightTrend) {
@@ -449,7 +493,13 @@ export default async function DailyReportPage({
           defaultItems={defaultItems ?? []}
           aiAvailable={aiAvailable}
           locale={locale}
-          currentWeightKg={profileRow?.weight_kg ? Number(profileRow.weight_kg) : null}
+          currentWeightKg={
+            lastRecordedWeightKg !== null
+              ? Number(lastRecordedWeightKg)
+              : profileRow?.weight_kg
+                ? Number(profileRow.weight_kg)
+                : null
+          }
         />
       </section>
 
@@ -476,9 +526,19 @@ export default async function DailyReportPage({
         </div>
         {activeTargetProfile ? (
           <>
-            <div className="mt-4">
-              <DailyReportProgressRings locale={locale} metrics={ringMetrics} />
-            </div>
+            {ringMetrics.length ? (
+              <div className="mt-4">
+                <DailyReportProgressRings locale={locale} metrics={ringMetrics} />
+              </div>
+            ) : !chartPreferences.showWeightTrend ? (
+              <p className="mt-4 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600">
+                {tr(
+                  locale,
+                  "No charts selected. Choose what to show under \"Customize charts\" below.",
+                  "לא נבחרו תרשימים. יש לבחור מה להציג תחת \"התאמת התרשימים\" למטה.",
+                )}
+              </p>
+            ) : null}
 
             {chartPreferences.showWeightTrend ? (
               <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3">
@@ -493,29 +553,53 @@ export default async function DailyReportPage({
               <summary className="cursor-pointer text-sm font-semibold text-teal-700">
                 {tr(locale, "Customize charts", "התאמת התרשימים")}
               </summary>
-              <form action={updateDailyReportChartPreferencesAction} className="mt-3 space-y-3">
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {CHART_EXTRA_METRIC_IDS.map((metricId) => (
-                    <label key={metricId} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+              <form action={updateDailyReportChartPreferencesAction} className="mt-3 space-y-4">
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    {tr(locale, "Primary metrics", "מדדים עיקריים")}
+                  </p>
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {CHART_CORE_METRIC_IDS.map((metricId) => (
+                      <label key={metricId} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          name="core_metric"
+                          value={metricId}
+                          defaultChecked={chartPreferences.coreMetrics.includes(metricId)}
+                          className="h-4 w-4 accent-teal-700"
+                        />
+                        {tr(locale, coreMetricLabels[metricId].en, coreMetricLabels[metricId].he)}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    {tr(locale, "Additional metrics", "מדדים נוספים")}
+                  </p>
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {CHART_EXTRA_METRIC_IDS.map((metricId) => (
+                      <label key={metricId} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          name="extra_metric"
+                          value={metricId}
+                          defaultChecked={chartPreferences.extraMetrics.includes(metricId)}
+                          className="h-4 w-4 accent-teal-700"
+                        />
+                        {tr(locale, extraMetricLabels[metricId].en, extraMetricLabels[metricId].he)}
+                      </label>
+                    ))}
+                    <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
                       <input
                         type="checkbox"
-                        name="extra_metric"
-                        value={metricId}
-                        defaultChecked={chartPreferences.extraMetrics.includes(metricId)}
+                        name="show_weight_trend"
+                        defaultChecked={chartPreferences.showWeightTrend}
                         className="h-4 w-4 accent-teal-700"
                       />
-                      {tr(locale, extraMetricLabels[metricId].en, extraMetricLabels[metricId].he)}
+                      {tr(locale, "Weight trend", "מגמת משקל")}
                     </label>
-                  ))}
-                  <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-                    <input
-                      type="checkbox"
-                      name="show_weight_trend"
-                      defaultChecked={chartPreferences.showWeightTrend}
-                      className="h-4 w-4 accent-teal-700"
-                    />
-                    {tr(locale, "Weight trend", "מגמת משקל")}
-                  </label>
+                  </div>
                 </div>
                 <button
                   type="submit"
@@ -564,7 +648,7 @@ export default async function DailyReportPage({
                   </div>
 
                   <p className="mt-3 rounded-lg bg-white px-3 py-2 text-sm text-slate-700">
-                    {entrySummary || tr(locale, "No items recorded. Entry created from selected defaults.", "לא נרשמו פריטים. הרשומה נוצרה מברירות המחדל שנבחרו.")}
+                    {entrySummary || tr(locale, "No food or exercise items recorded.", "לא נרשמו פריטי מזון או פעילות.")}
                   </p>
 
                   {fullConversation ? (
@@ -596,7 +680,7 @@ export default async function DailyReportPage({
                   <div className="mt-3 flex flex-wrap gap-2">
                     <details>
                       <summary className="cursor-pointer list-none rounded-lg border border-cyan-300 px-3 py-2 text-xs font-semibold text-cyan-700 hover:bg-cyan-50 [&::-webkit-details-marker]:hidden">
-                        {tr(locale, "Add to defaults", "הוספה לברירות מחדל")}
+                        {tr(locale, "Add to Saved List", "הוספה לרשימה השמורה")}
                       </summary>
                       <form action={addReportToDefaultsAction} className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-cyan-200 bg-cyan-50/40 px-2 py-2">
                         <input type="hidden" name="report_id" value={report.id} />
@@ -611,7 +695,7 @@ export default async function DailyReportPage({
                           type="submit"
                           className="rounded-lg border border-cyan-300 px-3 py-2 text-xs font-semibold text-cyan-700 hover:bg-cyan-50"
                         >
-                          {tr(locale, "Save as default", "שמירה כברירת מחדל")}
+                          {tr(locale, "Save to Saved List", "שמירה לרשימה השמורה")}
                         </button>
                       </form>
                     </details>

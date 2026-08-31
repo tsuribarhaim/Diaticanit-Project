@@ -265,8 +265,8 @@ export function TargetsChatWorkspace({
    * bookkeeping themselves. */
   async function requestTargetsUpdate(
     history: ChatMessage[],
-  ): Promise<{ ok: boolean; semanticErrorMessage: string | null }> {
-    if (isStreaming || history.length === 0) return { ok: false, semanticErrorMessage: null };
+  ): Promise<{ ok: boolean; semanticErrorMessage: string | null; payload: TargetGenerationPayload | null }> {
+    if (isStreaming || history.length === 0) return { ok: false, semanticErrorMessage: null, payload: null };
 
     setStreamError(null);
     setRetryAction(null);
@@ -274,6 +274,7 @@ export function TargetsChatWorkspace({
     setIsGeneratingTargets(true);
 
     let receivedTargets = false;
+    let receivedPayload: TargetGenerationPayload | null = null;
     let semanticErrorMessage: string | null = null;
 
     const result = await runStream(
@@ -281,7 +282,15 @@ export function TargetsChatWorkspace({
       {
         onTargets: (payload, source, warning) => {
           receivedTargets = true;
+          receivedPayload = payload;
           setPendingPreview({ source, payload });
+          // On mobile, the panel showing the updated preview and the lock
+          // button is hidden while the chat input is focused (to save
+          // screen space) and only reappears once the input blurs - which
+          // doesn't reliably happen on its own once a virtual keyboard is
+          // involved. Force it visible whenever a fresh preview lands, so
+          // the user can actually see and act on what they just asked for.
+          setIsInputFocused(false);
           if (warning) setStreamError(warning);
         },
         onErrorEvent: (message) => {
@@ -294,7 +303,11 @@ export function TargetsChatWorkspace({
     setIsGeneratingTargets(false);
     setIsStreaming(false);
 
-    return { ok: result.ok && receivedTargets, semanticErrorMessage: semanticErrorMessage ?? result.errorMessage ?? null };
+    return {
+      ok: result.ok && receivedTargets,
+      semanticErrorMessage: semanticErrorMessage ?? result.errorMessage ?? null,
+      payload: receivedPayload,
+    };
   }
 
   async function handleUpdateTargetsDecision() {
@@ -328,7 +341,52 @@ export function TargetsChatWorkspace({
     setMessages(updatedHistory);
     setDecision(null);
     const outcome = await requestTargetsUpdate(updatedHistory);
-    if (!outcome.ok && !outcome.semanticErrorMessage) {
+    if (outcome.ok) {
+      // A real change was found - explain what happened and prompt the user
+      // to review and lock it in, then clear the now-addressed banner so it
+      // doesn't keep asking; the pending preview and its diff/lock button
+      // (rendered from pendingPreview) are what carries the "please lock"
+      // step forward from here.
+      const explanation = outcome.payload?.aiRationaleExplanation?.trim();
+      setMessages((previous) => [
+        ...previous,
+        {
+          role: "assistant",
+          content: explanation
+            ? tr(
+                locale,
+                `Your targets have been updated based on this profile change. ${explanation} Please review the differences below and lock them in when you're ready.`,
+                `היעדים שלך עודכנו בעקבות שינוי הפרופיל. ${explanation} נא לסקור את ההבדלים למטה ולנעול אותם כשתהיו מוכנים.`,
+              )
+            : tr(
+                locale,
+                "Your targets have been updated based on this profile change. Please review the differences below and lock them in when you're ready.",
+                "היעדים שלך עודכנו בעקבות שינוי הפרופיל. נא לסקור את ההבדלים למטה ולנעול אותם כשתהיו מוכנים.",
+              ),
+        },
+      ]);
+      await handleSkipProfileChange();
+    } else if (outcome.semanticErrorMessage) {
+      // The AI reviewed the profile change against the current targets and
+      // concluded no numeric/text adjustment is warranted - that's a valid,
+      // successful outcome (e.g. a condition with no established dietary
+      // rule to tighten), not a failure. Say so plainly instead of leaving
+      // the raw model wording sitting in the error-styled banner, and
+      // dismiss the now-resolved profile-change banner so it stops asking.
+      setStreamError(null);
+      setMessages((previous) => [
+        ...previous,
+        {
+          role: "assistant",
+          content: tr(
+            locale,
+            "I reviewed this profile change against your current targets - no adjustment is needed, they're still accurate as-is.",
+            "בדקתי את שינוי הפרופיל הזה מול היעדים הנוכחיים שלך - אין צורך בעדכון, הם עדיין מדויקים כפי שהם.",
+          ),
+        },
+      ]);
+      await handleSkipProfileChange();
+    } else {
       setRetryAction(() => () => handleRecalculateFromProfileChange());
     }
   }
@@ -396,7 +454,11 @@ export function TargetsChatWorkspace({
               <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{lockState.error}</p>
             ) : null}
 
-            <LockSubmitButton locale={locale} disabled={isNoChanges} />
+            <LockSubmitButton
+              locale={locale}
+              disabled={isNoChanges || isGeneratingTargets}
+              disabledReason={isGeneratingTargets ? "generating" : undefined}
+            />
           </form>
         ) : null}
       </div>
@@ -433,9 +495,12 @@ export function TargetsChatWorkspace({
                 type="button"
                 onClick={handleRecalculateFromProfileChange}
                 disabled={isStreaming || isDismissingProfileChange}
-                className="inline-flex items-center justify-center rounded-xl bg-amber-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-800"
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-800"
               >
-                {tr(locale, "Recalculate now", "לחישוב מחדש")}
+                {isGeneratingTargets ? <Spinner className="h-4 w-4 animate-spin" /> : null}
+                {isGeneratingTargets
+                  ? tr(locale, "Recalculating...", "מחשב מחדש...")
+                  : tr(locale, "Recalculate now", "לחישוב מחדש")}
               </button>
               <button
                 type="button"

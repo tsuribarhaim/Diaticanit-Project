@@ -13,6 +13,8 @@ export type DailyReportDefaultItem = {
   is_active: boolean;
 };
 
+export type SelectedSavedListItem = { name: string; quantity: number; unit: string };
+
 function kindBadgeClass(kind: DailyReportDefaultItem["kind"]): string {
   if (kind === "hydration") return "border-sky-200 bg-sky-50 text-sky-700";
   if (kind === "exercise") return "border-violet-200 bg-violet-50 text-violet-700";
@@ -21,24 +23,30 @@ function kindBadgeClass(kind: DailyReportDefaultItem["kind"]): string {
 }
 
 /**
- * A compact icon that opens a dropdown for picking saved defaults to
+ * A compact icon that opens a dropdown for picking saved-list items to
  * include in this report - the same selected_default_ids[]/
  * quantity_default_<id> form fields the save action has always read, just
  * tucked behind a click instead of an always-expanded grid (which got
- * unwieldy as the default list grows). The grid stays mounted at all times
- * (the <details> element only hides it visually via the browser's native
+ * unwieldy as the list grows). The grid stays mounted at all times (the
+ * <details> element only hides it visually via the browser's native
  * disclosure behavior), so checkbox state survives opening/closing, and the
  * native-DOM-driven sync below keeps working regardless of visibility.
+ *
+ * Checking/unchecking a row (or editing its quantity) reports the current
+ * full selection via onSelectionChange immediately - the caller uses this to
+ * show live feedback (e.g. echoing it into a chat transcript) as the user
+ * picks, rather than waiting for a separate "commit" click. The button is
+ * therefore just a dismiss action once the user is done browsing the list.
  */
 export function DailyReportDefaultsPicker({
   locale,
   defaultItems,
-  onAdd,
+  onSelectionChange,
   dropDirection = "down",
 }: {
   locale: AppLocale;
   defaultItems: DailyReportDefaultItem[];
-  onAdd: (selectedNames: string[]) => void;
+  onSelectionChange: (selected: SelectedSavedListItem[]) => void;
   /** "up" anchors the popover above the icon (for a picker sitting at the
    * bottom of the chat compose row); "down" (default) anchors it below,
    * for a picker placed near the top of a section. */
@@ -50,7 +58,7 @@ export function DailyReportDefaultsPicker({
   const selectedCountRef = useRef<HTMLSpanElement | null>(null);
   const selectAllButtonRef = useRef<HTMLButtonElement | null>(null);
   const clearButtonRef = useRef<HTMLButtonElement | null>(null);
-  const addButtonRef = useRef<HTMLButtonElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
 
   /**
    * The "selected" counter, quantity-input enable/disable, and each row's
@@ -59,7 +67,9 @@ export function DailyReportDefaultsPicker({
    * isn't guaranteed to reach a React onChange handler in this dev
    * environment, but the checkbox's own native `checked` property always
    * updates correctly (and is what the browser actually submits), so UI
-   * feedback is driven off of that instead.
+   * feedback is driven off of that instead. This same pass also reports the
+   * live selection up to the caller, so every check/uncheck/quantity edit
+   * shows up immediately wherever the caller displays it.
    */
   const syncSelectionUi = useCallback(() => {
     const grid = gridRef.current;
@@ -67,6 +77,7 @@ export function DailyReportDefaultsPicker({
 
     const checkboxes = grid.querySelectorAll<HTMLInputElement>('input[name="selected_default_ids"]');
     let checkedCount = 0;
+    const selected: SelectedSavedListItem[] = [];
     checkboxes.forEach((checkbox) => {
       const labelEl = checkbox.closest<HTMLElement>("label");
       labelEl?.classList.toggle("ring-2", checkbox.checked);
@@ -75,13 +86,21 @@ export function DailyReportDefaultsPicker({
       const row = checkbox.closest<HTMLElement>("[data-default-name]");
       const quantityInput = row?.querySelector<HTMLInputElement>('input[type="number"]');
       if (quantityInput) quantityInput.disabled = !checkbox.checked;
-      if (checkbox.checked) checkedCount += 1;
+      if (checkbox.checked) {
+        checkedCount += 1;
+        const match = defaultItems.find((item) => item.id === checkbox.value);
+        if (match) {
+          const quantity = quantityInput ? Number(quantityInput.value) || match.default_quantity : match.default_quantity;
+          selected.push({ name: formatDefaultItemName(match.name, locale), quantity, unit: match.default_unit });
+        }
+      }
     });
 
     if (selectedCountRef.current) {
       selectedCountRef.current.textContent = String(checkedCount);
     }
-  }, []);
+    onSelectionChange(selected);
+  }, [defaultItems, locale, onSelectionChange]);
 
   const setAllChecked = useCallback(
     (checked: boolean) => {
@@ -104,7 +123,7 @@ export function DailyReportDefaultsPicker({
     return () => grid.removeEventListener("change", syncSelectionUi);
   }, [syncSelectionUi]);
 
-  // "Select all" / "Clear" / "Add" are wired via native addEventListener
+  // "Select all" / "Clear" / "Close" are wired via native addEventListener
   // rather than React's onClick, for the same reason as the checkbox grid: a
   // real click's event isn't guaranteed to reach a React synthetic handler
   // in this dev environment, even though the handlers themselves are
@@ -112,38 +131,29 @@ export function DailyReportDefaultsPicker({
   useEffect(() => {
     const selectAllButton = selectAllButtonRef.current;
     const clearButton = clearButtonRef.current;
-    const addButton = addButtonRef.current;
-    if (!selectAllButton || !clearButton || !addButton) return;
+    const closeButton = closeButtonRef.current;
+    if (!selectAllButton || !clearButton || !closeButton) return;
 
     const handleSelectAll = () => setAllChecked(true);
     const handleClear = () => setAllChecked(false);
-    const handleAdd = () => {
-      const grid = gridRef.current;
-      const checkedNames: string[] = [];
-      if (grid) {
-        grid.querySelectorAll<HTMLInputElement>('input[name="selected_default_ids"]:checked').forEach((checkbox) => {
-          const match = defaultItems.find((item) => item.id === checkbox.value);
-          if (match) checkedNames.push(formatDefaultItemName(match.name, locale));
-        });
-      }
-      onAdd(checkedNames);
+    const handleClose = () => {
       if (detailsRef.current) detailsRef.current.open = false;
     };
 
     selectAllButton.addEventListener("click", handleSelectAll);
     clearButton.addEventListener("click", handleClear);
-    addButton.addEventListener("click", handleAdd);
+    closeButton.addEventListener("click", handleClose);
     return () => {
       selectAllButton.removeEventListener("click", handleSelectAll);
       clearButton.removeEventListener("click", handleClear);
-      addButton.removeEventListener("click", handleAdd);
+      closeButton.removeEventListener("click", handleClose);
     };
-  }, [setAllChecked, defaultItems, locale, onAdd]);
+  }, [setAllChecked]);
 
-  // A native (non-React-driven) filter for the defaults search box: a plain
-  // DOM `input` listener toggling each row's visibility directly, rather
-  // than React state gating a `.filter()` in the render. This must not
-  // depend on React's onChange firing for a real keystroke.
+  // A native (non-React-driven) filter for the saved-list search box: a
+  // plain DOM `input` listener toggling each row's visibility directly,
+  // rather than React state gating a `.filter()` in the render. This must
+  // not depend on React's onChange firing for a real keystroke.
   useEffect(() => {
     const input = searchInputRef.current;
     const grid = gridRef.current;
@@ -167,8 +177,8 @@ export function DailyReportDefaultsPicker({
   return (
     <details ref={detailsRef} className="relative shrink-0">
       <summary
-        aria-label={tr(locale, "Add from your saved defaults", "הוספה מברירות המחדל השמורות")}
-        title={tr(locale, "Add from your saved defaults", "הוספה מברירות המחדל השמורות")}
+        aria-label={tr(locale, "Add from your saved list", "הוספה מהרשימה השמורה")}
+        title={tr(locale, "Add from your saved list", "הוספה מהרשימה השמורה")}
         className="flex h-9 w-9 list-none items-center justify-center rounded-full border border-teal-300 text-teal-700 hover:bg-teal-50 [&::-webkit-details-marker]:hidden"
       >
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
@@ -213,7 +223,7 @@ export function DailyReportDefaultsPicker({
             ref={searchInputRef}
             type="text"
             defaultValue=""
-            placeholder={tr(locale, "Search your defaults...", "חיפוש בברירות המחדל שלך...")}
+            placeholder={tr(locale, "Search your saved list...", "חיפוש ברשימה השמורה שלך...")}
             className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2"
           />
         ) : null}
@@ -228,7 +238,7 @@ export function DailyReportDefaultsPicker({
                     <span>
                       <span className="block font-medium text-slate-800">{formatDefaultItemName(item.name, locale)}</span>
                       <span className="mt-0.5 block text-xs text-slate-500">
-                        {tr(locale, "Default", "ברירת מחדל")}: {item.default_quantity} {formatDefaultUnit(item.default_unit, locale)}
+                        {tr(locale, "Usual amount", "כמות רגילה")}: {item.default_quantity} {formatDefaultUnit(item.default_unit, locale)}
                       </span>
                     </span>
                   </span>
@@ -255,10 +265,10 @@ export function DailyReportDefaultsPicker({
 
         <button
           type="button"
-          ref={addButtonRef}
+          ref={closeButtonRef}
           className="mt-3 w-full rounded-lg bg-teal-700 px-3 py-2 text-sm font-semibold text-white hover:bg-teal-800"
         >
-          {tr(locale, "Add", "הוספה")}
+          {tr(locale, "Close", "סגירה")}
         </button>
       </div>
     </details>

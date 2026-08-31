@@ -6,8 +6,18 @@ import { redirect } from "next/navigation";
 import { parseDailyReportWithAi } from "@/lib/ai/daily-report";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { parseDailyReportText, type DailyReportMetrics } from "@/lib/daily-report";
+import { normalizeLocale, tr } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
+
+function buildDefaultsRedirectPath(params: { error?: string }): string {
+  const search = new URLSearchParams();
+  if (params.error) {
+    search.set("error", params.error);
+  }
+  const query = search.toString();
+  return query ? `/app/daily-report/defaults?${query}` : "/app/daily-report/defaults";
+}
 
 function toNumber(value: FormDataEntryValue | null, fallback = 0): number {
   if (typeof value !== "string") return fallback;
@@ -121,9 +131,29 @@ export async function addDefaultItemAction(formData: FormData): Promise<void> {
 
   const { data: profile } = await supabase
     .from("user_profile")
-    .select("weight_kg")
+    .select("weight_kg, preferred_language")
     .eq("user_id", user.id)
     .maybeSingle();
+  const locale = normalizeLocale(profile?.preferred_language);
+
+  const { data: existingNameMatch } = await supabase
+    .from("user_default_items")
+    .select("id")
+    .eq("user_id", user.id)
+    .ilike("name", name)
+    .maybeSingle();
+
+  if (existingNameMatch) {
+    redirect(
+      buildDefaultsRedirectPath({
+        error: tr(
+          locale,
+          `An item named "${name}" is already in your saved list. Please choose a different name.`,
+          `פריט בשם "${name}" כבר קיים ברשימה השמורה שלך. יש לבחור שם אחר.`,
+        ),
+      }),
+    );
+  }
 
   const parsedSnapshot = await parseDefaultItemSnapshot({
     userId: user.id,
@@ -188,9 +218,30 @@ export async function updateDefaultItemAction(formData: FormData): Promise<void>
 
   const { data: profile } = await supabase
     .from("user_profile")
-    .select("weight_kg")
+    .select("weight_kg, preferred_language")
     .eq("user_id", user.id)
     .maybeSingle();
+  const locale = normalizeLocale(profile?.preferred_language);
+
+  const { data: existingNameMatch } = await supabase
+    .from("user_default_items")
+    .select("id")
+    .eq("user_id", user.id)
+    .neq("id", id)
+    .ilike("name", name)
+    .maybeSingle();
+
+  if (existingNameMatch) {
+    redirect(
+      buildDefaultsRedirectPath({
+        error: tr(
+          locale,
+          `An item named "${name}" is already in your saved list. Please choose a different name.`,
+          `פריט בשם "${name}" כבר קיים ברשימה השמורה שלך. יש לבחור שם אחר.`,
+        ),
+      }),
+    );
+  }
 
   const parsedSnapshot = await parseDefaultItemSnapshot({
     userId: user.id,

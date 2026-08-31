@@ -8,6 +8,16 @@ export type RingMetric = {
   min: number;
   max: number;
   unit: string;
+  /**
+   * Only set for calories, and only when the user has logged exercise
+   * today: `total` is the NET value (gross intake minus estimated exercise
+   * burn - can go negative if burn exceeds intake), while `grossTotal` is
+   * the raw pre-exercise intake. The ring then visualizes both - the net
+   * portion in the normal status color, the burned-back portion (gross
+   * minus net) as a lighter tint of the same color - and the numbers below
+   * spell out the full gained/burned/net breakdown instead of one figure.
+   */
+  grossTotal?: number;
 };
 
 /**
@@ -27,15 +37,36 @@ function textColorClass(total: number, min: number, max: number): string {
   return "text-teal-700";
 }
 
-function Ring({ percent, colorClass }: { percent: number; colorClass: string }) {
+function clampPercent(value: number): number {
+  return Math.min(100, Math.max(0, value));
+}
+
+function Ring({ percent, colorClass, grossPercent }: { percent: number; colorClass: string; grossPercent?: number }) {
   const radius = 42;
   const circumference = 2 * Math.PI * radius;
-  const clamped = Math.min(100, Math.max(0, percent));
-  const offset = circumference * (1 - clamped / 100);
+  const clampedNet = clampPercent(percent);
+  const netOffset = circumference * (1 - clampedNet / 100);
+  const hasBurnBack = grossPercent !== undefined && grossPercent > percent;
+  const clampedGross = hasBurnBack ? clampPercent(grossPercent) : 0;
+  const grossOffset = circumference * (1 - clampedGross / 100);
 
   return (
     <svg viewBox="0 0 100 100" className="h-24 w-24 -rotate-90">
       <circle cx="50" cy="50" r={radius} fill="none" strokeWidth="10" stroke="currentColor" className="text-slate-200" />
+      {hasBurnBack ? (
+        <circle
+          cx="50"
+          cy="50"
+          r={radius}
+          fill="none"
+          strokeWidth="10"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={grossOffset}
+          className={`${colorClass} opacity-30`}
+        />
+      ) : null}
       <circle
         cx="50"
         cy="50"
@@ -45,7 +76,7 @@ function Ring({ percent, colorClass }: { percent: number; colorClass: string }) 
         stroke="currentColor"
         strokeLinecap="round"
         strokeDasharray={circumference}
-        strokeDashoffset={offset}
+        strokeDashoffset={netOffset}
         className={colorClass}
       />
     </svg>
@@ -53,10 +84,10 @@ function Ring({ percent, colorClass }: { percent: number; colorClass: string }) 
 }
 
 /**
- * Phase 1 of the Daily Report redesign: today's aggregate totals for the 5
- * default metrics (Calories, Protein, Fats, Fiber, Water), shown as progress
- * rings against the active target range, plus a red-zone list for anything
- * over today's target ceiling.
+ * Phase 1 of the Daily Report redesign: today's aggregate totals for the
+ * user's selected primary/extra metrics, shown as progress rings against
+ * the active target range, plus a red-zone list for anything over today's
+ * target ceiling.
  */
 export function DailyReportProgressRings({ locale, metrics }: { locale: AppLocale; metrics: RingMetric[] }) {
   const overLimit = metrics.filter((metric) => metric.max > 0 && metric.total > metric.max);
@@ -66,15 +97,21 @@ export function DailyReportProgressRings({ locale, metrics }: { locale: AppLocal
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {metrics.map((metric) => {
           const percent = metric.max > 0 ? (metric.total / metric.max) * 100 : 0;
+          const grossPercent =
+            metric.grossTotal !== undefined && metric.max > 0 ? (metric.grossTotal / metric.max) * 100 : undefined;
           const ringColor = ringColorClass(metric.total, metric.min, metric.max);
           const labelColor = textColorClass(metric.total, metric.min, metric.max);
+          const burnedAmount =
+            metric.grossTotal !== undefined && metric.grossTotal !== metric.total
+              ? metric.grossTotal - metric.total
+              : null;
 
           return (
             <div key={metric.id} className="flex flex-col items-center rounded-xl border border-slate-200 bg-white p-3">
               <div className="relative flex h-24 w-24 items-center justify-center">
-                <Ring percent={percent} colorClass={ringColor} />
+                <Ring percent={percent} colorClass={ringColor} grossPercent={grossPercent} />
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <span className={`text-sm font-bold ${labelColor}`}>{Math.round(percent)}%</span>
+                  <span className={`text-sm font-bold ${labelColor}`}>{Math.max(0, Math.round(percent))}%</span>
                 </div>
               </div>
               <p className="mt-2 text-xs font-semibold text-slate-800">{tr(locale, metric.labelEn, metric.labelHe)}</p>
@@ -84,6 +121,13 @@ export function DailyReportProgressRings({ locale, metrics }: { locale: AppLocal
                 {formatNumberForLocale(metric.max, locale, { maximumFractionDigits: 0 })}{" "}
                 {formatMeasurementUnit(metric.unit, locale)}
               </p>
+              {burnedAmount !== null ? (
+                <p className="text-center text-[10px] text-slate-400">
+                  {formatNumberForLocale(metric.grossTotal!, locale, { maximumFractionDigits: 0 })}{" "}
+                  {tr(locale, "gained", "התקבלו")} − {formatNumberForLocale(burnedAmount, locale, { maximumFractionDigits: 0 })}{" "}
+                  {tr(locale, "burned", "נשרפו")}
+                </p>
+              ) : null}
             </div>
           );
         })}

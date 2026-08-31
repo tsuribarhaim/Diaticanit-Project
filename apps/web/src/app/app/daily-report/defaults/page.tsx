@@ -18,7 +18,12 @@ function kindBadgeClass(kind: string): string {
   return "border-emerald-200 bg-emerald-50 text-emerald-700";
 }
 
-export default async function DailyReportDefaultsPage() {
+export default async function DailyReportDefaultsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
+  const resolvedSearchParams = await searchParams;
   const supabase = await createClient();
   const {
     data: { user },
@@ -55,7 +60,7 @@ export default async function DailyReportDefaultsPage() {
       <section className="rounded-2xl border border-slate-200 bg-white p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "Daily report defaults", "ברירות מחדל לדיווח יומי")}</h1>
+            <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "Daily Report Saved List", "רשימה שמורה לדיווח יומי")}</h1>
             <p className="mt-2 text-sm text-slate-600">{tr(locale, "Configure reusable items with name, type, quantity, and unit for one-click reporting.", "הגדירו פריטים לשימוש חוזר עם שם, סוג, כמות ויחידה לדיווח בלחיצה אחת.")}</p>
           </div>
           <Link
@@ -65,6 +70,12 @@ export default async function DailyReportDefaultsPage() {
             {tr(locale, "Back to daily report", "חזרה לדיווח היומי")}
           </Link>
         </div>
+
+        {resolvedSearchParams.error ? (
+          <p className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+            {resolvedSearchParams.error}
+          </p>
+        ) : null}
 
         <form action={addDefaultItemAction} className="mt-5 grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:grid-cols-2 lg:grid-cols-4">
           <label className="space-y-1">
@@ -96,7 +107,7 @@ export default async function DailyReportDefaultsPage() {
             </select>
           </label>
           <label className="space-y-1">
-            <span className="text-xs font-medium text-slate-700">{tr(locale, "Default quantity", "כמות ברירת מחדל")}</span>
+            <span className="text-xs font-medium text-slate-700">{tr(locale, "Usual quantity", "כמות רגילה")}</span>
             <input name="default_quantity" type="number" step="0.01" defaultValue={1} placeholder="1" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
           </label>
 
@@ -105,18 +116,18 @@ export default async function DailyReportDefaultsPage() {
               {tr(locale, "Tip: Keep names short and specific, like water, walk, or protein shake.", "טיפ: שמרו על שמות קצרים ומדויקים, כמו מים, הליכה או שייק חלבון.")}
             </p>
             <button type="submit" className="rounded-lg border border-emerald-300 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50">
-              {tr(locale, "Add default item", "הוספת פריט ברירת מחדל")}
+              {tr(locale, "Add item to Saved List", "הוספת פריט לרשימה השמורה")}
             </button>
           </div>
         </form>
       </section>
 
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
-        <h2 className="text-lg font-semibold text-slate-900">{tr(locale, "Your default items", "פריטי ברירת המחדל שלך")}</h2>
+        <h2 className="text-lg font-semibold text-slate-900">{tr(locale, "Your Saved List items", "פריטי הרשימה השמורה שלך")}</h2>
 
         {!defaults?.length ? (
           <p className="mt-3 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600">
-            {tr(locale, "No defaults yet. Create one above.", "אין עדיין ברירות מחדל. אפשר ליצור אחת למעלה.")}
+            {tr(locale, "Your saved list is empty. Create an item above.", "הרשימה השמורה שלך ריקה. אפשר ליצור פריט למעלה.")}
           </p>
         ) : (
           <div className="mt-4 space-y-3">

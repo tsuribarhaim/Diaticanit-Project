@@ -10,7 +10,13 @@ import {
   type DailyReportMetrics,
   type DailyReportParseResult,
 } from "@/lib/daily-report";
-import { CHART_EXTRA_METRIC_IDS, type DailyReportChartExtraMetric, type DailyReportChartPreferences } from "@/lib/daily-report-chart-preferences";
+import {
+  CHART_CORE_METRIC_IDS,
+  CHART_EXTRA_METRIC_IDS,
+  type DailyReportChartCoreMetric,
+  type DailyReportChartExtraMetric,
+  type DailyReportChartPreferences,
+} from "@/lib/daily-report-chart-preferences";
 import { parseDailyReportPhotoWithAi, parseDailyReportWithAi } from "@/lib/ai/daily-report";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
@@ -276,13 +282,17 @@ export async function saveDailyReportAction(
   // heuristic/AI text mode is selected - the mode radios only apply when no
   // photo is present.
   const mealPhotoFile = mealPhotoEntry instanceof File && mealPhotoEntry.size > 0 ? mealPhotoEntry : null;
+  // A weight-only entry (no food/exercise content at all) is a legitimate
+  // way to just log today's weight, so it bypasses the "add something"
+  // requirement below.
+  const hasWeightEntry = Boolean(formData.get("reported_weight_kg")?.toString().trim());
 
-  if (!reportText && selectedDefaultIds.length === 0 && !mealPhotoFile) {
+  if (!reportText && selectedDefaultIds.length === 0 && !mealPhotoFile && !hasWeightEntry) {
     return {
       error: tr(
         locale,
-        "Add free text, a meal photo, select at least one default, or a combination.",
-        "יש להוסיף טקסט חופשי, תמונת ארוחה, לבחור לפחות ברירת מחדל אחת, או שילוב ביניהם.",
+        "Add free text, a meal photo, an item from your saved list, a weight, or a combination.",
+        "יש להוסיף טקסט חופשי, תמונת ארוחה, פריט מהרשימה השמורה, משקל, או שילוב ביניהם.",
       ),
     };
   }
@@ -702,6 +712,25 @@ export async function saveDailyReportAction(
     return { error: insertError.message };
   }
 
+  // Keep the profile's weight in sync with whatever the user most recently
+  // logged, so other features that read it (BMI/safety checks when
+  // generating targets, the compose form's own default) reflect reality
+  // instead of a stale onboarding-time value. Best-effort: a failure here
+  // shouldn't undo an already-successful report save.
+  if (reportedWeightKg !== null && !reportedWeightNotPersisted) {
+    const { error: profileUpdateError } = await supabase
+      .from("user_profile")
+      .update({ weight_kg: reportedWeightKg })
+      .eq("user_id", user.id);
+
+    if (profileUpdateError) {
+      logServerError("dailyReport.save", "profile_weight_sync_failed", {
+        userId: user.id,
+        error: profileUpdateError.message,
+      });
+    }
+  }
+
   revalidatePath("/app/daily-report");
   revalidatePath("/app/targets");
 
@@ -772,7 +801,7 @@ export async function addReportToDefaultsAction(formData: FormData): Promise<voi
   if (!reportId) {
     redirect(
       buildDailyReportRedirectPath({
-        error: tr(locale, "Missing report id for adding default.", "מזהה הדיווח חסר להוספת ברירת מחדל."),
+        error: tr(locale, "Missing report id for saving to your list.", "מזהה הדיווח חסר לשמירה ברשימה."),
       }),
     );
   }
@@ -789,13 +818,32 @@ export async function addReportToDefaultsAction(formData: FormData): Promise<voi
   if (reportError || !reportRow) {
     redirect(
       buildDailyReportRedirectPath({
-        error: tr(locale, "Daily report not found for default creation.", "הדיווח היומי לא נמצא ליצירת ברירת מחדל."),
+        error: tr(locale, "Daily report not found for saving to your list.", "הדיווח היומי לא נמצא לשמירה ברשימה."),
       }),
     );
   }
 
   const fallbackName = `Saved report ${new Date(reportRow.report_at).toISOString().slice(0, 10)}`;
   const defaultName = customName || fallbackName;
+
+  const { data: existingNameMatch } = await supabase
+    .from("user_default_items")
+    .select("id")
+    .eq("user_id", user.id)
+    .ilike("name", defaultName)
+    .maybeSingle();
+
+  if (existingNameMatch) {
+    redirect(
+      buildDailyReportRedirectPath({
+        error: tr(
+          locale,
+          `An item named "${defaultName}" is already in your saved list. Please choose a different name.`,
+          `פריט בשם "${defaultName}" כבר קיים ברשימה השמורה שלך. יש לבחור שם אחר.`,
+        ),
+      }),
+    );
+  }
 
   const { error: insertError } = await supabase
     .from("user_default_items")
@@ -839,7 +887,7 @@ export async function addReportToDefaultsAction(formData: FormData): Promise<voi
     });
     redirect(
       buildDailyReportRedirectPath({
-        error: tr(locale, "Could not add this report to defaults.", "לא ניתן להוסיף דיווח זה לברירות המחדל."),
+        error: tr(locale, "Could not add this report to your Saved List.", "לא ניתן להוסיף דיווח זה לרשימה השמורה."),
       }),
     );
   }
@@ -848,7 +896,7 @@ export async function addReportToDefaultsAction(formData: FormData): Promise<voi
   revalidatePath("/app/daily-report/defaults");
 
   redirect(
-    buildDailyReportRedirectPath({ notice: tr(locale, "Report was added to defaults.", "הדיווח נוסף לברירות המחדל.") }),
+    buildDailyReportRedirectPath({ notice: tr(locale, "Report was added to your Saved List.", "הדיווח נוסף לרשימה השמורה.") }),
   );
 }
 
@@ -864,13 +912,26 @@ export async function updateDailyReportChartPreferencesAction(formData: FormData
 
   const locale = await resolveDailyReportLocale(supabase, user.id);
 
+  const coreMetrics = formData
+    .getAll("core_metric")
+    .map((value) => value.toString())
+    .filter((id): id is DailyReportChartCoreMetric => CHART_CORE_METRIC_IDS.includes(id as DailyReportChartCoreMetric));
   const extraMetrics = formData
     .getAll("extra_metric")
     .map((value) => value.toString())
     .filter((id): id is DailyReportChartExtraMetric => CHART_EXTRA_METRIC_IDS.includes(id as DailyReportChartExtraMetric));
   const showWeightTrend = formData.get("show_weight_trend")?.toString() === "on";
 
-  const preferences: DailyReportChartPreferences = { extraMetrics, showWeightTrend };
+  // `customized: true` marks that the user has explicitly saved a selection
+  // at least once, so an intentionally empty one (every box unchecked) is
+  // respected instead of being indistinguishable from a pristine, never-
+  // configured row - see normalizeDailyReportChartPreferences.
+  const preferences: DailyReportChartPreferences & { customized: true } = {
+    customized: true,
+    coreMetrics,
+    extraMetrics,
+    showWeightTrend,
+  };
 
   const { error } = await supabase
     .from("user_profile")
