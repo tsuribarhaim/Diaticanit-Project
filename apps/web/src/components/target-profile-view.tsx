@@ -47,18 +47,42 @@ function evaluateEnergyImbalanceRisk({
   };
 }
 
+/**
+ * The underlying min/max range is still generated and stored in full (and
+ * shown here on hover) - but a range reads as two numbers to hit, which is
+ * one too many for an at-a-glance daily target. A single representative
+ * value is more correct only when it's derived the right way per metric:
+ * - added_sugar and sat_fat are always generated with min=0 by design (see
+ *   generateHeuristicTargetProfile/the AI prompt's DRI-style rules) -
+ *   they're pure ceilings ("stay under"), not a band to aim for the middle
+ *   of, so the max is shown as a limit rather than averaging it with 0.
+ * - Every other metric has a genuine, meaningful non-zero floor (e.g.
+ *   fiber's 28g minimum, sodium's 1200-1500mg baseline), so the midpoint is
+ *   a fair single "aim for this" number.
+ */
+function singleTargetValue(row: MetricRow, locale: AppLocale): string {
+  const unitLabel = formatMeasurementUnit(getNutrientReference(row.id)?.unit ?? "", locale);
+
+  if (row.min === 0) {
+    return `${tr(locale, "Up to", "עד")} ${formatNumberForLocale(row.max, locale, { maximumFractionDigits: 1 })} ${unitLabel}`;
+  }
+
+  const midpoint = (row.min + row.max) / 2;
+  return `${formatNumberForLocale(midpoint, locale, { maximumFractionDigits: 1 })} ${unitLabel}`;
+}
+
 function MetricRowView({ row, locale }: { row: MetricRow; locale: AppLocale }) {
   const reference = getNutrientReference(row.id);
   if (!reference) return null;
 
   const unitLabel = formatMeasurementUnit(reference.unit, locale);
-  const rangeText = `${formatNumberForLocale(row.min, locale, { maximumFractionDigits: 1 })}–${formatNumberForLocale(row.max, locale, { maximumFractionDigits: 1 })} ${unitLabel}`;
+  const fullRangeText = `${formatNumberForLocale(row.min, locale, { maximumFractionDigits: 1 })}–${formatNumberForLocale(row.max, locale, { maximumFractionDigits: 1 })} ${unitLabel}`;
 
   return (
     <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3">
       <div>
         <p className="text-xs uppercase tracking-wide text-slate-500">{reference.nameLabel[locale]}</p>
-        <p className="mt-1 text-lg font-semibold text-slate-900">{rangeText}</p>
+        <p className="mt-1 text-lg font-semibold text-slate-900">{singleTargetValue(row, locale)}</p>
       </div>
       <div className="group relative">
         <span
@@ -70,7 +94,9 @@ function MetricRowView({ row, locale }: { row: MetricRow; locale: AppLocale }) {
           ?
         </span>
         <div className="invisible absolute end-0 z-10 mt-2 w-64 rounded-xl border border-amber-300 bg-amber-50 p-3 text-start text-xs text-amber-900 opacity-0 shadow-lg transition-opacity duration-150 group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
-          <p className="font-semibold text-amber-900">{tr(locale, "Role", "תפקיד")}</p>
+          <p className="font-semibold text-amber-900">{tr(locale, "Full daily range", "טווח יומי מלא")}</p>
+          <p className="mt-1">{fullRangeText}</p>
+          <p className="mt-2 font-semibold text-amber-900">{tr(locale, "Role", "תפקיד")}</p>
           <p className="mt-1">{reference.roleDescription[locale]}</p>
           <p className="mt-2 font-semibold text-amber-900">{tr(locale, "Food examples", "דוגמאות מזון")}</p>
           <p className="mt-1">{reference.foodExamples[locale]}</p>

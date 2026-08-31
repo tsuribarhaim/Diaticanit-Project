@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
-import { DailyReportDefaultsPicker, type DailyReportDefaultItem } from "@/components/daily-report-defaults-picker";
-import { tr, type AppLocale } from "@/lib/locale";
+import { DailyReportDefaultsPicker, type DailyReportDefaultItem, type SelectedSavedListItem } from "@/components/daily-report-defaults-picker";
+import { SubmitButton } from "@/components/daily-report-submit-button";
+import { formatDefaultUnit, tr, type AppLocale } from "@/lib/locale";
 
 export type { DailyReportDefaultItem };
 
@@ -39,24 +41,34 @@ function readFileAsBase64(file: File): Promise<string> {
 }
 
 /**
- * The sole way to describe a day's food/drink/exercise: a back-and-forth
- * conversation with the AI, which can also see an attached photo and
- * reflect on it immediately, plus a compact picker for quick-adding saved
- * defaults. This panel never saves anything itself - it continuously
- * reports the full transcript up to the parent via onTranscriptChange,
- * which keeps a hidden report_text field (and whatever photo/defaults are
- * attached here) in sync so the page's single "Conclude & Report" button -
- * and everything it already does (safety gate, AI parsing) - handles it
- * exactly as if this had been typed/attached directly into that field.
+ * Describing a day's food/drink/exercise, either as a back-and-forth
+ * conversation with the AI (which can also see an attached photo and
+ * reflect on it immediately), or as a quick one-shot save for something
+ * simple that needs no discussion (e.g. "a cup of water") - a compact
+ * picker for quick-adding saved-list items is also available either way.
+ * This panel never saves anything itself for the "Send" path - it
+ * continuously reports the full transcript up to the parent via
+ * onTranscriptChange, which keeps a hidden report_text field (and whatever
+ * photo/defaults are attached here) in sync so "Conclude & Report" - and
+ * everything it already does (safety gate, AI parsing) - handles it exactly
+ * as if this had been typed/attached directly into that field. The
+ * "Conclude & Report" button itself is rendered here too (right under the
+ * compose row) so the fast path never requires a Send round-trip first: its
+ * click handler folds in whatever's currently typed but not yet sent before
+ * the form submits, so typing something and immediately saving just works.
  */
 export function DailyReportChatPanel({
   locale,
   defaultItems,
   onTranscriptChange,
+  saveError,
+  saveSuccess,
 }: {
   locale: AppLocale;
   defaultItems: DailyReportDefaultItem[];
   onTranscriptChange: (text: string) => void;
+  saveError?: string;
+  saveSuccess?: string;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState("");
@@ -65,7 +77,7 @@ export function DailyReportChatPanel({
   const [retryAction, setRetryAction] = useState<(() => void) | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
-  const [defaultsSummary, setDefaultsSummary] = useState<string[]>([]);
+  const [selectedSavedListItems, setSelectedSavedListItems] = useState<SelectedSavedListItem[]>([]);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
@@ -90,7 +102,7 @@ export function DailyReportChatPanel({
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages]);
+  }, [messages, selectedSavedListItems]);
 
   useEffect(() => {
     const transcript = messages.map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`).join("\n");
@@ -219,6 +231,35 @@ export function DailyReportChatPanel({
     setIsStreaming(false);
   }
 
+  /**
+   * "Conclude & Report" reads report_text from the parent's `reportText`
+   * state, which is only ever updated (via onTranscriptChange) when
+   * `messages` changes - i.e. after a real Send round-trip. Typing
+   * something and clicking Save without ever hitting Send would otherwise
+   * submit whatever was typed in *previous* messages while silently
+   * dropping the not-yet-sent text sitting in the box. This folds that
+   * pending text in as one final line right before the native form
+   * submission fires, so a plain type-then-save works without needing a
+   * conversational reply first. flushSync is required here (not just
+   * setState) because the button is a native type="submit" - the browser
+   * reads the form's current field values immediately after this onClick
+   * returns, so the hidden report_text textarea's DOM value must already
+   * reflect the merged text by then, not on React's next scheduled render.
+   */
+  function handleQuickSave() {
+    const trimmed = inputValue.trim();
+    if (!trimmed) return;
+
+    const finalMessages: ChatMessage[] = [...messages, { role: "user", content: trimmed }];
+    const transcript = finalMessages.map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`).join("\n");
+
+    flushSync(() => {
+      setMessages(finalMessages);
+      onTranscriptChange(transcript);
+    });
+    setInputValue("");
+  }
+
   async function handlePhotoSelected(file: File | null) {
     setPhotoError(null);
     if (!file) return;
@@ -309,6 +350,18 @@ export function DailyReportChatPanel({
               </div>
             </div>
           ))}
+          {selectedSavedListItems.length ? (
+            <div className="flex flex-col items-end">
+              <div className="max-w-[85%] rounded-2xl border-2 border-dashed border-teal-300 bg-teal-50 px-3 py-2 text-sm text-teal-900">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-teal-700">
+                  {tr(locale, "From your saved list", "מהרשימה השמורה")}
+                </p>
+                {selectedSavedListItems
+                  .map((item) => `${item.name} (${item.quantity} ${formatDefaultUnit(item.unit, locale)})`)
+                  .join(", ")}
+              </div>
+            </div>
+          ) : null}
           <div ref={messagesEndRef} />
         </div>
 
@@ -337,58 +390,74 @@ export function DailyReportChatPanel({
             this input after the first re-render. Enter-to-send and the
             button's onClick cover submission without needing form
             semantics. */}
-        <div className="flex items-end gap-2 border-t border-slate-200 p-3">
-          <label
-            htmlFor="daily-report-chat-photo-input"
-            aria-label={tr(locale, "Take a photo of your plate", "צילום תמונה של הצלחת")}
-            title={tr(locale, "Take a photo of your plate", "צילום תמונה של הצלחת")}
-            className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border border-teal-300 text-teal-700 hover:bg-teal-50 focus-within:outline-none focus-within:ring-2 focus-within:ring-teal-600"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
-              <path d="M9 3h6l1.5 3H20a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h3.5L9 3Z" />
-              <circle cx="12" cy="13" r="3.5" />
-            </svg>
-          </label>
-          <label
-            aria-label={tr(locale, "Choose an existing photo or file", "בחירת תמונה או קובץ קיים")}
-            title={tr(locale, "Choose an existing photo or file", "בחירת תמונה או קובץ קיים")}
-            className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border border-teal-300 text-teal-700 hover:bg-teal-50 focus-within:outline-none focus-within:ring-2 focus-within:ring-teal-600"
-            onClick={() => photoGalleryInputRef.current?.click()}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <circle cx="8.5" cy="8.5" r="1.5" />
-              <path d="m21 15-5-5L5 21" />
-            </svg>
-          </label>
+        {/* On a narrow portrait phone, three 36px icon buttons plus the Send
+            button leave almost no width for the textarea itself. Below the
+            `sm` breakpoint (roughly: narrower than a phone turned
+            sideways), the icons wrap onto their own row via `sm:contents`
+            un-wrapping them back into this same flex row once there's
+            enough width - so landscape/tablet/desktop keep the original
+            single-row layout unchanged. */}
+        <div className="flex flex-col gap-2 border-t border-slate-200 p-3 sm:flex-row sm:items-end">
+          <div className="flex items-center gap-2 sm:contents">
+            <label
+              htmlFor="daily-report-chat-photo-input"
+              aria-label={tr(locale, "Take a photo of your plate", "צילום תמונה של הצלחת")}
+              title={tr(locale, "Take a photo of your plate", "צילום תמונה של הצלחת")}
+              className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border border-teal-300 text-teal-700 hover:bg-teal-50 focus-within:outline-none focus-within:ring-2 focus-within:ring-teal-600"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
+                <path d="M9 3h6l1.5 3H20a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h3.5L9 3Z" />
+                <circle cx="12" cy="13" r="3.5" />
+              </svg>
+            </label>
+            <label
+              aria-label={tr(locale, "Choose an existing photo or file", "בחירת תמונה או קובץ קיים")}
+              title={tr(locale, "Choose an existing photo or file", "בחירת תמונה או קובץ קיים")}
+              className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border border-teal-300 text-teal-700 hover:bg-teal-50 focus-within:outline-none focus-within:ring-2 focus-within:ring-teal-600"
+              onClick={() => photoGalleryInputRef.current?.click()}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <path d="m21 15-5-5L5 21" />
+              </svg>
+            </label>
 
-          <DailyReportDefaultsPicker locale={locale} defaultItems={defaultItems} onAdd={setDefaultsSummary} dropDirection="up" />
+            <DailyReportDefaultsPicker
+              locale={locale}
+              defaultItems={defaultItems}
+              onSelectionChange={setSelectedSavedListItems}
+              dropDirection="up"
+            />
+          </div>
 
-          <textarea
-            ref={textareaRef}
-            value={inputValue}
-            onChange={(event) => setInputValue(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void sendMessage(inputValue);
-              }
-            }}
-            rows={2}
-            maxLength={500}
-            disabled={isStreaming}
-            placeholder={tr(locale, "Type a message...", "כתבו הודעה...")}
-            className="flex-1 resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 disabled:opacity-70"
-          />
-          <button
-            type="button"
-            disabled={isStreaming || !inputValue.trim()}
-            onClick={() => void sendMessage(inputValue)}
-            onMouseDown={(event) => event.preventDefault()}
-            className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800"
-          >
-            {isStreaming ? <Spinner className="h-4 w-4 animate-spin" /> : tr(locale, "Send", "שליחה")}
-          </button>
+          <div className="flex items-end gap-2 sm:contents">
+            <textarea
+              ref={textareaRef}
+              value={inputValue}
+              onChange={(event) => setInputValue(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void sendMessage(inputValue);
+                }
+              }}
+              rows={2}
+              maxLength={500}
+              disabled={isStreaming}
+              placeholder={tr(locale, "Type a message...", "כתבו הודעה...")}
+              className="flex-1 resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 disabled:opacity-70"
+            />
+            <button
+              type="button"
+              disabled={isStreaming || !inputValue.trim()}
+              onClick={() => void sendMessage(inputValue)}
+              onMouseDown={(event) => event.preventDefault()}
+              className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800"
+            >
+              {isStreaming ? <Spinner className="h-4 w-4 animate-spin" /> : tr(locale, "Send", "שליחה")}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -411,11 +480,22 @@ export function DailyReportChatPanel({
         </div>
       ) : null}
 
-      {defaultsSummary.length ? (
-        <div className="border-t border-teal-200 bg-teal-50 px-3 py-2 text-xs text-teal-800">
-          {tr(locale, "From defaults", "מברירות מחדל")}: {defaultsSummary.join(", ")}
-        </div>
-      ) : null}
+      <div className="border-t border-slate-200 p-3">
+        <p className="mb-2 text-xs text-slate-500">
+          {tr(
+            locale,
+            "Chatting is optional - type something simple and tap Conclude & Report directly to save it right away.",
+            "השיחה אופציונלית - אפשר להקליד משהו פשוט וללחוץ ישירות על סיום ודיווח כדי לשמור מיד.",
+          )}
+        </p>
+        {saveError ? (
+          <p className="mb-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{saveError}</p>
+        ) : null}
+        {saveSuccess ? (
+          <p className="mb-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{saveSuccess}</p>
+        ) : null}
+        <SubmitButton locale={locale} onClick={handleQuickSave} />
+      </div>
     </div>
   );
 }

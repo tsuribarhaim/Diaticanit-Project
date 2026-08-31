@@ -26,7 +26,7 @@ export function AppNav({ locale }: { locale: AppLocale }) {
     },
     {
       href: "/app/daily-report/defaults",
-      label: tr(locale, "Manage defaults", "ניהול ברירות מחדל"),
+      label: tr(locale, "Manage Saved List", "ניהול רשימה שמורה"),
       isActive: pathname?.startsWith("/app/daily-report/defaults") ?? false,
     },
   ];

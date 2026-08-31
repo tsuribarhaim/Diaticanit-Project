@@ -408,6 +408,20 @@ function parseExerciseMinutes(segment: string): number {
   return Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
 }
 
+// A step count (e.g. from a phone pedometer) has no dedicated field in this
+// schema - rather than dropping it when no duration is stated, it's folded
+// into an estimated duration (at a typical walking cadence) so it still
+// produces a real exercise entry, and the literal step count is kept in the
+// item's name below so what the user actually entered isn't lost.
+const AVERAGE_WALKING_STEPS_PER_MINUTE = 100;
+
+function parseExerciseSteps(segment: string): number {
+  const match = segment.match(/(\d[\d,]*)\s*(steps?|צעדים|צעד)/i);
+  if (!match) return 0;
+  const value = Number(match[1].replace(/,/g, ""));
+  return Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
+}
+
 function estimateBurnKcal({ met, weightKg, minutes }: { met: number; weightKg: number; minutes: number }): number {
   if (minutes <= 0 || weightKg <= 0) return 0;
   const kcalPerMinute = (met * 3.5 * weightKg) / 200;
@@ -545,10 +559,13 @@ export function parseDailyReportText({
     let matchedExercise = false;
     for (const profile of exerciseProfiles) {
       if (profile.aliases.some((alias) => segment.includes(alias))) {
-        const minutes = parseExerciseMinutes(segment);
+        const statedMinutes = parseExerciseMinutes(segment);
+        const steps = parseExerciseSteps(segment);
+        const minutes = statedMinutes > 0 ? statedMinutes : steps > 0 ? Math.round(steps / AVERAGE_WALKING_STEPS_PER_MINUTE) : 0;
         if (minutes > 0) {
+          const name = statedMinutes === 0 && steps > 0 ? `${profile.aliases[0]} (${steps} steps)` : profile.aliases[0];
           exerciseItems.push({
-            name: profile.aliases[0],
+            name,
             minutes,
             estimatedBurnKcal: estimateBurnKcal({ met: profile.met, weightKg, minutes }),
           });

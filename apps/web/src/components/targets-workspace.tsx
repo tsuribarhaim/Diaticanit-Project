@@ -32,7 +32,19 @@ function GenerateSubmitButton({ locale, mode }: { locale: AppLocale; mode: "init
   );
 }
 
-export function LockSubmitButton({ locale, disabled }: { locale: AppLocale; disabled?: boolean }) {
+export function LockSubmitButton({
+  locale,
+  disabled,
+  disabledReason,
+}: {
+  locale: AppLocale;
+  disabled?: boolean;
+  /** Why the button is disabled, when it's not for the default "no changes"
+   * reason - e.g. a new preview is still generating, so locking now would
+   * save the stale preview shown underneath instead of the one being
+   * computed. */
+  disabledReason?: "generating";
+}) {
   const { pending } = useFormStatus();
   const isDisabled = pending || disabled;
 
@@ -40,7 +52,13 @@ export function LockSubmitButton({ locale, disabled }: { locale: AppLocale; disa
     <button
       type="submit"
       disabled={isDisabled}
-      title={disabled ? tr(locale, "No changes to save yet.", "אין שינויים לשמירה כרגע.") : undefined}
+      title={
+        disabled
+          ? disabledReason === "generating"
+            ? tr(locale, "Please wait for the update to finish before saving.", "יש להמתין לסיום העדכון לפני השמירה.")
+            : tr(locale, "No changes to save yet.", "אין שינויים לשמירה כרגע.")
+          : undefined
+      }
       className={`inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed ${
         disabled && !pending ? "bg-slate-300 text-slate-500" : "bg-emerald-700 hover:bg-emerald-800 disabled:opacity-70"
       }`}
@@ -81,7 +99,7 @@ export function TargetsWorkspace({
         preview: initialPreview,
       }
     : {};
-  const [generateState, generateFormAction] = useActionState(generateTargetsAction, initialGenerateState);
+  const [generateState, generateFormAction, isGeneratePending] = useActionState(generateTargetsAction, initialGenerateState);
   const [lockState, lockFormAction] = useActionState(lockTargetsAction, {} as TargetsActionState);
   const [isDismissingProfileChange, setIsDismissingProfileChange] = useState(false);
   const { setHasUnsavedPreview } = useUnsavedPreview();
@@ -156,7 +174,11 @@ export function TargetsWorkspace({
                   <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{lockState.error}</p>
                 ) : null}
 
-                <LockSubmitButton locale={locale} disabled={isAdjustWithNoChanges} />
+                <LockSubmitButton
+                  locale={locale}
+                  disabled={isAdjustWithNoChanges || isGeneratePending}
+                  disabledReason={isGeneratePending ? "generating" : undefined}
+                />
               </form>
             ) : null}
           </>

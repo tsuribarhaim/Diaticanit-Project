@@ -124,7 +124,7 @@ export default async function TargetsPage() {
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 py-10">
       <section className="rounded-2xl border border-slate-200 bg-white p-6">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "Targets", "יעדים")}</h1>
+          <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "Daily Targets", "יעדים יומיים")}</h1>
           <p className="mt-2 text-sm text-slate-600">
             {tr(
               locale,
