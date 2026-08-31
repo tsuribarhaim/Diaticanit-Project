@@ -7,6 +7,7 @@ import type {
   ParsedFoodItem,
 } from "@/lib/daily-report";
 import type { AiExtractionConfig } from "@/lib/ai/env";
+import { callAiChatCompletion, type AiChatMessage } from "@/lib/ai/provider-client";
 import type { AppLocale } from "@/lib/locale";
 
 const numberFromUnknown = z.preprocess((value) => {
@@ -226,21 +227,12 @@ function computeMetrics({
   };
 }
 
-function summarizeAiError(errorBody: string, status: number): string {
-  return `AI daily report request failed (${status}): ${errorBody.slice(0, 240)}`;
-}
-
-type ChatMessage = {
-  role: "system" | "user";
-  content: string | Array<Record<string, unknown>>;
-};
-
 async function callDailyReportChatCompletion({
   config,
   messages,
 }: {
   config: AiExtractionConfig;
-  messages: ChatMessage[];
+  messages: AiChatMessage[];
 }): Promise<DailyReportParseResult> {
   if (config.provider === "github") {
     throw new Error(
@@ -248,65 +240,7 @@ async function callDailyReportChatCompletion({
     );
   }
 
-  const requestBody = {
-    model: config.model,
-    temperature: 0,
-    response_format: { type: "json_object" },
-    messages,
-  };
-
-  const normalizedBaseUrl = config.baseUrl.replace(/\/+$/, "");
-  const candidateUrls = normalizedBaseUrl.endsWith("/v1")
-    ? [`${normalizedBaseUrl}/chat/completions`]
-    : [`${normalizedBaseUrl}/chat/completions`, `${normalizedBaseUrl}/v1/chat/completions`];
-
-  let response: Response | null = null;
-  let lastStatus = 0;
-  let lastBody = "";
-
-  for (const candidateUrl of candidateUrls) {
-    response = await fetch(candidateUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    if (response.ok) {
-      break;
-    }
-
-    const body = await response.text();
-    lastStatus = response.status;
-    lastBody = body;
-
-    if (response.status !== 404) {
-      throw new Error(summarizeAiError(body, response.status));
-    }
-  }
-
-  if (!response?.ok) {
-    throw new Error(summarizeAiError(lastBody, lastStatus || 404));
-  }
-
-  const payload = (await response.json()) as {
-    choices?: Array<{
-      message?: {
-        content?: string | Array<{ type?: string; text?: string }>;
-      };
-    }>;
-  };
-
-  const messageContent = payload.choices?.[0]?.message?.content;
-  const contentText = Array.isArray(messageContent)
-    ? messageContent
-        .map((item) => (typeof item?.text === "string" ? item.text : ""))
-        .join("\n")
-    : typeof messageContent === "string"
-      ? messageContent
-      : "";
+  const contentText = await callAiChatCompletion({ config, messages, jsonMode: true });
 
   const parsed = aiDailyReportSchema.parse(parseJsonPayload(contentText));
 

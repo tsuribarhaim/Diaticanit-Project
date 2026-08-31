@@ -1,4 +1,5 @@
 import type { AiExtractionConfig } from "@/lib/ai/env";
+import { streamAiChatCompletion } from "@/lib/ai/provider-client";
 import type { DailyReportMetrics } from "@/lib/daily-report";
 import type { AppLocale } from "@/lib/locale";
 
@@ -97,15 +98,17 @@ function buildTodaysTotalsSummary(totals: DailyReportMetrics): string {
 }
 
 /**
- * Opens a raw streaming chat-completions request for a conversational reply
+ * Opens a streaming chat-completions request for a conversational reply
  * while the user describes their day in free text (optionally with a photo
  * attached to this turn). Mirrors openChatReplyStream in targets-chat.ts: the
  * model prefixes its reply with an 'ACTIONABLE '/'INFO ' marker (stripped
  * before the user sees it) so the client can show a light "ready to save"
  * hint without a second AI round-trip - saving itself always goes through
  * the normal report_text/meal_photo save action regardless of this marker.
- * Returns the raw fetch Response so the caller can pipe/transform its SSE
- * body directly.
+ * Returns a Response whose SSE body is always OpenAI-shaped (see
+ * streamAiChatCompletion in provider-client.ts) regardless of which
+ * provider is actually configured, so the caller's parsing never needs to
+ * know the difference.
  */
 export async function openDailyReportChatReplyStream({
   config,
@@ -151,13 +154,9 @@ export async function openDailyReportChatReplyStream({
       ]
     : userContentText;
 
-  const requestBody = {
-    model: config.model,
-    temperature: 0.4,
-    stream: true,
-    messages: [
+  const messages = [
       {
-        role: "system",
+        role: "system" as const,
         content: [
           "You are a warm, concise assistant helping a user log what they ate, drank, or exercised today in a Personal Health Companion app, and helping them plan the rest of their day to meet their targets. This is a conversation only - your reply never saves anything by itself; the user saves whenever they choose using a separate Save button.",
           "CONTEXT: every message includes user_profile_summary (dietary preference, allergies, medical conditions, pregnancy/lactation status), daily_targets_summary (this user's target ranges), and todays_logged_totals_summary (what they've already logged today so far, computed by the app). Always use this context instead of asking the user to repeat it - e.g. if they ask what to eat for lunch, compute their remaining needs yourself from daily_targets_summary minus todays_logged_totals_summary and suggest something concrete that fits, taking dietary_preference and allergies/medical_conditions into account.",
@@ -173,21 +172,10 @@ export async function openDailyReportChatReplyStream({
       },
       ...chatHistory.map((message) => ({ role: message.role, content: message.content })),
       {
-        role: "user",
+        role: "user" as const,
         content: userMessageContent,
       },
-    ],
-  };
+    ];
 
-  const normalizedBaseUrl = config.baseUrl.replace(/\/+$/, "");
-  const url = normalizedBaseUrl.endsWith("/v1") ? `${normalizedBaseUrl}/chat/completions` : `${normalizedBaseUrl}/v1/chat/completions`;
-
-  return fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify(requestBody),
-  });
+  return streamAiChatCompletion({ config, messages, temperature: 0.4 });
 }

@@ -6,9 +6,11 @@ import { redirect } from "next/navigation";
 import { parseDailyReportWithAi } from "@/lib/ai/daily-report";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { parseDailyReportText, type DailyReportMetrics } from "@/lib/daily-report";
-import { normalizeLocale, tr } from "@/lib/locale";
+import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
+
+export type SavedListIngredient = { name: string; kind: string; quantity: number; unit: string };
 
 function buildDefaultsRedirectPath(params: { error?: string }): string {
   const search = new URLSearchParams();
@@ -30,26 +32,90 @@ function round(value: number, digits = 2): number {
   return Math.round(value * factor) / factor;
 }
 
-function buildDefaultParseText({
-  name,
-  kind,
-  quantity,
-  unit,
-}: {
-  name: string;
-  kind: string;
-  quantity: number;
-  unit: string;
-}): string {
-  if (kind === "exercise") {
-    return `${name} ${quantity} minutes`;
+/**
+ * The add/edit form renders one repeatable "ingredient row" (name, kind,
+ * quantity, unit) per real ingredient, all sharing the same field names -
+ * formData.getAll() naturally collects them as parallel arrays in DOM
+ * order, so no indexed field names are needed. Rows left blank (no name
+ * typed) are dropped.
+ */
+function extractIngredientsFromFormData(formData: FormData): SavedListIngredient[] {
+  const names = formData.getAll("ingredient_name").map((value) => value.toString().trim());
+  const kinds = formData.getAll("ingredient_kind").map((value) => value.toString().trim());
+  const quantities = formData.getAll("ingredient_quantity");
+  const units = formData.getAll("ingredient_unit").map((value) => value.toString().trim());
+
+  const ingredients: SavedListIngredient[] = [];
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    if (!name) continue;
+    ingredients.push({
+      name,
+      kind: kinds[i] || "food",
+      quantity: Math.max(0, toNumber(quantities[i] ?? null, 1)),
+      unit: units[i] || "unit",
+    });
+  }
+  return ingredients;
+}
+
+/**
+ * A saved list item is either a single thing (1 ingredient row - the common
+ * case, e.g. "Eggs") or a bundle of several under one name (e.g. "My
+ * Breakfast" = eggs + salad + toast + yogurt). For a single ingredient, the
+ * bundle's own name/kind/quantity/unit default directly to that
+ * ingredient's, so nothing extra needs to be typed - exactly today's
+ * behavior. For multiple ingredients there's no single obvious
+ * name/quantity/unit, so an explicit bundle name is required and the
+ * quantity becomes "how many servings of the whole bundle" (1 serving by
+ * default) rather than any one ingredient's own unit.
+ */
+function resolveBundleFields(
+  explicitName: string,
+  ingredients: SavedListIngredient[],
+  locale: AppLocale,
+): { name: string; kind: string; defaultQuantity: number; defaultUnit: string } | { error: string } {
+  if (ingredients.length === 0) {
+    return { error: tr(locale, "Add at least one ingredient.", "יש להוסיף לפחות מרכיב אחד.") };
   }
 
-  if (kind === "hydration") {
-    return `${name} ${quantity} ${unit} water`;
+  if (ingredients.length === 1) {
+    const only = ingredients[0];
+    return {
+      name: explicitName || only.name,
+      kind: only.kind,
+      defaultQuantity: only.quantity,
+      defaultUnit: only.unit,
+    };
   }
 
-  return `${name} ${quantity} ${unit}`;
+  if (!explicitName) {
+    return {
+      error: tr(
+        locale,
+        "Please name this saved item (e.g. \"My Breakfast\") since it bundles more than one ingredient.",
+        "יש לתת שם לפריט השמור הזה (למשל \"ארוחת הבוקר שלי\") מכיוון שהוא מאגד יותר ממרכיב אחד.",
+      ),
+    };
+  }
+
+  const uniqueKinds = new Set(ingredients.map((item) => item.kind));
+  return {
+    name: explicitName,
+    kind: uniqueKinds.size === 1 ? ingredients[0].kind : "custom",
+    defaultQuantity: 1,
+    defaultUnit: "serving",
+  };
+}
+
+function buildDefaultParseText(ingredients: SavedListIngredient[]): string {
+  return ingredients
+    .map(({ name, kind, quantity, unit }) => {
+      if (kind === "exercise") return `${name} ${quantity} minutes`;
+      if (kind === "hydration") return `${name} ${quantity} ${unit} water`;
+      return `${name} ${quantity} ${unit}`;
+    })
+    .join(", ");
 }
 
 type DefaultItemParseSnapshot = {
@@ -61,20 +127,16 @@ type DefaultItemParseSnapshot = {
 
 async function parseDefaultItemSnapshot({
   userId,
-  name,
-  kind,
-  quantity,
-  unit,
+  bundleName,
+  ingredients,
   weightKg,
 }: {
   userId: string;
-  name: string;
-  kind: string;
-  quantity: number;
-  unit: string;
+  bundleName: string;
+  ingredients: SavedListIngredient[];
   weightKg: number;
 }): Promise<DefaultItemParseSnapshot> {
-  const reportText = buildDefaultParseText({ name, kind, quantity, unit });
+  const reportText = buildDefaultParseText(ingredients);
   const aiConfig = getAiExtractionConfig();
 
   if (aiConfig) {
@@ -95,7 +157,7 @@ async function parseDefaultItemSnapshot({
       const message = error instanceof Error ? error.message : "Failed to parse default item with AI.";
       logServerError("dailyReport.defaults.parse", "ai_parse_failed", {
         userId,
-        defaultName: name,
+        defaultName: bundleName,
         error: message,
       });
     }
@@ -122,19 +184,21 @@ export async function addDefaultItemAction(formData: FormData): Promise<void> {
 
   if (!user) redirect("/auth/sign-in");
 
-  const name = formData.get("name")?.toString().trim();
-  const kind = formData.get("kind")?.toString() ?? "food";
-  if (!name) return;
-
-  const defaultQuantity = Math.max(0, toNumber(formData.get("default_quantity"), 1));
-  const defaultUnit = formData.get("default_unit")?.toString().trim() || "unit";
-
   const { data: profile } = await supabase
     .from("user_profile")
     .select("weight_kg, preferred_language")
     .eq("user_id", user.id)
     .maybeSingle();
   const locale = normalizeLocale(profile?.preferred_language);
+
+  const explicitName = formData.get("name")?.toString().trim() ?? "";
+  const ingredients = extractIngredientsFromFormData(formData);
+  const resolved = resolveBundleFields(explicitName, ingredients, locale);
+
+  if ("error" in resolved) {
+    redirect(buildDefaultsRedirectPath({ error: resolved.error }));
+  }
+  const { name, kind, defaultQuantity, defaultUnit } = resolved;
 
   const { data: existingNameMatch } = await supabase
     .from("user_default_items")
@@ -157,10 +221,8 @@ export async function addDefaultItemAction(formData: FormData): Promise<void> {
 
   const parsedSnapshot = await parseDefaultItemSnapshot({
     userId: user.id,
-    name,
-    kind,
-    quantity: defaultQuantity,
-    unit: defaultUnit,
+    bundleName: name,
+    ingredients,
     weightKg: toNumber(profile?.weight_kg, 0),
   });
 
@@ -170,6 +232,7 @@ export async function addDefaultItemAction(formData: FormData): Promise<void> {
     kind,
     default_quantity: defaultQuantity,
     default_unit: defaultUnit,
+    ingredients,
     parse_mode: parsedSnapshot.parseMode,
     parser_version: parsedSnapshot.parserVersion,
     parse_confidence: parsedSnapshot.parseConfidence,
@@ -209,12 +272,7 @@ export async function updateDefaultItemAction(formData: FormData): Promise<void>
   if (!user) redirect("/auth/sign-in");
 
   const id = formData.get("id")?.toString();
-  const name = formData.get("name")?.toString().trim();
-  const kind = formData.get("kind")?.toString() ?? "food";
-  if (!id || !name) return;
-
-  const defaultQuantity = Math.max(0, toNumber(formData.get("default_quantity"), 1));
-  const defaultUnit = formData.get("default_unit")?.toString().trim() || "unit";
+  if (!id) return;
 
   const { data: profile } = await supabase
     .from("user_profile")
@@ -222,6 +280,15 @@ export async function updateDefaultItemAction(formData: FormData): Promise<void>
     .eq("user_id", user.id)
     .maybeSingle();
   const locale = normalizeLocale(profile?.preferred_language);
+
+  const explicitName = formData.get("name")?.toString().trim() ?? "";
+  const ingredients = extractIngredientsFromFormData(formData);
+  const resolved = resolveBundleFields(explicitName, ingredients, locale);
+
+  if ("error" in resolved) {
+    redirect(buildDefaultsRedirectPath({ error: resolved.error }));
+  }
+  const { name, kind, defaultQuantity, defaultUnit } = resolved;
 
   const { data: existingNameMatch } = await supabase
     .from("user_default_items")
@@ -245,10 +312,8 @@ export async function updateDefaultItemAction(formData: FormData): Promise<void>
 
   const parsedSnapshot = await parseDefaultItemSnapshot({
     userId: user.id,
-    name,
-    kind,
-    quantity: defaultQuantity,
-    unit: defaultUnit,
+    bundleName: name,
+    ingredients,
     weightKg: toNumber(profile?.weight_kg, 0),
   });
 
@@ -259,6 +324,7 @@ export async function updateDefaultItemAction(formData: FormData): Promise<void>
       kind,
       default_quantity: defaultQuantity,
       default_unit: defaultUnit,
+      ingredients,
       parse_mode: parsedSnapshot.parseMode,
       parser_version: parsedSnapshot.parserVersion,
       parse_confidence: parsedSnapshot.parseConfidence,

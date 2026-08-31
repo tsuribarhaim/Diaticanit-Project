@@ -456,7 +456,7 @@ export default async function DailyReportPage({
   const { data: defaultItems } = await supabase
     .from("user_default_items")
     .select(
-      "id, name, kind, default_quantity, default_unit, is_active",
+      "id, name, kind, default_quantity, default_unit, ingredients, is_active",
     )
     .eq("user_id", user.id)
     .eq("is_active", true)

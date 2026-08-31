@@ -10,6 +10,11 @@ export type DailyReportDefaultItem = {
   kind: "food" | "hydration" | "exercise" | "custom";
   default_quantity: number;
   default_unit: string;
+  /** Present (length > 1) when this item bundles several ingredients under
+   * one name (e.g. "My Breakfast") - shown as a breakdown under the item's
+   * name so the user knows what's inside before selecting it. A single
+   * plain item has 0 or 1 entries here and shows no breakdown. */
+  ingredients?: Array<{ name: string; kind: string; quantity: number; unit: string }> | null;
   is_active: boolean;
 };
 
@@ -240,6 +245,13 @@ export function DailyReportDefaultsPicker({
                       <span className="mt-0.5 block text-xs text-slate-500">
                         {tr(locale, "Usual amount", "כמות רגילה")}: {item.default_quantity} {formatDefaultUnit(item.default_unit, locale)}
                       </span>
+                      {item.ingredients && item.ingredients.length > 1 ? (
+                        <span className="mt-0.5 block text-xs text-slate-400">
+                          {item.ingredients
+                            .map((ingredient) => `${ingredient.quantity} ${formatDefaultUnit(ingredient.unit, locale)} ${formatDefaultItemName(ingredient.name, locale)}`)
+                            .join(", ")}
+                        </span>
+                      ) : null}
                     </span>
                   </span>
                   <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${kindBadgeClass(item.kind)}`}>
