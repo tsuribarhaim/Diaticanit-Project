@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { AiExtractionConfig } from "@/lib/ai/env";
+import { callAiChatCompletion } from "@/lib/ai/provider-client";
 
 export type ProfileTextField = "medical_condition" | "medication";
 
@@ -213,87 +214,34 @@ export async function evaluateProfileTextWithAi({
     };
   }
 
-  const requestBody = {
-    model: config.model,
-    temperature: 0,
-    response_format: { type: "json_object" },
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are a healthcare intake text relevance validator. Do not diagnose. Return strict JSON only.",
-      },
-      {
-        role: "user",
-        content: buildUserPrompt({ field, text, locale }),
-      },
-    ],
-  };
-
-  const normalizedBaseUrl = config.baseUrl.replace(/\/+$/, "");
-  const candidateUrls = normalizedBaseUrl.endsWith("/v1")
-    ? [`${normalizedBaseUrl}/chat/completions`]
-    : [`${normalizedBaseUrl}/chat/completions`, `${normalizedBaseUrl}/v1/chat/completions`];
-
-  let response: Response | null = null;
-  let lastStatus = 0;
-  let lastBody = "";
-
-  for (const candidateUrl of candidateUrls) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT_MS);
-    try {
-      response = await fetch(candidateUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${config.apiKey}`,
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT_MS);
+  let contentText: string;
+  try {
+    contentText = await callAiChatCompletion({
+      config,
+      jsonMode: true,
+      signal: controller.signal,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a healthcare intake text relevance validator. Do not diagnose. Return strict JSON only.",
         },
-        body: JSON.stringify(requestBody),
-        signal: controller.signal,
-      });
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
-        throw new Error(`AI profile text validation timed out after ${AI_REQUEST_TIMEOUT_MS}ms.`);
-      }
-      throw error;
-    } finally {
-      clearTimeout(timeout);
+        {
+          role: "user",
+          content: buildUserPrompt({ field, text, locale }),
+        },
+      ],
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`AI profile text validation timed out after ${AI_REQUEST_TIMEOUT_MS}ms.`);
     }
-
-    if (response.ok) {
-      break;
-    }
-
-    const body = await response.text();
-    lastStatus = response.status;
-    lastBody = body.slice(0, 320);
-
-    if (response.status !== 404) {
-      throw new Error(`AI profile text validation request failed (${response.status}): ${lastBody}`);
-    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  if (!response?.ok) {
-    throw new Error(`AI profile text validation request failed (${lastStatus || 404}): ${lastBody}`);
-  }
-
-  const payload = (await response.json()) as {
-    choices?: Array<{
-      message?: {
-        content?: string | Array<{ type?: string; text?: string }>;
-      };
-    }>;
-  };
-
-  const messageContent = payload.choices?.[0]?.message?.content;
-  const contentText = Array.isArray(messageContent)
-    ? messageContent
-        .map((item) => (typeof item?.text === "string" ? item.text : ""))
-        .join("\n")
-    : typeof messageContent === "string"
-      ? messageContent
-      : "";
 
   const parsed = profileTextResponseSchema.parse(parseJsonPayload(contentText));
   const result = toEvaluationResult(parsed);

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { AiExtractionConfig } from "@/lib/ai/env";
+import { callAiChatCompletion } from "@/lib/ai/provider-client";
 import type { AppLocale } from "@/lib/locale";
 import type { ExerciseTargetEntry, HabitEntry, ProfileForTargets, TargetGenerationPayload, TargetGoalType, UserTargetEntry } from "@/lib/targets";
 
@@ -257,10 +258,6 @@ function buildProfileSummary(profile: ProfileForTargets): string {
   ].join("\n");
 }
 
-function summarizeAiError(errorBody: string, status: number): string {
-  return `AI targets generation request failed (${status}): ${errorBody.slice(0, 240)}`;
-}
-
 export async function generateTargetsWithAi({
   config,
   goalText,
@@ -315,18 +312,14 @@ export async function generateTargetsWithAi({
       ]
     : [];
 
-  const requestBody = {
-    model: config.model,
-    temperature: 0.2,
-    response_format: { type: "json_object" },
-    messages: [
+  const messages = [
       {
-        role: "system",
+        role: "system" as const,
         content:
           "You are a cautious nutrition and exercise coaching assistant. You translate a user's free-text health goal plus their profile into a full, safety-bounded set of daily nutrient ranges, an exercise plan, and do/don't habits. Return strict JSON only. No markdown.",
       },
       {
-        role: "user",
+        role: "user" as const,
         content: [
           "Return strict JSON with exactly this shape (all numeric fields are plain numbers, all ranges must have min <= max):",
           '{"no_actionable_change":boolean,"no_actionable_change_reason":"string",',
@@ -362,59 +355,9 @@ export async function generateTargetsWithAi({
           goalText.slice(0, 1200),
         ].join("\n"),
       },
-    ],
-  };
+    ];
 
-  const normalizedBaseUrl = config.baseUrl.replace(/\/+$/, "");
-  const candidateUrls = normalizedBaseUrl.endsWith("/v1")
-    ? [`${normalizedBaseUrl}/chat/completions`]
-    : [`${normalizedBaseUrl}/chat/completions`, `${normalizedBaseUrl}/v1/chat/completions`];
-
-  let response: Response | null = null;
-  let lastStatus = 0;
-  let lastBody = "";
-
-  for (const candidateUrl of candidateUrls) {
-    response = await fetch(candidateUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    if (response.ok) {
-      break;
-    }
-
-    const body = await response.text();
-    lastStatus = response.status;
-    lastBody = body;
-
-    if (response.status !== 404) {
-      throw new Error(summarizeAiError(body, response.status));
-    }
-  }
-
-  if (!response?.ok) {
-    throw new Error(summarizeAiError(lastBody, lastStatus || 404));
-  }
-
-  const payload = (await response.json()) as {
-    choices?: Array<{
-      message?: {
-        content?: string | Array<{ type?: string; text?: string }>;
-      };
-    }>;
-  };
-
-  const messageContent = payload.choices?.[0]?.message?.content;
-  const contentText = Array.isArray(messageContent)
-    ? messageContent.map((item) => (typeof item?.text === "string" ? item.text : "")).join("\n")
-    : typeof messageContent === "string"
-      ? messageContent
-      : "";
+  const contentText = await callAiChatCompletion({ config, messages, temperature: 0.2, jsonMode: true });
 
   const parsed = aiTargetsSchema.parse(parseJsonPayload(contentText));
 

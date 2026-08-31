@@ -1,5 +1,6 @@
 import { computeBmi } from "@/lib/bmi";
 import type { AiExtractionConfig } from "@/lib/ai/env";
+import { streamAiChatCompletion } from "@/lib/ai/provider-client";
 import type { AppLocale } from "@/lib/locale";
 import type { ProfileForTargets, TargetGenerationPayload } from "@/lib/targets";
 
@@ -34,12 +35,14 @@ function summarizeTargets(payload: TargetGenerationPayload): string {
 }
 
 /**
- * Opens a raw streaming chat-completions request for a short conversational
+ * Opens a streaming chat-completions request for a short conversational
  * reply (2-3 sentences) acknowledging the user's negotiation message. This is
  * intentionally separate from the structured target-generation call
  * (generateTargetsWithAi) - it exists purely to drive the chat bubble's
- * "typing" effect. Returns the raw fetch Response so the caller can pipe/
- * transform its SSE body directly.
+ * "typing" effect. Returns a Response whose SSE body is always OpenAI-shaped
+ * (see streamAiChatCompletion in provider-client.ts) regardless of which
+ * provider is actually configured, so the caller's parsing never needs to
+ * know the difference.
  */
 export async function openChatReplyStream({
   config,
@@ -58,13 +61,9 @@ export async function openChatReplyStream({
 }): Promise<Response> {
   const languageName = locale === "he" ? "Hebrew" : "English";
 
-  const requestBody = {
-    model: config.model,
-    temperature: 0.4,
-    stream: true,
-    messages: [
+  const messages = [
       {
-        role: "system",
+        role: "system" as const,
         content: [
           "You are a warm, concise nutrition and exercise coaching assistant chatting with a user about their locked daily targets. This is a conversation only - your reply never changes anything by itself, so just answer naturally: explain, advise, or discuss as asked.",
           "If the user is describing something that genuinely calls for changing their targets (a new goal, a schedule change, a symptom, etc.) AND it is safe and reasonable, say so plainly and mention that they can tap \"Update Targets\" below whenever they're ready - don't imply the change has already happened.",
@@ -77,7 +76,7 @@ export async function openChatReplyStream({
       },
       ...chatHistory.map((message) => ({ role: message.role, content: message.content })),
       {
-        role: "user",
+        role: "user" as const,
         content: [
           `Reply in ${languageName} only.`,
           "current_targets_summary:",
@@ -88,18 +87,7 @@ export async function openChatReplyStream({
           userMessage.slice(0, 1000),
         ].join("\n"),
       },
-    ],
-  };
+    ];
 
-  const normalizedBaseUrl = config.baseUrl.replace(/\/+$/, "");
-  const url = normalizedBaseUrl.endsWith("/v1") ? `${normalizedBaseUrl}/chat/completions` : `${normalizedBaseUrl}/v1/chat/completions`;
-
-  return fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify(requestBody),
-  });
+  return streamAiChatCompletion({ config, messages, temperature: 0.4 });
 }

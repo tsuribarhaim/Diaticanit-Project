@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { AiExtractionConfig } from "@/lib/ai/env";
+import { callAiChatCompletion } from "@/lib/ai/provider-client";
 
 const aiComponentSchema = z.object({
   category: z.string().trim().min(1).max(60).optional(),
@@ -98,10 +99,9 @@ export async function extractComponentsWithAi({
 
   const clippedText = documentText.slice(0, 24000);
 
-  const requestBody = {
-    model: config.model,
-    temperature: 0,
-    response_format: { type: "json_object" },
+  const contentText = await callAiChatCompletion({
+    config,
+    jsonMode: true,
     messages: [
       {
         role: "system",
@@ -125,60 +125,7 @@ export async function extractComponentsWithAi({
         ].join("\n"),
       },
     ],
-  };
-
-  const normalizedBaseUrl = config.baseUrl.replace(/\/+$/, "");
-  const candidateUrls = normalizedBaseUrl.endsWith("/v1")
-    ? [`${normalizedBaseUrl}/chat/completions`]
-    : [`${normalizedBaseUrl}/chat/completions`, `${normalizedBaseUrl}/v1/chat/completions`];
-
-  let response: Response | null = null;
-  let lastStatus = 0;
-  let lastBody = "";
-
-  for (const candidateUrl of candidateUrls) {
-    response = await fetch(candidateUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    if (response.ok) {
-      break;
-    }
-
-    const body = await response.text();
-    lastStatus = response.status;
-    lastBody = body.slice(0, 280);
-
-    if (response.status !== 404) {
-      throw new Error(`AI extraction request failed (${response.status}): ${lastBody}`);
-    }
-  }
-
-  if (!response?.ok) {
-    throw new Error(`AI extraction request failed (${lastStatus || 404}): ${lastBody}`);
-  }
-
-  const payload = (await response.json()) as {
-    choices?: Array<{
-      message?: {
-        content?: string | Array<{ type?: string; text?: string }>;
-      };
-    }>;
-  };
-
-  const messageContent = payload.choices?.[0]?.message?.content;
-  const contentText = Array.isArray(messageContent)
-    ? messageContent
-        .map((item) => (typeof item?.text === "string" ? item.text : ""))
-        .join("\n")
-    : typeof messageContent === "string"
-      ? messageContent
-      : "";
+  });
 
   const parsed = aiResponseSchema.parse(parseJsonPayload(contentText));
   return { components: mapAiComponents(parsed.components), reportDate: parseReportDate(parsed.report_date) };
