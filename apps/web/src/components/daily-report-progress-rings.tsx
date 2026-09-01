@@ -18,21 +18,32 @@ export type RingMetric = {
    * spell out the full gained/burned/net breakdown instead of one figure.
    */
   grossTotal?: number;
+  /**
+   * For metrics where "more" is never a bad thing (e.g. a weekly exercise
+   * session count against its target) rather than a ceiling to stay under
+   * (nutrients) - exceeding max still reads as goal met/exceeded (emerald),
+   * never as an over-target warning, and the metric is left out of the
+   * red "Over today's target" list below.
+   */
+  neverOverLimit?: boolean;
 };
 
 /**
  * Progress percent is measured against the range's max (the "ceiling"),
  * consistent with how a value over max is always flagged as over-target
- * regardless of which nutrient it is.
+ * regardless of which nutrient it is - unless the metric opts out via
+ * neverOverLimit.
  */
-function ringColorClass(total: number, min: number, max: number): string {
-  if (max > 0 && total > max) return "text-rose-500";
+function ringColorClass(total: number, min: number, max: number, neverOverLimit?: boolean): string {
+  if (!neverOverLimit && max > 0 && total > max) return "text-rose-500";
+  if (neverOverLimit && max > 0 && total >= max) return "text-emerald-500";
   if (min > 0 && total >= min) return "text-emerald-500";
   return "text-teal-500";
 }
 
-function textColorClass(total: number, min: number, max: number): string {
-  if (max > 0 && total > max) return "text-rose-700";
+function textColorClass(total: number, min: number, max: number, neverOverLimit?: boolean): string {
+  if (!neverOverLimit && max > 0 && total > max) return "text-rose-700";
+  if (neverOverLimit && max > 0 && total >= max) return "text-emerald-700";
   if (min > 0 && total >= min) return "text-emerald-700";
   return "text-teal-700";
 }
@@ -90,7 +101,7 @@ function Ring({ percent, colorClass, grossPercent }: { percent: number; colorCla
  * target ceiling.
  */
 export function DailyReportProgressRings({ locale, metrics }: { locale: AppLocale; metrics: RingMetric[] }) {
-  const overLimit = metrics.filter((metric) => metric.max > 0 && metric.total > metric.max);
+  const overLimit = metrics.filter((metric) => !metric.neverOverLimit && metric.max > 0 && metric.total > metric.max);
 
   return (
     <div>
@@ -99,8 +110,8 @@ export function DailyReportProgressRings({ locale, metrics }: { locale: AppLocal
           const percent = metric.max > 0 ? (metric.total / metric.max) * 100 : 0;
           const grossPercent =
             metric.grossTotal !== undefined && metric.max > 0 ? (metric.grossTotal / metric.max) * 100 : undefined;
-          const ringColor = ringColorClass(metric.total, metric.min, metric.max);
-          const labelColor = textColorClass(metric.total, metric.min, metric.max);
+          const ringColor = ringColorClass(metric.total, metric.min, metric.max, metric.neverOverLimit);
+          const labelColor = textColorClass(metric.total, metric.min, metric.max, metric.neverOverLimit);
           const burnedAmount =
             metric.grossTotal !== undefined && metric.grossTotal !== metric.total
               ? metric.grossTotal - metric.total
