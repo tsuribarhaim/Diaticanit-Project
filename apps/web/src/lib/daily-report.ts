@@ -227,6 +227,125 @@ export async function getDailyReportTotalsForRange({
   );
 }
 
+const METRIC_KEYS = Object.keys(EMPTY_METRICS) as Array<keyof DailyReportMetrics>;
+
+function rowToMetrics(row: Record<string, unknown>): DailyReportMetrics {
+  return {
+    caloriesKcal: Number(row.calories_kcal ?? 0),
+    proteinG: Number(row.protein_g ?? 0),
+    carbsG: Number(row.carbs_g ?? 0),
+    fatG: Number(row.fat_g ?? 0),
+    fiberG: Number(row.fiber_g ?? 0),
+    waterMl: Number(row.water_ml ?? 0),
+    magnesiumMg: Number(row.magnesium_mg ?? 0),
+    potassiumMg: Number(row.potassium_mg ?? 0),
+    ironMg: Number(row.iron_mg ?? 0),
+    zincMg: Number(row.zinc_mg ?? 0),
+    sodiumMg: Number(row.sodium_mg ?? 0),
+    addedSugarG: Number(row.added_sugar_g ?? 0),
+    calciumMg: Number(row.calcium_mg ?? 0),
+    vitCMg: Number(row.vit_c_mg ?? 0),
+    vitB12Mcg: Number(row.vit_b12_mcg ?? 0),
+    vitDMcg: Number(row.vit_d_mcg ?? 0),
+    satFatG: Number(row.sat_fat_g ?? 0),
+    omega3G: Number(row.omega3_g ?? 0),
+    exerciseMinutes: Number(row.exercise_minutes ?? 0),
+    estimatedBurnKcal: Number(row.estimated_burn_kcal ?? 0),
+  };
+}
+
+function sumMetrics(a: DailyReportMetrics, b: DailyReportMetrics): DailyReportMetrics {
+  const result = { ...EMPTY_METRICS };
+  for (const key of METRIC_KEYS) result[key] = a[key] + b[key];
+  return result;
+}
+
+function divideMetrics(a: DailyReportMetrics, divisor: number): DailyReportMetrics {
+  const result = { ...EMPTY_METRICS };
+  for (const key of METRIC_KEYS) result[key] = a[key] / divisor;
+  return result;
+}
+
+export type LoggedDaysAverageResult = {
+  averages: DailyReportMetrics;
+  loggedDayCount: number;
+  totalDayCount: number;
+};
+
+/**
+ * Averages metrics only over days that actually have at least one report -
+ * a 7-day window where the user only logged 3 days shows the average of
+ * those 3 logged days, not diluted toward zero by the 4 unlogged days.
+ */
+export async function getLoggedDaysAverageDailyReportTotals({
+  supabase,
+  userId,
+  rangeStartIso,
+  rangeEndIso,
+}: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  userId: string;
+  rangeStartIso: string;
+  rangeEndIso: string;
+}): Promise<LoggedDaysAverageResult> {
+  const { data: rows } = await supabase
+    .from("user_daily_reports")
+    .select(
+      "report_at, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, sodium_mg, added_sugar_g, calcium_mg, vit_c_mg, vit_b12_mcg, vit_d_mcg, sat_fat_g, omega3_g, exercise_minutes, estimated_burn_kcal",
+    )
+    .eq("user_id", userId)
+    .gte("report_at", rangeStartIso)
+    .lt("report_at", rangeEndIso);
+
+  const totalDayCount = Math.max(
+    1,
+    Math.round((new Date(rangeEndIso).getTime() - new Date(rangeStartIso).getTime()) / (24 * 60 * 60 * 1000)),
+  );
+
+  const dayTotals = new Map<string, DailyReportMetrics>();
+  for (const row of rows ?? []) {
+    const dayKey = String(row.report_at).slice(0, 10);
+    dayTotals.set(dayKey, sumMetrics(dayTotals.get(dayKey) ?? EMPTY_METRICS, rowToMetrics(row)));
+  }
+
+  const loggedDayCount = dayTotals.size;
+  const sums = Array.from(dayTotals.values()).reduce(sumMetrics, { ...EMPTY_METRICS });
+  const averages = divideMetrics(sums, loggedDayCount || 1);
+
+  return { averages, loggedDayCount, totalDayCount };
+}
+
+/**
+ * "Any day counts as a session" - a day with exercise logged counts once
+ * toward weekly consistency regardless of how many separate exercise
+ * entries or minutes were logged that day. Always the trailing 7 days
+ * (rolling, including today), independent of whatever range the calorie/
+ * protein rings are currently showing.
+ */
+export async function getWeeklyExerciseSessionDayCount({
+  supabase,
+  userId,
+}: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  userId: string;
+}): Promise<number> {
+  const now = new Date();
+  const todayStartMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const rangeStartIso = new Date(todayStartMs - 6 * 24 * 60 * 60 * 1000).toISOString();
+  const rangeEndIso = new Date(todayStartMs + 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: rows } = await supabase
+    .from("user_daily_reports")
+    .select("report_at")
+    .eq("user_id", userId)
+    .gt("exercise_minutes", 0)
+    .gte("report_at", rangeStartIso)
+    .lt("report_at", rangeEndIso);
+
+  const sessionDays = new Set((rows ?? []).map((row) => String(row.report_at).slice(0, 10)));
+  return sessionDays.size;
+}
+
 export type DailyReportParseResult = {
   confidence: number;
   requiresConfirmation: boolean;

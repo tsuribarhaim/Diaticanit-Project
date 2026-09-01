@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import {
@@ -83,23 +82,15 @@ export default async function DailyReportDefaultsPage({
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 py-10">
       <section className="rounded-2xl border border-slate-200 bg-white p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "Daily Report Saved List", "רשימה שמורה לדיווח יומי")}</h1>
-            <p className="mt-2 text-sm text-slate-600">
-              {tr(
-                locale,
-                "Configure reusable items for one-click reporting - a single thing like water, or a bundle of several ingredients under one name, like \"My Breakfast\".",
-                "הגדירו פריטים לשימוש חוזר לדיווח בלחיצה אחת - דבר בודד כמו מים, או צירוף של כמה מרכיבים תחת שם אחד, כמו \"ארוחת הבוקר שלי\".",
-              )}
-            </p>
-          </div>
-          <Link
-            href="/app/daily-report"
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
-          >
-            {tr(locale, "Back to daily report", "חזרה לדיווח היומי")}
-          </Link>
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "Daily Report Saved List", "רשימה שמורה לדיווח יומי")}</h1>
+          <p className="mt-2 text-sm text-slate-600">
+            {tr(
+              locale,
+              "Configure reusable items for one-click reporting - a single thing like water, or a bundle of several ingredients under one name, like \"My Breakfast\".",
+              "הגדירו פריטים לשימוש חוזר לדיווח בלחיצה אחת - דבר בודד כמו מים, או צירוף של כמה מרכיבים תחת שם אחד, כמו \"ארוחת הבוקר שלי\".",
+            )}
+          </p>
         </div>
 
         {resolvedSearchParams.error ? (
