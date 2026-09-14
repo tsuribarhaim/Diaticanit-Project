@@ -174,8 +174,8 @@ export function TargetProfileView({
             href="/app/profile/edit"
             confirmMessage={tr(
               locale,
-              "You have a generated target plan that hasn't been locked in yet. Leave this page anyway?",
-              "יש לך תכנית יעדים שנוצרה אך טרם ננעלה. לעזוב את הדף בכל זאת?",
+              "You have an unsaved conversation or generated target plan on the Targets page that hasn't been locked in yet. Leave this page anyway?",
+              "יש לך שיחה או תכנית יעדים שנוצרה בדף היעדים שטרם ננעלה. לעזוב את הדף בכל זאת?",
             )}
             className="mt-2 inline-block font-semibold text-amber-900 underline hover:text-amber-700"
           >
@@ -257,15 +257,32 @@ export function TargetProfileView({
         <div>
           <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{userTargetsTitle}</h3>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            {payload.userTargets.map((entry, index) => (
-              <div
-                key={`${entry.label}-${index}`}
-                className="flex items-center justify-between gap-3 rounded-xl border border-teal-200 bg-teal-50 p-3"
-              >
-                <p className="text-sm font-medium text-teal-900">{entry.label}</p>
-                <p className="text-sm font-semibold text-teal-900">{entry.value}</p>
-              </div>
-            ))}
+            {payload.userTargets.map((entry, index) => {
+              const isTracked =
+                Boolean(entry.unit) && entry.targetMin !== undefined && entry.targetMax !== undefined;
+              const rangeText = isTracked
+                ? entry.targetMin === entry.targetMax
+                  ? `${formatNumberForLocale(entry.targetMin!, locale, { maximumFractionDigits: 1 })} ${entry.unit}`
+                  : `${formatNumberForLocale(entry.targetMin!, locale, { maximumFractionDigits: 1 })}–${formatNumberForLocale(entry.targetMax!, locale, { maximumFractionDigits: 1 })} ${entry.unit}`
+                : entry.value;
+
+              return (
+                <div
+                  key={`${entry.id ?? entry.label}-${index}`}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-teal-200 bg-teal-50 p-3"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-teal-900">{entry.label}</p>
+                    {isTracked ? (
+                      <p className="mt-0.5 text-xs text-teal-700">
+                        {tr(locale, "Tracked in your Daily Report", "נעקב בדיווח היומי שלך")}
+                      </p>
+                    ) : null}
+                  </div>
+                  <p className="text-sm font-semibold text-teal-900">{rangeText}</p>
+                </div>
+              );
+            })}
           </div>
         </div>
       ) : null}

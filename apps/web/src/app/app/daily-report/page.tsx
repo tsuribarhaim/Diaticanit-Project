@@ -6,6 +6,7 @@ import {
   updateDailyReportChartPreferencesAction,
 } from "@/app/app/daily-report/actions";
 import { DailyReportForm } from "@/components/daily-report-form";
+import { LocalizedDateInput } from "@/components/localized-date-input";
 import { DailyReportProgressRings, type RingMetric } from "@/components/daily-report-progress-rings";
 import { DailyReportWeightTrend, type WeightPoint } from "@/components/daily-report-weight-trend";
 import {
@@ -16,9 +17,10 @@ import {
   type DailyReportChartExtraMetric,
 } from "@/lib/daily-report-chart-preferences";
 import { getDailyReportTotalsForRange } from "@/lib/daily-report";
+import { normalizeUserTargetsJson } from "@/lib/targets";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { formatDateForLocale, formatDateTimeForLocale, formatMeasurementUnit, formatNumberForLocale, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -143,7 +145,7 @@ export default async function DailyReportPage({
   const supabase = await createClient();
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await getAuthenticatedUser();
 
   if (!user) {
     redirect("/auth/sign-in");
@@ -184,11 +186,22 @@ export default async function DailyReportPage({
   const { data: activeTargetProfile } = await supabase
     .from("user_target_profiles")
     .select(
-      "id, protein_min_g, protein_max_g, carbs_min_g, carbs_max_g, water_min_ml, water_max_ml, calories_min, calories_max, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, magnesium_min_mg, magnesium_max_mg, potassium_min_mg, potassium_max_mg, iron_min_mg, iron_max_mg, zinc_min_mg, zinc_max_mg, sodium_min_mg, sodium_max_mg, added_sugar_min_g, added_sugar_max_g, calcium_min_mg, calcium_max_mg, vit_c_min_mg, vit_c_max_mg, vit_b12_min_mcg, vit_b12_max_mcg, vit_d_min_mcg, vit_d_max_mcg, sat_fat_min_g, sat_fat_max_g, omega3_min_g, omega3_max_g",
+      "id, protein_min_g, protein_max_g, carbs_min_g, carbs_max_g, water_min_ml, water_max_ml, calories_min, calories_max, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, magnesium_min_mg, magnesium_max_mg, potassium_min_mg, potassium_max_mg, iron_min_mg, iron_max_mg, zinc_min_mg, zinc_max_mg, sodium_min_mg, sodium_max_mg, added_sugar_min_g, added_sugar_max_g, calcium_min_mg, calcium_max_mg, vit_c_min_mg, vit_c_max_mg, vit_b12_min_mcg, vit_b12_max_mcg, vit_d_min_mcg, vit_d_max_mcg, sat_fat_min_g, sat_fat_max_g, omega3_min_g, omega3_max_g, user_targets",
     )
     .eq("user_id", user.id)
     .eq("is_active", true)
     .maybeSingle();
+
+  // Only entries with a full id/unit/targetMin/targetMax set are loggable -
+  // a legacy or non-numeric user_targets entry (display-only) is silently
+  // excluded here rather than showing a broken/incomplete input for it.
+  const loggableCustomTargets = normalizeUserTargetsJson(activeTargetProfile?.user_targets)
+    .filter((entry) => entry.id && entry.unit && entry.targetMin !== undefined && entry.targetMax !== undefined)
+    .map((entry) => ({
+      id: entry.id!,
+      label: entry.label,
+      unit: entry.unit!,
+    }));
 
   const now = new Date();
   const todaysTotals = await getDailyReportTotalsForRange({
@@ -493,6 +506,7 @@ export default async function DailyReportPage({
           defaultItems={defaultItems ?? []}
           aiAvailable={aiAvailable}
           locale={locale}
+          customTargets={loggableCustomTargets}
           currentWeightKg={
             lastRecordedWeightKg !== null
               ? Number(lastRecordedWeightKg)
@@ -509,12 +523,12 @@ export default async function DailyReportPage({
             {tr(locale, "Your Progress as of", "ההתקדמות שלך ליום")} {formatDateForLocale(`${selectedDate}T00:00:00.000Z`, locale)}
           </h2>
           <form method="GET" className="flex items-center gap-2">
-            <input
-              type="date"
+            <LocalizedDateInput
+              locale={locale}
               name="date"
-              defaultValue={selectedDate}
+              value={selectedDate}
               max={getUtcDateStringToday()}
-              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none ring-teal-600 focus:ring-2"
+              ariaLabel={tr(locale, "View date", "תאריך לצפייה")}
             />
             <button
               type="submit"

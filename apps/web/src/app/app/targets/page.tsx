@@ -5,7 +5,7 @@ import { TargetsChatWorkspace } from "@/components/targets-chat-workspace";
 import { TargetsWorkspace } from "@/components/targets-workspace";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { formatDateTimeForLocale, normalizeLocale, tr } from "@/lib/locale";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 import {
   computeProfileDiff,
   estimateMaintenanceCalories,
@@ -22,7 +22,7 @@ export default async function TargetsPage() {
   const supabase = await createClient();
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await getAuthenticatedUser();
 
   if (!user) {
     redirect("/auth/sign-in");

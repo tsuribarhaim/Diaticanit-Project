@@ -772,13 +772,9 @@ export const onboardingProfileSchema = z.object({
   habits: z
     .array(z.enum(habitOptions, { error: "Select a valid habit option." }))
     .default([]),
-  alcohol_times_per_week: z.preprocess(
+  alcohol_consumption_level: z.preprocess(
     (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
-    z.coerce
-      .number({ error: "Alcohol frequency must be a number." })
-      .min(0, "Alcohol frequency cannot be negative.")
-      .max(200, "Alcohol frequency must be at most 200 per week.")
-      .optional(),
+    z.enum(["low", "high"], { error: "Select a valid alcohol consumption level." }).optional(),
   ),
   smoking_packs_per_day: z.preprocess(
     (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
@@ -856,11 +852,11 @@ export const onboardingProfileSchema = z.object({
     });
   }
 
-  if (includesAlcohol && (data.alcohol_times_per_week == null || data.alcohol_times_per_week <= 0)) {
+  if (includesAlcohol && data.alcohol_consumption_level == null) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      path: ["alcohol_times_per_week"],
-      message: "Enter alcohol frequency per week.",
+      path: ["alcohol_consumption_level"],
+      message: "Select a consumption level.",
     });
   }
 

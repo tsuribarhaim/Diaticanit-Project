@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 
 import {
   saveDailyReportAction,
@@ -9,6 +9,8 @@ import {
 import { DailyReportChatPanel, type DailyReportDefaultItem } from "@/components/daily-report-chat-panel";
 import { DailyReportDefaultsPicker, type SelectedSavedListItem } from "@/components/daily-report-defaults-picker";
 import { SubmitButton } from "@/components/daily-report-submit-button";
+import { LocalizedDateTimeInput } from "@/components/localized-date-input";
+import { useUnsavedPreview } from "@/components/unsaved-preview-context";
 import { formatDefaultUnit, tr, type AppLocale } from "@/lib/locale";
 
 const initialState: DailyReportActionState = {};
@@ -22,16 +24,23 @@ function getLocalDateTimeValue(date: Date): string {
   return new Date(copy.getTime() - offsetMs).toISOString().slice(0, 16);
 }
 
+export type LoggableCustomTarget = { id: string; label: string; unit: string };
+
 export function DailyReportForm({
   defaultItems,
   aiAvailable,
   locale,
   currentWeightKg,
+  customTargets = [],
 }: {
   defaultItems: DailyReportDefaultItem[];
   aiAvailable: boolean;
   locale: AppLocale;
   currentWeightKg?: number | null;
+  /** Custom targets from the user's locked plan (e.g. "Sleep duration") that
+   * carry a unit/range and are therefore loggable here - see
+   * apps/app/targets: UserTargetEntry.id/unit/targetMin/targetMax. */
+  customTargets?: LoggableCustomTarget[];
 }) {
   const [state, formAction] = useActionState(saveDailyReportAction, initialState);
   const [reportText, setReportText] = useState("");
@@ -40,6 +49,30 @@ export function DailyReportForm({
   const [fallbackSelectedSavedListItems, setFallbackSelectedSavedListItems] = useState<SelectedSavedListItem[]>([]);
   const initialWeightValue = currentWeightKg != null ? String(currentWeightKg) : "";
   const [weightValue, setWeightValue] = useState(initialWeightValue);
+  // The baseline weightValue is compared against for "has this been
+  // edited" - starts at the page-load value, but advances to whatever was
+  // just saved after a successful submit (see below), since weightValue
+  // intentionally isn't cleared on save (convenient prefill for the next
+  // report) and shouldn't therefore read as permanently "unsaved."
+  const weightBaselineRef = useRef(initialWeightValue);
+
+  // Warns before navigating away (nav bar links) once the user has typed a
+  // report, entered a weight, or picked saved-list items - same guard/modal
+  // already used on the Targets page. Unlike Profile/Onboarding, a
+  // successful save doesn't navigate away - the form resets itself in
+  // place (see the reportText/reportAtValue reset below) - so clearing on
+  // state.success (handled in that same reset block) is what actually
+  // matters here, not on unmount.
+  const { setHasUnsavedPreview } = useUnsavedPreview();
+  useEffect(() => {
+    const isDirty =
+      reportText.trim().length > 0 || weightValue !== weightBaselineRef.current || fallbackSelectedSavedListItems.length > 0;
+    setHasUnsavedPreview(isDirty);
+  }, [reportText, weightValue, fallbackSelectedSavedListItems, setHasUnsavedPreview]);
+  useEffect(() => {
+    return () => setHasUnsavedPreview(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /** "Conclude & Report" both saves and starts a fresh conversation - the
    * chat is a scratchpad for composing one report, not a running log, so
@@ -56,6 +89,8 @@ export function DailyReportForm({
       setReportText("");
       setReportAtValue(getLocalDateTimeValue(new Date()));
       setChatResetKey((key) => key + 1);
+      weightBaselineRef.current = weightValue;
+      setFallbackSelectedSavedListItems([]);
     }
   }
 
@@ -71,14 +106,15 @@ export function DailyReportForm({
       <div className="flex flex-wrap gap-2">
         <label className="block flex-1 min-w-[180px]">
           <span className="mb-1 block text-xs font-medium text-slate-600">{tr(locale, "Date & time", "תאריך ושעה")}</span>
-          <input
-            type="datetime-local"
+          <LocalizedDateTimeInput
+            locale={locale}
             value={reportAtValue}
-            onChange={(event) => setReportAtValue(event.target.value)}
-            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2"
+            onChange={setReportAtValue}
+            ariaLabel={tr(locale, "Date & time", "תאריך ושעה")}
           />
-          {/* datetime-local's value is a timezone-naive wall-clock string
-              (e.g. "2026-08-30T23:30") with no offset. Submitting that
+          {/* reportAtValue is a timezone-naive wall-clock string (e.g.
+              "2026-08-30T23:30") with no offset, the same shape a native
+              datetime-local input would produce. Submitting that
               directly would leave the server to guess a timezone when
               parsing it - and a server that isn't in the same timezone as
               the browser would silently misfile the entry under the wrong
@@ -94,7 +130,7 @@ export function DailyReportForm({
             name="reported_weight_kg"
             min="20"
             max="400"
-            step="0.01"
+            step="0.1"
             value={weightValue}
             onChange={(event) => setWeightValue(event.target.value)}
             placeholder={tr(locale, "e.g. 63.8", "לדוגמה: 63.8")}
@@ -111,6 +147,25 @@ export function DailyReportForm({
           ) : null}
         </label>
       </div>
+
+      {customTargets.length ? (
+        <div className="flex flex-wrap gap-2">
+          {customTargets.map((target) => (
+            <label key={target.id} className="block flex-1 min-w-[140px]">
+              <span className="mb-1 block text-xs font-medium text-slate-600">
+                {target.label} ({target.unit})
+              </span>
+              <input
+                type="number"
+                name={`custom_target_value__${target.id}`}
+                step="any"
+                placeholder={tr(locale, "Optional", "לא חובה")}
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2"
+              />
+            </label>
+          ))}
+        </div>
+      ) : null}
 
       {aiAvailable ? (
         <div className="block">

@@ -6,12 +6,14 @@ import { DailyReportProgressRings, type RingMetric } from "@/components/daily-re
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { generateHomeCoachNarrative } from "@/lib/ai/home-coach";
 import {
+  getCustomTargetValueTotals,
   getLoggedDaysAverageDailyReportTotals,
   getTodaysDailyReportTotals,
   getWeeklyExerciseSessionDayCount,
 } from "@/lib/daily-report";
 import { normalizeLocale, tr } from "@/lib/locale";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
+import { normalizeUserTargetsJson } from "@/lib/targets";
 
 export const dynamic = "force-dynamic";
 
@@ -54,7 +56,7 @@ export default async function AppHomePage({
   const supabase = await createClient();
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await getAuthenticatedUser();
 
   if (!user) {
     redirect("/auth/sign-in");
@@ -74,10 +76,17 @@ export default async function AppHomePage({
 
   const { data: activeTargetProfile } = await supabase
     .from("user_target_profiles")
-    .select("calories_min, calories_max, protein_min_g, protein_max_g, exercise_targets, goal_type")
+    .select("calories_min, calories_max, protein_min_g, protein_max_g, exercise_targets, goal_type, user_targets")
     .eq("user_id", user.id)
     .eq("is_active", true)
     .maybeSingle();
+
+  // Only entries with a full id/unit/targetMin/targetMax set are loggable -
+  // see DailyReportForm's customTargets prop for the matching Daily Report
+  // side of this.
+  const loggableCustomTargets = normalizeUserTargetsJson(activeTargetProfile?.user_targets).filter(
+    (entry) => entry.id && entry.unit && entry.targetMin !== undefined && entry.targetMax !== undefined,
+  );
 
   // Same "sum of each planned modality's frequency" convention already used
   // on the Targets page (see target-profile-view.tsx's
@@ -100,17 +109,36 @@ export default async function AppHomePage({
   let reportingConsistencyRingMetric: RingMetric | null = null;
   let reportingConsistencyPercent: number | null = null;
 
+  let customTargetTotals: Record<string, number> = {};
+
   if (range === "today") {
+    const now = new Date();
+    const todayStartIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+    const todayEndIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString();
+
     const todaysTotals = await getTodaysDailyReportTotals({ supabase, userId: user.id });
     caloriesKcal = todaysTotals.caloriesKcal;
     proteinG = todaysTotals.proteinG;
     estimatedBurnKcal = todaysTotals.estimatedBurnKcal;
+
+    if (loggableCustomTargets.length) {
+      customTargetTotals = await getCustomTargetValueTotals({
+        supabase,
+        userId: user.id,
+        rangeStartIso: todayStartIso,
+        rangeEndIso: todayEndIso,
+      });
+    }
   } else {
     const rangeDays = Number(range);
     const now = new Date();
     const todayStartMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
     const rangeStartIso = new Date(todayStartMs - (rangeDays - 1) * 24 * 60 * 60 * 1000).toISOString();
     const rangeEndIso = new Date(todayStartMs + 24 * 60 * 60 * 1000).toISOString();
+
+    if (loggableCustomTargets.length) {
+      customTargetTotals = await getCustomTargetValueTotals({ supabase, userId: user.id, rangeStartIso, rangeEndIso });
+    }
 
     const { averages, loggedDayCount, totalDayCount } = await getLoggedDaysAverageDailyReportTotals({
       supabase,
@@ -180,6 +208,21 @@ export default async function AppHomePage({
       unit: "g",
     },
     ...(reportingConsistencyRingMetric ? [reportingConsistencyRingMetric] : []),
+    // Custom targets from the Targets chat (e.g. "Sleep duration") that
+    // carry a unit/range - labelEn/labelHe both get the same string since
+    // the AI already generates it in the user's own locale, not two
+    // separate translations.
+    ...loggableCustomTargets.map(
+      (entry): RingMetric => ({
+        id: `customTarget_${entry.id}`,
+        labelEn: entry.label,
+        labelHe: entry.label,
+        total: customTargetTotals[entry.id!] ?? 0,
+        min: entry.targetMin!,
+        max: entry.targetMax!,
+        unit: entry.unit!,
+      }),
+    ),
   ];
 
   const exerciseRingMetric: RingMetric = {

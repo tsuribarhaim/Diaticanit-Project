@@ -227,6 +227,49 @@ export async function getDailyReportTotalsForRange({
   );
 }
 
+/** Sums each custom target's logged value (by id) across every report in
+ * the given range. Kept separate from DailyReportMetrics (a closed, fixed-
+ * field type covering only the ~20 built-in nutrients) rather than bolting
+ * a dynamic key onto it, so none of that type's many existing call sites
+ * need to change - this is purely additive.
+ *
+ * v1 aggregation is sum-per-day, same as every other metric here (protein,
+ * water, etc.). Known simplification: a target that's naturally point-in-
+ * time (e.g. sleep hours) rather than cumulative could double-count if
+ * logged in more than one report the same day - refining per-metric
+ * aggregation semantics is a natural follow-up, not solved here. */
+export async function getCustomTargetValueTotals({
+  supabase,
+  userId,
+  rangeStartIso,
+  rangeEndIso,
+}: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  userId: string;
+  rangeStartIso: string;
+  rangeEndIso: string;
+}): Promise<Record<string, number>> {
+  const { data: rows } = await supabase
+    .from("user_daily_reports")
+    .select("custom_target_values")
+    .eq("user_id", userId)
+    .gte("report_at", rangeStartIso)
+    .lt("report_at", rangeEndIso);
+
+  const totals: Record<string, number> = {};
+  for (const row of rows ?? []) {
+    const values = row.custom_target_values;
+    if (!values || typeof values !== "object") continue;
+    for (const [id, value] of Object.entries(values as Record<string, unknown>)) {
+      const numeric = Number(value);
+      if (Number.isFinite(numeric)) {
+        totals[id] = (totals[id] ?? 0) + numeric;
+      }
+    }
+  }
+  return totals;
+}
+
 const METRIC_KEYS = Object.keys(EMPTY_METRICS) as Array<keyof DailyReportMetrics>;
 
 function rowToMetrics(row: Record<string, unknown>): DailyReportMetrics {

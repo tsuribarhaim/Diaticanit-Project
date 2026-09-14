@@ -7,6 +7,7 @@ import {
   requestExtractionAction,
 } from "@/app/app/documents/actions";
 import { DocumentUploadForm } from "@/components/document-upload-form";
+import { TargetsStaleModal } from "@/components/targets-stale-modal";
 import { formatFileSize } from "@/lib/documents";
 import { isPhase2Enabled } from "@/lib/feature-flags";
 import {
@@ -17,6 +18,7 @@ import {
   formatExerciseModality,
   formatExtractionStatus,
   formatGender,
+  formatHabit,
   formatMeasurementUnit,
   formatNutritionalGoal,
   formatNumberForLocale,
@@ -24,7 +26,8 @@ import {
   normalizeLocale,
   tr,
 } from "@/lib/locale";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
+import { computeProfileDiff, parseProfileSnapshot, type ProfileForTargets } from "@/lib/targets";
 
 const BMI_SCALE_MIN = 12;
 const BMI_SCALE_MAX = 40;
@@ -61,24 +64,22 @@ function bmiStatus(bmi: number): "good" | "warning" | "out_of_range" {
   return "out_of_range";
 }
 
-function formatHabitLabel(value: string, locale: "en" | "he"): string {
-  if (value === "smoking_or_vaping") return tr(locale, "Smoking", "עישון");
-  if (value === "alcohol") return tr(locale, "Alcohol", "אלכוהול");
-  if (value === "none") return tr(locale, "None", "ללא");
-  return value;
-}
-
 function modalitySupportsSchedule(value: string): boolean {
   return value !== "none";
 }
 
 export const dynamic = "force-dynamic";
 
-export default async function ProfilePage() {
+export default async function ProfilePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ targetsStale?: string }>;
+}) {
+  const resolvedSearchParams = await searchParams;
   const supabase = await createClient();
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await getAuthenticatedUser();
 
   if (!user) {
     redirect("/auth/sign-in");
@@ -87,7 +88,7 @@ export default async function ProfilePage() {
   const { data: profile, error } = await supabase
     .from("user_profile_enriched")
     .select(
-      "first_name, last_name, date_of_birth, biological_sex, calculated_age_years, bmi, height_cm, weight_kg, activity_level, exercise_modalities, exercise_modality_other_details, exercise_schedule_by_modality, exercise_frequency_days_per_week, exercise_duration_minutes, nutritional_goal, pregnancy_lactation_status, has_medical_conditions, medical_conditions_details, has_regular_medications, regular_medications_details, hot_climate_or_heavy_sweating, habits, alcohol_times_per_week, smoking_packs_per_day, dietary_preference, additional_information, allergies, updated_at",
+      "first_name, last_name, date_of_birth, gender, biological_sex, calculated_age_years, bmi, height_cm, weight_kg, activity_level, exercise_modalities, exercise_modality_other_details, exercise_schedule_by_modality, exercise_frequency_days_per_week, exercise_duration_minutes, nutritional_goal, pregnancy_lactation_status, has_medical_conditions, medical_conditions, medical_conditions_details, has_regular_medications, regular_medications_details, hot_climate_or_heavy_sweating, habits, alcohol_consumption_level, smoking_packs_per_day, dietary_preference, additional_information, allergies, updated_at",
     )
     .eq("user_id", user.id)
     .maybeSingle();
@@ -105,6 +106,45 @@ export default async function ProfilePage() {
         .maybeSingle()
     ).data?.preferred_language,
   );
+
+  // Only computed when the profile-save action just flagged this via the
+  // one-time query param (see updateProfileAction) - reuses the exact same
+  // snapshot-diff the Targets page's own banner already shows.
+  let targetsStaleChanges: ReturnType<typeof computeProfileDiff> | null = null;
+  if (resolvedSearchParams.targetsStale === "1") {
+    const { data: activeTargetProfile } = await supabase
+      .from("user_target_profiles")
+      .select("profile_snapshot")
+      .eq("user_id", user.id)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    const snapshot = activeTargetProfile ? parseProfileSnapshot(activeTargetProfile.profile_snapshot) : null;
+    if (snapshot) {
+      const currentProfileForTargets: ProfileForTargets = {
+        age: profile.calculated_age_years ?? 0,
+        gender: profile.gender ?? null,
+        biological_sex: profile.biological_sex ?? null,
+        height_cm: Number(profile.height_cm ?? 0),
+        weight_kg: Number(profile.weight_kg ?? 0),
+        activity_level: profile.activity_level,
+        allergies: Array.isArray(profile.allergies) ? profile.allergies : [],
+        medical_conditions: Array.isArray(profile.medical_conditions) ? profile.medical_conditions : [],
+        medical_conditions_details: profile.medical_conditions_details ?? null,
+        regular_medications_details: profile.regular_medications_details ?? null,
+        dietary_preference: profile.dietary_preference ?? null,
+        exercise_modalities: Array.isArray(profile.exercise_modalities) ? profile.exercise_modalities : [],
+        exercise_schedule_by_modality: profile.exercise_schedule_by_modality ?? null,
+        habits: Array.isArray(profile.habits) ? profile.habits : [],
+        pregnancy_lactation_status: profile.pregnancy_lactation_status ?? null,
+        hot_climate_or_heavy_sweating: Boolean(profile.hot_climate_or_heavy_sweating),
+      };
+      const diff = computeProfileDiff(snapshot, currentProfileForTargets, locale);
+      if (diff.length > 0) {
+        targetsStaleChanges = diff;
+      }
+    }
+  }
   const bmiState = profile.bmi != null ? bmiStatus(profile.bmi) : null;
   const bmiPercent = profile.bmi != null ? bmiPositionPercent(profile.bmi) : null;
   const scheduleByModality =
@@ -160,6 +200,7 @@ export default async function ProfilePage() {
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-10">
+      {targetsStaleChanges ? <TargetsStaleModal locale={locale} changes={targetsStaleChanges} /> : null}
       <section className="rounded-2xl border border-slate-200 bg-white p-6">
         <div className="flex items-start justify-between gap-3">
           <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "Profile", "פרופיל")}</h1>
@@ -365,15 +406,17 @@ export default async function ProfilePage() {
               </div>
               <div>
                 <dt className="font-medium text-slate-900">{tr(locale, "Habits", "הרגלים")}</dt>
-                <dd>{profile.habits?.length ? profile.habits.map((value: string) => formatHabitLabel(value, locale)).join(", ") : tr(locale, "None", "ללא")}</dd>
+                <dd>{profile.habits?.length ? profile.habits.map((value: string) => formatHabit(value, locale)).join(", ") : tr(locale, "None", "ללא")}</dd>
               </div>
               {profile.habits?.includes("alcohol") ? (
                 <div>
-                  <dt className="font-medium text-slate-900">{tr(locale, "Alcohol frequency", "תדירות אלכוהול")}</dt>
+                  <dt className="font-medium text-slate-900">{tr(locale, "Alcohol consumption", "צריכת אלכוהול")}</dt>
                   <dd>
-                    {profile.alcohol_times_per_week != null
-                      ? `${formatNumberForLocale(profile.alcohol_times_per_week, locale, { maximumFractionDigits: 1 })} ${tr(locale, "times/week", "פעמים בשבוע")}`
-                      : tr(locale, "n/a", "לא זמין")}
+                    {profile.alcohol_consumption_level === "low"
+                      ? tr(locale, "Low consumption", "צריכה נמוכה")
+                      : profile.alcohol_consumption_level === "high"
+                        ? tr(locale, "High consumption", "צריכה גבוהה")
+                        : tr(locale, "n/a", "לא זמין")}
                   </dd>
                 </div>
               ) : null}

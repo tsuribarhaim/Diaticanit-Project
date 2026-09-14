@@ -1,4 +1,4 @@
-import { formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
+import { formatGoalType, formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
 import type { TargetGenerationPayload } from "@/lib/targets";
 
 export type MetricDiffRow = { labelEn: string; labelHe: string; before: string; after: string };
@@ -46,7 +46,10 @@ function habitsSummary(payload: TargetGenerationPayload): string {
 
 function userTargetsSummary(payload: TargetGenerationPayload): string {
   return payload.userTargets
-    .map((entry) => `${entry.label}: ${entry.value}`)
+    // Sort by id when present so a relabeled-but-same-target adjustment
+    // (id unchanged, per the AI prompt's "keep its id unchanged" rule)
+    // sorts stably rather than jumping around by label text.
+    .map((entry) => `${entry.id ?? entry.label}|${entry.label}: ${entry.value}${entry.unit ? ` (${entry.targetMin}-${entry.targetMax} ${entry.unit})` : ""}`)
     .sort()
     .join(" | ");
 }
@@ -102,7 +105,12 @@ export function computeTargetsDiff(before: TargetGenerationPayload, after: Targe
   }
 
   if (before.goalType !== after.goalType) {
-    rows.push({ labelEn: "Goal type", labelHe: "סוג מטרה", before: before.goalType, after: after.goalType });
+    rows.push({
+      labelEn: "Goal type",
+      labelHe: "סוג מטרה",
+      before: formatGoalType(before.goalType, locale),
+      after: formatGoalType(after.goalType, locale),
+    });
   }
   if (before.targetWeightKg !== after.targetWeightKg) {
     rows.push({

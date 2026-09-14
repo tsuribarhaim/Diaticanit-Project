@@ -263,7 +263,7 @@ export function DailyReportDefaultsPicker({
                   <input
                     name={`quantity_default_${item.id}`}
                     type="number"
-                    step="0.01"
+                    step="1"
                     min="0"
                     defaultValue={item.default_quantity}
                     disabled

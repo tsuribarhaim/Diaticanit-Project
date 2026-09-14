@@ -2,7 +2,16 @@ import { z } from "zod";
 
 import { BMI_GOOD_MIN, classifyBmi, computeBmi } from "@/lib/bmi";
 import type { AppLocale } from "@/lib/locale";
-import { formatNumberForLocale, tr } from "@/lib/locale";
+import {
+  formatActivityLevel,
+  formatDietaryPreference,
+  formatExerciseModality,
+  formatGoalType,
+  formatHabit,
+  formatMedicalCondition,
+  formatNumberForLocale,
+  tr,
+} from "@/lib/locale";
 import { activityLevelOptions } from "@/lib/profile";
 
 /** Column list for selecting a full `user_target_profiles` row, shared by
@@ -30,6 +39,14 @@ const habitEntrySchema = z.object({
 const userTargetEntrySchema = z.object({
   label: z.string().trim().min(1).max(80),
   value: z.string().trim().min(1).max(80),
+  // Optional so a legacy entry (saved before custom-target tracking
+  // existed) still validates and displays via label/value - it just won't
+  // get a loggable field in the Daily Report. Every new entry the AI
+  // generates going forward includes all four.
+  id: z.string().trim().min(1).max(60).optional(),
+  unit: z.string().trim().min(1).max(30).optional(),
+  targetMin: z.number().min(0).max(100000).optional(),
+  targetMax: z.number().min(0).max(100000).optional(),
 });
 
 const numericRangePairs = [
@@ -147,10 +164,20 @@ export type HabitEntry = {
 
 /** A user's own explicit ask (e.g. "Lose weight" -> "2 kg", "Improve sleep
  * duration" -> "8 hours"), tracked separately from the structured targets so
- * the Targets page can show what was actually requested. */
+ * the Targets page can show what was actually requested.
+ *
+ * id/unit/targetMin/targetMax make the entry loggable: when present, the
+ * Daily Report form shows a numeric input for it (keyed by `id`) and the
+ * Home page shows a progress ring against [targetMin, targetMax] `unit`.
+ * Optional because an entry saved before this existed (or a rare
+ * non-numeric ask) has only label/value and just displays as before. */
 export type UserTargetEntry = {
   label: string;
   value: string;
+  id?: string;
+  unit?: string;
+  targetMin?: number;
+  targetMax?: number;
 };
 
 /**
@@ -485,15 +512,22 @@ function buildExerciseTargets(profile: ProfileForTargets, goalType: TargetGoalTy
     const durationMinutesPerSession =
       schedule?.minutes_per_session && schedule.minutes_per_session > 0 ? schedule.minutes_per_session : fallback.duration;
 
+    const modalityLabel = formatExerciseModality(modality, locale);
+    const goalLabel = formatGoalType(goalType, locale);
+
     return {
       modality,
       frequencyPerWeek,
       durationMinutesPerSession,
       aiAdjustmentNote: tr(
         locale,
-        `Kept your existing ${modality.replace(/_/g, " ")} routine, aligned to your ${goalType.replace(/_/g, " ")} goal.`,
-        `שומר על שגרת ${modality.replace(/_/g, " ")} הקיימת שלך, בהתאמה למטרת ${goalType.replace(/_/g, " ")}.`,
+        `Kept your existing ${modalityLabel} routine, aligned to your ${goalLabel} goal.`,
+        `שומר על שגרת ${modalityLabel} הקיימת שלך, בהתאמה למטרת ${goalLabel}.`,
       ),
+      // Always English regardless of locale, deliberately - this is a
+      // YouTube search phrase, not user-facing prose, and English search
+      // terms return far better exercise-video results than a literal
+      // Hebrew translation of the modality/goal names would.
       searchKeywords: youtubeSearchKeywords(`${modality.replace(/_/g, " ")} workout for ${goalType.replace(/_/g, " ")}`),
     };
   });
@@ -760,10 +794,11 @@ export function generateHeuristicTargetProfileFromAnalysis({
     ));
   }
 
+  const goalLabelForRationale = formatGoalType(goalType, locale);
   const aiRationaleExplanation = tr(
     locale,
-    `These ranges are a general adult reference plan for a "${goalType.replace(/_/g, " ")}" goal, scaled to your weight, height, age, and activity level. They are informational only and not a substitute for personalized clinical or dietitian advice.`,
-    `הטווחים הללו הם תכנית ייחוס כללית למבוגרים עבור מטרת "${goalType.replace(/_/g, " ")}", המותאמת למשקל, לגובה, לגיל ולרמת הפעילות שלך. המידע הוא לצרכי ידע בלבד ואינו תחליף לייעוץ קליני או תזונתי מותאם אישית.`,
+    `These ranges are a general adult reference plan for a "${goalLabelForRationale}" goal, scaled to your weight, height, age, and activity level. They are informational only and not a substitute for personalized clinical or dietitian advice.`,
+    `הטווחים הללו הם תכנית ייחוס כללית למבוגרים עבור מטרת "${goalLabelForRationale}", המותאמת למשקל, לגובה, לגיל ולרמת הפעילות שלך. המידע הוא לצרכי ידע בלבד ואינו תחליף לייעוץ קליני או תזונתי מותאם אישית.`,
   );
 
   const userTargets: UserTargetEntry[] = [];
@@ -902,14 +937,29 @@ function normalizeHabitEntriesJson(value: unknown): HabitEntry[] {
   });
 }
 
-function normalizeUserTargetsJson(value: unknown): UserTargetEntry[] {
+/** Exported so callers that only need the active profile's user_targets
+ * (e.g. the Daily Report page, to know which custom targets are loggable
+ * today) can parse that one JSONB column directly, without having to select
+ * and map the entire user_target_profiles row via TARGET_PROFILE_COLUMNS. */
+export function normalizeUserTargetsJson(value: unknown): UserTargetEntry[] {
   if (!Array.isArray(value)) return [];
   return value
     .map((item) => {
       const record = (item ?? {}) as Record<string, unknown>;
+      const id = typeof record.id === "string" && record.id.trim() ? record.id.trim() : undefined;
+      const unit = typeof record.unit === "string" && record.unit.trim() ? record.unit.trim() : undefined;
+      const targetMin = typeof record.target_min === "number" ? record.target_min : undefined;
+      const targetMax = typeof record.target_max === "number" ? record.target_max : undefined;
       return {
         label: typeof record.label === "string" ? record.label : "",
         value: typeof record.value === "string" ? record.value : "",
+        // A legacy entry, or one the AI produced without a full set of
+        // these four, is treated as display-only rather than loggable -
+        // only expose the group when every field needed to log against it
+        // is actually present.
+        ...(id && unit && targetMin !== undefined && targetMax !== undefined
+          ? { id, unit, targetMin, targetMax }
+          : {}),
       };
     })
     .filter((entry) => entry.label && entry.value);
@@ -1010,8 +1060,14 @@ export function parseProfileSnapshot(value: unknown): ProfileForTargets | null {
 
 export type ProfileDiffRow = { labelEn: string; labelHe: string; before: string; after: string };
 
-function joinedOrNone(values: string[], locale: AppLocale): string {
-  return values.length ? [...values].sort().join(", ") : tr(locale, "None", "ללא");
+function joinedOrNone(
+  values: string[],
+  locale: AppLocale,
+  formatter?: (value: string, locale: AppLocale) => string,
+): string {
+  if (!values.length) return tr(locale, "None", "ללא");
+  const formatted = formatter ? values.map((value) => formatter(value, locale)) : values;
+  return [...formatted].sort().join(", ");
 }
 
 function exerciseScheduleSummary(
@@ -1020,7 +1076,7 @@ function exerciseScheduleSummary(
 ): string {
   if (!schedule) return tr(locale, "None", "ללא");
   const entries = Object.entries(schedule)
-    .map(([modality, value]) => `${modality} ${value.days_per_week}x/${value.minutes_per_session}min`)
+    .map(([modality, value]) => `${formatExerciseModality(modality, locale)} ${value.days_per_week}x/${value.minutes_per_session}min`)
     .sort();
   return entries.length ? entries.join(", ") : tr(locale, "None", "ללא");
 }
@@ -1042,12 +1098,17 @@ export function computeProfileDiff(before: ProfileForTargets, after: ProfileForT
     `${formatNumberForLocale(before.weight_kg, locale, { maximumFractionDigits: 1 })} kg`,
     `${formatNumberForLocale(after.weight_kg, locale, { maximumFractionDigits: 1 })} kg`,
   );
-  addIfChanged("Activity level", "רמת פעילות", before.activity_level, after.activity_level);
+  addIfChanged(
+    "Activity level",
+    "רמת פעילות",
+    formatActivityLevel(before.activity_level, locale),
+    formatActivityLevel(after.activity_level, locale),
+  );
   addIfChanged(
     "Medical conditions",
     "מצבים רפואיים",
-    joinedOrNone(before.medical_conditions, locale),
-    joinedOrNone(after.medical_conditions, locale),
+    joinedOrNone(before.medical_conditions, locale, formatMedicalCondition),
+    joinedOrNone(after.medical_conditions, locale, formatMedicalCondition),
   );
   addIfChanged(
     "Medical condition details",
@@ -1065,14 +1126,14 @@ export function computeProfileDiff(before: ProfileForTargets, after: ProfileForT
   addIfChanged(
     "Dietary preference",
     "העדפה תזונתית",
-    before.dietary_preference ?? tr(locale, "None", "ללא"),
-    after.dietary_preference ?? tr(locale, "None", "ללא"),
+    before.dietary_preference ? formatDietaryPreference(before.dietary_preference, locale) : tr(locale, "None", "ללא"),
+    after.dietary_preference ? formatDietaryPreference(after.dietary_preference, locale) : tr(locale, "None", "ללא"),
   );
   addIfChanged(
     "Exercise modalities",
     "סוגי פעילות",
-    joinedOrNone(before.exercise_modalities, locale),
-    joinedOrNone(after.exercise_modalities, locale),
+    joinedOrNone(before.exercise_modalities, locale, formatExerciseModality),
+    joinedOrNone(after.exercise_modalities, locale, formatExerciseModality),
   );
   addIfChanged(
     "Exercise schedule",
@@ -1080,7 +1141,7 @@ export function computeProfileDiff(before: ProfileForTargets, after: ProfileForT
     exerciseScheduleSummary(before.exercise_schedule_by_modality, locale),
     exerciseScheduleSummary(after.exercise_schedule_by_modality, locale),
   );
-  addIfChanged("Habits", "הרגלים", joinedOrNone(before.habits, locale), joinedOrNone(after.habits, locale));
+  addIfChanged("Habits", "הרגלים", joinedOrNone(before.habits, locale, formatHabit), joinedOrNone(after.habits, locale, formatHabit));
   addIfChanged(
     "Pregnancy / lactation status",
     "סטטוס היריון / הנקה",

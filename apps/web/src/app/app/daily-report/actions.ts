@@ -137,6 +137,28 @@ function isMissingSelectedDefaultsColumn(errorMessage: string): boolean {
   return errorMessage.includes("selected_defaults") && errorMessage.includes("does not exist");
 }
 
+function isMissingCustomTargetValuesColumn(errorMessage: string): boolean {
+  return errorMessage.includes("custom_target_values") && errorMessage.includes("does not exist");
+}
+
+/** Reads every `custom_target_value__<id>` field the Daily Report form
+ * submits (one per currently loggable custom target - see
+ * DailyReportForm's customTargets prop) into a plain `{id: number}` map,
+ * skipping blanks/invalid numbers rather than writing 0 for a target the
+ * user didn't fill in today. */
+function extractCustomTargetValues(formData: FormData): Record<string, number> {
+  const values: Record<string, number> = {};
+  for (const [key, rawValue] of formData.entries()) {
+    if (!key.startsWith("custom_target_value__")) continue;
+    const targetId = key.slice("custom_target_value__".length);
+    const parsed = Number(rawValue?.toString().trim());
+    if (targetId && Number.isFinite(parsed)) {
+      values[targetId] = parsed;
+    }
+  }
+  return values;
+}
+
 function extractReportedWeightFromText(reportText: string): number | null {
   const normalized = reportText.replace(/,/g, ".");
 
@@ -619,6 +641,7 @@ export async function saveDailyReportAction(
   const inferredWeightFromText = reportText ? extractReportedWeightFromText(reportText) : null;
   const enteredReportedWeightKg = reportedWeightRaw ? toNumber(reportedWeightRaw, NaN) : null;
   const reportedWeightKg = enteredReportedWeightKg ?? inferredWeightFromText;
+  const customTargetValues = extractCustomTargetValues(formData);
 
   if (
     reportedWeightRaw &&
@@ -666,6 +689,7 @@ export async function saveDailyReportAction(
     estimated_burn_kcal: mergedMetrics.estimatedBurnKcal,
     reported_weight_kg: reportedWeightKg,
     selected_defaults: selectedDefaultsSnapshot,
+    custom_target_values: customTargetValues,
     // DB check constraint only allows 'heuristic' | 'ai'; parser_version carries the "-photo-" marker.
     parse_mode: modeUsedForReport === "ai_photo" ? "ai" : modeUsedForReport,
     parser_version: parserVersionUsed,
@@ -680,7 +704,8 @@ export async function saveDailyReportAction(
   if (
     insertWithWeight.error &&
     (isMissingReportedWeightColumn(insertWithWeight.error.message) ||
-      isMissingSelectedDefaultsColumn(insertWithWeight.error.message))
+      isMissingSelectedDefaultsColumn(insertWithWeight.error.message) ||
+      isMissingCustomTargetValuesColumn(insertWithWeight.error.message))
   ) {
     reportedWeightNotPersisted =
       reportedWeightKg !== null && isMissingReportedWeightColumn(insertWithWeight.error.message);
@@ -692,6 +717,10 @@ export async function saveDailyReportAction(
         }
 
         if (key === "selected_defaults" && isMissingSelectedDefaultsColumn(insertWithWeight.error!.message)) {
+          return false;
+        }
+
+        if (key === "custom_target_values" && isMissingCustomTargetValuesColumn(insertWithWeight.error!.message)) {
           return false;
         }
 

@@ -86,6 +86,34 @@ export function formatActivityLevel(value: string, locale: AppLocale): string {
   return locale === "he" ? value : titleCase(value);
 }
 
+export function formatGoalType(value: string, locale: AppLocale): string {
+  const token = normalizeToken(value);
+  if (token === "weight_loss") return tr(locale, "weight loss", "ירידה במשקל");
+  if (token === "weight_gain") return tr(locale, "weight gain", "עלייה במשקל");
+  if (token === "maintain") return tr(locale, "maintaining your weight", "שמירה על המשקל");
+  if (token === "general") return tr(locale, "general health", "בריאות כללית");
+  return locale === "he" ? value : titleCase(value.replace(/_/g, " "));
+}
+
+export function formatMedicalCondition(value: string, locale: AppLocale): string {
+  const token = normalizeToken(value);
+  if (token === "celiac_disease") return tr(locale, "Celiac Disease", "צליאק");
+  if (token === "hypertension") return tr(locale, "Hypertension (High Blood Pressure)", "יתר לחץ דם");
+  if (token === "kidney_renal_failure") return tr(locale, "Kidney / Renal Failure", "אי ספיקת כליות");
+  if (token === "diabetes") return tr(locale, "Diabetes", "סוכרת");
+  if (token === "other") return tr(locale, "Others (Please specify)", "אחר (נא לפרט)");
+  if (token === "prefer_not_to_disclose") return tr(locale, "Prefer not to disclose", "מעדיפ/ה לא לשתף");
+  return locale === "he" ? value : titleCase(value.replace(/_/g, " "));
+}
+
+export function formatHabit(value: string, locale: AppLocale): string {
+  const token = normalizeToken(value);
+  if (token === "smoking_or_vaping") return tr(locale, "Smoking", "עישון");
+  if (token === "alcohol") return tr(locale, "Alcohol", "אלכוהול");
+  if (token === "none") return tr(locale, "None", "ללא");
+  return locale === "he" ? value : titleCase(value.replace(/_/g, " "));
+}
+
 export function formatExerciseModality(value: string, locale: AppLocale): string {
   const token = normalizeToken(value);
   if (token === "resistance_hypertrophy") return tr(locale, "Resistance / Hypertrophy", "התנגדות / היפרטרופיה");

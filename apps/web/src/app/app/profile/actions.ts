@@ -19,6 +19,7 @@ import {
 import { normalizeLocale, tr } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
+import { computeProfileDiff, parseProfileSnapshot, type ProfileForTargets } from "@/lib/targets";
 
 export type ProfileUpdateActionState = {
   error?: string;
@@ -38,7 +39,7 @@ function isMissingOnboardingV2Columns(errorMessage: string): boolean {
     || errorMessage.includes("nutritional_goal")
     || errorMessage.includes("exercise_modality_other_details")
     || errorMessage.includes("exercise_schedule_by_modality")
-    || errorMessage.includes("alcohol_times_per_week")
+    || errorMessage.includes("alcohol_consumption_level")
     || errorMessage.includes("smoking_packs_per_day")
     || errorMessage.includes("needs_onboarding_refresh")
   );
@@ -130,7 +131,7 @@ export async function updateProfileAction(
     regular_medications_details: getFormString(formData, "regular_medications_details"),
     hot_climate_or_heavy_sweating: parseBooleanField(formData.get("hot_climate_or_heavy_sweating")),
     habits: parseMultiSelect(formData, "habits"),
-    alcohol_times_per_week: getFormString(formData, "alcohol_times_per_week"),
+    alcohol_consumption_level: getFormString(formData, "alcohol_consumption_level"),
     smoking_packs_per_day: getFormString(formData, "smoking_packs_per_day"),
     dietary_preference: getFormString(formData, "dietary_preference"),
     additional_information: getFormString(formData, "additional_information"),
@@ -420,7 +421,7 @@ export async function updateProfileAction(
     has_regular_medications: parsed.data.has_regular_medications,
     regular_medications_details: parsed.data.regular_medications_details,
     habits: parsed.data.habits,
-    alcohol_times_per_week: parsed.data.habits.includes("alcohol") ? parsed.data.alcohol_times_per_week : null,
+    alcohol_consumption_level: parsed.data.habits.includes("alcohol") ? parsed.data.alcohol_consumption_level : null,
     smoking_packs_per_day: parsed.data.habits.includes("smoking_or_vaping") ? parsed.data.smoking_packs_per_day : null,
     additional_information: parsed.data.additional_information,
     allergies: parsed.data.allergies,
@@ -504,5 +505,45 @@ export async function updateProfileAction(
     maxAge: 60 * 60 * 24 * 365,
   });
 
-  redirect("/app/profile");
+  // Reuses the exact same snapshot-diff mechanism that already powers the
+  // "your profile changed" banner on the Targets page (see
+  // computeProfileDiff/parseProfileSnapshot) - if this save changed any of
+  // the fields that feed target generation, flag it via a one-time query
+  // param so the profile page can prompt the user to go review their
+  // targets, instead of only surfacing it if/when they happen to visit
+  // Targets on their own.
+  const { data: activeTargetProfileForDiff } = await supabase
+    .from("user_target_profiles")
+    .select("profile_snapshot")
+    .eq("user_id", user.id)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  let targetsStale = false;
+  if (activeTargetProfileForDiff) {
+    const snapshot = parseProfileSnapshot(activeTargetProfileForDiff.profile_snapshot);
+    if (snapshot) {
+      const updatedProfileForTargets: ProfileForTargets = {
+        age: calculatedAge,
+        gender: payload.gender,
+        biological_sex: payload.biological_sex,
+        height_cm: payload.height_cm,
+        weight_kg: payload.weight_kg,
+        activity_level: payload.activity_level,
+        allergies: payload.allergies,
+        medical_conditions: payload.medical_conditions,
+        medical_conditions_details: payload.medical_conditions_details,
+        regular_medications_details: payload.regular_medications_details,
+        dietary_preference: payload.dietary_preference ?? null,
+        exercise_modalities: payload.exercise_modalities,
+        exercise_schedule_by_modality: payload.exercise_schedule_by_modality,
+        habits: payload.habits,
+        pregnancy_lactation_status: payload.pregnancy_lactation_status,
+        hot_climate_or_heavy_sweating: payload.hot_climate_or_heavy_sweating,
+      };
+      targetsStale = computeProfileDiff(snapshot, updatedProfileForTargets, locale).length > 0;
+    }
+  }
+
+  redirect(targetsStale ? "/app/profile?targetsStale=1" : "/app/profile");
 }

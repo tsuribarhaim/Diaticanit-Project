@@ -167,6 +167,16 @@ async function callAnthropicChatCompletion({ config, messages, signal }: AiChatC
     body: JSON.stringify({
       model: config.model,
       max_tokens: ANTHROPIC_JSON_MAX_TOKENS,
+      // Confirmed via direct testing against this account's model: without
+      // this, Claude spends a large, variable chunk of the max_tokens
+      // budget on invisible extended-thinking tokens before writing any of
+      // the actual JSON (1235 of 8192 in one measured call) - none of that
+      // reasoning is needed for a deterministic "convert this into JSON"
+      // task, and when thinking runs long it leaves too little budget for
+      // the JSON itself, truncating it mid-structure (the repeated
+      // "Expected ',' or ']'" parse failures). Disabling it also cut a
+      // representative call's latency from 47.5s to 31.9s.
+      thinking: { type: "disabled" },
       system,
       messages: anthropicMessages,
     }),
@@ -185,14 +195,30 @@ async function callAnthropicChatCompletion({ config, messages, signal }: AiChatC
     .join("\n");
 }
 
+/** No caller of callAiChatCompletion currently passes its own `signal`, so
+ * without a default a slow or stalled provider response has nothing to
+ * bound it - it was observed taking 105s+ on a single structured-JSON
+ * request before finally failing anyway (the model ran up to its max_tokens
+ * ceiling and got cut off mid-JSON). Aborting well before that turns an
+ * open-ended, silent wait into a bounded one that reaches the app's
+ * existing failure handling (which already falls back gracefully) in a
+ * reasonable time instead of well over a minute. */
+const DEFAULT_AI_REQUEST_TIMEOUT_MS = 45000;
+
+function withDefaultTimeout(signal?: AbortSignal): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(DEFAULT_AI_REQUEST_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+}
+
 /** Single entry point for every non-streaming "give me back JSON" AI call
  * in this app - branches to the right provider's request/response shape
  * internally so call sites never need to know the difference. */
 export async function callAiChatCompletion(params: AiChatCompletionParams): Promise<string> {
+  const boundedParams = { ...params, signal: withDefaultTimeout(params.signal) };
   if (params.config.provider === "anthropic") {
-    return callAnthropicChatCompletion(params);
+    return callAnthropicChatCompletion(boundedParams);
   }
-  return callOpenAiCompatibleChatCompletion(params);
+  return callOpenAiCompatibleChatCompletion(boundedParams);
 }
 
 /**
@@ -290,6 +316,10 @@ async function streamAnthropicAsOpenAiSse({ config, messages, signal }: AiChatCo
     body: JSON.stringify({
       model: config.model,
       max_tokens: ANTHROPIC_CHAT_MAX_TOKENS,
+      // See the note in callAnthropicChatCompletion - extended thinking adds
+      // latency before the reply even starts streaming, for no benefit on a
+      // short conversational reply.
+      thinking: { type: "disabled" },
       stream: true,
       system,
       messages: anthropicMessages,

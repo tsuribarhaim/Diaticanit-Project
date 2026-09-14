@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 
@@ -9,6 +9,9 @@ import {
   updateProfileAction,
   type ProfileUpdateActionState,
 } from "@/app/app/profile/actions";
+import { AlcoholConsumptionInfo } from "@/components/alcohol-consumption-info";
+import { LocalizedDateInput } from "@/components/localized-date-input";
+import { useUnsavedPreview } from "@/components/unsaved-preview-context";
 import {
   activityLevelOptions,
   dietaryPreferenceOptions,
@@ -24,7 +27,7 @@ import {
   validateFreeTextDetails,
 } from "@/lib/profile";
 import type { AppLocale } from "@/lib/locale";
-import { formatActivityLevel, formatNumberForLocale, localeTag, tr } from "@/lib/locale";
+import { formatActivityLevel, formatMedicalCondition, formatNumberForLocale, tr } from "@/lib/locale";
 
 type ProfileEditFormProps = {
   defaults: {
@@ -49,7 +52,7 @@ type ProfileEditFormProps = {
     regular_medications_details: string;
     hot_climate_or_heavy_sweating: boolean;
     habits: string[];
-    alcohol_times_per_week: number | null;
+    alcohol_consumption_level: "low" | "high" | null;
     smoking_packs_per_day: number | null;
     dietary_preference: (typeof dietaryPreferenceOptions)[number];
     additional_information: string;
@@ -74,15 +77,6 @@ const EXERCISE_MODALITY_LABELS: Record<ExerciseScheduleModalityOption, { en: str
 };
 
 type MedicalConditionOption = (typeof medicalConditionOptions)[number];
-
-const MEDICAL_CONDITION_LABELS: Record<MedicalConditionOption, { en: string; he: string }> = {
-  celiac_disease: { en: "Celiac Disease", he: "צליאק" },
-  hypertension: { en: "Hypertension (High Blood Pressure)", he: "יתר לחץ דם" },
-  kidney_renal_failure: { en: "Kidney / Renal Failure", he: "אי ספיקת כליות" },
-  diabetes: { en: "Diabetes", he: "סוכרת" },
-  other: { en: "Others (Please specify)", he: "אחר (נא לפרט)" },
-  prefer_not_to_disclose: { en: "Prefer not to disclose", he: "מעדיפ/ה לא לשתף" },
-};
 
 type ProfileEditDraft = {
   first_name: string;
@@ -109,7 +103,7 @@ type ProfileEditDraft = {
   regular_medications_details: string;
   hot_climate_or_heavy_sweating: "yes" | "no";
   habits: string[];
-  alcohol_times_per_week: string;
+  alcohol_consumption_level: "low" | "high" | "";
   smoking_packs_per_day: string;
   dietary_preference: (typeof dietaryPreferenceOptions)[number];
   additional_information: string;
@@ -125,11 +119,6 @@ type PersistedProfileEditDraft = {
 
 function exerciseModalityLabel(modality: ExerciseScheduleModalityOption, locale: AppLocale): string {
   const labels = EXERCISE_MODALITY_LABELS[modality];
-  return locale === "he" ? labels.he : labels.en;
-}
-
-function medicalConditionLabel(condition: MedicalConditionOption, locale: AppLocale): string {
-  const labels = MEDICAL_CONDITION_LABELS[condition];
   return locale === "he" ? labels.he : labels.en;
 }
 
@@ -363,8 +352,7 @@ function createInitialDraft(defaults: ProfileEditFormProps["defaults"]): Profile
     regular_medications_details: defaults.regular_medications_details,
     hot_climate_or_heavy_sweating: defaults.hot_climate_or_heavy_sweating ? "yes" : "no",
     habits: defaults.habits,
-    alcohol_times_per_week:
-      defaults.alcohol_times_per_week == null ? "" : String(defaults.alcohol_times_per_week),
+    alcohol_consumption_level: defaults.alcohol_consumption_level ?? "",
     smoking_packs_per_day: packsPerDayToCigarettesString(defaults.smoking_packs_per_day),
     dietary_preference: defaults.dietary_preference,
     additional_information: defaults.additional_information,
@@ -400,6 +388,21 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
     selectedExerciseModalities,
     draft.exercise_schedule_by_modality,
   );
+
+  // Warns before navigating away (nav bar links) once anything's been
+  // edited - same guard/modal already used on the Targets page. A
+  // successful save redirects server-side rather than updating client
+  // state, so there's no "success" flag to also check here; the unmount
+  // cleanup below handles clearing the flag once that redirect happens.
+  const initialDraftRef = useRef(draft);
+  const { setHasUnsavedPreview } = useUnsavedPreview();
+  useEffect(() => {
+    setHasUnsavedPreview(JSON.stringify(draft) !== JSON.stringify(initialDraftRef.current));
+  }, [draft, setHasUnsavedPreview]);
+  useEffect(() => {
+    return () => setHasUnsavedPreview(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const payload: PersistedProfileEditDraft = {
@@ -524,7 +527,7 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
 
     if (key === "habits") {
       if (!nextValues.includes("alcohol")) {
-        patch.alcohol_times_per_week = "";
+        patch.alcohol_consumption_level = "";
       }
       if (!nextValues.includes("smoking_or_vaping")) {
         patch.smoking_packs_per_day = "";
@@ -774,7 +777,7 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
         name="medical_conditions"
         value={draft.has_medical_conditions === "yes" ? draft.medical_conditions.join(",") : ""}
       />
-      <input type="hidden" name="alcohol_times_per_week" value={draft.alcohol_times_per_week} />
+      <input type="hidden" name="alcohol_consumption_level" value={draft.alcohol_consumption_level} />
       <input type="hidden" name="smoking_packs_per_day" value={cigarettesPerDayToPacksString(draft.smoking_packs_per_day)} />
 
       <section className="rounded-xl border border-slate-200 p-4">
@@ -792,15 +795,14 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
           </label>
           <label className="block" data-field="date_of_birth">
             <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Date of birth", "תאריך לידה")}</span>
-            <input
-              type="date"
+            <LocalizedDateInput
+              locale={locale}
               name="date_of_birth"
               required
               max={maxDateOfBirth}
               value={draft.date_of_birth}
-              onChange={(event) => updateDraft({ date_of_birth: event.target.value, date_of_birth_display: event.target.value })}
-              lang={localeTag(locale)}
-              className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("date_of_birth")}`}
+              onChange={(isoValue) => updateDraft({ date_of_birth: isoValue, date_of_birth_display: isoValue })}
+              ariaLabel={tr(locale, "Date of birth", "תאריך לידה")}
             />
             {renderFieldError("date_of_birth")}
           </label>
@@ -814,12 +816,12 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
           </div>
           <label className="block" data-field="height_cm">
             <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Height (cm)", "גובה (ס\"מ)")}</span>
-            <input type="number" name="height_cm" required min={80} max={250} step="0.01" value={draft.height_cm} onChange={(event) => updateDraft({ height_cm: event.target.value })} className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("height_cm")}`} />
+            <input type="number" name="height_cm" required min={80} max={250} step="0.1" value={draft.height_cm} onChange={(event) => updateDraft({ height_cm: event.target.value })} className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("height_cm")}`} />
             {renderFieldError("height_cm")}
           </label>
           <label className="block" data-field="weight_kg">
             <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Weight (kg)", "משקל (ק\"ג)")}</span>
-            <input type="number" name="weight_kg" required min={20} max={400} step="0.01" value={draft.weight_kg} onChange={(event) => updateDraft({ weight_kg: event.target.value })} className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("weight_kg")}`} />
+            <input type="number" name="weight_kg" required min={20} max={400} step="0.1" value={draft.weight_kg} onChange={(event) => updateDraft({ weight_kg: event.target.value })} className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("weight_kg")}`} />
             {renderFieldError("weight_kg")}
           </label>
         </div>
@@ -988,7 +990,7 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
                       onClick={() => toggleMedicalCondition(condition)}
                       className={`rounded-xl border px-3 py-2 text-left text-xs font-medium ${selected ? "border-teal-700 bg-teal-50 text-teal-900" : "border-slate-300 bg-white text-slate-700"}`}
                     >
-                      {medicalConditionLabel(condition, locale)}
+                      {formatMedicalCondition(condition, locale)}
                     </button>
                   );
                 })}
@@ -1058,11 +1060,37 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
               })}
             </div>
             {draft.habits.includes("alcohol") ? (
-              <label className="mt-2 block" data-field="alcohol_times_per_week">
-                <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Alcohol frequency (times/week)", "תדירות אלכוהול (פעמים בשבוע)")}</span>
-                <input type="number" min={0} step="0.1" value={draft.alcohol_times_per_week} onChange={(event) => updateDraft({ alcohol_times_per_week: event.target.value })} className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("alcohol_times_per_week")}`} />
-                {renderFieldError("alcohol_times_per_week")}
-              </label>
+              <div className="mt-2" data-field="alcohol_consumption_level">
+                <span className="mb-1 flex items-center gap-1.5 text-sm font-medium text-slate-700">
+                  {tr(locale, "Alcohol consumption", "צריכת אלכוהול")}
+                  <AlcoholConsumptionInfo locale={locale} />
+                </span>
+                <div className="flex gap-3 text-sm">
+                  <label
+                    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.alcohol_consumption_level === "low" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}
+                  >
+                    <input
+                      className="h-4 w-4 accent-teal-700"
+                      type="radio"
+                      checked={draft.alcohol_consumption_level === "low"}
+                      onChange={() => updateDraft({ alcohol_consumption_level: "low" })}
+                    />{" "}
+                    {tr(locale, "Low consumption", "צריכה נמוכה")}
+                  </label>
+                  <label
+                    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.alcohol_consumption_level === "high" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}
+                  >
+                    <input
+                      className="h-4 w-4 accent-teal-700"
+                      type="radio"
+                      checked={draft.alcohol_consumption_level === "high"}
+                      onChange={() => updateDraft({ alcohol_consumption_level: "high" })}
+                    />{" "}
+                    {tr(locale, "High consumption", "צריכה גבוהה")}
+                  </label>
+                </div>
+                {renderFieldError("alcohol_consumption_level")}
+              </div>
             ) : null}
             {draft.habits.includes("smoking_or_vaping") ? (
               <label className="mt-2 block" data-field="smoking_packs_per_day">
