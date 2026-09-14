@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 
@@ -8,6 +8,9 @@ import {
   saveOnboardingProfileAction,
   type OnboardingActionState,
 } from "@/app/app/onboarding/actions";
+import { AlcoholConsumptionInfo } from "@/components/alcohol-consumption-info";
+import { LocalizedDateInput } from "@/components/localized-date-input";
+import { useUnsavedPreview } from "@/components/unsaved-preview-context";
 import {
   activityLevelOptions,
   dietaryPreferenceOptions,
@@ -23,7 +26,7 @@ import {
   validateFreeTextDetails,
 } from "@/lib/profile";
 import type { AppLocale } from "@/lib/locale";
-import { formatActivityLevel, formatNumberForLocale, localeTag, tr } from "@/lib/locale";
+import { formatActivityLevel, formatMedicalCondition, formatNumberForLocale, tr } from "@/lib/locale";
 
 type OnboardingProfileFormProps = {
   defaults?: {
@@ -48,7 +51,7 @@ type OnboardingProfileFormProps = {
     regular_medications_details?: string;
     hot_climate_or_heavy_sweating?: boolean;
     habits?: string[];
-    alcohol_times_per_week?: number | null;
+    alcohol_consumption_level?: "low" | "high" | null;
     smoking_packs_per_day?: number | null;
     dietary_preference?: (typeof dietaryPreferenceOptions)[number];
     additional_information?: string;
@@ -71,15 +74,6 @@ const EXERCISE_MODALITY_LABELS: Record<ExerciseScheduleModalityOption, { en: str
 };
 
 type MedicalConditionOption = (typeof medicalConditionOptions)[number];
-
-const MEDICAL_CONDITION_LABELS: Record<MedicalConditionOption, { en: string; he: string }> = {
-  celiac_disease: { en: "Celiac Disease", he: "צליאק" },
-  hypertension: { en: "Hypertension (High Blood Pressure)", he: "יתר לחץ דם" },
-  kidney_renal_failure: { en: "Kidney / Renal Failure", he: "אי ספיקת כליות" },
-  diabetes: { en: "Diabetes", he: "סוכרת" },
-  other: { en: "Others (Please specify)", he: "אחר (נא לפרט)" },
-  prefer_not_to_disclose: { en: "Prefer not to disclose", he: "מעדיפ/ה לא לשתף" },
-};
 
 type StepKey = 1 | 2 | 3 | 4;
 
@@ -107,7 +101,7 @@ const FIELD_TO_STEP: Record<string, StepKey> = {
   regular_medications_details: 3,
   hot_climate_or_heavy_sweating: 3,
   habits: 3,
-  alcohol_times_per_week: 3,
+  alcohol_consumption_level: 3,
   smoking_packs_per_day: 3,
   dietary_preference: 4,
   allergies: 4,
@@ -144,7 +138,7 @@ type OnboardingFormDraft = {
   regular_medications_details: string;
   hot_climate_or_heavy_sweating: "yes" | "no" | "";
   habits: string[];
-  alcohol_times_per_week: string;
+  alcohol_consumption_level: "low" | "high" | "";
   smoking_packs_per_day: string;
   dietary_preference: (typeof dietaryPreferenceOptions)[number] | "";
   additional_information: string;
@@ -155,11 +149,6 @@ type OnboardingFormDraft = {
 
 function exerciseModalityLabel(modality: ExerciseScheduleModalityOption, locale: AppLocale): string {
   const labels = EXERCISE_MODALITY_LABELS[modality];
-  return locale === "he" ? labels.he : labels.en;
-}
-
-function medicalConditionLabel(condition: MedicalConditionOption, locale: AppLocale): string {
-  const labels = MEDICAL_CONDITION_LABELS[condition];
   return locale === "he" ? labels.he : labels.en;
 }
 
@@ -512,8 +501,7 @@ function createInitialDraft(
         ? ""
         : (defaults.hot_climate_or_heavy_sweating ? "yes" : "no"),
     habits: defaults?.habits ?? [],
-    alcohol_times_per_week:
-      defaults?.alcohol_times_per_week == null ? "" : String(defaults.alcohol_times_per_week),
+    alcohol_consumption_level: defaults?.alcohol_consumption_level ?? "",
     smoking_packs_per_day: packsPerDayToCigarettesString(defaults?.smoking_packs_per_day),
     dietary_preference: defaults?.dietary_preference ?? "",
     additional_information: defaults?.additional_information ?? "",
@@ -561,7 +549,7 @@ function isValidDraft(value: unknown): value is OnboardingFormDraft {
       || candidate.hot_climate_or_heavy_sweating === "no"
       || candidate.hot_climate_or_heavy_sweating === "") &&
     Array.isArray(candidate.habits) &&
-    typeof candidate.alcohol_times_per_week === "string" &&
+    typeof candidate.alcohol_consumption_level === "string" &&
     typeof candidate.smoking_packs_per_day === "string" &&
     (candidate.dietary_preference === ""
       || dietaryPreferenceOptions.includes(candidate.dietary_preference as (typeof dietaryPreferenceOptions)[number])) &&
@@ -631,6 +619,22 @@ export function OnboardingProfileForm({
   });
   const [step, setStep] = useState<StepKey>(1);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Warns before navigating away (nav bar links) once anything's changed
+  // from wherever the draft started (a blank form, or a restored
+  // in-progress draft) - same guard/modal already used on the Targets
+  // page. A successful submit redirects server-side rather than updating
+  // client state, so there's no "success" flag to also check; the unmount
+  // cleanup clears the flag once that redirect happens.
+  const initialDraftRef = useRef(draft);
+  const { setHasUnsavedPreview } = useUnsavedPreview();
+  useEffect(() => {
+    setHasUnsavedPreview(JSON.stringify(draft) !== JSON.stringify(initialDraftRef.current));
+  }, [draft, setHasUnsavedPreview]);
+  useEffect(() => {
+    return () => setHasUnsavedPreview(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const effectiveLocale = draft.preferred_language;
 
@@ -753,7 +757,7 @@ export function OnboardingProfileForm({
 
     if (key === "habits") {
       if (!nextValues.includes("alcohol")) {
-        patch.alcohol_times_per_week = "";
+        patch.alcohol_consumption_level = "";
       }
       if (!nextValues.includes("smoking_or_vaping")) {
         patch.smoking_packs_per_day = "";
@@ -931,11 +935,8 @@ export function OnboardingProfileForm({
       if (!draft.hot_climate_or_heavy_sweating) {
         nextErrors.hot_climate_or_heavy_sweating = tr(effectiveLocale, "Choose Yes or No.", "יש לבחור כן או לא.");
       }
-      if (draft.habits.includes("alcohol")) {
-        const alcoholPerWeek = Number(draft.alcohol_times_per_week);
-        if (!Number.isFinite(alcoholPerWeek) || alcoholPerWeek <= 0) {
-          nextErrors.alcohol_times_per_week = tr(effectiveLocale, "Enter alcohol times per week.", "יש להזין תדירות אלכוהול בשבוע.");
-        }
+      if (draft.habits.includes("alcohol") && !draft.alcohol_consumption_level) {
+        nextErrors.alcohol_consumption_level = tr(effectiveLocale, "Select a consumption level.", "יש לבחור רמת צריכה.");
       }
 
       if (draft.habits.includes("smoking_or_vaping")) {
@@ -1114,7 +1115,7 @@ export function OnboardingProfileForm({
         name="hot_climate_or_heavy_sweating"
         value={draft.hot_climate_or_heavy_sweating}
       />
-      <input type="hidden" name="alcohol_times_per_week" value={draft.alcohol_times_per_week} />
+      <input type="hidden" name="alcohol_consumption_level" value={draft.alcohol_consumption_level} />
       <input type="hidden" name="smoking_packs_per_day" value={cigarettesPerDayToPacksString(draft.smoking_packs_per_day)} />
       <input type="hidden" name="dietary_preference" value={draft.dietary_preference} />
       <input type="hidden" name="allergies" value={draft.allergies} />
@@ -1167,14 +1168,13 @@ export function OnboardingProfileForm({
 
             <label className="block" data-field="date_of_birth">
               <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Date of birth", "תאריך לידה")}</span>
-              <input
-                type="date"
+              <LocalizedDateInput
+                locale={effectiveLocale}
                 required
                 max={new Date().toISOString().slice(0, 10)}
                 value={draft.date_of_birth}
-                onChange={(event) => updateDraft({ date_of_birth: event.target.value, date_of_birth_display: event.target.value })}
-                lang={localeTag(effectiveLocale)}
-                className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("date_of_birth")}`}
+                onChange={(isoValue) => updateDraft({ date_of_birth: isoValue, date_of_birth_display: isoValue })}
+                ariaLabel={tr(effectiveLocale, "Date of birth", "תאריך לידה")}
               />
               {renderFieldError("date_of_birth")}
             </label>
@@ -1617,7 +1617,7 @@ export function OnboardingProfileForm({
                       onClick={() => toggleMedicalCondition(condition)}
                       className={`rounded-xl border px-3 py-2 text-left text-xs font-medium ${selected ? "border-teal-700 bg-teal-50 text-teal-900" : "border-slate-300 bg-white text-slate-700"}`}
                     >
-                      {medicalConditionLabel(condition, effectiveLocale)}
+                      {formatMedicalCondition(condition, effectiveLocale)}
                     </button>
                   );
                 })}
@@ -1718,20 +1718,37 @@ export function OnboardingProfileForm({
             </div>
 
             {draft.habits.includes("alcohol") ? (
-              <label className="mt-2 block" data-field="alcohol_times_per_week">
-                <span className="mb-1 block text-sm font-medium text-slate-700">
-                  {tr(effectiveLocale, "Alcohol frequency (times/week)", "תדירות אלכוהול (פעמים בשבוע)")}
+              <div className="mt-2" data-field="alcohol_consumption_level">
+                <span className="mb-1 flex items-center gap-1.5 text-sm font-medium text-slate-700">
+                  {tr(effectiveLocale, "Alcohol consumption", "צריכת אלכוהול")}
+                  <AlcoholConsumptionInfo locale={effectiveLocale} />
                 </span>
-                <input
-                  type="number"
-                  min={0}
-                  step="0.1"
-                  value={draft.alcohol_times_per_week}
-                  onChange={(event) => updateDraft({ alcohol_times_per_week: event.target.value })}
-                  className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("alcohol_times_per_week")}`}
-                />
-                {renderFieldError("alcohol_times_per_week")}
-              </label>
+                <div className="flex gap-3 text-sm">
+                  <label
+                    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.alcohol_consumption_level === "low" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}
+                  >
+                    <input
+                      className="h-4 w-4 accent-teal-700"
+                      type="radio"
+                      checked={draft.alcohol_consumption_level === "low"}
+                      onChange={() => updateDraft({ alcohol_consumption_level: "low" })}
+                    />{" "}
+                    {tr(effectiveLocale, "Low consumption", "צריכה נמוכה")}
+                  </label>
+                  <label
+                    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.alcohol_consumption_level === "high" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}
+                  >
+                    <input
+                      className="h-4 w-4 accent-teal-700"
+                      type="radio"
+                      checked={draft.alcohol_consumption_level === "high"}
+                      onChange={() => updateDraft({ alcohol_consumption_level: "high" })}
+                    />{" "}
+                    {tr(effectiveLocale, "High consumption", "צריכה גבוהה")}
+                  </label>
+                </div>
+                {renderFieldError("alcohol_consumption_level")}
+              </div>
             ) : null}
 
             {draft.habits.includes("smoking_or_vaping") ? (

@@ -13,7 +13,7 @@ import {
 } from "@/lib/extraction-insights";
 import { formatExtractionStatus, normalizeLocale, tr } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -82,7 +82,7 @@ export default async function DocumentExtractionPage({
   const supabase = await createClient();
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await getAuthenticatedUser();
 
   if (!user) {
     redirect("/auth/sign-in");

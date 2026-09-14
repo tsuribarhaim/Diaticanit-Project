@@ -42,9 +42,20 @@ function ChatSendButton({ locale, disabled }: { locale: AppLocale; disabled: boo
   return (
     <button
       type="submit"
-      disabled={disabled}
+      // Not the native `disabled` attribute: if this button ever holds
+      // focus at the moment it flips on (e.g. reached via Tab+Enter instead
+      // of a mouse click, which onMouseDown's preventDefault below doesn't
+      // cover), disabling a focused element forces the browser to blur it -
+      // and with nothing else to take focus, that resets scroll to the top
+      // of the page. aria-disabled plus the pointer/opacity styling gives
+      // the same look and the form's own submit guard (sendMessage no-ops
+      // when isStreaming) already prevents a real double-send.
+      aria-disabled={disabled}
+      onClick={(event) => {
+        if (disabled) event.preventDefault();
+      }}
       onMouseDown={(event) => event.preventDefault()}
-      className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800"
+      className={`inline-flex items-center justify-center rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-800 ${disabled ? "cursor-not-allowed opacity-70" : ""}`}
     >
       {tr(locale, "Send", "שליחה")}
     </button>
@@ -78,6 +89,7 @@ export function TargetsChatWorkspace({
   const [lockState, lockFormAction] = useActionState(lockTargetsAction, {} as TargetsActionState);
   const { setHasUnsavedPreview } = useUnsavedPreview();
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const previewPanelRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -87,8 +99,13 @@ export function TargetsChatWorkspace({
   }, [lockState.success, router]);
 
   useEffect(() => {
-    setHasUnsavedPreview(Boolean(pendingPreview) && !lockState.success);
-  }, [pendingPreview, lockState.success, setHasUnsavedPreview]);
+    // Guards navigation away not just once a structured preview exists, but
+    // from the moment any conversation has happened - losing a chat you
+    // typed (and the AI's reply) silently on an accidental tab switch is
+    // exactly the same "unsaved work" problem as losing a generated
+    // preview, just earlier in the flow.
+    setHasUnsavedPreview((Boolean(pendingPreview) || messages.length > 0) && !lockState.success);
+  }, [pendingPreview, messages, lockState.success, setHasUnsavedPreview]);
 
   useEffect(() => {
     return () => {
@@ -254,6 +271,14 @@ export function TargetsChatWorkspace({
       }
     } else if (assistantText) {
       setDecision({ messageIndex: assistantIndex, actionable, status: "pending" });
+      // On mobile the current-targets panel is hidden while the chat input
+      // is focused (see the isInputFocused ternary below) to save screen
+      // space, and nothing un-focuses the input just from sending a message
+      // - only the update_targets flow forced it back open. A reply here
+      // deserves the same treatment: the user just asked something about
+      // their targets, so show them again instead of leaving the panel
+      // hidden until they notice they have to tap away from the keyboard.
+      setIsInputFocused(false);
     }
 
     setIsStreaming(false);
@@ -320,6 +345,27 @@ export function TargetsChatWorkspace({
       // A genuine connection/timeout failure (not a server-explained
       // rejection) - offer to retry the exact same request.
       setRetryAction(() => () => handleUpdateTargetsDecision());
+    }
+  }
+
+  /** The decision banner only appears when the AI itself marks a reply
+   * ACTIONABLE - across a longer back-and-forth it can keep answering
+   * informationally without ever committing to that marker, leaving the
+   * user with no way to move forward at all. This lets them ask for an
+   * update explicitly regardless of how any single reply was classified;
+   * if there's genuinely nothing concrete to apply yet, that comes back as
+   * a normal, visible message rather than the conversation just going
+   * nowhere. */
+  async function handleManualUpdateRequest() {
+    if (isStreaming || messages.length === 0) return;
+    // This updates the Preview panel on the left, not the chat itself - on
+    // a tall page that panel can be scrolled out of view, which is exactly
+    // why clicking this looked like it "did nothing." Bring it into view
+    // right away so the spinner (and then the result) is visible.
+    previewPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const outcome = await requestTargetsUpdate(messages);
+    if (!outcome.ok && !outcome.semanticErrorMessage) {
+      setRetryAction(() => () => handleManualUpdateRequest());
     }
   }
 
@@ -409,7 +455,7 @@ export function TargetsChatWorkspace({
 
   return (
     <div className="grid grid-cols-1 gap-6 md:grid-cols-2 md:items-start">
-      <div className={isInputFocused ? "hidden space-y-4 md:block" : "space-y-4"}>
+      <div ref={previewPanelRef} className={isInputFocused ? "hidden space-y-4 md:block" : "space-y-4"}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm font-semibold text-slate-900">
             {pendingPreview ? tr(locale, "Preview", "תצוגה מקדימה") : tr(locale, "Current targets", "היעדים הנוכחיים")}
@@ -583,7 +629,14 @@ export function TargetsChatWorkspace({
               }}
               rows={2}
               maxLength={500}
-              disabled={isStreaming}
+              // readOnly, not disabled: disabling an element that currently
+              // has focus (which this does, right after the user just
+              // pressed Enter in it to send) forces the browser to blur it,
+              // and with nothing else to take focus, the browser resets
+              // scroll to the top of the page - happening on every single
+              // message. readOnly blocks editing during the request without
+              // touching focus, so scroll position stays put.
+              readOnly={isStreaming}
               placeholder={tr(locale, "Type a message...", "כתבו הודעה...")}
               className="flex-1 resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 disabled:opacity-70"
             />
@@ -619,6 +672,26 @@ export function TargetsChatWorkspace({
           <p className="mt-3 text-xs text-slate-400">{tr(locale, "Targets updated from your last request.", "היעדים עודכנו בהתאם לבקשתך האחרונה.")}</p>
         ) : decision && decision.status === "ignored" ? (
           <p className="mt-3 text-xs text-slate-400">{tr(locale, "Suggestion ignored.", "ההצעה נדחתה.")}</p>
+        ) : null}
+
+        {messages.length > 0 && !pendingPreview && !(decision?.status === "pending" && decision.actionable) ? (
+          <div className="mt-3 flex flex-col items-start gap-1.5">
+            <button
+              type="button"
+              onClick={handleManualUpdateRequest}
+              disabled={isStreaming}
+              className="rounded-lg border border-teal-300 bg-teal-50 px-3 py-1.5 text-sm font-semibold text-teal-800 hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {tr(locale, "Try updating targets from this conversation", "נסו לעדכן את היעדים לפי השיחה")}
+            </button>
+            <p className="text-xs text-slate-500">
+              {tr(
+                locale,
+                "This re-checks your whole conversation above and shows any resulting change in the Preview panel here - it won't apply anything until you review and lock it in.",
+                "פעולה זו בודקת מחדש את כל השיחה למעלה ומציגה כל שינוי שנובע ממנה בחלונית \"תצוגה מקדימה\" כאן - שום דבר לא ייושם עד שתסקרו ותנעלו אותו.",
+              )}
+            </p>
+          </div>
         ) : null}
       </div>
     </div>

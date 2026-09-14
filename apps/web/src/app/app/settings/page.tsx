@@ -4,7 +4,7 @@ import { EnvironmentBadge } from "@/components/environment-badge";
 import { LanguageToggle } from "@/components/language-toggle";
 import { getEnvironmentBadgeLabel } from "@/lib/environment-badge";
 import { normalizeLocale, tr } from "@/lib/locale";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +18,7 @@ export default async function SettingsPage() {
   const supabase = await createClient();
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await getAuthenticatedUser();
 
   if (!user) {
     redirect("/auth/sign-in");

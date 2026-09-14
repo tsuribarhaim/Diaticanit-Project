@@ -3,7 +3,29 @@ import { z } from "zod";
 import type { AiExtractionConfig } from "@/lib/ai/env";
 import { callAiChatCompletion } from "@/lib/ai/provider-client";
 import type { AppLocale } from "@/lib/locale";
+import { exerciseModalityOptions } from "@/lib/profile";
 import type { ExerciseTargetEntry, HabitEntry, ProfileForTargets, TargetGenerationPayload, TargetGoalType, UserTargetEntry } from "@/lib/targets";
+
+/** The exact modality tokens the rest of the app knows how to localize (see
+ * formatExerciseModality in lib/locale.ts) and that onboarding/profile already
+ * constrain users to. "none" is excluded - it never makes sense for an actual
+ * planned exercise_targets entry. */
+const AI_EXERCISE_MODALITY_TOKENS = exerciseModalityOptions.filter((option) => option !== "none");
+
+/** The AI is asked to only ever use one of AI_EXERCISE_MODALITY_TOKENS, but
+ * models drift toward a more natural free-text word (e.g. "walking") instead
+ * of the bucket it belongs to (e.g. "endurance_cardio") - formatExerciseModality
+ * has no translation for an arbitrary word, so it would render that raw
+ * English word untouched even in a Hebrew UI. Coercing anything outside the
+ * known set to "other" here guarantees a correctly localized label every
+ * time; the specific activity name itself isn't lost - it already lives in
+ * ai_adjustment_note and search_keywords, both free text the model already
+ * writes in the right language. */
+function normalizeAiModality(rawModality: string): (typeof AI_EXERCISE_MODALITY_TOKENS)[number] {
+  const normalized = rawModality.trim().toLowerCase();
+  const match = AI_EXERCISE_MODALITY_TOKENS.find((token) => token === normalized);
+  return match ?? "other";
+}
 
 /** Thrown when the model determines goal_text (an adjustment request against
  * an already-locked plan) doesn't describe any concrete, in-scope health
@@ -39,6 +61,13 @@ const aiHabitEntrySchema = z.object({
 const aiUserTargetEntrySchema = z.object({
   label: z.string().trim().min(1).max(80),
   value: z.string().trim().min(1).max(80),
+  // Optional so a response that omits these (model drift) still validates
+  // as a display-only entry rather than failing generation entirely - see
+  // the prompt rule below for why they should normally always be present.
+  id: z.string().trim().min(1).max(60).optional(),
+  unit: z.string().trim().min(1).max(30).optional(),
+  target_min: z.number().min(0).max(100000).optional(),
+  target_max: z.number().min(0).max(100000).optional(),
 });
 
 const aiTargetsSchema = z.object({
@@ -138,7 +167,7 @@ function parseJsonPayload(contentText: string): unknown {
 
 function toExerciseTargets(items: z.infer<typeof aiExerciseTargetSchema>[]): ExerciseTargetEntry[] {
   return items.slice(0, 6).map((item) => ({
-    modality: item.modality,
+    modality: normalizeAiModality(item.modality),
     frequencyPerWeek: Math.round(clamp(item.frequency_per_week, 0, 14)),
     durationMinutesPerSession: Math.round(clamp(item.duration_minutes_per_session, 0, 240)),
     aiAdjustmentNote: item.ai_adjustment_note,
@@ -160,6 +189,12 @@ function toUserTargets(items: z.infer<typeof aiUserTargetEntrySchema>[]): UserTa
   return items.slice(0, 8).map((item) => ({
     label: item.label,
     value: item.value,
+    // Only exposed as a group - see normalizeAiModality's sibling reasoning
+    // in this file: a partial set (e.g. unit without target_min) isn't
+    // enough to log against, so it's treated the same as absent.
+    ...(item.id && item.unit && item.target_min !== undefined && item.target_max !== undefined
+      ? { id: item.id, unit: item.unit, targetMin: item.target_min, targetMax: item.target_max }
+      : {}),
   }));
 }
 
@@ -298,7 +333,7 @@ export async function generateTargetsWithAi({
         "Change what the goal_text below asks for, plus anything the current profile now requires for safety (see the mandatory safety review rule above) - keep every other range, exercise entry, and habit as close to the current values as reasonable.",
         "If the requested change would create an unsafe or unbalanced combination (e.g. reducing exercise while keeping calories at the same level), proactively adjust the DEPENDENT values (e.g. lower the calorie range) to keep the plan coherent, and explain that adjustment in global_coaching_explanation. This does not apply to target_weight_kg itself - that must stay a literal translation of goal_text per the rule above, not something you adjust for safety.",
         "Do not treat a vague goal_text (e.g. \"please recalculate\" or \"my profile changed\") as a reason to leave everything unchanged - in that case, the safety review against the current profile IS the request.",
-        "current_active_targets.user_targets holds the user's previously tracked asks. Carry forward any still-relevant ones, add a new entry for whatever this request newly asks for, and update the value of an existing entry instead of duplicating it if this request changes the same thing (e.g. a new weight-loss amount replaces the old \"Lose weight\" value rather than adding a second one).",
+        "current_active_targets.user_targets holds the user's previously tracked asks. Carry forward any still-relevant ones, add a new entry for whatever this request newly asks for, and update the value/target_min/target_max of an existing entry instead of duplicating it if this request changes the same thing (e.g. a new weight-loss amount replaces the old \"Lose weight\" value rather than adding a second one) - when updating an existing entry, KEEP ITS id UNCHANGED (copy it from current_active_targets) so any Daily Report values already logged against it stay linked; only invent a new id for a genuinely new entry.",
       ]
     : [];
 
@@ -329,22 +364,23 @@ export async function generateTargetsWithAi({
           '"potassium_min_mg":number,"potassium_max_mg":number,"magnesium_min_mg":number,"magnesium_max_mg":number,"calcium_min_mg":number,"calcium_max_mg":number,"iron_min_mg":number,"iron_max_mg":number,',
           '"zinc_min_mg":number,"zinc_max_mg":number,"vit_c_min_mg":number,"vit_c_max_mg":number,"vit_b12_min_mcg":number,"vit_b12_max_mcg":number,"vit_d_min_mcg":number,"vit_d_max_mcg":number,',
           '"sat_fat_min_g":number,"sat_fat_max_g":number,"omega3_min_g":number,"omega3_max_g":number,',
-          '"exercise_targets":[{"modality":"string","frequency_per_week":number,"duration_minutes_per_session":number,"ai_adjustment_note":"string","search_keywords":["string"]}],',
+          `"exercise_targets":[{"modality":"${AI_EXERCISE_MODALITY_TOKENS.join("|")}","frequency_per_week":number,"duration_minutes_per_session":number,"ai_adjustment_note":"string","search_keywords":["string"]}],`,
           '"habits_do":[{"id":"string","habit_instruction":"string","rationale":"string"}],',
           '"habits_dont":[{"id":"string","habit_instruction":"string","rationale":"string"}],',
-          '"user_targets":[{"label":"string","value":"string"}],',
+          '"user_targets":[{"id":"string","label":"string","value":"string","unit":"string","target_min":number,"target_max":number}],',
           '"global_coaching_explanation":"string","confidence":number,"profile_discrepancy_message":"string"}',
           "Rules:",
           "- target_weight_kg and duration_days must be a FAITHFUL, literal translation of what goal_text actually asks for (e.g. \"lose 5kg\" against a known current weight, or an explicit target weight) - never silently substitute a different, \"safer\" number of your own choosing, even if the literal ask looks medically unwise. The application runs its own independent, deterministic safety check on target_weight_kg after you respond and will reject the whole request if it's unsafe; your job here is accurate translation, not moderation. If goal_text does not state or imply a weight/duration change, leave the current value(s) unchanged.",
           "- Base all ranges on standard adult Dietary Reference Intake (DRI) style ranges, scaled to the user's profile. This is general guidance, not a clinical diagnosis.",
           "- Respect any allergies, medical conditions, medications, and dietary preference when shaping habits and exercise notes (e.g. avoid recommending foods that conflict with a stated allergy).",
           "- MANDATORY SAFETY REVIEW: check the numeric ranges themselves (not just habit text) against the user's medical conditions. In particular: hypertension calls for a tighter, lower sodium range (roughly 1,200-1,500 mg rather than a generic 1,500-2,300 mg); diabetes calls for a lower added-sugar ceiling (roughly 15 g rather than a generic 25 g). Apply comparable, clinically-reasonable tightening for any other stated condition that has an established dietary implication. This review applies even when it is not the explicit subject of goal_text.",
-          "- exercise_targets: 2 to 4 entries. search_keywords must be short YouTube search phrases only (e.g. \"beginner resistance training routine\") — NEVER include a URL or a specific video title/link, since direct AI-suggested links are unreliable.",
+          `- exercise_targets: 2 to 4 entries. modality must be exactly one of these tokens: ${AI_EXERCISE_MODALITY_TOKENS.join(", ")} - never a free-text activity name like "walking" or "yoga" (the app only knows how to display these exact tokens; anything else renders as raw untranslated text). Put the specific activity itself (e.g. "brisk walking", "beginner yoga") in ai_adjustment_note and search_keywords instead - that's where the detail belongs, not in modality. search_keywords must be short YouTube search phrases only (e.g. \"beginner resistance training routine\") — NEVER include a URL or a specific video title/link, since direct AI-suggested links are unreliable.`,
           "- habits_do and habits_dont: 2 to 4 entries each, each with a short actionable instruction and a one-sentence rationale.",
-          "- user_targets: 0 to 5 entries. For each concrete, health-relevant ask the user actually made in goal_text (e.g. losing/gaining a specific amount of weight, a sleep-duration goal, a hydration goal, a step-count goal), add one entry with a short clean label (e.g. \"Target weight\", \"Lose weight\", \"Sleep duration\") and a short concrete value (e.g. \"62 kg\", \"2 kg\", \"8 hours\"). Only include asks that are genuinely about health, nutrition, exercise, sleep, or a related wellbeing topic and that you judged safe to apply; silently omit anything irrelevant, unsafe, or too vague to state as a concrete value. Do not invent entries the user didn't ask for - leave user_targets empty if goal_text has no concrete ask.",
+          "- user_targets: 0 to 5 entries. For each concrete, health-relevant OUTCOME the user actually asked for in goal_text (e.g. losing/gaining a specific amount of weight, a sleep-duration goal, a hydration goal, a step-count goal), add one entry with a short clean label (e.g. \"Target weight\", \"Lose weight\", \"Sleep duration\") and a short concrete value (e.g. \"62 kg\", \"2 kg\", \"8 hours\"). Only include asks that are genuinely about health, nutrition, exercise, sleep, or a related wellbeing topic and that you judged safe to apply; silently omit anything irrelevant, unsafe, or too vague to state as a concrete value. Do not invent entries the user didn't ask for - leave user_targets empty if goal_text has no concrete ask. user_targets is NEVER for an exercise activity or modality itself (e.g. \"Walking\", \"Running\", \"Yoga\") - any activity you add or recommend, including one chosen specifically to help reach a user_targets goal like weight loss, belongs in exercise_targets instead, never as its own user_targets entry.",
+          "- user_targets id/unit/target_min/target_max (required on every entry, not just label/value): these make the target loggable - the app shows the user a numeric input for it in their Daily Report and tracks real progress against it, so every entry needs all four, not just the ones that feel like an obvious number. id is a short, stable, lowercase snake_case machine key you invent from the label (e.g. \"sleep_hours\", \"daily_steps\") - use ASCII only even when label/value are in Hebrew. unit is a short plain-language unit (\"hours\", \"steps\", \"ml\", \"kg\"). target_min/target_max are the numeric range this entry represents (set them equal for an exact single-value goal, e.g. both 8 for \"8 hours of sleep\"); value stays the short human-readable string as before (e.g. \"8 hours\") - it is display text, target_min/target_max are what tracking actually runs on and must be consistent with it.",
           "- confidence must be between 0 and 1.",
           "- PROFILE CONSISTENCY CHECK: compare goal_text against user_profile. If goal_text clearly states something that factually contradicts a specific profile field (e.g. the user states an age that doesn't match user_profile's age, says they are no longer pregnant while user_profile marks them as pregnant, mentions a medical condition or medication that isn't reflected in user_profile, or similar), set profile_discrepancy_message to one short plain-language sentence describing the specific mismatch (in the reply language) so the app can alert the user to review their profile or their input - name both the profile's value and what goal_text stated. Leave profile_discrepancy_message empty when there is no clear, specific factual contradiction (do not flag vague, ambiguous, or merely-updated-over-time statements). This check never blocks generation and is independent of the no_actionable_change and safety checks - still generate the best targets you can even when a discrepancy is flagged.",
-          `- Write every text field (ai_adjustment_note, habit_instruction, rationale, global_coaching_explanation, user_targets label/value) entirely in ${languageName}. Do not mix languages within a field.`,
+          `- Write every text field (ai_adjustment_note, habit_instruction, rationale, global_coaching_explanation, user_targets label/value/unit) entirely in ${languageName}, EXCEPT user_targets id which must stay ASCII snake_case regardless of reply language. Do not mix languages within a field.`,
           "- Address the user directly in second person (\"you\"/\"your\") in every text field. Never refer to the user in third person (\"he\", \"she\", \"his\", \"her\", or the user's inferred gender) even when their biological_sex is known.",
           "- In Hebrew specifically, prefer gender-neutral or mixed-form second-person phrasing (e.g. \"שלך\", \"את/ה\") over a gendered third-person construction like \"בשל מצבו הרפואי\" or \"בשל מצבה הרפואי\" — write \"בשל המצב הרפואי שלך\" instead.",
           ...adjustmentContextLines,

@@ -8,7 +8,7 @@ import {
 } from "@/app/app/daily-report/defaults/actions";
 import { IngredientRowsFieldset, type IngredientRowValue } from "@/components/ingredient-rows-fieldset";
 import { formatDefaultItemKind, formatDefaultItemName, formatDefaultUnit, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -53,7 +53,7 @@ export default async function DailyReportDefaultsPage({
   const supabase = await createClient();
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await getAuthenticatedUser();
 
   if (!user) {
     redirect("/auth/sign-in");

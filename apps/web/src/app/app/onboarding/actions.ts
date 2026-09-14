@@ -40,7 +40,7 @@ function isMissingOnboardingV2Columns(errorMessage: string): boolean {
     || errorMessage.includes("nutritional_goal")
     || errorMessage.includes("exercise_modality_other_details")
     || errorMessage.includes("exercise_schedule_by_modality")
-    || errorMessage.includes("alcohol_times_per_week")
+    || errorMessage.includes("alcohol_consumption_level")
     || errorMessage.includes("smoking_packs_per_day")
     || errorMessage.includes("needs_onboarding_refresh")
   );
@@ -132,7 +132,7 @@ export async function saveOnboardingProfileAction(
     regular_medications_details: getFormString(formData, "regular_medications_details"),
     hot_climate_or_heavy_sweating: parseBooleanField(formData.get("hot_climate_or_heavy_sweating")),
     habits: parseMultiSelect(formData, "habits"),
-    alcohol_times_per_week: getFormString(formData, "alcohol_times_per_week"),
+    alcohol_consumption_level: getFormString(formData, "alcohol_consumption_level"),
     smoking_packs_per_day: getFormString(formData, "smoking_packs_per_day"),
     dietary_preference: getFormString(formData, "dietary_preference"),
     additional_information: getFormString(formData, "additional_information"),
@@ -209,7 +209,7 @@ export async function saveOnboardingProfileAction(
     has_regular_medications: parsed.data.has_regular_medications,
     regular_medications_details: parsed.data.regular_medications_details,
     habits: parsed.data.habits,
-    alcohol_times_per_week: parsed.data.habits.includes("alcohol") ? parsed.data.alcohol_times_per_week : null,
+    alcohol_consumption_level: parsed.data.habits.includes("alcohol") ? parsed.data.alcohol_consumption_level : null,
     smoking_packs_per_day: parsed.data.habits.includes("smoking_or_vaping") ? parsed.data.smoking_packs_per_day : null,
     additional_information: parsed.data.additional_information,
     allergies: parsed.data.allergies,

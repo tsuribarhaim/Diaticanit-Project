@@ -5,8 +5,8 @@ import { usePathname } from "next/navigation";
 import { GuardedLink } from "@/components/unsaved-preview-context";
 import { tr, type AppLocale } from "@/lib/locale";
 
-const CONFIRM_MESSAGE_EN = "You have a generated target plan that hasn't been locked in yet. Leave this page anyway?";
-const CONFIRM_MESSAGE_HE = "יש לך תכנית יעדים שנוצרה אך טרם ננעלה. לעזוב את הדף בכל זאת?";
+const CONFIRM_MESSAGE_EN = "You have an unsaved conversation or generated target plan on the Targets page that hasn't been locked in yet. Leave this page anyway?";
+const CONFIRM_MESSAGE_HE = "יש לך שיחה או תכנית יעדים שנוצרה בדף היעדים שטרם ננעלה. לעזוב את הדף בכל זאת?";
 
 export function AppNav({ locale }: { locale: AppLocale }) {
   const pathname = usePathname();

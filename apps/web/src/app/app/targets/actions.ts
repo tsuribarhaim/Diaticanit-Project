@@ -6,7 +6,7 @@ import { redirect } from "next/navigation";
 import { prepareMedicalContextForTargets } from "@/app/app/documents/actions";
 import { generateTargetsWithAi, NoActionableChangeError } from "@/lib/ai/targets";
 import { getAiExtractionConfig } from "@/lib/ai/env";
-import { normalizeLocale } from "@/lib/locale";
+import { normalizeLocale, tr } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import {
   evaluateTargetWeightSafety,
@@ -130,10 +130,33 @@ export async function generateTargetsPayload({
         };
       }
 
-      heuristicReason = "AI generation failed at runtime; heuristic fallback was used.";
       logServerError("targets.generate", "ai_generation_failed", {
         error: error instanceof Error ? error.message : "Unknown AI targets generation error",
       });
+
+      if (currentTargets) {
+        // This is an adjustment against an already-locked plan, not a
+        // fresh generation - the heuristic fallback below builds a brand
+        // new generic baseline from the profile alone and has no idea
+        // about currentTargets, so falling through to it here would
+        // silently blow away everything the user already built (custom
+        // exercise entries, habits, prior user_targets) just because this
+        // one AI call happened to fail. Keep the locked plan untouched and
+        // report the failure instead, matching how NoActionableChangeError
+        // is already handled above.
+        return {
+          payload: currentTargets,
+          source: "ai",
+          heuristicReason: null,
+          notActionableMessage: tr(
+            locale,
+            "Couldn't process that update right now. Please try again.",
+            "לא ניתן היה לעבד את העדכון כרגע. יש לנסות שוב.",
+          ),
+        };
+      }
+
+      heuristicReason = "AI generation failed at runtime; heuristic fallback was used.";
     }
   } else if (!aiConfig) {
     heuristicReason = "AI generation is disabled or missing configuration.";
@@ -371,6 +394,9 @@ export async function lockTargetsAction(
     user_targets: parsedPayload.userTargets.map((entry) => ({
       label: entry.label,
       value: entry.value,
+      ...(entry.id && entry.unit && entry.targetMin !== undefined && entry.targetMax !== undefined
+        ? { id: entry.id, unit: entry.unit, target_min: entry.targetMin, target_max: entry.targetMax }
+        : {}),
     })),
 
     ai_rationale_explanation: parsedPayload.aiRationaleExplanation,

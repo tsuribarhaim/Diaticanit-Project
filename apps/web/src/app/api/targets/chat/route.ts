@@ -14,6 +14,30 @@ function sseEvent(data: Record<string, unknown>): Uint8Array {
   return new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`);
 }
 
+/** The client aborts its fetch after ~20s of no new bytes (see
+ * STREAM_INACTIVITY_TIMEOUT_MS in targets-chat-workspace.tsx), and the
+ * structured-JSON AI calls this route makes routinely take longer than that.
+ * Once the client has given up, Next.js marks this stream's controller
+ * closed, and any further controller.enqueue()/close() call throws - which,
+ * uncaught, cascades into the error handler trying to enqueue again and
+ * throwing a second time. These wrappers make "the client already left" a
+ * silent no-op instead of an unhandled-error cascade. */
+function safeEnqueue(controller: ReadableStreamDefaultController<Uint8Array>, data: Record<string, unknown>) {
+  try {
+    controller.enqueue(sseEvent(data));
+  } catch {
+    // Client already disconnected - nothing left to deliver to.
+  }
+}
+
+function safeClose(controller: ReadableStreamDefaultController<Uint8Array>) {
+  try {
+    controller.close();
+  } catch {
+    // Already closed.
+  }
+}
+
 function toProfileForTargets(profile: Record<string, unknown>): ProfileForTargets {
   return {
     age: Number(profile.age ?? 0),
@@ -115,11 +139,22 @@ export async function POST(request: NextRequest) {
             .join("\n");
           const goalText = `Based on the following conversation with the user, update their daily targets accordingly:\n\n${conversationText}`;
 
-          controller.enqueue(sseEvent({ type: "status", status: "generating_targets" }));
+          safeEnqueue(controller, { type: "status", status: "generating_targets" });
 
           let targetsPayload;
           let source: "ai" | "heuristic" = "heuristic";
           let warning: string | undefined;
+
+          // The structured-JSON generation this calls can legitimately take
+          // well past the client's inactivity timeout (large schema, a
+          // non-streaming call to a large model) - without something
+          // arriving in the meantime, the client gives up and aborts before
+          // the real result is ready. A periodic heartbeat resets that timer
+          // (any received chunk does, per targets-chat-workspace.tsx) so a
+          // slow-but-successful call still reaches the client.
+          const heartbeat = setInterval(() => {
+            safeEnqueue(controller, { type: "status", status: "generating_targets" });
+          }, 8000);
 
           try {
             const result = await generateTargetsPayload({
@@ -134,11 +169,12 @@ export async function POST(request: NextRequest) {
             });
 
             if (result.safetyRejectionMessage || result.notActionableMessage) {
-              controller.enqueue(
-                sseEvent({ type: "error", message: result.safetyRejectionMessage ?? result.notActionableMessage }),
-              );
-              controller.enqueue(sseEvent({ type: "done" }));
-              controller.close();
+              safeEnqueue(controller, {
+                type: "error",
+                message: result.safetyRejectionMessage ?? result.notActionableMessage,
+              });
+              safeEnqueue(controller, { type: "done" });
+              safeClose(controller);
               return;
             }
 
@@ -150,17 +186,17 @@ export async function POST(request: NextRequest) {
               userId: user.id,
               error: error instanceof Error ? error.message : "Unknown error",
             });
-            controller.enqueue(
-              sseEvent({ type: "error", message: "Could not update your targets. Please try again." }),
-            );
-            controller.enqueue(sseEvent({ type: "done" }));
-            controller.close();
+            safeEnqueue(controller, { type: "error", message: "Could not update your targets. Please try again." });
+            safeEnqueue(controller, { type: "done" });
+            safeClose(controller);
             return;
+          } finally {
+            clearInterval(heartbeat);
           }
 
-          controller.enqueue(sseEvent({ type: "targets", payload: targetsPayload, source, warning }));
-          controller.enqueue(sseEvent({ type: "done" }));
-          controller.close();
+          safeEnqueue(controller, { type: "targets", payload: targetsPayload, source, warning });
+          safeEnqueue(controller, { type: "done" });
+          safeClose(controller);
           return;
         }
 
@@ -193,7 +229,7 @@ export async function POST(request: NextRequest) {
         let markerPending = "";
 
         function emitToken(text: string) {
-          if (text) controller.enqueue(sseEvent({ type: "token", text }));
+          if (text) safeEnqueue(controller, { type: "token", text });
         }
 
         function handleToken(token: string) {
@@ -205,7 +241,7 @@ export async function POST(request: NextRequest) {
           markerPending += token;
 
           if (markerPending.startsWith(MARKER_ACTIONABLE)) {
-            controller.enqueue(sseEvent({ type: "actionable", value: true }));
+            safeEnqueue(controller, { type: "actionable", value: true });
             markerResolved = true;
             emitToken(markerPending.slice(MARKER_ACTIONABLE.length));
             markerPending = "";
@@ -213,7 +249,7 @@ export async function POST(request: NextRequest) {
           }
 
           if (markerPending.startsWith(MARKER_INFO)) {
-            controller.enqueue(sseEvent({ type: "actionable", value: false }));
+            safeEnqueue(controller, { type: "actionable", value: false });
             markerResolved = true;
             emitToken(markerPending.slice(MARKER_INFO.length));
             markerPending = "";
@@ -224,7 +260,7 @@ export async function POST(request: NextRequest) {
           if (!stillPossible || markerPending.length >= MAX_MARKER_BUFFER) {
             // The model didn't follow the marker format - fail safe (no
             // "Update Targets" offered) and surface whatever it said.
-            controller.enqueue(sseEvent({ type: "actionable", value: false }));
+            safeEnqueue(controller, { type: "actionable", value: false });
             markerResolved = true;
             emitToken(markerPending);
             markerPending = "";
@@ -260,20 +296,20 @@ export async function POST(request: NextRequest) {
         }
 
         if (!markerResolved) {
-          controller.enqueue(sseEvent({ type: "actionable", value: false }));
+          safeEnqueue(controller, { type: "actionable", value: false });
           emitToken(markerPending);
         }
 
-        controller.enqueue(sseEvent({ type: "done" }));
-        controller.close();
+        safeEnqueue(controller, { type: "done" });
+        safeClose(controller);
       } catch (error) {
         logServerError("targets.chat", "stream_failed", {
           userId: user.id,
           error: error instanceof Error ? error.message : "Unknown error",
         });
-        controller.enqueue(sseEvent({ type: "error", message: "The chat connection failed. Please try again." }));
-        controller.enqueue(sseEvent({ type: "done" }));
-        controller.close();
+        safeEnqueue(controller, { type: "error", message: "The chat connection failed. Please try again." });
+        safeEnqueue(controller, { type: "done" });
+        safeClose(controller);
       }
     },
   });

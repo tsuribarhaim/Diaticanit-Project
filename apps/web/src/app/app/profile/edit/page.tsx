@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 
 import { ProfileEditForm } from "@/components/profile-edit-form";
 import { normalizeLocale, tr } from "@/lib/locale";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +10,7 @@ export default async function ProfileEditPage() {
   const supabase = await createClient();
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await getAuthenticatedUser();
 
   if (!user) {
     redirect("/auth/sign-in");
@@ -19,7 +19,7 @@ export default async function ProfileEditPage() {
   const { data: profile, error } = await supabase
     .from("user_profile_enriched")
     .select(
-      "first_name, last_name, date_of_birth, biological_sex, height_cm, weight_kg, activity_level, preferred_language, exercise_modalities, exercise_modality_other_details, exercise_schedule_by_modality, exercise_frequency_days_per_week, exercise_duration_minutes, nutritional_goal, pregnancy_lactation_status, has_medical_conditions, medical_conditions, medical_conditions_details, has_regular_medications, regular_medications_details, hot_climate_or_heavy_sweating, habits, alcohol_times_per_week, smoking_packs_per_day, dietary_preference, additional_information, allergies, calculated_age_years, bmi, updated_at",
+      "first_name, last_name, date_of_birth, biological_sex, height_cm, weight_kg, activity_level, preferred_language, exercise_modalities, exercise_modality_other_details, exercise_schedule_by_modality, exercise_frequency_days_per_week, exercise_duration_minutes, nutritional_goal, pregnancy_lactation_status, has_medical_conditions, medical_conditions, medical_conditions_details, has_regular_medications, regular_medications_details, hot_climate_or_heavy_sweating, habits, alcohol_consumption_level, smoking_packs_per_day, dietary_preference, additional_information, allergies, calculated_age_years, bmi, updated_at",
     )
     .eq("user_id", user.id)
     .maybeSingle();
@@ -64,7 +64,7 @@ export default async function ProfileEditPage() {
     regular_medications_details: profile.regular_medications_details ?? "",
     hot_climate_or_heavy_sweating: Boolean(profile.hot_climate_or_heavy_sweating),
     habits: profile.habits ?? [],
-    alcohol_times_per_week: profile.alcohol_times_per_week ?? null,
+    alcohol_consumption_level: (profile.alcohol_consumption_level as "low" | "high" | null) ?? null,
     smoking_packs_per_day: profile.smoking_packs_per_day ?? null,
     dietary_preference: profile.dietary_preference ?? "standard",
     additional_information: profile.additional_information ?? "",
