@@ -2,6 +2,7 @@
 
 import { usePathname } from "next/navigation";
 
+import { signOutAction } from "@/app/app/actions";
 import { GuardedLink } from "@/components/unsaved-preview-context";
 import { tr, type AppLocale } from "@/lib/locale";
 
@@ -51,6 +52,15 @@ export function AppNav({ locale }: { locale: AppLocale }) {
             {item.label}
           </GuardedLink>
         ))}
+
+        <form action={signOutAction} className="ms-auto">
+          <button
+            type="submit"
+            className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
+          >
+            {tr(locale, "Sign out", "התנתקות")}
+          </button>
+        </form>
       </div>
     </nav>
   );
