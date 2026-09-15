@@ -446,9 +446,11 @@ export function DailyReportChatPanel({
         {/* A plain div, not a <form>: this panel is always mounted inside the
             page's own report <form>, and a nested <form> is invalid HTML
             that Next.js silently repairs by moving/dropping it, breaking
-            this input after the first re-render. Enter-to-send and the
-            button's onClick cover submission without needing form
-            semantics. */}
+            this input after the first re-render. The Send button's onClick
+            covers submission without needing form semantics - Enter is
+            deliberately left as the textarea's own default behavior (insert
+            a newline) rather than intercepted to send, so composing a
+            multi-line message doesn't risk firing it off mid-thought. */}
         {/* On a narrow portrait phone, three 36px icon buttons plus the Send
             button leave almost no width for the textarea itself. Below the
             `sm` breakpoint (roughly: narrower than a phone turned
@@ -495,12 +497,6 @@ export function DailyReportChatPanel({
               ref={textareaRef}
               value={inputValue}
               onChange={(event) => setInputValue(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void sendMessage(inputValue);
-                }
-              }}
               rows={2}
               maxLength={500}
               disabled={isStreaming}
