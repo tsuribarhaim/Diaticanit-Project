@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 
 import {
   addReportToDefaultsAction,
+  adjustDailyReportItemQuantitiesAction,
   deleteDailyReportAction,
   updateDailyReportChartPreferencesAction,
 } from "@/app/app/daily-report/actions";
@@ -20,7 +21,7 @@ import {
 import { getDailyReportTotalsForRange } from "@/lib/daily-report";
 import { normalizeUserTargetsJson } from "@/lib/targets";
 import { getAiExtractionConfig } from "@/lib/ai/env";
-import { formatDateForLocale, formatDateTimeForLocale, formatMeasurementUnit, formatNumberForLocale, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
+import { formatDateForLocale, formatDateTimeForLocale, formatDefaultUnit, formatMeasurementUnit, formatNumberForLocale, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -77,6 +78,40 @@ function buildEntrySummary(parsedItems: unknown, parsedExercises: unknown, local
 
   const parts = [...foodParts, ...exerciseParts];
   return parts.join(" · ");
+}
+
+type EditableFoodItem = { index: number; name: string; quantity: number; unit: string };
+type EditableExerciseItem = { index: number; name: string; minutes: number };
+
+/**
+ * Item position within parsed_items/parsed_exercises doubles as its
+ * identifier for the "Edit quantities" inline form below (see
+ * adjustDailyReportItemQuantitiesAction's food_quantity__<index>/
+ * exercise_minutes__<index> field names) - neither array carries a stable
+ * per-item id of its own.
+ */
+function buildEditableItems(
+  parsedItems: unknown,
+  parsedExercises: unknown,
+): { foodItems: EditableFoodItem[]; exerciseItems: EditableExerciseItem[] } {
+  const foodItems = (Array.isArray(parsedItems) ? (parsedItems as SummaryFoodItem[]) : [])
+    .map((item, index) => ({
+      index,
+      name: typeof item.name === "string" ? item.name : "",
+      quantity: Number(item.quantity ?? 0),
+      unit: typeof item.unit === "string" ? item.unit : "",
+    }))
+    .filter((item) => item.name);
+
+  const exerciseItems = (Array.isArray(parsedExercises) ? (parsedExercises as SummaryExerciseItem[]) : [])
+    .map((item, index) => ({
+      index,
+      name: typeof item.name === "string" ? item.name : "",
+      minutes: Number(item.minutes ?? 0),
+    }))
+    .filter((item) => item.name);
+
+  return { foodItems, exerciseItems };
 }
 
 /**
@@ -711,6 +746,10 @@ export default async function DailyReportPage({
             {reports.map((report) => {
               const entrySummary = buildEntrySummary(report.parsed_items, report.parsed_exercises, locale);
               const fullConversation = report.raw_report_text?.trim() ?? "";
+              const { foodItems: editableFoodItems, exerciseItems: editableExerciseItems } = buildEditableItems(
+                report.parsed_items,
+                report.parsed_exercises,
+              );
 
               const editHref = `/app/daily-report?edit=${report.id}${resolvedSearchParams.date ? `&date=${resolvedSearchParams.date}` : ""}`;
               const isBeingEdited = report.id === editReportId;
@@ -749,6 +788,57 @@ export default async function DailyReportPage({
                       >
                         {buildDisplayConversation(fullConversation, locale, userDisplayName)}
                       </p>
+                    </details>
+                  ) : null}
+
+                  {editableFoodItems.length > 0 || editableExerciseItems.length > 0 ? (
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-xs font-medium text-teal-700 hover:text-teal-800">
+                        {tr(locale, "Edit quantities", "עריכת כמויות")}
+                      </summary>
+                      <form
+                        action={adjustDailyReportItemQuantitiesAction}
+                        className="mt-2 space-y-2 rounded-lg border border-teal-200 bg-teal-50/40 p-3"
+                      >
+                        <input type="hidden" name="report_id" value={report.id} />
+                        {resolvedSearchParams.date ? (
+                          <input type="hidden" name="selected_date" value={resolvedSearchParams.date} />
+                        ) : null}
+                        {editableFoodItems.map((item) => (
+                          <div key={`food-${item.index}`} className="flex flex-wrap items-center gap-2">
+                            <span className="min-w-[120px] flex-1 text-xs text-slate-700">{item.name}</span>
+                            <input
+                              type="number"
+                              name={`food_quantity__${item.index}`}
+                              min={0}
+                              step="any"
+                              defaultValue={item.quantity}
+                              className="w-24 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none ring-teal-600 focus:ring-2"
+                            />
+                            <span className="text-xs text-slate-500">{formatDefaultUnit(item.unit, locale)}</span>
+                          </div>
+                        ))}
+                        {editableExerciseItems.map((item) => (
+                          <div key={`exercise-${item.index}`} className="flex flex-wrap items-center gap-2">
+                            <span className="min-w-[120px] flex-1 text-xs text-slate-700">{item.name}</span>
+                            <input
+                              type="number"
+                              name={`exercise_minutes__${item.index}`}
+                              min={0}
+                              step="any"
+                              defaultValue={item.minutes}
+                              className="w-24 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none ring-teal-600 focus:ring-2"
+                            />
+                            <span className="text-xs text-slate-500">{tr(locale, "min", "דק'")}</span>
+                          </div>
+                        ))}
+                        <button
+                          type="submit"
+                          className="rounded-lg border border-teal-300 px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50"
+                        >
+                          {tr(locale, "Save quantities", "שמירת כמויות")}
+                        </button>
+                      </form>
                     </details>
                   ) : null}
 

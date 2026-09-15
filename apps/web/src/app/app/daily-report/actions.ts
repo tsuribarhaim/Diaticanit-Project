@@ -9,6 +9,8 @@ import {
   parseDailyReportText,
   type DailyReportMetrics,
   type DailyReportParseResult,
+  type ParsedExerciseItem,
+  type ParsedFoodItem,
 } from "@/lib/daily-report";
 import {
   CHART_CORE_METRIC_IDS,
@@ -213,8 +215,13 @@ function extractCustomTargetValues(formData: FormData): Record<string, number> {
   for (const [key, rawValue] of formData.entries()) {
     if (!key.startsWith("custom_target_value__")) continue;
     const targetId = key.slice("custom_target_value__".length);
-    const parsed = Number(rawValue?.toString().trim());
-    if (targetId && Number.isFinite(parsed)) {
+    const trimmed = rawValue?.toString().trim() ?? "";
+    // Number("") is 0, not NaN - without this explicit check, a target the
+    // user left untouched would silently be recorded as "0", contradicting
+    // this function's whole purpose of skipping blanks.
+    if (!targetId || trimmed === "") continue;
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed)) {
       values[targetId] = parsed;
     }
   }
@@ -438,7 +445,7 @@ export async function saveDailyReportAction(
   const { data: profile, error: profileError } = await supabase
     .from("user_profile")
     .select(
-      "age, weight_kg, height_cm, gender, biological_sex, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_schedule_by_modality, habits, pregnancy_lactation_status, hot_climate_or_heavy_sweating",
+      "age, weight_kg, height_cm, gender, biological_sex, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, habits, pregnancy_lactation_status, hot_climate_or_heavy_sweating",
     )
     .eq("user_id", user.id)
     .maybeSingle();
@@ -907,6 +914,9 @@ export async function saveDailyReportAction(
             regular_medications_details: profile.regular_medications_details ?? null,
             dietary_preference: profile.dietary_preference ?? null,
             exercise_modalities: Array.isArray(profile.exercise_modalities) ? profile.exercise_modalities : [],
+            exercise_other_activities: Array.isArray(profile.exercise_other_activities)
+              ? (profile.exercise_other_activities as ProfileForTargets["exercise_other_activities"])
+              : [],
             exercise_schedule_by_modality: profile.exercise_schedule_by_modality ?? null,
             habits: Array.isArray(profile.habits) ? profile.habits : [],
             pregnancy_lactation_status: profile.pregnancy_lactation_status ?? null,
@@ -1125,6 +1135,263 @@ export async function addReportToDefaultsAction(formData: FormData): Promise<voi
 
   redirect(
     buildDailyReportRedirectPath({ notice: tr(locale, "Report was added to your Saved List.", "הדיווח נוסף לרשימה השמורה.") }),
+  );
+}
+
+const FOOD_NUMERIC_FIELDS: Array<Exclude<keyof ParsedFoodItem, "name" | "quantity" | "unit">> = [
+  "caloriesKcal", "proteinG", "carbsG", "fatG", "fiberG", "waterMl",
+  "magnesiumMg", "potassiumMg", "ironMg", "zincMg", "sodiumMg", "addedSugarG",
+  "calciumMg", "vitCMg", "vitB12Mcg", "vitDMcg", "satFatG", "omega3G",
+];
+
+/** Rescales every nutrient field on a single already-logged food item to a
+ * new quantity, proportional to its original quantity (e.g. "2 rolls" -> "1
+ * roll" halves calories/protein/etc. too) - the same scale-by-quantity-ratio
+ * approach already used when a saved-list item's quantity differs from its
+ * default (see the `scale = quantity / baseQuantity` block above). Falls
+ * back to leaving nutrients untouched (scale 1) only in the degenerate case
+ * where the item's original quantity was 0 and no rate can be derived. */
+function scaleFoodItem(item: Record<string, unknown>, newQuantity: number): ParsedFoodItem {
+  const oldQuantity = toNumber(item.quantity, 0);
+  const scale = oldQuantity > 0 ? newQuantity / oldQuantity : 1;
+  const scaled: Record<string, unknown> = { ...item, quantity: round(newQuantity, 2) };
+  for (const field of FOOD_NUMERIC_FIELDS) {
+    scaled[field] = round(toNumber(item[field]) * scale, 2);
+  }
+  return scaled as ParsedFoodItem;
+}
+
+/** Same idea as scaleFoodItem, for an already-logged exercise entry's
+ * duration - estimatedBurnKcal scales with minutes the same way it was
+ * originally computed (MET x weight x minutes, linear in minutes). */
+function scaleExerciseItem(item: Record<string, unknown>, newMinutes: number): ParsedExerciseItem {
+  const oldMinutes = toNumber(item.minutes, 0);
+  const scale = oldMinutes > 0 ? newMinutes / oldMinutes : 1;
+  return {
+    ...item,
+    minutes: Math.round(newMinutes),
+    estimatedBurnKcal: round(toNumber(item.estimatedBurnKcal) * scale, 2),
+  } as ParsedExerciseItem;
+}
+
+function sumFoodTotals(items: Array<Record<string, unknown>>): Record<string, number> {
+  const totals: Record<string, number> = Object.fromEntries(FOOD_NUMERIC_FIELDS.map((field) => [field, 0]));
+  for (const item of items) {
+    for (const field of FOOD_NUMERIC_FIELDS) {
+      totals[field] += toNumber(item[field]);
+    }
+  }
+  return totals;
+}
+
+function sumExerciseTotals(items: Array<Record<string, unknown>>): { exerciseMinutes: number; estimatedBurnKcal: number } {
+  let exerciseMinutes = 0;
+  let estimatedBurnKcal = 0;
+  for (const item of items) {
+    exerciseMinutes += toNumber(item.minutes);
+    estimatedBurnKcal += toNumber(item.estimatedBurnKcal);
+  }
+  return { exerciseMinutes: Math.round(exerciseMinutes), estimatedBurnKcal: round(estimatedBurnKcal) };
+}
+
+/**
+ * Lets the user correct a single already-logged item's quantity/duration
+ * directly from the reports list (e.g. "2 rolls" -> "1 roll") without going
+ * through the chat again - the "Edit entry" flow re-opens the whole
+ * conversation and re-runs AI parsing on the full transcript, which is far
+ * more than a one-number correction calls for. Items are matched by their
+ * position in parsed_items/parsed_exercises (the same order the form was
+ * rendered with, via food_quantity__<index>/exercise_minutes__<index> field
+ * names) since neither array carries a stable per-item id. Setting an
+ * item's quantity/duration to 0 removes it from the log entirely (see the
+ * flatMap below), rather than leaving a zeroed-out entry behind.
+ */
+export async function adjustDailyReportItemQuantitiesAction(formData: FormData): Promise<void> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/sign-in");
+  }
+
+  const locale = await resolveDailyReportLocale(supabase, user.id);
+  const reportId = formData.get("report_id")?.toString();
+  const selectedDateParam = formData.get("selected_date")?.toString() || undefined;
+
+  if (!reportId) {
+    redirect(
+      buildDailyReportRedirectPath({
+        error: tr(locale, "Missing report id.", "מזהה הדיווח חסר."),
+        date: selectedDateParam,
+      }),
+    );
+  }
+
+  const { data: reportRow, error: reportError } = await supabase
+    .from("user_daily_reports")
+    .select("id, parsed_items, parsed_exercises, reported_weight_kg, custom_target_values")
+    .eq("id", reportId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (reportError || !reportRow) {
+    redirect(
+      buildDailyReportRedirectPath({
+        error: tr(locale, "Daily report not found.", "הדיווח היומי לא נמצא."),
+        date: selectedDateParam,
+      }),
+    );
+  }
+
+  const foodItems = (Array.isArray(reportRow.parsed_items) ? reportRow.parsed_items : []) as Array<Record<string, unknown>>;
+  const exerciseItems = (Array.isArray(reportRow.parsed_exercises) ? reportRow.parsed_exercises : []) as Array<Record<string, unknown>>;
+
+  let changed = false;
+
+  // flatMap rather than map: setting a quantity/duration to 0 removes the
+  // item from the log entirely (an empty array in place of it) rather than
+  // leaving a zeroed-out "banana (0 unit)" entry behind - that matches what
+  // a user setting it to 0 actually means ("I didn't have this").
+  const nextFoodItems = foodItems.flatMap((item, index) => {
+    const raw = formData.get(`food_quantity__${index}`);
+    if (raw == null) return [item];
+    const nextQuantity = toNumber(raw, Number.NaN);
+    if (!Number.isFinite(nextQuantity) || nextQuantity < 0) return [item];
+    const currentQuantity = toNumber(item.quantity, 0);
+    if (Math.abs(nextQuantity - currentQuantity) < 1e-9) return [item];
+    changed = true;
+    if (nextQuantity <= 1e-9) return [];
+    return [scaleFoodItem(item, nextQuantity)];
+  });
+
+  const nextExerciseItems = exerciseItems.flatMap((item, index) => {
+    const raw = formData.get(`exercise_minutes__${index}`);
+    if (raw == null) return [item];
+    const nextMinutes = toNumber(raw, Number.NaN);
+    if (!Number.isFinite(nextMinutes) || nextMinutes < 0) return [item];
+    const currentMinutes = toNumber(item.minutes, 0);
+    if (Math.abs(nextMinutes - currentMinutes) < 1e-9) return [item];
+    changed = true;
+    if (nextMinutes <= 1e-9) return [];
+    return [scaleExerciseItem(item, nextMinutes)];
+  });
+
+  if (!changed) {
+    redirect(buildDailyReportRedirectPath({ date: selectedDateParam }));
+  }
+
+  // Zeroing out every remaining item leaves a report with nothing left to
+  // say - rather than persist an empty "0 calories, 0 of everything" row,
+  // delete it outright (same as the explicit "Delete entry" button). But
+  // only when the row is ACTUALLY empty once food/exercise items are gone -
+  // a report can also carry a logged weigh-in and/or custom target values
+  // (e.g. sleep hours, steps) entirely independent of its food/exercise
+  // items, and zeroing out "1 apple" must not silently delete those too.
+  // (No weight-resync needed here, unlike deleteDailyReportAction - a
+  // report only reaches this branch when it has no weight of its own.)
+  const hasReportedWeight = reportRow.reported_weight_kg != null;
+  // A value of exactly 0 is treated the same as "not logged" here (not just
+  // "key absent") - a leftover {"sleep_hours": 0} from an untouched custom
+  // target field (see extractCustomTargetValues) must not by itself block
+  // deleting an otherwise-empty report.
+  const hasCustomTargetValues =
+    Boolean(reportRow.custom_target_values)
+    && typeof reportRow.custom_target_values === "object"
+    && !Array.isArray(reportRow.custom_target_values)
+    && Object.values(reportRow.custom_target_values as Record<string, unknown>).some((value) => Number(value) !== 0);
+
+  if (nextFoodItems.length === 0 && nextExerciseItems.length === 0 && !hasReportedWeight && !hasCustomTargetValues) {
+    const { error: deleteError } = await supabase
+      .from("user_daily_reports")
+      .delete()
+      .eq("id", reportId)
+      .eq("user_id", user.id);
+
+    if (deleteError) {
+      logServerError("dailyReport.adjustQuantities", "delete_empty_report_failed", {
+        userId: user.id,
+        reportId,
+        error: deleteError.message,
+      });
+      redirect(
+        buildDailyReportRedirectPath({
+          error: tr(locale, "Failed to update quantities. Please try again.", "עדכון הכמויות נכשל. יש לנסות שוב."),
+          date: selectedDateParam,
+        }),
+      );
+    }
+
+    revalidatePath("/app/daily-report");
+    revalidatePath("/app");
+
+    redirect(
+      buildDailyReportRedirectPath({
+        notice: tr(
+          locale,
+          "All items were removed, so the entry was deleted.",
+          "כל הפריטים הוסרו, ולכן הרשומה נמחקה.",
+        ),
+        date: selectedDateParam,
+      }),
+    );
+  }
+
+  const foodTotals = sumFoodTotals(nextFoodItems);
+  const exerciseTotals = sumExerciseTotals(nextExerciseItems);
+
+  const { error: updateError } = await supabase
+    .from("user_daily_reports")
+    .update({
+      parsed_items: nextFoodItems,
+      parsed_exercises: nextExerciseItems,
+      calories_kcal: round(foodTotals.caloriesKcal),
+      protein_g: round(foodTotals.proteinG),
+      carbs_g: round(foodTotals.carbsG),
+      fat_g: round(foodTotals.fatG),
+      fiber_g: round(foodTotals.fiberG),
+      water_ml: round(foodTotals.waterMl),
+      magnesium_mg: round(foodTotals.magnesiumMg),
+      potassium_mg: round(foodTotals.potassiumMg),
+      iron_mg: round(foodTotals.ironMg),
+      zinc_mg: round(foodTotals.zincMg),
+      sodium_mg: round(foodTotals.sodiumMg),
+      added_sugar_g: round(foodTotals.addedSugarG),
+      calcium_mg: round(foodTotals.calciumMg),
+      vit_c_mg: round(foodTotals.vitCMg),
+      vit_b12_mcg: round(foodTotals.vitB12Mcg),
+      vit_d_mcg: round(foodTotals.vitDMcg),
+      sat_fat_g: round(foodTotals.satFatG),
+      omega3_g: round(foodTotals.omega3G),
+      exercise_minutes: exerciseTotals.exerciseMinutes,
+      estimated_burn_kcal: exerciseTotals.estimatedBurnKcal,
+    })
+    .eq("id", reportId)
+    .eq("user_id", user.id);
+
+  if (updateError) {
+    logServerError("dailyReport.adjustQuantities", "update_failed", {
+      userId: user.id,
+      reportId,
+      error: updateError.message,
+    });
+    redirect(
+      buildDailyReportRedirectPath({
+        error: tr(locale, "Failed to update quantities. Please try again.", "עדכון הכמויות נכשל. יש לנסות שוב."),
+        date: selectedDateParam,
+      }),
+    );
+  }
+
+  revalidatePath("/app/daily-report");
+  revalidatePath("/app");
+
+  redirect(
+    buildDailyReportRedirectPath({
+      notice: tr(locale, "Quantities updated.", "הכמויות עודכנו."),
+      date: selectedDateParam,
+    }),
   );
 }
 

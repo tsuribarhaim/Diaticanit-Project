@@ -39,6 +39,7 @@ function isMissingOnboardingV2Columns(errorMessage: string): boolean {
     || errorMessage.includes("first_name")
     || errorMessage.includes("nutritional_goal")
     || errorMessage.includes("exercise_modality_other_details")
+    || errorMessage.includes("exercise_other_activities")
     || errorMessage.includes("exercise_schedule_by_modality")
     || errorMessage.includes("alcohol_consumption_level")
     || errorMessage.includes("smoking_packs_per_day")
@@ -120,7 +121,7 @@ export async function saveOnboardingProfileAction(
     activity_level: getFormString(formData, "activity_level"),
     preferred_language: getFormString(formData, "preferred_language"),
     exercise_modalities: parseMultiSelect(formData, "exercise_modalities"),
-    exercise_modality_other_details: getFormString(formData, "exercise_modality_other_details"),
+    exercise_other_activities: getFormString(formData, "exercise_other_activities"),
     exercise_schedule_by_modality: getFormString(formData, "exercise_schedule_by_modality"),
     exercise_frequency_days_per_week: getFormString(formData, "exercise_frequency_days_per_week"),
     exercise_duration_minutes: getFormString(formData, "exercise_duration_minutes"),
@@ -177,6 +178,7 @@ export async function saveOnboardingProfileAction(
   const exerciseSummary = deriveExerciseSummaryFromSchedule(
     parsed.data.exercise_modalities,
     parsed.data.exercise_schedule_by_modality,
+    parsed.data.exercise_modalities.includes("other") ? parsed.data.exercise_other_activities : [],
     parsed.data.exercise_frequency_days_per_week,
     parsed.data.exercise_duration_minutes,
   );
@@ -197,9 +199,9 @@ export async function saveOnboardingProfileAction(
     dietary_preference: parsed.data.dietary_preference,
     hot_climate_or_heavy_sweating: parsed.data.hot_climate_or_heavy_sweating,
     exercise_modalities: parsed.data.exercise_modalities,
-    exercise_modality_other_details: parsed.data.exercise_modalities.includes("other")
-      ? parsed.data.exercise_modality_other_details
-      : null,
+    exercise_other_activities: parsed.data.exercise_modalities.includes("other")
+      ? parsed.data.exercise_other_activities
+      : [],
     exercise_schedule_by_modality: parsed.data.exercise_schedule_by_modality,
     exercise_frequency_days_per_week: exerciseSummary.frequencyDaysPerWeek,
     exercise_duration_minutes: exerciseSummary.durationMinutes,

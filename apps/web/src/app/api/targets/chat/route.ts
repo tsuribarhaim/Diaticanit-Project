@@ -87,6 +87,9 @@ function toProfileForTargets(profile: Record<string, unknown>): ProfileForTarget
     regular_medications_details: (profile.regular_medications_details as string) ?? null,
     dietary_preference: (profile.dietary_preference as string) ?? null,
     exercise_modalities: Array.isArray(profile.exercise_modalities) ? (profile.exercise_modalities as string[]) : [],
+    exercise_other_activities: Array.isArray(profile.exercise_other_activities)
+      ? (profile.exercise_other_activities as ProfileForTargets["exercise_other_activities"])
+      : [],
     exercise_schedule_by_modality:
       (profile.exercise_schedule_by_modality as ProfileForTargets["exercise_schedule_by_modality"]) ?? null,
     habits: Array.isArray(profile.habits) ? (profile.habits as string[]) : [],
@@ -141,7 +144,7 @@ export async function POST(request: NextRequest) {
   const { data: profileRow, error: profileError } = await supabase
     .from("user_profile")
     .select(
-      "age, gender, biological_sex, height_cm, weight_kg, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_schedule_by_modality, habits, pregnancy_lactation_status, hot_climate_or_heavy_sweating, preferred_language",
+      "age, gender, biological_sex, height_cm, weight_kg, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, habits, pregnancy_lactation_status, hot_climate_or_heavy_sweating, preferred_language",
     )
     .eq("user_id", user.id)
     .maybeSingle();

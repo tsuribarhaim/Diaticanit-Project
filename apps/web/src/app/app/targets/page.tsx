@@ -33,7 +33,7 @@ export default async function TargetsPage() {
   const { data: profileRow, error: profileError } = await supabase
     .from("user_profile")
     .select(
-      "first_name, age, gender, biological_sex, height_cm, weight_kg, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_schedule_by_modality, habits, pregnancy_lactation_status, hot_climate_or_heavy_sweating, preferred_language",
+      "first_name, age, gender, biological_sex, height_cm, weight_kg, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, habits, pregnancy_lactation_status, hot_climate_or_heavy_sweating, preferred_language",
     )
     .eq("user_id", user.id)
     .maybeSingle();
@@ -61,6 +61,9 @@ export default async function TargetsPage() {
     regular_medications_details: profileRow.regular_medications_details ?? null,
     dietary_preference: profileRow.dietary_preference ?? null,
     exercise_modalities: Array.isArray(profileRow.exercise_modalities) ? profileRow.exercise_modalities : [],
+    exercise_other_activities: Array.isArray(profileRow.exercise_other_activities)
+      ? (profileRow.exercise_other_activities as ProfileForTargets["exercise_other_activities"])
+      : [],
     exercise_schedule_by_modality:
       (profileRow.exercise_schedule_by_modality as ProfileForTargets["exercise_schedule_by_modality"]) ?? null,
     habits: Array.isArray(profileRow.habits) ? profileRow.habits : [],

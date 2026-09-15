@@ -658,21 +658,16 @@ export function TargetsChatWorkspace({
               onChange={(event) => setInputValue(event.target.value)}
               onFocus={() => setIsInputFocused(true)}
               onBlur={() => setIsInputFocused(false)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void sendMessage(inputValue);
-                }
-              }}
               rows={2}
               maxLength={500}
               // readOnly, not disabled: disabling an element that currently
-              // has focus (which this does, right after the user just
-              // pressed Enter in it to send) forces the browser to blur it,
-              // and with nothing else to take focus, the browser resets
-              // scroll to the top of the page - happening on every single
-              // message. readOnly blocks editing during the request without
-              // touching focus, so scroll position stays put.
+              // has focus (which this does, right after the user clicks Send
+              // with the mouse - ChatSendButton's onMouseDown keeps focus on
+              // this textarea rather than moving it to the button) forces
+              // the browser to blur it, and with nothing else to take focus,
+              // the browser resets scroll to the top of the page - happening
+              // on every single message. readOnly blocks editing during the
+              // request without touching focus, so scroll position stays put.
               readOnly={isStreaming}
               placeholder={tr(locale, "Type a message...", "כתבו הודעה...")}
               className="flex-1 resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 disabled:opacity-70"
