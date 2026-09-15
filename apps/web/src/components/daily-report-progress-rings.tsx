@@ -126,14 +126,20 @@ export function DailyReportProgressRings({ locale, metrics }: { locale: AppLocal
                 </div>
               </div>
               <p className="mt-2 text-xs font-semibold text-slate-800">{tr(locale, metric.labelEn, metric.labelHe)}</p>
-              <p className="text-center text-[11px] text-slate-500">
+              {/* A bare numeric ratio like "188 / 2,200" is two LTR number
+                  runs joined by a neutral "/" - inside an RTL page, the
+                  Unicode bidi algorithm can visually swap which number
+                  appears first even though the source order here is already
+                  correct (total, then max). Locking direction is the same
+                  fix already used for the BMI scale elsewhere on Profile. */}
+              <p dir="ltr" className="text-center text-[11px] text-slate-500">
                 {formatNumberForLocale(metric.total, locale, { maximumFractionDigits: 0 })}
                 {" / "}
                 {formatNumberForLocale(metric.max, locale, { maximumFractionDigits: 0 })}{" "}
                 {formatMeasurementUnit(metric.unit, locale)}
               </p>
               {burnedAmount !== null ? (
-                <p className="text-center text-[10px] text-slate-400">
+                <p dir="ltr" className="text-center text-[10px] text-slate-400">
                   {formatNumberForLocale(metric.grossTotal!, locale, { maximumFractionDigits: 0 })}{" "}
                   {tr(locale, "gained", "התקבלו")} − {formatNumberForLocale(burnedAmount, locale, { maximumFractionDigits: 0 })}{" "}
                   {tr(locale, "burned", "נשרפו")}
@@ -151,9 +157,11 @@ export function DailyReportProgressRings({ locale, metrics }: { locale: AppLocal
             {overLimit.map((metric) => (
               <li key={metric.id}>
                 {tr(locale, metric.labelEn, metric.labelHe)}:{" "}
-                {formatNumberForLocale(metric.total, locale, { maximumFractionDigits: 0 })} {formatMeasurementUnit(metric.unit, locale)}
-                {" "}
-                ({tr(locale, "limit", "מגבלה")} {formatNumberForLocale(metric.max, locale, { maximumFractionDigits: 0 })})
+                <span dir="ltr">
+                  {formatNumberForLocale(metric.total, locale, { maximumFractionDigits: 0 })} {formatMeasurementUnit(metric.unit, locale)}
+                  {" "}
+                  ({tr(locale, "limit", "מגבלה")} {formatNumberForLocale(metric.max, locale, { maximumFractionDigits: 0 })})
+                </span>
               </li>
             ))}
           </ul>

@@ -227,6 +227,95 @@ export async function getDailyReportTotalsForRange({
   );
 }
 
+export type TodaysLoggedItems = {
+  foodItems: Array<{ reportAt: string } & ParsedFoodItem>;
+  exerciseItems: Array<{ reportAt: string } & ParsedExerciseItem>;
+  weighIns: Array<{ reportAt: string; weightKg: number }>;
+};
+
+/**
+ * The item-level detail behind getTodaysDailyReportTotals' sums - each food/
+ * exercise entry already logged today, with its own per-item nutrient
+ * breakdown (parsed_items/parsed_exercises are stored with exactly this
+ * shape at save time - see saveDailyReportAction). Exists so the Daily
+ * Report chat assistant can explain WHY a total is high/low by naming the
+ * specific item responsible, instead of only knowing the aggregate number
+ * and having to ask the user to redescribe food they already logged.
+ */
+export async function getTodaysLoggedItems({
+  supabase,
+  userId,
+}: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  userId: string;
+}): Promise<TodaysLoggedItems> {
+  const now = new Date();
+  const todayStartIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+  const todayEndIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString();
+
+  const { data: rows } = await supabase
+    .from("user_daily_reports")
+    .select("report_at, parsed_items, parsed_exercises, reported_weight_kg")
+    .eq("user_id", userId)
+    .gte("report_at", todayStartIso)
+    .lt("report_at", todayEndIso)
+    .order("report_at", { ascending: true });
+
+  const foodItems: TodaysLoggedItems["foodItems"] = [];
+  const exerciseItems: TodaysLoggedItems["exerciseItems"] = [];
+  const weighIns: TodaysLoggedItems["weighIns"] = [];
+
+  for (const row of rows ?? []) {
+    const reportAt = String(row.report_at);
+
+    if (Array.isArray(row.parsed_items)) {
+      for (const raw of row.parsed_items as Array<Record<string, unknown>>) {
+        foodItems.push({
+          reportAt,
+          name: String(raw.name ?? ""),
+          quantity: Number(raw.quantity ?? 0),
+          unit: String(raw.unit ?? ""),
+          caloriesKcal: Number(raw.caloriesKcal ?? 0),
+          proteinG: Number(raw.proteinG ?? 0),
+          carbsG: Number(raw.carbsG ?? 0),
+          fatG: Number(raw.fatG ?? 0),
+          fiberG: Number(raw.fiberG ?? 0),
+          waterMl: Number(raw.waterMl ?? 0),
+          magnesiumMg: Number(raw.magnesiumMg ?? 0),
+          potassiumMg: Number(raw.potassiumMg ?? 0),
+          ironMg: Number(raw.ironMg ?? 0),
+          zincMg: Number(raw.zincMg ?? 0),
+          sodiumMg: Number(raw.sodiumMg ?? 0),
+          addedSugarG: Number(raw.addedSugarG ?? 0),
+          calciumMg: Number(raw.calciumMg ?? 0),
+          vitCMg: Number(raw.vitCMg ?? 0),
+          vitB12Mcg: Number(raw.vitB12Mcg ?? 0),
+          vitDMcg: Number(raw.vitDMcg ?? 0),
+          satFatG: Number(raw.satFatG ?? 0),
+          omega3G: Number(raw.omega3G ?? 0),
+        });
+      }
+    }
+
+    if (Array.isArray(row.parsed_exercises)) {
+      for (const raw of row.parsed_exercises as Array<Record<string, unknown>>) {
+        exerciseItems.push({
+          reportAt,
+          name: String(raw.name ?? ""),
+          minutes: Number(raw.minutes ?? 0),
+          estimatedBurnKcal: Number(raw.estimatedBurnKcal ?? 0),
+        });
+      }
+    }
+
+    if (row.reported_weight_kg != null) {
+      weighIns.push({ reportAt, weightKg: Number(row.reported_weight_kg) });
+    }
+  }
+
+  return { foodItems, exerciseItems, weighIns };
+}
+
 /** Sums each custom target's logged value (by id) across every report in
  * the given range. Kept separate from DailyReportMetrics (a closed, fixed-
  * field type covering only the ~20 built-in nutrients) rather than bolting

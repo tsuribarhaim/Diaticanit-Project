@@ -7,7 +7,7 @@ import {
   type DailyReportChatTargets,
 } from "@/lib/ai/daily-report-chat";
 import { getAiExtractionConfig } from "@/lib/ai/env";
-import { getTodaysDailyReportTotals } from "@/lib/daily-report";
+import { getTodaysDailyReportTotals, getTodaysLoggedItems } from "@/lib/daily-report";
 import { normalizeLocale, tr } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
@@ -85,6 +85,7 @@ export async function POST(request: NextRequest) {
   const targets: DailyReportChatTargets = targetRow ?? null;
 
   const todaysTotals = await getTodaysDailyReportTotals({ supabase, userId: user.id });
+  const todaysLoggedItems = await getTodaysLoggedItems({ supabase, userId: user.id });
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -99,6 +100,7 @@ export async function POST(request: NextRequest) {
           profile,
           targets,
           todaysTotals,
+          todaysLoggedItems,
         });
 
         if (!upstream.ok || !upstream.body) {

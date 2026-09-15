@@ -1,6 +1,6 @@
 import type { AiExtractionConfig } from "@/lib/ai/env";
 import { streamAiChatCompletion } from "@/lib/ai/provider-client";
-import type { DailyReportMetrics } from "@/lib/daily-report";
+import type { DailyReportMetrics, TodaysLoggedItems } from "@/lib/daily-report";
 import type { AppLocale } from "@/lib/locale";
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
@@ -98,6 +98,37 @@ function buildTodaysTotalsSummary(totals: DailyReportMetrics): string {
 }
 
 /**
+ * The item-level detail behind todays_logged_totals_summary's sums - lets
+ * the model attribute a total to a specific item (e.g. "your added sugar is
+ * mostly from the chocolate cake slice you logged") instead of only having
+ * the aggregate number and having to ask the user to redescribe something
+ * they already logged in an earlier report today.
+ */
+function buildTodaysLoggedItemsSummary(items: TodaysLoggedItems): string {
+  if (!items.foodItems.length && !items.exerciseItems.length && !items.weighIns.length) {
+    return "nothing logged yet today";
+  }
+
+  const lines: string[] = [];
+
+  for (const item of items.foodItems) {
+    lines.push(
+      `- ${item.name} (${item.quantity} ${item.unit}): ${item.caloriesKcal} kcal, protein ${item.proteinG}g, carbs ${item.carbsG}g, fat ${item.fatG}g, fiber ${item.fiberG}g, added sugar ${item.addedSugarG}g, sodium ${item.sodiumMg}mg, water ${item.waterMl}ml, sat fat ${item.satFatG}g, magnesium ${item.magnesiumMg}mg, potassium ${item.potassiumMg}mg, calcium ${item.calciumMg}mg, iron ${item.ironMg}mg, zinc ${item.zincMg}mg, vit C ${item.vitCMg}mg, vit B12 ${item.vitB12Mcg}mcg, vit D ${item.vitDMcg}mcg, omega-3 ${item.omega3G}g`,
+    );
+  }
+
+  for (const item of items.exerciseItems) {
+    lines.push(`- exercise: ${item.name}, ${item.minutes} min, ~${item.estimatedBurnKcal} kcal burned`);
+  }
+
+  for (const weighIn of items.weighIns) {
+    lines.push(`- weighed in: ${weighIn.weightKg} kg`);
+  }
+
+  return lines.join("\n");
+}
+
+/**
  * Opens a streaming chat-completions request for a conversational reply
  * while the user describes their day in free text (optionally with a photo
  * attached to this turn). Mirrors openChatReplyStream in targets-chat.ts: the
@@ -120,6 +151,7 @@ export async function openDailyReportChatReplyStream({
   profile,
   targets,
   todaysTotals,
+  todaysLoggedItems,
 }: {
   config: AiExtractionConfig;
   locale: AppLocale;
@@ -132,6 +164,11 @@ export async function openDailyReportChatReplyStream({
   profile: DailyReportChatProfile;
   targets: DailyReportChatTargets;
   todaysTotals: DailyReportMetrics;
+  /** The individual food/exercise/weigh-in entries behind todaysTotals'
+   * sums, each with its own nutrient breakdown - lets the model explain
+   * WHY a total is high/low by naming the specific item, not just repeat
+   * the aggregate number back. */
+  todaysLoggedItems: TodaysLoggedItems;
 }): Promise<Response> {
   const languageName = locale === "he" ? "Hebrew" : "English";
 
@@ -143,6 +180,8 @@ export async function openDailyReportChatReplyStream({
     buildTargetsSummary(targets),
     "todays_logged_totals_summary (already logged today, computed by the app - trust these numbers, don't ask the user to repeat them):",
     buildTodaysTotalsSummary(todaysTotals),
+    "todays_logged_items (the individual entries behind the totals above, already logged today - use these to explain WHAT specifically contributed to a total instead of asking the user to redescribe it):",
+    buildTodaysLoggedItemsSummary(todaysLoggedItems),
     "user_message:",
     userMessage.slice(0, 1000) || "(no text, see attached photo)",
   ].join("\n");
@@ -158,15 +197,16 @@ export async function openDailyReportChatReplyStream({
       {
         role: "system" as const,
         content: [
-          "You are a warm, concise assistant helping a user log what they ate, drank, or exercised today in a Personal Health Companion app, and helping them plan the rest of their day to meet their targets. This is a conversation only - your reply never saves anything by itself; the user saves whenever they choose using a separate Save button.",
-          "CONTEXT: every message includes user_profile_summary (dietary preference, allergies, medical conditions, pregnancy/lactation status), daily_targets_summary (this user's target ranges), and todays_logged_totals_summary (what they've already logged today so far, computed by the app). Always use this context instead of asking the user to repeat it - e.g. if they ask what to eat for lunch, compute their remaining needs yourself from daily_targets_summary minus todays_logged_totals_summary and suggest something concrete that fits, taking dietary_preference and allergies/medical_conditions into account.",
-          "SCOPE: in scope is (a) logging what the user ate/drank/exercised, and (b) planning/suggestion questions about nutrition, meals, hydration, or exercise for the rest of today, grounded in the context above. If the user asks about something unrelated to nutrition/exercise/health (e.g. a career goal, general chit-chat, changing their targets), warmly redirect them to describe something they ate/drank/did, or ask a nutrition/exercise planning question instead.",
+          "You are a warm, concise assistant helping a user log what they ate, drank, exercised, or weighed today in a Personal Health Companion app, and helping them plan the rest of their day to meet their targets. This is a conversation only - your reply never saves anything by itself; the user saves whenever they choose using a separate Save button.",
+          "CONTEXT: every message includes user_profile_summary (dietary preference, allergies, medical conditions, pregnancy/lactation status), daily_targets_summary (this user's target ranges), todays_logged_totals_summary (their aggregate totals so far, computed by the app), and todays_logged_items (the individual food/exercise/weigh-in entries behind those totals, each with its own nutrient breakdown). Always use this context instead of asking the user to repeat it - e.g. if they ask what to eat for lunch, compute their remaining needs yourself from daily_targets_summary minus todays_logged_totals_summary and suggest something concrete that fits, taking dietary_preference and allergies/medical_conditions into account. If they ask WHY a total is high/low or where it came from, look through todays_logged_items yourself and name the specific item(s) responsible (e.g. \"most of your added sugar today came from the chocolate cake slice you logged\") - never ask them to describe what they ate again when todays_logged_items already answers it.",
+          "SCOPE: in scope is (a) logging what the user ate/drank/exercised/weighed, and (b) planning/suggestion questions about nutrition, meals, hydration, or exercise for the rest of today, grounded in the context above. If the user asks about something unrelated to nutrition/exercise/health (e.g. a career goal, general chit-chat, changing their targets), warmly redirect them to describe something they ate/drank/did, or ask a nutrition/exercise planning question instead.",
+          "WEIGHT: if the user mentions their current weight (a number, e.g. \"I'm down to 55kg\"), this genuinely is tracked - never say weight isn't something you can log or track here, that's false. Acknowledge it warmly and specifically (e.g. congratulate a loss, or just note it plainly) and tell them it will be saved as today's weight once they save this report - do not ask them to repeat it elsewhere or imply they need a different feature for it.",
           "CLARIFYING QUESTIONS: ask brief clarifying questions when a food/drink/exercise item is missing a rough quantity or detail needed to estimate nutrition (e.g. how much, what size, how long) - one or two questions at a time, not a long checklist. Every time you ask such a question, also explicitly tell the user in the same reply that they don't have to answer - they can just save now and you'll use a reasonable estimate. Never leave a reply as a bare question with no mention that saving now is already fine.",
           "EXERCISE IMPACT: when the user reports an exercise with enough detail to estimate (activity + rough duration/intensity/step count), state your own single concrete calorie-burn estimate directly and confidently in the same reply (e.g. \"that's roughly 250 kcal burned\") - pick one number or a narrow range, don't hedge on whether you're allowed to estimate it. If there is nothing left to clarify, end the reply right there. Do NOT end an exercise reply by asking the user whether they'd like you to log/save/record/calculate/check it, or whether they want to do so now - that question is never necessary because saving already only ever happens when the user themselves taps the separate Save button, never from anything you say. Bad example (never do this): \"That burns about 300 kcal. Would you like me to log it now?\" Good example: \"That burns about 300 kcal - nice work.\"",
           "STEPS: if the user reports exercise as a step count instead of a duration (e.g. \"5000 steps\"), acknowledge the actual step count back to them in your reply (don't silently restate it as a duration instead) and estimate the calorie burn from that step count yourself (a typical walking pace is roughly 100 steps per minute) - the step count itself is preserved as part of what gets saved, so never imply it was converted into something else or lost.",
           "PHOTO CHECK: if this message includes an attached photo, look at it and identify each distinct food or drink item you can see, with a rough portion-size estimate, then ask only if something is genuinely unclear or you'd like the user to confirm a detail (again, making clear saving now is already an option) - otherwise say plainly that they can save it now as is. If the photo is too blurry, dark, cropped, or otherwise unclear to identify reliably, say so plainly and ask for a clearer photo or a text description instead - do not guess at an unreadable photo.",
           "SAFETY CHECK: if the user describes or the photo shows consuming something that is not actually food/drink and would be dangerous or harmful (e.g. fuel, cleaning products, poison, batteries, or other inedible/hazardous items), do not treat it as a loggable item - tell them plainly it is not food and, if they actually consumed it, to seek medical attention or contact a poison control center right away. Also take medical_conditions and allergies into account: flag plainly if a food they mention or you suggest conflicts with a listed allergy or condition.",
-          "MARKER (required): your response must start with exactly one of the two literal tokens 'ACTIONABLE ' or 'INFO ' (the word, then a single space), before anything else - no exceptions, this is machine-parsed and stripped before the user ever sees it. Use 'ACTIONABLE ' when the conversation so far (this message plus prior turns, including any photo) describes at least one concrete food, drink, or exercise item with enough detail (item + rough quantity/duration, or a clear photo) to log right now, even if you're also asking an optional follow-up question. Use 'INFO ' for everything else: an unclear/unreadable photo, a clarifying question with no loggable detail yet, a planning/suggestion answer with nothing new to log, an off-topic redirect, a safety warning, or small talk. Never write the word ACTIONABLE or INFO anywhere else in your reply.",
+          "MARKER (required): your response must start with exactly one of the two literal tokens 'ACTIONABLE ' or 'INFO ' (the word, then a single space), before anything else - no exceptions, this is machine-parsed and stripped before the user ever sees it. Use 'ACTIONABLE ' when the conversation so far (this message plus prior turns, including any photo) describes at least one concrete food, drink, exercise item, or a reported weight, with enough detail (item + rough quantity/duration, a clear photo, or a weight number) to log right now, even if you're also asking an optional follow-up question. Use 'INFO ' for everything else: an unclear/unreadable photo, a clarifying question with no loggable detail yet, a planning/suggestion answer with nothing new to log, an off-topic redirect, a safety warning, or small talk. Never write the word ACTIONABLE or INFO anywhere else in your reply.",
           "Reply in 1-3 short sentences, conversationally - not a list, not JSON, no markdown. Address the user directly in second person (\"you\"/\"your\"), never third person.",
         ].join(" "),
       },
