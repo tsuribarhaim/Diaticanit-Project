@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { dismissProfileChangeAction, lockTargetsAction, type TargetsActionState } from "@/app/app/targets/actions";
 import { LockSubmitButton } from "@/components/targets-workspace";
-import { TargetProfileView } from "@/components/target-profile-view";
+import { TargetsSectionTabs, type TargetsHistoryInfo } from "@/components/targets-section-tabs";
 import { TargetsDiffTable } from "@/components/targets-diff-table";
 import { useUnsavedPreview } from "@/components/unsaved-preview-context";
 import { tr, type AppLocale } from "@/lib/locale";
@@ -67,16 +67,37 @@ export function TargetsChatWorkspace({
   maintenanceCalories,
   currentPayload,
   profileChanges,
+  bmiWarning,
   firstName,
+  history,
 }: {
   locale: AppLocale;
   maintenanceCalories: number;
   currentPayload: TargetGenerationPayload;
   profileChanges?: ProfileDiffRow[];
+  /** Deterministic BMI safety message (lib/bmi.ts), computed server-side
+   * from the profile change that just landed - shown immediately, without
+   * waiting on the AI to notice it when asked to recalculate. */
+  bmiWarning?: string;
   firstName?: string | null;
+  history?: TargetsHistoryInfo | null;
 }) {
   const router = useRouter();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Seeded (not fetched) so the BMI concern is visible in the conversation
+  // itself the moment the page renders - not only once the user asks about
+  // it or clicks "Recalculate now" and the AI's own update_targets pass
+  // happens to mention it. This is the same deterministic bmiWarning text
+  // as the red banner above; the AI is not involved in producing it.
+  const [messages, setMessages] = useState<ChatMessage[]>(() =>
+    bmiWarning
+      ? [
+          {
+            role: "assistant",
+            content: `${tr(locale, "Before you ask - I noticed something important:", "לפני שתשאלו - שמתי לב למשהו חשוב:")}\n\n${bmiWarning}`,
+          },
+        ]
+      : [],
+  );
   const [inputValue, setInputValue] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [isInputFocused, setIsInputFocused] = useState(false);
@@ -103,8 +124,12 @@ export function TargetsChatWorkspace({
     // from the moment any conversation has happened - losing a chat you
     // typed (and the AI's reply) silently on an accidental tab switch is
     // exactly the same "unsaved work" problem as losing a generated
-    // preview, just earlier in the flow.
-    setHasUnsavedPreview((Boolean(pendingPreview) || messages.length > 0) && !lockState.success);
+    // preview, just earlier in the flow. Checks for a *user* message
+    // specifically (not just any message) - the seeded BMI-warning bubble
+    // above is shown automatically on mount and isn't something the user
+    // typed or would lose, so it shouldn't trip this guard by itself.
+    const hasUserMessage = messages.some((message) => message.role === "user");
+    setHasUnsavedPreview((Boolean(pendingPreview) || hasUserMessage) && !lockState.success);
   }, [pendingPreview, messages, lockState.success, setHasUnsavedPreview]);
 
   useEffect(() => {
@@ -414,11 +439,14 @@ export function TargetsChatWorkspace({
       await handleSkipProfileChange();
     } else if (outcome.semanticErrorMessage) {
       // The AI reviewed the profile change against the current targets and
-      // concluded no numeric/text adjustment is warranted - that's a valid,
-      // successful outcome (e.g. a condition with no established dietary
-      // rule to tighten), not a failure. Say so plainly instead of leaving
-      // the raw model wording sitting in the error-styled banner, and
-      // dismiss the now-resolved profile-change banner so it stops asking.
+      // concluded no numeric/text adjustment is warranted. Unlike the "ok"
+      // branch above, this does NOT dismiss the profile-change banner - a
+      // "no change needed" conclusion from a single AI pass isn't reliable
+      // enough to treat as final (a genuinely significant change, e.g. a
+      // newly added medical condition, has been seen going through as a
+      // false negative here), so the banner stays up and "Recalculate now"
+      // stays available to try again, rather than silently losing the
+      // pending change with no easy way back to it.
       setStreamError(null);
       setMessages((previous) => [
         ...previous,
@@ -426,12 +454,11 @@ export function TargetsChatWorkspace({
           role: "assistant",
           content: tr(
             locale,
-            "I reviewed this profile change against your current targets - no adjustment is needed, they're still accurate as-is.",
-            "בדקתי את שינוי הפרופיל הזה מול היעדים הנוכחיים שלך - אין צורך בעדכון, הם עדיין מדויקים כפי שהם.",
+            "I reviewed this profile change against your current targets - no adjustment is needed, they're still accurate as-is. If that doesn't sound right, you can try \"Recalculate now\" again or describe the concern here.",
+            "בדקתי את שינוי הפרופיל הזה מול היעדים הנוכחיים שלך - אין צורך בעדכון, הם עדיין מדויקים כפי שהם. אם זה לא נשמע נכון, אפשר לנסות שוב \"לחישוב מחדש\" או לתאר כאן את החשש.",
           ),
         },
       ]);
-      await handleSkipProfileChange();
     } else {
       setRetryAction(() => () => handleRecalculateFromProfileChange());
     }
@@ -454,19 +481,52 @@ export function TargetsChatWorkspace({
   const isNoChanges = Boolean(pendingPreview) && diffRows.length === 0;
 
   return (
-    <div className="grid grid-cols-1 gap-6 md:grid-cols-2 md:items-start">
-      <div ref={previewPanelRef} className={isInputFocused ? "hidden space-y-4 md:block" : "space-y-4"}>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm font-semibold text-slate-900">
-            {pendingPreview ? tr(locale, "Preview", "תצוגה מקדימה") : tr(locale, "Current targets", "היעדים הנוכחיים")}
+    <div className="space-y-4">
+      {bmiWarning ? (
+        <div className="rounded-xl border border-rose-300 bg-rose-50 p-4">
+          <p className="text-sm font-semibold text-rose-900">
+            {tr(locale, "Your new weight is outside the healthy BMI range", "המשקל החדש שלך מחוץ לטווח ה-BMI הבריא")}
           </p>
-          {pendingPreview ? (
-            <span className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">
-              {pendingPreview.source === "ai" ? "AI" : tr(locale, "Heuristic fallback", "גיבוי יוריסטי")}
-            </span>
-          ) : null}
+          <p className="mt-2 text-sm text-rose-800">{bmiWarning}</p>
         </div>
+      ) : null}
+      {profileChanges?.length ? (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4">
+          <p className="text-sm font-semibold text-amber-900">
+            {tr(locale, "Your profile has changed since these targets were set", "הפרופיל שלך השתנה מאז נקבעו היעדים הללו")}
+          </p>
+          <ul className="mt-2 space-y-1 text-sm text-amber-800">
+            {profileChanges.map((row) => (
+              <li key={row.labelEn}>
+                <span className="font-medium">{tr(locale, row.labelEn, row.labelHe)}:</span> {row.before} → {row.after}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleRecalculateFromProfileChange}
+              disabled={isStreaming || isDismissingProfileChange}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-800"
+            >
+              {isGeneratingTargets ? <Spinner className="h-4 w-4 animate-spin" /> : null}
+              {isGeneratingTargets
+                ? tr(locale, "Recalculating...", "מחשב מחדש...")
+                : tr(locale, "Recalculate now", "לחישוב מחדש")}
+            </button>
+            <button
+              type="button"
+              onClick={handleSkipProfileChange}
+              disabled={isStreaming || isDismissingProfileChange}
+              className="inline-flex items-center justify-center rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-800 disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-100"
+            >
+              {isDismissingProfileChange ? tr(locale, "Skipping...", "מדלג...") : tr(locale, "Skip", "דילוג")}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
+      <div ref={previewPanelRef} className={isInputFocused ? "hidden space-y-4 md:block" : "space-y-4"}>
         {isGeneratingTargets ? (
           <div className="flex items-center gap-2 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800">
             <Spinner className="h-4 w-4 shrink-0 animate-spin text-teal-700" />
@@ -475,38 +535,51 @@ export function TargetsChatWorkspace({
         ) : null}
 
         {pendingPreview ? (
-          diffRows.length ? (
-            <TargetsDiffTable rows={diffRows} locale={locale} />
-          ) : (
-            <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-              {tr(
-                locale,
-                "This recalculation didn't change anything measurable in your targets — nothing new to lock in.",
-                "החישוב מחדש לא שינה דבר מדיד ביעדים שלך — אין מה לנעול מחדש.",
-              )}
-            </p>
-          )
+          <div className="space-y-3 rounded-xl border border-teal-200 bg-teal-50/40 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-teal-900">{tr(locale, "Preview", "תצוגה מקדימה")}</p>
+              <span className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">
+                {pendingPreview.source === "ai" ? "AI" : tr(locale, "Heuristic fallback", "גיבוי יוריסטי")}
+              </span>
+            </div>
+
+            {diffRows.length ? (
+              <TargetsDiffTable rows={diffRows} locale={locale} />
+            ) : (
+              <p className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+                {tr(
+                  locale,
+                  "This recalculation didn't change anything measurable in your targets — nothing new to lock in.",
+                  "החישוב מחדש לא שינה דבר מדיד ביעדים שלך — אין מה לנעול מחדש.",
+                )}
+              </p>
+            )}
+
+            <form action={lockFormAction} className="space-y-2">
+              <input type="hidden" name="goal_text" value={messages.filter((m) => m.role === "user").at(-1)?.content ?? ""} />
+              <input type="hidden" name="source" value={pendingPreview.source} />
+              <input type="hidden" name="payload_json" value={JSON.stringify(pendingPreview.payload)} />
+
+              {lockState.error ? (
+                <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{lockState.error}</p>
+              ) : null}
+
+              <LockSubmitButton
+                locale={locale}
+                disabled={isNoChanges || isGeneratingTargets}
+                disabledReason={isGeneratingTargets ? "generating" : undefined}
+              />
+            </form>
+          </div>
         ) : null}
 
-        <TargetProfileView payload={displayedPayload} locale={locale} maintenanceCalories={maintenanceCalories} firstName={firstName} />
-
-        {pendingPreview ? (
-          <form action={lockFormAction} className="space-y-2">
-            <input type="hidden" name="goal_text" value={messages.filter((m) => m.role === "user").at(-1)?.content ?? ""} />
-            <input type="hidden" name="source" value={pendingPreview.source} />
-            <input type="hidden" name="payload_json" value={JSON.stringify(pendingPreview.payload)} />
-
-            {lockState.error ? (
-              <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{lockState.error}</p>
-            ) : null}
-
-            <LockSubmitButton
-              locale={locale}
-              disabled={isNoChanges || isGeneratingTargets}
-              disabledReason={isGeneratingTargets ? "generating" : undefined}
-            />
-          </form>
-        ) : null}
+        <TargetsSectionTabs
+          payload={displayedPayload}
+          locale={locale}
+          maintenanceCalories={maintenanceCalories}
+          firstName={firstName}
+          history={history}
+        />
       </div>
 
       {isInputFocused ? (
@@ -523,43 +596,7 @@ export function TargetsChatWorkspace({
         </div>
       ) : null}
 
-      <div className="flex flex-col md:sticky md:top-6">
-        {profileChanges?.length ? (
-          <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4">
-            <p className="text-sm font-semibold text-amber-900">
-              {tr(locale, "Your profile has changed since these targets were set", "הפרופיל שלך השתנה מאז נקבעו היעדים הללו")}
-            </p>
-            <ul className="mt-2 space-y-1 text-sm text-amber-800">
-              {profileChanges.map((row) => (
-                <li key={row.labelEn}>
-                  <span className="font-medium">{tr(locale, row.labelEn, row.labelHe)}:</span> {row.before} → {row.after}
-                </li>
-              ))}
-            </ul>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={handleRecalculateFromProfileChange}
-                disabled={isStreaming || isDismissingProfileChange}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-800"
-              >
-                {isGeneratingTargets ? <Spinner className="h-4 w-4 animate-spin" /> : null}
-                {isGeneratingTargets
-                  ? tr(locale, "Recalculating...", "מחשב מחדש...")
-                  : tr(locale, "Recalculate now", "לחישוב מחדש")}
-              </button>
-              <button
-                type="button"
-                onClick={handleSkipProfileChange}
-                disabled={isStreaming || isDismissingProfileChange}
-                className="inline-flex items-center justify-center rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-800 disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-100"
-              >
-                {isDismissingProfileChange ? tr(locale, "Skipping...", "מדלג...") : tr(locale, "Skip", "דילוג")}
-              </button>
-            </div>
-          </div>
-        ) : null}
-
+      <div className="flex flex-col">
         <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tr(locale, "Chat", "צ'אט")}</h3>
         <div className="mt-2 flex h-[420px] flex-col rounded-xl border border-slate-200 bg-white">
           <div className="flex-1 space-y-3 overflow-y-auto p-3">
@@ -575,7 +612,7 @@ export function TargetsChatWorkspace({
             {messages.map((message, index) => (
               <div key={index} className={`flex flex-col ${message.role === "user" ? "items-end" : "items-start"}`}>
                 <div
-                  className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
+                  className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm ${
                     message.role === "user" ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-800"
                   }`}
                 >

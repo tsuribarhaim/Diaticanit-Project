@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { AiExtractionConfig } from "@/lib/ai/env";
 import { callAiChatCompletion } from "@/lib/ai/provider-client";
+import { BMI_GOOD_MAX, BMI_GOOD_MIN, classifyBmi, computeBmi } from "@/lib/bmi";
 import type { AppLocale } from "@/lib/locale";
 import { exerciseModalityOptions } from "@/lib/profile";
 import type { ExerciseTargetEntry, HabitEntry, ProfileForTargets, TargetGenerationPayload, TargetGoalType, UserTargetEntry } from "@/lib/targets";
@@ -123,7 +124,13 @@ const aiTargetsSchema = z.object({
   habits_dont: z.array(aiHabitEntrySchema).max(6).optional().default([]),
   user_targets: z.array(aiUserTargetEntrySchema).max(8).optional().default([]),
 
-  global_coaching_explanation: z.string().trim().max(1000).optional().default(""),
+  // 1000 was too tight for a thorough explanation covering more than one
+  // simultaneous change (e.g. a medical condition AND a dietary preference
+  // both requiring their own safety/compatibility discussion) - the model
+  // would write a longer, genuinely justified explanation and the whole
+  // generation would fail validation over it, indistinguishable from a real
+  // failure to the caller (see generateTargetsPayload's catch-all).
+  global_coaching_explanation: z.string().trim().max(2500).optional().default(""),
   confidence: numberFromUnknown.optional(),
   profile_discrepancy_message: z.string().trim().max(300).optional().default(""),
 });
@@ -276,11 +283,22 @@ function mapAiTargetsResponse(raw: z.infer<typeof aiTargetsSchema>): TargetGener
 }
 
 function buildProfileSummary(profile: ProfileForTargets): string {
+  // Computed deterministically (not left for the model to derive) so the
+  // MANDATORY BMI SAFETY REVIEW rule below has an exact, pre-classified
+  // number to act on instead of relying on the model to both do the
+  // arithmetic correctly and recognize on its own that it matters.
+  const bmi = computeBmi(profile.weight_kg, profile.height_cm);
+  const bmiLine =
+    bmi > 0
+      ? `bmi: ${bmi.toFixed(1)} (${classifyBmi(bmi) === "good" ? "within" : classifyBmi(bmi) === "warning" ? "borderline outside" : "well outside"} the healthy range of ${BMI_GOOD_MIN}-${BMI_GOOD_MAX})`
+      : "bmi: unknown (missing height or weight)";
+
   return [
     `age: ${profile.age}`,
     `biological_sex: ${profile.biological_sex ?? profile.gender ?? "unknown"}`,
     `height_cm: ${profile.height_cm}`,
     `weight_kg: ${profile.weight_kg}`,
+    bmiLine,
     `activity_level: ${profile.activity_level}`,
     `allergies: ${profile.allergies.join(", ") || "none"}`,
     `medical_conditions: ${profile.medical_conditions.join(", ") || "none"}`,
@@ -332,7 +350,8 @@ export async function generateTargetsWithAi({
         "NO-ACTIONABLE-CHANGE CHECK (adjustment requests only): if goal_text (the conversation transcript) does not describe any concrete, in-scope health/nutrition/exercise/sleep/hydration/weight change to make - e.g. it's off-topic (a career, financial, or relationship goal), pure small talk, a question you already answered conversationally, or too vague to translate into a number - set no_actionable_change to true, put a short plain-language reason in no_actionable_change_reason (in the reply language), and you may leave every other field as a best-effort copy of current_active_targets since it will be discarded. Do not set this just because the request happens to be unsafe (that has its own handling below) - only when there is genuinely nothing concrete and in-scope to apply.",
         "Change what the goal_text below asks for, plus anything the current profile now requires for safety (see the mandatory safety review rule above) - keep every other range, exercise entry, and habit as close to the current values as reasonable.",
         "If the requested change would create an unsafe or unbalanced combination (e.g. reducing exercise while keeping calories at the same level), proactively adjust the DEPENDENT values (e.g. lower the calorie range) to keep the plan coherent, and explain that adjustment in global_coaching_explanation. This does not apply to target_weight_kg itself - that must stay a literal translation of goal_text per the rule above, not something you adjust for safety.",
-        "Do not treat a vague goal_text (e.g. \"please recalculate\" or \"my profile changed\") as a reason to leave everything unchanged - in that case, the safety review against the current profile IS the request.",
+        "Do not treat a vague goal_text (e.g. \"please recalculate\" or \"my profile changed\") as a reason to leave everything unchanged - in that case, the safety review against the current profile IS the request. Concretely: if user_profile's bmi is currently outside the healthy range, no_actionable_change must NOT be set to true, even for a bare profile-changed note with no explicit weight ask - apply the MANDATORY BMI SAFETY REVIEW rule instead.",
+        "The same override applies to medical_conditions, allergies, regular_medications_details, AND dietary_preference: if goal_text says the user's profile changed and user_profile's medical_conditions, allergies, regular_medications_details, or dietary_preference now includes or states something not already reflected in current_active_targets (a newly added condition, allergy, medication, or a changed dietary preference - not just a rewording of the same one), no_actionable_change must NOT be set to true, even with no explicit numeric ask - apply the MANDATORY SAFETY REVIEW rule instead and tighten/adjust whatever ranges or habits it calls for (a dietary_preference change alone still requires reviewing habits_do/habits_dont and any affected ranges for compatibility, e.g. protein sourcing for a new vegetarian/vegan preference). A placeholder \"before\" value such as \"prefers not to share\", \"undisclosed\", or \"none stated\" is NOT the same as an actual condition/preference - a change FROM one of these TO a real, specific value (e.g. \"prefers not to share\" -> \"kidney insufficiency\") is exactly the kind of newly-added information this override exists for, not a case to wave through as unchanged. Only fall back to no_actionable_change when you have genuinely checked this and there is nothing in the new profile that the safety review, the BMI review, or a dietary-preference compatibility check would change.",
         "current_active_targets.user_targets holds the user's previously tracked asks. Carry forward any still-relevant ones, add a new entry for whatever this request newly asks for, and update the value/target_min/target_max of an existing entry instead of duplicating it if this request changes the same thing (e.g. a new weight-loss amount replaces the old \"Lose weight\" value rather than adding a second one) - when updating an existing entry, KEEP ITS id UNCHANGED (copy it from current_active_targets) so any Daily Report values already logged against it stay linked; only invent a new id for a genuinely new entry.",
       ]
     : [];
@@ -374,6 +393,7 @@ export async function generateTargetsWithAi({
           "- Base all ranges on standard adult Dietary Reference Intake (DRI) style ranges, scaled to the user's profile. This is general guidance, not a clinical diagnosis.",
           "- Respect any allergies, medical conditions, medications, and dietary preference when shaping habits and exercise notes (e.g. avoid recommending foods that conflict with a stated allergy).",
           "- MANDATORY SAFETY REVIEW: check the numeric ranges themselves (not just habit text) against the user's medical conditions. In particular: hypertension calls for a tighter, lower sodium range (roughly 1,200-1,500 mg rather than a generic 1,500-2,300 mg); diabetes calls for a lower added-sugar ceiling (roughly 15 g rather than a generic 25 g). Apply comparable, clinically-reasonable tightening for any other stated condition that has an established dietary implication. This review applies even when it is not the explicit subject of goal_text.",
+          "- MANDATORY BMI SAFETY REVIEW: user_profile's bmi line reflects the user's CURRENT weight, not a request or a hypothetical - if it is outside the healthy 18.5-24.9 range, that by itself is a concrete, in-scope safety issue you must act on, even when goal_text says nothing about weight (a bare \"profile changed\" or \"recalculate\" note included - see the no-actionable-change rule above, this is exactly the kind of thing that rule means by \"the safety review IS the request\"). Underweight (bmi below 18.5): raise calories_min/calories_max and protein_min_g/protein_max_g above the generic DRI baseline to support safe, gradual weight gain. Overweight/obese (bmi above 24.9): lower calories_min/calories_max moderately, keeping protein comparatively high, to support safe, gradual weight loss. State the current bmi value and this adjustment explicitly in global_coaching_explanation. This is independent of target_weight_kg, which must still remain a literal translation of goal_text per the rule above - do not set or change target_weight_kg based on this review alone.",
           `- exercise_targets: 2 to 4 entries. modality must be exactly one of these tokens: ${AI_EXERCISE_MODALITY_TOKENS.join(", ")} - never a free-text activity name like "walking" or "yoga" (the app only knows how to display these exact tokens; anything else renders as raw untranslated text). Put the specific activity itself (e.g. "brisk walking", "beginner yoga") in ai_adjustment_note and search_keywords instead - that's where the detail belongs, not in modality. search_keywords must be short YouTube search phrases only (e.g. \"beginner resistance training routine\") — NEVER include a URL or a specific video title/link, since direct AI-suggested links are unreliable.`,
           "- habits_do and habits_dont: 2 to 4 entries each, each with a short actionable instruction and a one-sentence rationale.",
           "- user_targets: 0 to 5 entries. For each concrete, health-relevant OUTCOME the user actually asked for in goal_text (e.g. losing/gaining a specific amount of weight, a sleep-duration goal, a hydration goal, a step-count goal), add one entry with a short clean label (e.g. \"Target weight\", \"Lose weight\", \"Sleep duration\") and a short concrete value (e.g. \"62 kg\", \"2 kg\", \"8 hours\"). Only include asks that are genuinely about health, nutrition, exercise, sleep, or a related wellbeing topic and that you judged safe to apply; silently omit anything irrelevant, unsafe, or too vague to state as a concrete value. Do not invent entries the user didn't ask for - leave user_targets empty if goal_text has no concrete ask. user_targets is NEVER for an exercise activity or modality itself (e.g. \"Walking\", \"Running\", \"Yoga\") - any activity you add or recommend, including one chosen specifically to help reach a user_targets goal like weight loss, belongs in exercise_targets instead, never as its own user_targets entry.",
@@ -388,12 +408,33 @@ export async function generateTargetsWithAi({
           "user_profile:",
           buildProfileSummary(profile),
           "goal_text:",
-          goalText.slice(0, 1200),
+          // Tail, not head: for the update_targets flow goalText is a joined
+          // conversation where the actual ask is the newest (last) message -
+          // route.ts's buildConversationText already keeps this under budget
+          // newest-first, but slicing from the end here too (rather than the
+          // start) is a cheap defense against ever silently dropping the
+          // part that matters for any other caller of this function.
+          goalText.length > 4500 ? goalText.slice(-4500) : goalText,
         ].join("\n"),
       },
     ];
 
-  const contentText = await callAiChatCompletion({ config, messages, temperature: 0.2, jsonMode: true });
+  const contentText = await callAiChatCompletion({
+    config,
+    messages,
+    temperature: 0.2,
+    jsonMode: true,
+    // This full-schema structured JSON generation (calories, every
+    // macro/micro range, exercise targets, habits, user targets) routinely
+    // runs close to or past provider-client's default 45s timeout even with
+    // extended thinking disabled - it was observed failing 3/3 times in a
+    // row at ~48s against a real profile-change adjustment. The client side
+    // (targets-chat-workspace.tsx) already tolerates an open-ended wait via
+    // an 8s heartbeat that resets its own 20s inactivity timer specifically
+    // for this call, so there's no UI cost to giving the upstream request
+    // itself more room before this route's own abort kicks in.
+    timeoutMs: 90_000,
+  });
 
   const parsed = aiTargetsSchema.parse(parseJsonPayload(contentText));
 

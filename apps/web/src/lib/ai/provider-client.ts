@@ -26,6 +26,9 @@ export type AiChatCompletionParams = {
   /** Forwarded to the underlying fetch() for callers that need a
    * request-level timeout (via AbortController). */
   signal?: AbortSignal;
+  /** Overrides DEFAULT_AI_REQUEST_TIMEOUT_MS for this call only - see
+   * callAiChatCompletion's targets-generation caller for why this exists. */
+  timeoutMs?: number;
 };
 
 const ANTHROPIC_API_VERSION = "2023-06-01";
@@ -205,8 +208,8 @@ async function callAnthropicChatCompletion({ config, messages, signal }: AiChatC
  * reasonable time instead of well over a minute. */
 const DEFAULT_AI_REQUEST_TIMEOUT_MS = 45000;
 
-function withDefaultTimeout(signal?: AbortSignal): AbortSignal {
-  const timeoutSignal = AbortSignal.timeout(DEFAULT_AI_REQUEST_TIMEOUT_MS);
+function withDefaultTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
   return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 }
 
@@ -214,7 +217,7 @@ function withDefaultTimeout(signal?: AbortSignal): AbortSignal {
  * in this app - branches to the right provider's request/response shape
  * internally so call sites never need to know the difference. */
 export async function callAiChatCompletion(params: AiChatCompletionParams): Promise<string> {
-  const boundedParams = { ...params, signal: withDefaultTimeout(params.signal) };
+  const boundedParams = { ...params, signal: withDefaultTimeout(params.signal, params.timeoutMs ?? DEFAULT_AI_REQUEST_TIMEOUT_MS) };
   if (params.config.provider === "anthropic") {
     return callAnthropicChatCompletion(boundedParams);
   }

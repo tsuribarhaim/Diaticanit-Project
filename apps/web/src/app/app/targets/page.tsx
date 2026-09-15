@@ -3,7 +3,9 @@ import { redirect } from "next/navigation";
 import { generateTargetsPayload, hasAiTargetsConsent } from "@/app/app/targets/actions";
 import { TargetsChatWorkspace } from "@/components/targets-chat-workspace";
 import { TargetsWorkspace } from "@/components/targets-workspace";
+import type { TargetsHistoryInfo } from "@/components/targets-section-tabs";
 import { getAiExtractionConfig } from "@/lib/ai/env";
+import { buildBmiWarningMessage } from "@/lib/bmi";
 import { formatDateTimeForLocale, normalizeLocale, tr } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 import {
@@ -82,12 +84,20 @@ export default async function TargetsPage() {
   let initialPreview: { goalText: string; source: "ai" | "heuristic"; payload: ReturnType<typeof mapTargetProfileRowToPayload> } | null = null;
   let initialWarning: string | undefined;
   let profileChanges: ReturnType<typeof computeProfileDiff> | undefined;
+  let bmiWarning: string | undefined;
   let missingProfileSnapshot = false;
 
   if (activeTargetProfile) {
     const snapshot = parseProfileSnapshot(activeTargetProfile.profile_snapshot);
     if (snapshot) {
       profileChanges = computeProfileDiff(snapshot, profile, locale);
+      // Deterministic, not AI-generated - shown immediately alongside the
+      // "profile changed" banner below so an unhealthy BMI is flagged the
+      // first time the page renders, rather than only if/when the user
+      // happens to ask the chat about it (see lib/bmi.ts).
+      if (profileChanges.some((row) => row.labelEn === "Weight")) {
+        bmiWarning = buildBmiWarningMessage(profile.weight_kg, profile.height_cm, locale);
+      }
     } else {
       missingProfileSnapshot = true;
     }
@@ -120,12 +130,21 @@ export default async function TargetsPage() {
     initialWarning = source === "heuristic" ? heuristicReason ?? undefined : undefined;
   }
 
+  const targetsHistory: TargetsHistoryInfo | undefined = activeTargetProfile
+    ? {
+        rawGoalText: activeTargetProfile.raw_goal_text,
+        lockedAtLabel: formatDateTimeForLocale(activeTargetProfile.sys_start_date, locale),
+        analysisSource: activeTargetProfile.analysis_source === "ai" ? "ai" : "heuristic",
+      }
+    : undefined;
+
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 py-10">
       <section className="rounded-2xl border border-slate-200 bg-white p-6">
-        <div>
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
           <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "Daily Targets", "יעדים יומיים")}</h1>
-          <p className="mt-2 text-sm text-slate-600">
+          <p className="text-sm text-slate-600">
+            -{" "}
             {tr(
               locale,
               "Your personalized daily nutrition, exercise, and habit targets.",
@@ -156,29 +175,6 @@ export default async function TargetsPage() {
           </>
         ) : (
           <div className="mt-5 space-y-4">
-            <div className="rounded-lg bg-slate-50 p-4 text-sm text-slate-700">
-              <p>
-                <span className="font-semibold text-slate-900">{tr(locale, "Original request", "בקשה מקורית")}:</span>{" "}
-                <span className="italic text-slate-600">{activeTargetProfile.raw_goal_text}</span>
-              </p>
-              <p className="mt-1">
-                <span className="font-semibold text-slate-900">{tr(locale, "Locked at", "ננעל בתאריך")}:</span>{" "}
-                {formatDateTimeForLocale(activeTargetProfile.sys_start_date, locale)}
-              </p>
-              <p className="mt-1">
-                <span className="font-semibold text-slate-900">{tr(locale, "Analysis source", "מקור ניתוח")}:</span>{" "}
-                {activeTargetProfile.analysis_source === "ai" ? "AI" : tr(locale, "Heuristic", "יוריסטי")}
-              </p>
-            </div>
-
-            <p className="text-xs text-slate-500">
-              {tr(
-                locale,
-                "Informational support only. Check with a qualified healthcare professional for medical decisions.",
-                "למטרות מידע בלבד. להחלטות רפואיות יש להתייעץ עם איש מקצוע מוסמך.",
-              )}
-            </p>
-
             {missingProfileSnapshot ? (
               <p className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
                 {tr(
@@ -196,7 +192,9 @@ export default async function TargetsPage() {
                 maintenanceCalories={maintenanceCalories}
                 currentPayload={mapTargetProfileRowToPayload(activeTargetProfile)}
                 profileChanges={profileChanges}
+                bmiWarning={bmiWarning}
                 firstName={profileRow.first_name ?? null}
+                history={targetsHistory}
               />
             ) : (
               <TargetsWorkspace
@@ -206,11 +204,21 @@ export default async function TargetsPage() {
                 maintenanceCalories={maintenanceCalories}
                 currentPayload={mapTargetProfileRowToPayload(activeTargetProfile)}
                 profileChanges={profileChanges}
+                bmiWarning={bmiWarning}
                 firstName={profileRow.first_name ?? null}
+                history={targetsHistory}
               />
             )}
           </div>
         )}
+
+        <p className="mt-6 border-t border-slate-100 pt-4 text-xs text-slate-500">
+          {tr(
+            locale,
+            "Informational support only. Check with a qualified healthcare professional for medical decisions.",
+            "למטרות מידע בלבד. להחלטות רפואיות יש להתייעץ עם איש מקצוע מוסמך.",
+          )}
+        </p>
       </section>
     </main>
   );
