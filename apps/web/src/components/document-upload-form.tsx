@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 
 import {
@@ -27,6 +27,44 @@ function UploadButton({ locale }: { locale: AppLocale }) {
   );
 }
 
+/**
+ * The native file input's own "Choose File" / "No file chosen" text comes
+ * from the browser's UI locale, not the page's `lang` attribute - there's no
+ * way to translate it directly. Hiding the real input (kept functional via
+ * sr-only, not display:none, so it stays clickable/keyboard-reachable and
+ * still participates in form submission and native required-validation) and
+ * driving it from our own button + filename text is the standard workaround.
+ */
+function FileField({ locale }: { locale: AppLocale }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+
+  return (
+    <div>
+      <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "File", "קובץ")}</span>
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-300 px-3 py-2">
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+        >
+          {tr(locale, "Choose file", "בחירת קובץ")}
+        </button>
+        <span className="truncate text-sm text-slate-600">{fileName ?? tr(locale, "No file chosen", "לא נבחר קובץ")}</span>
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        name="file"
+        required
+        accept={ALLOWED_DOCUMENT_MIME_TYPES.join(",")}
+        className="sr-only"
+        onChange={(event) => setFileName(event.target.files?.[0]?.name ?? null)}
+      />
+    </div>
+  );
+}
+
 export function DocumentUploadForm({ locale }: { locale: AppLocale }) {
   const [state, formAction] = useActionState(uploadDocumentAction, initialState);
 
@@ -44,16 +82,7 @@ export function DocumentUploadForm({ locale }: { locale: AppLocale }) {
         />
       </label>
 
-      <label className="block">
-        <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "File", "קובץ")}</span>
-        <input
-          type="file"
-          name="file"
-          required
-          accept={ALLOWED_DOCUMENT_MIME_TYPES.join(",")}
-          className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-700"
-        />
-      </label>
+      <FileField locale={locale} />
 
       <p className="text-xs text-slate-500">
         {tr(locale, "Max size 10 MB. Allowed: PDF, PNG, JPG, WEBP, TXT.", "גודל מרבי 10MB. מותר: PDF, PNG, JPG, WEBP, TXT.")}

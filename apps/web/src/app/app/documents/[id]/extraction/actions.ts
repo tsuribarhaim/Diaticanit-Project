@@ -9,8 +9,24 @@ import {
   computeOverallStatus,
   generateObservationBullets,
 } from "@/lib/extraction-insights";
+import { normalizeLocale } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
+
+async function resolveUserLocale({
+  supabase,
+  userId,
+}: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  userId: string;
+}) {
+  const { data } = await supabase
+    .from("user_profile")
+    .select("preferred_language")
+    .eq("user_id", userId)
+    .maybeSingle();
+  return normalizeLocale(data?.preferred_language);
+}
 
 type DemoComponentSeed = {
   category: string;
@@ -169,46 +185,6 @@ export async function generateDemoExtractionAction(formData: FormData): Promise<
   revalidatePath(`/app/documents/${documentId}/extraction`);
 }
 
-export async function acknowledgeAiExtractionConsentAction(formData: FormData): Promise<void> {
-  const documentId = formData.get("document_id")?.toString();
-  const accepted = formData.get("accept_ai_extraction")?.toString() === "yes";
-  if (!documentId || !accepted) return;
-
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/auth/sign-in");
-  }
-
-  const provider = formData.get("provider")?.toString() || "openai-compatible";
-
-  const { error } = await supabase.from("ai_extraction_consents").upsert(
-    {
-      user_id: user.id,
-      provider,
-      accepted_at: new Date().toISOString(),
-      revoked_at: null,
-    },
-    {
-      onConflict: "user_id",
-    },
-  );
-
-  if (error) {
-    logServerError("extraction.aiConsent", "upsert_failed", {
-      userId: user.id,
-      documentId,
-      error: error.message,
-    });
-    return;
-  }
-
-  revalidatePath("/app/documents");
-  revalidatePath(`/app/documents/${documentId}/extraction`);
-}
 
 export async function applyDeterministicInsightsAction(formData: FormData): Promise<void> {
   const reportId = formData.get("report_id")?.toString();
@@ -273,7 +249,8 @@ export async function applyDeterministicInsightsAction(formData: FormData): Prom
   });
 
   const summaryOverallStatus = computeOverallStatus(statuses);
-  const summaryBullets = generateObservationBullets(updatedComponents ?? []);
+  const locale = await resolveUserLocale({ supabase, userId: user.id });
+  const summaryBullets = generateObservationBullets(updatedComponents ?? [], locale);
 
   const { error: reportUpdateError } = await supabase
     .from("extracted_reports")

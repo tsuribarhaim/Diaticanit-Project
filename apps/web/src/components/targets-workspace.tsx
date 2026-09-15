@@ -5,7 +5,7 @@ import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 
 import { dismissProfileChangeAction, generateTargetsAction, lockTargetsAction, type TargetsActionState } from "@/app/app/targets/actions";
-import { TargetProfileView } from "@/components/target-profile-view";
+import { TargetsSectionTabs, type TargetsHistoryInfo } from "@/components/targets-section-tabs";
 import { TargetsDiffTable } from "@/components/targets-diff-table";
 import { useUnsavedPreview } from "@/components/unsaved-preview-context";
 import { tr, type AppLocale } from "@/lib/locale";
@@ -76,7 +76,9 @@ export function TargetsWorkspace({
   initialWarning,
   currentPayload,
   profileChanges,
+  bmiWarning,
   firstName,
+  history,
 }: {
   locale: AppLocale;
   maintenanceCalories: number;
@@ -85,7 +87,10 @@ export function TargetsWorkspace({
   initialWarning?: string;
   currentPayload?: TargetGenerationPayload;
   profileChanges?: ProfileDiffRow[];
+  /** Deterministic BMI safety message (lib/bmi.ts) - see TargetsChatWorkspace. */
+  bmiWarning?: string;
   firstName?: string | null;
+  history?: TargetsHistoryInfo | null;
 }) {
   const router = useRouter();
   const initialGenerateState: TargetsActionState = initialPreview
@@ -133,38 +138,73 @@ export function TargetsWorkspace({
   const isAdjustWithNoChanges = mode === "adjust" && Boolean(pendingPreview) && Boolean(currentPayload) && diffRows.length === 0;
 
   return (
-    <div className="grid grid-cols-1 gap-6 md:grid-cols-2 md:items-start">
-      <div className="space-y-4">
-        {displayedPayload ? (
-          <>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-slate-900">
-                {pendingPreview ? tr(locale, "Preview", "תצוגה מקדימה") : tr(locale, "Current targets", "היעדים הנוכחיים")}
-              </p>
-              {pendingPreview ? (
+    <div className="space-y-4">
+      {bmiWarning ? (
+        <div className="rounded-xl border border-rose-300 bg-rose-50 p-4">
+          <p className="text-sm font-semibold text-rose-900">
+            {tr(locale, "Your new weight is outside the healthy BMI range", "המשקל החדש שלך מחוץ לטווח ה-BMI הבריא")}
+          </p>
+          <p className="mt-2 text-sm text-rose-800">{bmiWarning}</p>
+        </div>
+      ) : null}
+      {profileChanges?.length ? (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4">
+          <p className="text-sm font-semibold text-amber-900">
+            {tr(locale, "Your profile has changed since these targets were set", "הפרופיל שלך השתנה מאז נקבעו היעדים הללו")}
+          </p>
+          <ul className="mt-2 space-y-1 text-sm text-amber-800">
+            {profileChanges.map((row) => (
+              <li key={row.labelEn}>
+                <span className="font-medium">{tr(locale, row.labelEn, row.labelHe)}:</span> {row.before} → {row.after}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="submit"
+              form={GENERATE_FORM_ID}
+              disabled={isDismissingProfileChange}
+              className="inline-flex items-center justify-center rounded-xl bg-amber-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-800"
+            >
+              {tr(locale, "Recalculate now", "לחישוב מחדש")}
+            </button>
+            <button
+              type="button"
+              onClick={handleSkipProfileChange}
+              disabled={isDismissingProfileChange}
+              className="inline-flex items-center justify-center rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-800 disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-100"
+            >
+              {isDismissingProfileChange ? tr(locale, "Skipping...", "מדלג...") : tr(locale, "Skip", "דילוג")}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {displayedPayload ? (
+        <div className="space-y-4">
+          {pendingPreview ? (
+            <div className="space-y-3 rounded-xl border border-teal-200 bg-teal-50/40 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-teal-900">{tr(locale, "Preview", "תצוגה מקדימה")}</p>
                 <span className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">
                   {pendingPreview.source === "ai" ? "AI" : tr(locale, "Heuristic fallback", "גיבוי יוריסטי")}
                 </span>
+              </div>
+
+              {mode === "adjust" ? (
+                diffRows.length ? (
+                  <TargetsDiffTable rows={diffRows} locale={locale} />
+                ) : (
+                  <p className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+                    {tr(
+                      locale,
+                      "This recalculation didn't change anything measurable in your targets — nothing new to lock in.",
+                      "החישוב מחדש לא שינה דבר מדיד ביעדים שלך — אין מה לנעול מחדש.",
+                    )}
+                  </p>
+                )
               ) : null}
-            </div>
 
-            {mode === "adjust" && pendingPreview ? (
-              diffRows.length ? (
-                <TargetsDiffTable rows={diffRows} locale={locale} />
-              ) : (
-                <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                  {tr(
-                    locale,
-                    "This recalculation didn't change anything measurable in your targets — nothing new to lock in.",
-                    "החישוב מחדש לא שינה דבר מדיד ביעדים שלך — אין מה לנעול מחדש.",
-                  )}
-                </p>
-              )
-            ) : null}
-
-            <TargetProfileView payload={displayedPayload} locale={locale} maintenanceCalories={maintenanceCalories} firstName={firstName} />
-
-            {pendingPreview ? (
               <form action={lockFormAction} className="space-y-2">
                 <input type="hidden" name="goal_text" value={pendingPreview.goalText} />
                 <input type="hidden" name="source" value={pendingPreview.source} />
@@ -180,77 +220,50 @@ export function TargetsWorkspace({
                   disabledReason={isGeneratePending ? "generating" : undefined}
                 />
               </form>
-            ) : null}
-          </>
-        ) : null}
-      </div>
-
-      <div className="space-y-4 md:sticky md:top-6">
-        {profileChanges?.length ? (
-          <div className="rounded-xl border border-amber-300 bg-amber-50 p-4">
-            <p className="text-sm font-semibold text-amber-900">
-              {tr(locale, "Your profile has changed since these targets were set", "הפרופיל שלך השתנה מאז נקבעו היעדים הללו")}
-            </p>
-            <ul className="mt-2 space-y-1 text-sm text-amber-800">
-              {profileChanges.map((row) => (
-                <li key={row.labelEn}>
-                  <span className="font-medium">{tr(locale, row.labelEn, row.labelHe)}:</span> {row.before} → {row.after}
-                </li>
-              ))}
-            </ul>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="submit"
-                form={GENERATE_FORM_ID}
-                disabled={isDismissingProfileChange}
-                className="inline-flex items-center justify-center rounded-xl bg-amber-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-800"
-              >
-                {tr(locale, "Recalculate now", "לחישוב מחדש")}
-              </button>
-              <button
-                type="button"
-                onClick={handleSkipProfileChange}
-                disabled={isDismissingProfileChange}
-                className="inline-flex items-center justify-center rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-800 disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-100"
-              >
-                {isDismissingProfileChange ? tr(locale, "Skipping...", "מדלג...") : tr(locale, "Skip", "דילוג")}
-              </button>
             </div>
-          </div>
-        ) : null}
+          ) : null}
 
-        <div>
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-            {mode === "initial" ? tr(locale, "Your goal (optional)", "המטרה שלך (אופציונלי)") : tr(locale, "Request an adjustment", "בקשת שינוי")}
-          </h3>
-          <form id={GENERATE_FORM_ID} action={generateFormAction} className="mt-2 space-y-3">
-            <textarea
-              name="goal_text"
-              maxLength={500}
-              rows={mode === "initial" ? 4 : 3}
-              defaultValue={initialPreview?.goalText ?? ""}
-              placeholder={
-                mode === "initial"
-                  ? tr(
-                      locale,
-                      "Optional. Example: I want to lose 5 kg in 2 months. Leave empty to keep the general baseline plan.",
-                      "אופציונלי. דוגמה: אני רוצה לרדת 5 ק\"ג בחודשיים. ניתן להשאיר ריק לשמירה על תכנית הבסיס הכללית.",
-                    )
-                  : tr(locale, "Example: reduce my workout days to 2 times a week.", "דוגמה: להפחית את ימי האימון שלי לפעמיים בשבוע.")
-              }
-              className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
-            />
-
-            {generateState.error ? (
-              <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{generateState.error}</p>
-            ) : null}
-            {generateState.warning ? (
-              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{generateState.warning}</p>
-            ) : null}
-
-            <GenerateSubmitButton locale={locale} mode={mode} />
-          </form>
+          <TargetsSectionTabs
+            payload={displayedPayload}
+            locale={locale}
+            maintenanceCalories={maintenanceCalories}
+            firstName={firstName}
+            history={history}
+          />
         </div>
+      ) : null}
+
+      <div>
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+          {mode === "initial" ? tr(locale, "Your goal (optional)", "המטרה שלך (אופציונלי)") : tr(locale, "Request an adjustment", "בקשת שינוי")}
+        </h3>
+        <form id={GENERATE_FORM_ID} action={generateFormAction} className="mt-2 space-y-3">
+          <textarea
+            name="goal_text"
+            maxLength={500}
+            rows={mode === "initial" ? 4 : 3}
+            defaultValue={initialPreview?.goalText ?? ""}
+            placeholder={
+              mode === "initial"
+                ? tr(
+                    locale,
+                    "Optional. Example: I want to lose 5 kg in 2 months. Leave empty to keep the general baseline plan.",
+                    "אופציונלי. דוגמה: אני רוצה לרדת 5 ק\"ג בחודשיים. ניתן להשאיר ריק לשמירה על תכנית הבסיס הכללית.",
+                  )
+                : tr(locale, "Example: reduce my workout days to 2 times a week.", "דוגמה: להפחית את ימי האימון שלי לפעמיים בשבוע.")
+            }
+            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
+          />
+
+          {generateState.error ? (
+            <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{generateState.error}</p>
+          ) : null}
+          {generateState.warning ? (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{generateState.warning}</p>
+          ) : null}
+
+          <GenerateSubmitButton locale={locale} mode={mode} />
+        </form>
       </div>
     </div>
   );

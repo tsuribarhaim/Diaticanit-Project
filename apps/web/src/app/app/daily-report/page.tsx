@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import {
@@ -136,10 +137,11 @@ function parseSelectedDateParam(value: string | undefined): string {
 export default async function DailyReportPage({
   searchParams,
 }: {
-  searchParams: Promise<{ notice?: string; error?: string; date?: string }>;
+  searchParams: Promise<{ notice?: string; error?: string; date?: string; edit?: string }>;
 }) {
   const resolvedSearchParams = await searchParams;
   const selectedDate = parseSelectedDateParam(resolvedSearchParams.date);
+  const editReportId = resolvedSearchParams.edit || null;
   const selectedDayStartIso = new Date(`${selectedDate}T00:00:00.000Z`).toISOString();
   const selectedDayEndIso = new Date(new Date(`${selectedDate}T00:00:00.000Z`).getTime() + 24 * 60 * 60 * 1000).toISOString();
   const supabase = await createClient();
@@ -178,6 +180,52 @@ export default async function DailyReportPage({
     .limit(1)
     .maybeSingle();
   const lastRecordedWeightKg = lastWeightReport?.reported_weight_kg ?? null;
+
+  // The report being edited (via the "Edit entry" button on the list below)
+  // needs its full original content - not just the summary fields the list
+  // query below selects - so DailyReportForm can faithfully re-seed the
+  // chat/weight/custom-target inputs and saveDailyReportAction re-saves
+  // everything that actually contributed to the original totals.
+  let editingReport: {
+    id: string;
+    rawReportText: string;
+    reportedWeightKg: number | null;
+    reportAt: string;
+    selectedDefaults: Array<{ id: string; quantity: number }>;
+    customTargetValues: Record<string, number>;
+  } | null = null;
+
+  if (editReportId) {
+    const { data: editableReportRow } = await supabase
+      .from("user_daily_reports")
+      .select("id, raw_report_text, reported_weight_kg, report_at, selected_defaults, custom_target_values")
+      .eq("id", editReportId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (editableReportRow) {
+      const selectedDefaultsRaw = Array.isArray(editableReportRow.selected_defaults)
+        ? (editableReportRow.selected_defaults as Array<{ id?: unknown; quantity?: unknown }>)
+        : [];
+      const customTargetValuesRaw =
+        editableReportRow.custom_target_values && typeof editableReportRow.custom_target_values === "object"
+          ? (editableReportRow.custom_target_values as Record<string, unknown>)
+          : {};
+
+      editingReport = {
+        id: editableReportRow.id,
+        rawReportText: editableReportRow.raw_report_text ?? "",
+        reportedWeightKg: editableReportRow.reported_weight_kg ?? null,
+        reportAt: editableReportRow.report_at,
+        selectedDefaults: selectedDefaultsRaw
+          .filter((item): item is { id: string; quantity: number } => typeof item.id === "string" && Number.isFinite(Number(item.quantity)))
+          .map((item) => ({ id: item.id, quantity: Number(item.quantity) })),
+        customTargetValues: Object.fromEntries(
+          Object.entries(customTargetValuesRaw).filter(([, value]) => Number.isFinite(Number(value))).map(([key, value]) => [key, Number(value)]),
+        ),
+      };
+    }
+  }
 
   // Daily-report entries no longer compare against scalar targets; the active
   // target profile stores min/max ranges instead. We compare against the
@@ -482,8 +530,7 @@ export default async function DailyReportPage({
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-6 py-10">
       <section className="rounded-2xl border border-slate-200 bg-white p-6">
-        <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "User daily report", "דיווח יומי")}</h1>
-        <p className="mt-1 text-sm text-slate-600">
+        <p className="text-sm text-slate-600">
           {tr(
             locale,
             "Record your daily food, drinks, activity, and other data.",
@@ -502,7 +549,20 @@ export default async function DailyReportPage({
           </p>
         ) : null}
 
+        {editingReport ? (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800">
+            <span>{tr(locale, "Editing a previously saved entry - saving below will update it in place.", "עריכת רשומה שנשמרה בעבר - השמירה למטה תעדכן אותה במקום.")}</span>
+            <Link
+              href={resolvedSearchParams.date ? `/app/daily-report?date=${resolvedSearchParams.date}` : "/app/daily-report"}
+              className="rounded-lg border border-teal-300 bg-white px-2.5 py-1 text-xs font-semibold text-teal-700 hover:bg-teal-100"
+            >
+              {tr(locale, "Cancel edit", "ביטול עריכה")}
+            </Link>
+          </div>
+        ) : null}
+
         <DailyReportForm
+          key={editingReport?.id ?? "new"}
           defaultItems={defaultItems ?? []}
           aiAvailable={aiAvailable}
           locale={locale}
@@ -514,6 +574,8 @@ export default async function DailyReportPage({
                 ? Number(profileRow.weight_kg)
                 : null
           }
+          editingReport={editingReport}
+          selectedDateParam={resolvedSearchParams.date}
         />
       </section>
 
@@ -650,8 +712,14 @@ export default async function DailyReportPage({
               const entrySummary = buildEntrySummary(report.parsed_items, report.parsed_exercises, locale);
               const fullConversation = report.raw_report_text?.trim() ?? "";
 
+              const editHref = `/app/daily-report?edit=${report.id}${resolvedSearchParams.date ? `&date=${resolvedSearchParams.date}` : ""}`;
+              const isBeingEdited = report.id === editReportId;
+
               return (
-                <article key={report.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <article
+                  key={report.id}
+                  className={`rounded-xl border p-4 ${isBeingEdited ? "border-teal-400 bg-teal-50/40 ring-1 ring-teal-300" : "border-slate-200 bg-slate-50"}`}
+                >
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
                       <p className="text-sm font-semibold text-slate-900">
@@ -659,6 +727,11 @@ export default async function DailyReportPage({
                       </p>
                       <p className="mt-1 text-xs text-slate-600">{tr(locale, "Confidence", "רמת ביטחון")}: {formatConfidence(report.parse_confidence, locale)}</p>
                     </div>
+                    {isBeingEdited ? (
+                      <span className="rounded-full border border-teal-300 bg-teal-100 px-2.5 py-1 text-xs font-semibold text-teal-800">
+                        {tr(locale, "Editing this entry", "עריכת רשומה זו")}
+                      </span>
+                    ) : null}
                   </div>
 
                   <p className="mt-3 rounded-lg bg-white px-3 py-2 text-sm text-slate-700">
@@ -713,6 +786,14 @@ export default async function DailyReportPage({
                         </button>
                       </form>
                     </details>
+
+                    <Link
+                      href={editHref}
+                      prefetch={false}
+                      className="rounded-lg border border-teal-300 px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50"
+                    >
+                      {tr(locale, "Edit entry", "עריכת רשומה")}
+                    </Link>
 
                     <form action={deleteDailyReportAction}>
                       <input type="hidden" name="report_id" value={report.id} />

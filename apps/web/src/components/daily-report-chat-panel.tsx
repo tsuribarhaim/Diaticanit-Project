@@ -19,6 +19,47 @@ type SseEvent =
 const STREAM_INACTIVITY_TIMEOUT_MS = 20000;
 const ALLOWED_MEAL_PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
 
+/**
+ * Inverse of the "User: ...\nAssistant: ..." transcript this panel builds
+ * (see the messages -> transcript effect below) - reconstructs chat bubbles
+ * from a previously saved report's raw_report_text so editing continues the
+ * same conversation. Each line is matched against the same "User: "/
+ * "Assistant: " prefixes the transcript itself always uses (regardless of
+ * UI locale - see the hardcoded English role labels below), consistent with
+ * how the report list's "View full conversation" toggle parses the same
+ * text. A line with neither prefix is treated as a continuation of the
+ * previous message's content rather than dropped, so a multi-line message
+ * round-trips too.
+ */
+function parseTranscriptToMessages(rawText: string): ChatMessage[] {
+  if (!rawText.trim()) return [];
+
+  const messages: ChatMessage[] = [];
+  // Browsers normalize a <textarea>'s value to CRLF ("\r\n") on form
+  // submission regardless of what JS wrote into it (the transcript is
+  // joined with plain "\n"), so raw_report_text as read back from the
+  // database has a trailing "\r" on every line - normalize it away first,
+  // since a line like "User: ...\r" otherwise fails to match /^User: (.*)$/
+  // entirely ("." excludes line terminators including "\r", and non-
+  // multiline "$" only matches true end-of-string), silently discarding
+  // every message and leaving the chat looking blank.
+  const normalizedText = rawText.replace(/\r\n/g, "\n");
+  for (const line of normalizedText.split("\n")) {
+    const userMatch = line.match(/^User: (.*)$/);
+    const assistantMatch = line.match(/^Assistant: (.*)$/);
+
+    if (userMatch) {
+      messages.push({ role: "user", content: userMatch[1] });
+    } else if (assistantMatch) {
+      messages.push({ role: "assistant", content: assistantMatch[1] });
+    } else if (messages.length > 0) {
+      messages[messages.length - 1].content += `\n${line}`;
+    }
+  }
+
+  return messages;
+}
+
 function Spinner({ className }: { className: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -63,14 +104,32 @@ export function DailyReportChatPanel({
   onTranscriptChange,
   saveError,
   saveSuccess,
+  bmiWarning,
+  initialTranscriptText,
+  isEditing = false,
 }: {
   locale: AppLocale;
   defaultItems: DailyReportDefaultItem[];
   onTranscriptChange: (text: string) => void;
   saveError?: string;
   saveSuccess?: string;
+  /** Deterministic BMI safety message (lib/bmi.ts) from a just-saved
+   * reported weight - shown here too, since this AI-chat panel (not the
+   * plain-text fallback below it) is the primary Daily Report path and
+   * previously never received this prop at all. */
+  bmiWarning?: string;
+  /** The "User: ...\nAssistant: ..." transcript of a previously saved
+   * report, when arriving via "Edit entry" - parsed back into chat bubbles
+   * so a correction reads as a continuation of that same conversation
+   * instead of starting from a blank slate with no memory of what was
+   * already logged (which is what silently created a second, incomplete
+   * report instead of amending the first). */
+  initialTranscriptText?: string;
+  /** True when Send/Conclude will update that same previously saved report
+   * rather than create a new one - see SubmitButton's isEditing. */
+  isEditing?: boolean;
 }) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => parseTranscriptToMessages(initialTranscriptText ?? ""));
   const [inputValue, setInputValue] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
@@ -494,7 +553,15 @@ export function DailyReportChatPanel({
         {saveSuccess ? (
           <p className="mb-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{saveSuccess}</p>
         ) : null}
-        <SubmitButton locale={locale} onClick={handleQuickSave} />
+        {bmiWarning ? (
+          <div className="mb-2 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2">
+            <p className="text-sm font-semibold text-rose-900">
+              {tr(locale, "Your weight is outside the healthy BMI range", "המשקל שלך מחוץ לטווח ה-BMI הבריא")}
+            </p>
+            <p className="mt-1 text-sm text-rose-800">{bmiWarning}</p>
+          </div>
+        ) : null}
+        <SubmitButton locale={locale} onClick={handleQuickSave} isEditing={isEditing} />
       </div>
     </div>
   );

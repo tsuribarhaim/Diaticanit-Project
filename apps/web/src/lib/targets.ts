@@ -966,7 +966,7 @@ export function normalizeUserTargetsJson(value: unknown): UserTargetEntry[] {
 }
 
 /** Maps a `user_target_profiles` DB row (snake_case) into the same shape the
- * generators produce, so the read-only dashboard can reuse `TargetProfileView`. */
+ * generators produce, so the read-only dashboard can reuse `TargetsSectionTabs`. */
 export function mapTargetProfileRowToPayload(row: TargetProfileDbRow): TargetGenerationPayload {
   return {
     goalType: (row.goal_type as TargetGoalType) ?? "general",

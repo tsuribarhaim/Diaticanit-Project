@@ -8,30 +8,47 @@ import { tr, type AppLocale } from "@/lib/locale";
 import type { ProfileDiffRow } from "@/lib/targets";
 
 /**
- * Shown right after a Profile save that changed something feeding target
+ * Shown right after a save that changed something feeding target
  * generation (weight, activity level, medical conditions, etc.) - reuses
  * the same computeProfileDiff data the Targets page's own "your profile
  * changed" banner already shows, just surfaced immediately instead of only
- * if/when the user happens to visit Targets on their own. Styled like the
- * "Notice" modal already used for the navigate-away guard, for visual
- * consistency.
+ * if/when the user happens to visit Targets on their own. Used from both
+ * Profile Edit (a direct field change) and the Daily Report form (a
+ * logged weight syncing back to the profile). Styled like the "Notice"
+ * modal already used for the navigate-away guard, for visual consistency.
  *
- * Stays open until the user explicitly dismisses it - the query param that
- * makes the server component render this in the first place (see
- * profile/page.tsx) is stripped only from the dismiss handlers below, never
- * automatically on mount. Stripping it on mount was the earlier bug here:
- * that re-ran the server page with the param gone, which stopped rendering
- * this component's parent branch entirely - unmounting the modal within a
- * second or two regardless of its own "stay open" state, since a child's
- * local state doesn't survive its parent choosing not to render it anymore.
+ * Stays open until the user explicitly dismisses it, never automatically -
+ * see the note on the Profile Edit page's use of onDismiss for a bug this
+ * caused previously when dismissal was tied to a URL change instead.
  */
-export function TargetsStaleModal({ locale, changes }: { locale: AppLocale; changes: ProfileDiffRow[] }) {
+export function TargetsStaleModal({
+  locale,
+  changes,
+  dismissHref,
+}: {
+  locale: AppLocale;
+  changes: ProfileDiffRow[];
+  /** When set, dismissing via "Got it" also replaces the URL with this
+   * path (client-side, no full navigation) - Profile Edit passes its own
+   * pathname to strip the query param that triggers this modal in the
+   * first place (see profile/page.tsx), since a plain string is what can
+   * cross the server/client boundary from that Server Component (a
+   * function prop can't). Daily Report omits this entirely: it has no
+   * such param, and visibility there is already driven by the save
+   * action's own result, not the URL - an earlier version of this
+   * component stripped /app/profile unconditionally on dismiss, which
+   * would have navigated Daily Report users away just for closing the
+   * modal. */
+  dismissHref?: string;
+}) {
   const [isOpen, setIsOpen] = useState(true);
   const router = useRouter();
 
   function dismiss() {
     setIsOpen(false);
-    router.replace("/app/profile", { scroll: false });
+    if (dismissHref) {
+      router.replace(dismissHref, { scroll: false });
+    }
   }
 
   if (!isOpen) return null;
@@ -49,8 +66,8 @@ export function TargetsStaleModal({ locale, changes }: { locale: AppLocale; chan
           <p className="text-sm text-slate-700">
             {tr(
               locale,
-              "You just changed the following in your profile, which may affect your daily targets:",
-              "עדכנת כרגע את הפרטים הבאים בפרופיל שלך, מה שעשוי להשפיע על היעדים היומיים שלך:",
+              "The following just changed, which may affect your daily targets:",
+              "הפרטים הבאים עודכנו כעת, מה שעשוי להשפיע על היעדים היומיים שלך:",
             )}
           </p>
           <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto text-sm text-slate-700">

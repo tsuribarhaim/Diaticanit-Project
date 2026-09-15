@@ -5,7 +5,7 @@ import { tr, type AppLocale } from "@/lib/locale";
  * mean - shared between profile-edit-form.tsx and onboarding-profile-form.tsx
  * so the standard-drink and threshold definitions live in exactly one place.
  * Reuses the same "?" trigger + hover/focus popover pattern already used for
- * nutrient info in target-profile-view.tsx, for visual consistency.
+ * nutrient info in targets-section-tabs.tsx, for visual consistency.
  */
 export function AlcoholConsumptionInfo({ locale }: { locale: AppLocale }) {
   return (

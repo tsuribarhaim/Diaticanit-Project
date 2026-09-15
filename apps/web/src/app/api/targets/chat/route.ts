@@ -38,6 +38,41 @@ function safeClose(controller: ReadableStreamDefaultController<Uint8Array>) {
   }
 }
 
+/** Budget (characters) for the conversation text embedded in the
+ * update_targets goal_text prompt - see buildConversationText below for why
+ * this is applied newest-message-first rather than as a flat slice. */
+const GOAL_TEXT_CONVERSATION_BUDGET = 4000;
+
+/**
+ * Joins chatHistory into the "User: ...\nAssistant: ...\n" block sent to the
+ * AI, keeping as many of the MOST RECENT messages as fit in the budget
+ * rather than the earliest ones. The actual ask (a typed message, or the
+ * profile-change note the client appends) is always the newest entry - a
+ * flat head-truncation would silently drop exactly that and leave the model
+ * looking at stale earlier chat with nothing concrete to act on. Whole
+ * messages are dropped from the oldest end (never cut mid-sentence), except
+ * the single newest message is always kept in full even if it alone exceeds
+ * the budget, since losing it entirely would be worse.
+ */
+function buildConversationText(chatHistory: ChatMessage[]): string {
+  const lines: string[] = [];
+  let usedLength = 0;
+
+  for (let index = chatHistory.length - 1; index >= 0; index -= 1) {
+    const entry = chatHistory[index];
+    const line = `${entry.role === "user" ? "User" : "Assistant"}: ${entry.content}`;
+
+    if (lines.length > 0 && usedLength + line.length + 1 > GOAL_TEXT_CONVERSATION_BUDGET) {
+      break;
+    }
+
+    lines.unshift(line);
+    usedLength += line.length + 1;
+  }
+
+  return lines.join("\n");
+}
+
 function toProfileForTargets(profile: Record<string, unknown>): ProfileForTargets {
   return {
     age: Number(profile.age ?? 0),
@@ -134,9 +169,7 @@ export async function POST(request: NextRequest) {
     async start(controller) {
       try {
         if (action === "update_targets") {
-          const conversationText = chatHistory
-            .map((entry) => `${entry.role === "user" ? "User" : "Assistant"}: ${entry.content}`)
-            .join("\n");
+          const conversationText = buildConversationText(chatHistory);
           const goalText = `Based on the following conversation with the user, update their daily targets accordingly:\n\n${conversationText}`;
 
           safeEnqueue(controller, { type: "status", status: "generating_targets" });

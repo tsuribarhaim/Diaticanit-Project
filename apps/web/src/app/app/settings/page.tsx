@@ -38,9 +38,7 @@ export default async function SettingsPage() {
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-10">
-      <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "Settings", "הגדרות")}</h1>
-
-      <section className="mt-6 divide-y divide-slate-200 rounded-2xl border border-slate-200 bg-white">
+      <section className="divide-y divide-slate-200 rounded-2xl border border-slate-200 bg-white">
         <div className="flex flex-wrap items-center justify-between gap-3 p-6">
           <div>
             <p className="font-medium text-slate-900">{tr(locale, "Language", "שפה")}</p>

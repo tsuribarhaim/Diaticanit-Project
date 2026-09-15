@@ -19,13 +19,24 @@ import {
 } from "@/lib/daily-report-chart-preferences";
 import { parseDailyReportPhotoWithAi, parseDailyReportWithAi } from "@/lib/ai/daily-report";
 import { getAiExtractionConfig } from "@/lib/ai/env";
+import { buildBmiWarningMessage } from "@/lib/bmi";
 import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
+import { computeProfileDiff, parseProfileSnapshot, type ProfileDiffRow, type ProfileForTargets } from "@/lib/targets";
 
 export type DailyReportActionState = {
   error?: string;
   success?: string;
+  /** Set when this save changed weight enough that the locked target
+   * profile's snapshot no longer matches - same data/mechanism as the
+   * Profile Edit page's own targets-stale prompt (see computeProfileDiff),
+   * just triggered from here since weight changes reported through Daily
+   * Report also sync back to the profile. */
+  targetsStaleChanges?: ProfileDiffRow[];
+  /** Set when the newly reported weight puts BMI outside the healthy
+   * range - a plain-language warning plus general recommendations. */
+  bmiWarning?: string;
 };
 
 type DailyReportParseMode = "heuristic" | "ai" | "ai_photo";
@@ -116,7 +127,7 @@ function getRequestedParseMode(formData: FormData): DailyReportParseMode {
   return "heuristic";
 }
 
-function buildDailyReportRedirectPath(params: { notice?: string; error?: string }): string {
+function buildDailyReportRedirectPath(params: { notice?: string; error?: string; date?: string }): string {
   const search = new URLSearchParams();
   if (params.notice) {
     search.set("notice", params.notice);
@@ -124,9 +135,60 @@ function buildDailyReportRedirectPath(params: { notice?: string; error?: string 
   if (params.error) {
     search.set("error", params.error);
   }
+  if (params.date) {
+    search.set("date", params.date);
+  }
 
   const query = search.toString();
   return query ? `/app/daily-report?${query}` : "/app/daily-report";
+}
+
+/**
+ * Keeps user_profile.weight_kg pointed at whatever the most recently logged
+ * weigh-in among the user's daily reports currently is (by report_at, not
+ * insertion order) - shared by every action that can change which report
+ * carries "the" current weight or remove it entirely: a fresh save, editing
+ * an entry's weight (including clearing it), or deleting the entry that had
+ * it. Re-deriving this from scratch each time - rather than trusting the
+ * triggering action's own reported_weight_kg - also correctly handles
+ * editing/backdating a report that ISN'T the most recent one: that must
+ * never override a more recent weigh-in still on record. Returns the value
+ * it synced to (or null if no report has a weight at all, in which case the
+ * profile is left untouched - weight_kg is a required field with nothing
+ * meaningful to revert to).
+ */
+async function resyncProfileWeightFromReports(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+): Promise<number | null> {
+  const { data: latest } = await supabase
+    .from("user_daily_reports")
+    .select("reported_weight_kg")
+    .eq("user_id", userId)
+    .not("reported_weight_kg", "is", null)
+    .order("report_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const latestWeightKg = latest?.reported_weight_kg ?? null;
+  if (latestWeightKg == null) {
+    return null;
+  }
+
+  const { error } = await supabase
+    .from("user_profile")
+    .update({ weight_kg: latestWeightKg })
+    .eq("user_id", userId);
+
+  if (error) {
+    logServerError("dailyReport.weightResync", "profile_weight_resync_failed", {
+      userId,
+      error: error.message,
+    });
+    return null;
+  }
+
+  return latestWeightKg;
 }
 
 function isMissingReportedWeightColumn(errorMessage: string): boolean {
@@ -168,7 +230,13 @@ function extractReportedWeightFromText(reportText: string): number | null {
     return Number.isFinite(value) ? value : null;
   }
 
-  const unitMatch = normalized.match(/(\d{2,3}(?:\.\d{1,2})?)\s*(?:kg|ק"ג|קג)\b/i);
+  // A trailing `\b` here would silently never match after the Hebrew
+  // units below - JS's `\b` is only defined relative to ASCII `\w`, so it
+  // doesn't fire between a Hebrew letter and a space/end-of-string. A
+  // negative lookahead for another word character (Latin or Hebrew) gives
+  // the same "don't match mid-word" guard (e.g. rejects "20kgs") while
+  // actually working for "קג"/ק"ג".
+  const unitMatch = normalized.match(/(\d{2,3}(?:\.\d{1,2})?)\s*(?:kg|ק"ג|קג)(?![a-zA-Zא-ת])/i);
   if (unitMatch) {
     const value = Number(unitMatch[1]);
     return Number.isFinite(value) ? value : null;
@@ -292,6 +360,27 @@ export async function saveDailyReportAction(
 
   const locale = await resolveDailyReportLocale(supabase, user.id);
 
+  // Editing (see the "Edit entry" button on each report in the list) reuses
+  // this exact same action/pipeline - the only difference is the terminal
+  // write is an update of the existing row instead of an insert, once we've
+  // confirmed the report being edited actually belongs to this user.
+  const editReportId = formData.get("edit_report_id")?.toString() || null;
+  if (editReportId) {
+    const { data: editableReport, error: editableReportError } = await supabase
+      .from("user_daily_reports")
+      .select("id")
+      .eq("id", editReportId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (editableReportError || !editableReport) {
+      return {
+        error: tr(locale, "The report you're editing could not be found.", "הדיווח שאתם עורכים לא נמצא."),
+      };
+    }
+  }
+  const isEditing = editReportId !== null;
+
   const reportTextRaw = formData.get("report_text")?.toString() ?? "";
   const reportText = reportTextRaw.trim();
   const requestedParseMode = getRequestedParseMode(formData);
@@ -348,7 +437,9 @@ export async function saveDailyReportAction(
 
   const { data: profile, error: profileError } = await supabase
     .from("user_profile")
-    .select("weight_kg")
+    .select(
+      "age, weight_kg, height_cm, gender, biological_sex, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_schedule_by_modality, habits, pregnancy_lactation_status, hot_climate_or_heavy_sweating",
+    )
     .eq("user_id", user.id)
     .maybeSingle();
 
@@ -364,7 +455,7 @@ export async function saveDailyReportAction(
 
   const { data: activeTargetProfile } = await supabase
     .from("user_target_profiles")
-    .select("id")
+    .select("id, profile_snapshot")
     .eq("user_id", user.id)
     .eq("is_active", true)
     .maybeSingle();
@@ -640,9 +731,19 @@ export async function saveDailyReportAction(
   const reportedWeightRaw = formData.get("reported_weight_kg")?.toString().trim() ?? "";
   const inferredWeightFromText = reportText ? extractReportedWeightFromText(reportText) : null;
   const enteredReportedWeightKg = reportedWeightRaw ? toNumber(reportedWeightRaw, NaN) : null;
-  const reportedWeightKg = enteredReportedWeightKg ?? inferredWeightFromText;
   const customTargetValues = extractCustomTargetValues(formData);
 
+  // An explicit, deliberate entry in the Weight field gets validated
+  // strictly and blocks the whole save on failure - the user clearly meant
+  // to report a weight and typing something out of range is worth asking
+  // them to fix. A weight merely *extracted* from free chat text is a
+  // different situation: extractReportedWeightFromText's "kg" fallback
+  // pattern has no way to tell a body weight from an unrelated quantity
+  // (e.g. "45 קג אבטיח" - 45kg of watermelon) apart from plausibility, so
+  // an implausible extracted value (outside 20-400) is far more likely a
+  // misparse than a genuine data-entry error. Blocking the entire report -
+  // including otherwise-valid food/exercise logging - over a probable
+  // misparse would be worse than just not treating it as a weight report.
   if (
     reportedWeightRaw &&
     (enteredReportedWeightKg === null ||
@@ -654,6 +755,10 @@ export async function saveDailyReportAction(
       error: tr(locale, "Reported weight must be between 20 and 400 kg.", "המשקל המדווח חייב להיות בין 20 ל-400 ק\"ג."),
     };
   }
+
+  const isInferredWeightPlausible =
+    inferredWeightFromText !== null && inferredWeightFromText >= 20 && inferredWeightFromText <= 400;
+  const reportedWeightKg = enteredReportedWeightKg ?? (isInferredWeightPlausible ? inferredWeightFromText : null);
 
   const status = requiresConfirmation ? "needs_confirmation" : "confirmed";
   const confirmedAt = requiresConfirmation ? null : new Date().toISOString();
@@ -699,69 +804,126 @@ export async function saveDailyReportAction(
 
   let insertError: { message: string } | null = null;
   let reportedWeightNotPersisted = false;
-  const insertWithWeight = await supabase.from("user_daily_reports").insert(baseInsertPayload);
+
+  /** insert for a new report, update for an edit - same payload either way,
+   * only the write mode and target row differ. */
+  const userId = user.id;
+  function writeReport(payload: Record<string, unknown>) {
+    return isEditing
+      ? supabase.from("user_daily_reports").update(payload).eq("id", editReportId!).eq("user_id", userId)
+      : supabase.from("user_daily_reports").insert(payload);
+  }
+
+  const writeWithWeight = await writeReport(baseInsertPayload);
 
   if (
-    insertWithWeight.error &&
-    (isMissingReportedWeightColumn(insertWithWeight.error.message) ||
-      isMissingSelectedDefaultsColumn(insertWithWeight.error.message) ||
-      isMissingCustomTargetValuesColumn(insertWithWeight.error.message))
+    writeWithWeight.error &&
+    (isMissingReportedWeightColumn(writeWithWeight.error.message) ||
+      isMissingSelectedDefaultsColumn(writeWithWeight.error.message) ||
+      isMissingCustomTargetValuesColumn(writeWithWeight.error.message))
   ) {
     reportedWeightNotPersisted =
-      reportedWeightKg !== null && isMissingReportedWeightColumn(insertWithWeight.error.message);
+      reportedWeightKg !== null && isMissingReportedWeightColumn(writeWithWeight.error.message);
 
     const legacyPayload = Object.fromEntries(
       Object.entries(baseInsertPayload).filter(([key]) => {
-        if (key === "reported_weight_kg" && isMissingReportedWeightColumn(insertWithWeight.error!.message)) {
+        if (key === "reported_weight_kg" && isMissingReportedWeightColumn(writeWithWeight.error!.message)) {
           return false;
         }
 
-        if (key === "selected_defaults" && isMissingSelectedDefaultsColumn(insertWithWeight.error!.message)) {
+        if (key === "selected_defaults" && isMissingSelectedDefaultsColumn(writeWithWeight.error!.message)) {
           return false;
         }
 
-        if (key === "custom_target_values" && isMissingCustomTargetValuesColumn(insertWithWeight.error!.message)) {
+        if (key === "custom_target_values" && isMissingCustomTargetValuesColumn(writeWithWeight.error!.message)) {
           return false;
         }
 
         return true;
       }),
     );
-    const legacyInsert = await supabase.from("user_daily_reports").insert(legacyPayload);
-    insertError = legacyInsert.error;
+    const legacyWrite = await writeReport(legacyPayload);
+    insertError = legacyWrite.error;
   } else {
-    insertError = insertWithWeight.error;
+    insertError = writeWithWeight.error;
   }
 
   if (insertError) {
-    logServerError("dailyReport.save", "insert_failed", {
+    logServerError(isEditing ? "dailyReport.edit" : "dailyReport.save", "write_failed", {
       userId: user.id,
+      editReportId,
       error: insertError.message,
     });
     return { error: insertError.message };
   }
 
-  // Keep the profile's weight in sync with whatever the user most recently
-  // logged, so other features that read it (BMI/safety checks when
-  // generating targets, the compose form's own default) reflect reality
-  // instead of a stale onboarding-time value. Best-effort: a failure here
-  // shouldn't undo an already-successful report save.
-  if (reportedWeightKg !== null && !reportedWeightNotPersisted) {
-    const { error: profileUpdateError } = await supabase
-      .from("user_profile")
-      .update({ weight_kg: reportedWeightKg })
-      .eq("user_id", user.id);
+  // Keep the profile's weight in sync with whatever the most recently
+  // logged weigh-in now is, so other features that read it (BMI/safety
+  // checks when generating targets, the compose form's own default) reflect
+  // reality instead of a stale value. Re-derived from scratch (not just set
+  // to this save's own reportedWeightKg) so editing/backdating an entry that
+  // ISN'T the most recent one can never override a more recent weigh-in -
+  // and so an edit that removes a previously-set weight correctly falls
+  // back instead of leaving the profile pointing at data that no longer
+  // exists. Runs whenever this save itself reported a weight, or when
+  // editing could have changed/removed one; best-effort either way - a
+  // failure here shouldn't undo an already-successful report save.
+  let targetsStaleChanges: ProfileDiffRow[] | undefined;
+  let bmiWarning: string | undefined;
 
-    if (profileUpdateError) {
-      logServerError("dailyReport.save", "profile_weight_sync_failed", {
-        userId: user.id,
-        error: profileUpdateError.message,
-      });
+  if ((reportedWeightKg !== null || isEditing) && !reportedWeightNotPersisted) {
+    const syncedWeightKg = await resyncProfileWeightFromReports(supabase, user.id);
+
+    // Only surface BMI/targets-stale messaging when this save's own weight
+    // is what's now actually current - editing an older entry's weight
+    // while a newer weigh-in still exists shouldn't claim to be reviewing
+    // the profile's current safety against a number that didn't win.
+    if (reportedWeightKg !== null && syncedWeightKg === reportedWeightKg) {
+      const heightCm = Number(profile.height_cm ?? 0);
+
+      // BMI safety check: deterministic, not AI-generated - a safety
+      // message should be instant and consistent, not depend on an AI
+      // call's latency or availability. Shared with the Targets page's
+      // profile-change banner (lib/bmi.ts) so the wording stays identical.
+      bmiWarning = buildBmiWarningMessage(reportedWeightKg, heightCm, locale);
+
+      // Targets-stale check: same computeProfileDiff/profile_snapshot
+      // mechanism the Profile Edit page uses (see updateProfileAction) -
+      // a weight change logged here can just as easily make the locked
+      // target profile's snapshot stale as one made via Profile Edit.
+      if (activeTargetProfile) {
+        const snapshot = parseProfileSnapshot(activeTargetProfile.profile_snapshot);
+        if (snapshot) {
+          const updatedProfileForTargets: ProfileForTargets = {
+            age: Number(profile.age ?? 0),
+            gender: profile.gender ?? null,
+            biological_sex: profile.biological_sex ?? null,
+            height_cm: heightCm,
+            weight_kg: reportedWeightKg,
+            activity_level: profile.activity_level,
+            allergies: Array.isArray(profile.allergies) ? profile.allergies : [],
+            medical_conditions: Array.isArray(profile.medical_conditions) ? profile.medical_conditions : [],
+            medical_conditions_details: profile.medical_conditions_details ?? null,
+            regular_medications_details: profile.regular_medications_details ?? null,
+            dietary_preference: profile.dietary_preference ?? null,
+            exercise_modalities: Array.isArray(profile.exercise_modalities) ? profile.exercise_modalities : [],
+            exercise_schedule_by_modality: profile.exercise_schedule_by_modality ?? null,
+            habits: Array.isArray(profile.habits) ? profile.habits : [],
+            pregnancy_lactation_status: profile.pregnancy_lactation_status ?? null,
+            hot_climate_or_heavy_sweating: Boolean(profile.hot_climate_or_heavy_sweating),
+          };
+          const diff = computeProfileDiff(snapshot, updatedProfileForTargets, locale);
+          if (diff.length > 0) {
+            targetsStaleChanges = diff;
+          }
+        }
+      }
     }
   }
 
   revalidatePath("/app/daily-report");
   revalidatePath("/app/targets");
+  revalidatePath("/app/profile");
 
   const weightNotice = reportedWeightNotPersisted
     ? " " +
@@ -772,8 +934,28 @@ export async function saveDailyReportAction(
       )
     : "";
 
+  if (isEditing) {
+    // Unlike a fresh "Conclude & Report" (which resets the chat scratchpad
+    // in place - see DailyReportForm), an edit came from the list further
+    // down the page and should return there instead of leaving the form in
+    // a half-finished "still editing" state. This does mean the
+    // targetsStale/bmiWarning banners aren't shown inline here - the
+    // Targets page independently re-checks profile staleness on its own
+    // next load regardless, so nothing is silently lost, just surfaced a
+    // click later.
+    const selectedDateParam = formData.get("selected_date")?.toString() || undefined;
+    redirect(
+      buildDailyReportRedirectPath({
+        notice: tr(locale, "Daily report updated.", "הדיווח היומי עודכן.") + weightNotice,
+        date: selectedDateParam,
+      }),
+    );
+  }
+
   return {
     success: tr(locale, "Daily report saved.", "הדיווח היומי נשמר.") + weightNotice,
+    targetsStaleChanges,
+    bmiWarning,
   };
 }
 
@@ -792,6 +974,18 @@ export async function deleteDailyReportAction(formData: FormData): Promise<void>
     return;
   }
 
+  // saveDailyReportAction keeps user_profile.weight_kg in sync with the most
+  // recently logged weigh-in - if the report being deleted is the one that
+  // set it, deleting the row alone would leave the profile pointing at data
+  // that no longer exists. Read its weight before deleting so we know
+  // whether a resync is needed at all.
+  const { data: deletedReport } = await supabase
+    .from("user_daily_reports")
+    .select("reported_weight_kg")
+    .eq("id", reportId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
   const { error } = await supabase
     .from("user_daily_reports")
     .delete()
@@ -807,8 +1001,13 @@ export async function deleteDailyReportAction(formData: FormData): Promise<void>
     return;
   }
 
+  if (deletedReport?.reported_weight_kg != null) {
+    await resyncProfileWeightFromReports(supabase, user.id);
+  }
+
   revalidatePath("/app/daily-report");
   revalidatePath("/app/targets");
+  revalidatePath("/app/profile");
 }
 
 export async function addReportToDefaultsAction(formData: FormData): Promise<void> {
