@@ -11,7 +11,11 @@ export const exerciseModalityOptions = [
   "none",
 ] as const;
 export type ExerciseModalityOption = (typeof exerciseModalityOptions)[number];
-export type ExerciseScheduleModalityOption = Exclude<ExerciseModalityOption, "none">;
+/** "other" is deliberately excluded: unlike the fixed modalities, it can
+ * have any number of named activities (see ExerciseOtherActivity), each
+ * with its own schedule, so it doesn't fit the one-schedule-per-modality
+ * shape this type represents. */
+export type ExerciseScheduleModalityOption = Exclude<ExerciseModalityOption, "none" | "other">;
 
 export type ExerciseScheduleEntry = {
   days_per_week: number;
@@ -21,6 +25,15 @@ export type ExerciseScheduleEntry = {
 export type ExerciseScheduleByModality = Partial<
   Record<ExerciseScheduleModalityOption, ExerciseScheduleEntry>
 >;
+
+/** A single user-named "other" activity (e.g. "Dance", "Pilates") with its
+ * own schedule - the app supports any number of these side by side, unlike
+ * the fixed modalities above which are single-select. */
+export type ExerciseOtherActivity = {
+  name: string;
+  days_per_week: number;
+  minutes_per_session: number;
+};
 export const nutritionalGoalOptions = [
   "maintenance",
   "weight_loss",
@@ -697,10 +710,48 @@ const exerciseScheduleByModalitySchema = z.preprocess(
   ).default({}),
 );
 
+const exerciseOtherActivitiesSchema = z.preprocess(
+  (value) => {
+    if (value == null) {
+      return [];
+    }
+
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return [];
+      }
+
+      try {
+        return JSON.parse(trimmed);
+      } catch {
+        return value;
+      }
+    }
+
+    return value;
+  },
+  z.array(
+    z.object({
+      name: z.string().trim().min(1).max(80),
+      days_per_week: z.coerce
+        .number({ error: "Exercise frequency must be a number." })
+        .int("Exercise frequency must be a whole number.")
+        .min(1, "Exercise frequency must be at least 1 day per week.")
+        .max(14, "Exercise frequency must be at most 14 days per week."),
+      minutes_per_session: z.coerce
+        .number({ error: "Exercise duration must be a number." })
+        .int("Exercise duration must be a whole number.")
+        .min(1, "Exercise duration must be at least 1 minute.")
+        .max(600, "Exercise duration must be at most 600 minutes."),
+    }),
+  ).max(10).default([]),
+);
+
 export function modalityRequiresSchedule(
   modality: ExerciseModalityOption,
 ): modality is ExerciseScheduleModalityOption {
-  return modality !== "none";
+  return modality !== "none" && modality !== "other";
 }
 
 export const onboardingProfileSchema = z.object({
@@ -738,12 +789,7 @@ export const onboardingProfileSchema = z.object({
   exercise_modalities: z
     .array(z.enum(exerciseModalityOptions, { error: "Select a valid exercise modality." }))
     .min(1, "Select at least one exercise modality."),
-  exercise_modality_other_details: z
-    .string()
-    .trim()
-    .max(80, "Other exercise type must be at most 80 characters.")
-    .optional()
-    .default(""),
+  exercise_other_activities: exerciseOtherActivitiesSchema,
   exercise_schedule_by_modality: exerciseScheduleByModalitySchema,
   exercise_frequency_days_per_week: z.coerce
     .number({ error: "Exercise frequency must be a number." })
@@ -869,14 +915,24 @@ export const onboardingProfileSchema = z.object({
   }
 
   if (includesExerciseOther) {
-    const validationResult = validateExerciseOtherDetails(data.exercise_modality_other_details);
-    if (!validationResult.isMeaningful) {
+    if (data.exercise_other_activities.length === 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["exercise_modality_other_details"],
-        message: "Enter a meaningful exercise type related to physical activity.",
+        path: ["exercise_other_activities"],
+        message: "Add at least one other activity type.",
       });
     }
+
+    data.exercise_other_activities.forEach((activity, index) => {
+      const validationResult = validateExerciseOtherDetails(activity.name);
+      if (!validationResult.isMeaningful) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["exercise_other_activities", index, "name"],
+          message: "Enter a meaningful exercise type related to physical activity.",
+        });
+      }
+    });
   }
 
   if (data.has_medical_conditions) {
@@ -949,20 +1005,23 @@ export type OnboardingProfileInput = z.infer<typeof onboardingProfileSchema>;
 export function deriveExerciseSummaryFromSchedule(
   modalities: ExerciseModalityOption[],
   scheduleByModality: ExerciseScheduleByModality,
+  otherActivities: ExerciseOtherActivity[],
   fallbackFrequency: number,
   fallbackDuration: number,
 ): { frequencyDaysPerWeek: number; durationMinutes: number } {
   const selectedScheduledModalities = modalities.filter(modalityRequiresSchedule);
 
-  if (selectedScheduledModalities.length === 0) {
+  if (selectedScheduledModalities.length === 0 && otherActivities.length === 0) {
     return {
       frequencyDaysPerWeek: 0,
       durationMinutes: 0,
     };
   }
 
-  const entries = selectedScheduledModalities
-    .map((modality) => scheduleByModality[modality])
+  const entries = [
+    ...selectedScheduledModalities.map((modality) => scheduleByModality[modality]),
+    ...otherActivities,
+  ]
     .filter((entry): entry is ExerciseScheduleEntry => {
       if (!entry) {
         return false;

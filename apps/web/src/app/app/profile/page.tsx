@@ -62,7 +62,7 @@ function bmiStatus(bmi: number): "good" | "warning" | "out_of_range" {
 }
 
 function modalitySupportsSchedule(value: string): boolean {
-  return value !== "none";
+  return value !== "none" && value !== "other";
 }
 
 export const dynamic = "force-dynamic";
@@ -85,7 +85,7 @@ export default async function ProfilePage({
   const { data: profile, error } = await supabase
     .from("user_profile_enriched")
     .select(
-      "first_name, last_name, date_of_birth, gender, biological_sex, calculated_age_years, bmi, height_cm, weight_kg, activity_level, exercise_modalities, exercise_modality_other_details, exercise_schedule_by_modality, exercise_frequency_days_per_week, exercise_duration_minutes, nutritional_goal, pregnancy_lactation_status, has_medical_conditions, medical_conditions, medical_conditions_details, has_regular_medications, regular_medications_details, hot_climate_or_heavy_sweating, habits, alcohol_consumption_level, smoking_packs_per_day, dietary_preference, additional_information, allergies, updated_at",
+      "first_name, last_name, date_of_birth, gender, biological_sex, calculated_age_years, bmi, height_cm, weight_kg, activity_level, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, exercise_frequency_days_per_week, exercise_duration_minutes, nutritional_goal, pregnancy_lactation_status, has_medical_conditions, medical_conditions, medical_conditions_details, has_regular_medications, regular_medications_details, hot_climate_or_heavy_sweating, habits, alcohol_consumption_level, smoking_packs_per_day, dietary_preference, additional_information, allergies, updated_at",
     )
     .eq("user_id", user.id)
     .maybeSingle();
@@ -131,6 +131,9 @@ export default async function ProfilePage({
         regular_medications_details: profile.regular_medications_details ?? null,
         dietary_preference: profile.dietary_preference ?? null,
         exercise_modalities: Array.isArray(profile.exercise_modalities) ? profile.exercise_modalities : [],
+        exercise_other_activities: Array.isArray(profile.exercise_other_activities)
+          ? (profile.exercise_other_activities as ProfileForTargets["exercise_other_activities"])
+          : [],
         exercise_schedule_by_modality: profile.exercise_schedule_by_modality ?? null,
         habits: Array.isArray(profile.habits) ? profile.habits : [],
         pregnancy_lactation_status: profile.pregnancy_lactation_status ?? null,
@@ -310,10 +313,22 @@ export default async function ProfilePage({
                     : tr(locale, "None", "ללא")}
                 </dd>
               </div>
-              {profile.exercise_modalities?.includes("other") && profile.exercise_modality_other_details ? (
-                <div>
-                  <dt className="font-medium text-slate-900">{tr(locale, "Other exercise type", "סוג אימון אחר")}</dt>
-                  <dd>{profile.exercise_modality_other_details}</dd>
+              {Array.isArray(profile.exercise_other_activities) && profile.exercise_other_activities.length > 0 ? (
+                <div className="sm:col-span-2">
+                  <dt className="font-medium text-slate-900">{tr(locale, "Other exercise activities", "פעילויות גופניות אחרות")}</dt>
+                  <dd>
+                    <div className="mt-2 space-y-2">
+                      {(profile.exercise_other_activities as Array<{ name: string; days_per_week?: number; minutes_per_session?: number }>).map((activity, index) => (
+                        <p key={`${activity.name}-${index}`} className="not-italic text-slate-700 before:content-none">
+                          <span className="font-medium text-slate-900">{activity.name}</span>
+                          {": "}
+                          {activity.days_per_week != null && activity.minutes_per_session != null
+                            ? `${activity.days_per_week} ${tr(locale, "days/week", "ימים/שבוע")}, ${activity.minutes_per_session} ${tr(locale, "minutes/session", "דקות לאימון")}`
+                            : tr(locale, "Schedule not set", "לא הוגדרה תכנית")}
+                        </p>
+                      ))}
+                    </div>
+                  </dd>
                 </div>
               ) : null}
               <div>

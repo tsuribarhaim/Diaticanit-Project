@@ -15,6 +15,7 @@ import { useUnsavedPreview } from "@/components/unsaved-preview-context";
 import {
   activityLevelOptions,
   dietaryPreferenceOptions,
+  type ExerciseOtherActivity,
   type ExerciseScheduleByModality,
   type ExerciseScheduleModalityOption,
   exerciseModalityOptions,
@@ -39,7 +40,7 @@ type ProfileEditFormProps = {
     weight_kg: number;
     activity_level: (typeof activityLevelOptions)[number];
     exercise_modalities: Array<(typeof exerciseModalityOptions)[number]>;
-    exercise_modality_other_details?: string;
+    exercise_other_activities?: ExerciseOtherActivity[];
     exercise_schedule_by_modality?: ExerciseScheduleByModality;
     exercise_frequency_days_per_week: number;
     exercise_duration_minutes: number;
@@ -73,7 +74,6 @@ const EXERCISE_MODALITY_LABELS: Record<ExerciseScheduleModalityOption, { en: str
   resistance_hypertrophy: { en: "Resistance / Hypertrophy", he: "התנגדות / היפרטרופיה" },
   endurance_cardio: { en: "Endurance / Cardio", he: "סבולת / אירובי" },
   martial_arts: { en: "Martial Arts", he: "אומנויות לחימה" },
-  other: { en: "Other", he: "אחר" },
 };
 
 type MedicalConditionOption = (typeof medicalConditionOptions)[number];
@@ -88,7 +88,7 @@ type ProfileEditDraft = {
   weight_kg: string;
   activity_level: (typeof activityLevelOptions)[number];
   exercise_modalities: Array<(typeof exerciseModalityOptions)[number]>;
-  exercise_modality_other_details: string;
+  exercise_other_activities: Array<{ id: string; name: string; days_per_week: string; minutes_per_session: string }>;
   exercise_schedule_by_modality: Partial<
     Record<ExerciseScheduleModalityOption, { days_per_week: string; minutes_per_session: string }>
   >;
@@ -249,13 +249,16 @@ function buildInitialExerciseSchedule(
 function computeExerciseSummaryFromDraft(
   selectedModalities: ExerciseScheduleModalityOption[],
   schedule: ProfileEditDraft["exercise_schedule_by_modality"],
+  otherActivities: ProfileEditDraft["exercise_other_activities"] = [],
 ): { frequency: string; duration: string } {
-  if (selectedModalities.length === 0) {
+  if (selectedModalities.length === 0 && otherActivities.length === 0) {
     return { frequency: "0", duration: "0" };
   }
 
-  const rows = selectedModalities
-    .map((modality) => schedule[modality])
+  const rows = [
+    ...selectedModalities.map((modality) => schedule[modality]),
+    ...otherActivities,
+  ]
     .filter((entry) => {
       const days = parseScheduleNumber(entry?.days_per_week ?? "");
       const minutes = parseScheduleNumber(entry?.minutes_per_session ?? "");
@@ -323,9 +326,16 @@ function createInitialDraft(defaults: ProfileEditFormProps["defaults"]): Profile
     );
   const scheduledModalities = getScheduledModalities(initialExerciseModalities);
   const exerciseScheduleByModality = buildInitialExerciseSchedule(defaults, scheduledModalities);
+  const initialOtherActivities = (defaults.exercise_other_activities ?? []).map((activity, index) => ({
+    id: `initial-${index}`,
+    name: activity.name,
+    days_per_week: String(activity.days_per_week),
+    minutes_per_session: String(activity.minutes_per_session),
+  }));
   const summaryFromSchedule = computeExerciseSummaryFromDraft(
     scheduledModalities,
     exerciseScheduleByModality,
+    initialOtherActivities,
   );
   const initialMedicalConditions = parseInitialMedicalConditionState(defaults);
 
@@ -339,7 +349,7 @@ function createInitialDraft(defaults: ProfileEditFormProps["defaults"]): Profile
     weight_kg: String(defaults.weight_kg),
     activity_level: defaults.activity_level,
     exercise_modalities: initialExerciseModalities,
-    exercise_modality_other_details: defaults.exercise_modality_other_details ?? "",
+    exercise_other_activities: initialOtherActivities,
     exercise_schedule_by_modality: exerciseScheduleByModality,
     exercise_frequency_days_per_week: summaryFromSchedule.frequency,
     exercise_duration_minutes: summaryFromSchedule.duration,
@@ -387,6 +397,7 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
   const exerciseSummary = computeExerciseSummaryFromDraft(
     selectedExerciseModalities,
     draft.exercise_schedule_by_modality,
+    draft.exercise_other_activities,
   );
 
   // Warns before navigating away (nav bar links) once anything's been
@@ -395,6 +406,10 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
   // state, so there's no "success" flag to also check here; the unmount
   // cleanup below handles clearing the flag once that redirect happens.
   const initialDraftRef = useRef(draft);
+  // Monotonic counter for new other-activity row keys - Date.now()/Math.random()
+  // are impure and disallowed during render by the react-hooks/purity rule,
+  // even though these calls only ever happen from an event handler.
+  const nextOtherActivityIdRef = useRef(0);
   const { setHasUnsavedPreview } = useUnsavedPreview();
   useEffect(() => {
     setHasUnsavedPreview(JSON.stringify(draft) !== JSON.stringify(initialDraftRef.current));
@@ -486,6 +501,7 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
     const summary = computeExerciseSummaryFromDraft(
       getScheduledModalities(nextDraft.exercise_modalities),
       normalizedSchedule,
+      nextDraft.exercise_other_activities,
     );
 
     nextDraft.exercise_schedule_by_modality = normalizedSchedule;
@@ -535,7 +551,10 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
     }
 
     if (key === "exercise_modalities" && !nextValues.includes("other")) {
-      patch.exercise_modality_other_details = "";
+      patch.exercise_other_activities = [];
+    }
+    if (key === "exercise_modalities" && nextValues.includes("other") && draft.exercise_other_activities.length === 0) {
+      patch.exercise_other_activities = [{ id: `other-${nextOtherActivityIdRef.current++}`, name: "", days_per_week: "", minutes_per_session: "" }];
     }
 
     if (key === "exercise_modalities") {
@@ -546,6 +565,29 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
     }
 
     updateDraft(patch);
+  };
+
+  const addOtherActivity = () => {
+    updateDraft({
+      exercise_other_activities: [
+        ...draft.exercise_other_activities,
+        { id: `other-${nextOtherActivityIdRef.current++}`, name: "", days_per_week: "", minutes_per_session: "" },
+      ],
+    });
+  };
+
+  const updateOtherActivity = (id: string, patch: Partial<ProfileEditDraft["exercise_other_activities"][number]>) => {
+    updateDraft({
+      exercise_other_activities: draft.exercise_other_activities.map((activity) =>
+        activity.id === id ? { ...activity, ...patch } : activity,
+      ),
+    });
+  };
+
+  const removeOtherActivity = (id: string) => {
+    updateDraft({
+      exercise_other_activities: draft.exercise_other_activities.filter((activity) => activity.id !== id),
+    });
   };
 
   const setYesNo = (
@@ -603,9 +645,19 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
     }
 
     if (draft.exercise_modalities.includes("other")) {
-      const validationResult = validateExerciseOtherDetails(draft.exercise_modality_other_details);
-      if (!validationResult.isMeaningful) {
-        const suggestionText = validationResult.suggestions.join(", ");
+      if (draft.exercise_other_activities.length === 0) {
+        setClientError(
+          tr(locale, "Add at least one other activity type.", "יש להוסיף לפחות פעילות אחת מסוג 'אחר'."),
+        );
+        event.preventDefault();
+        return;
+      }
+
+      const invalidActivity = draft.exercise_other_activities.find(
+        (activity) => !validateExerciseOtherDetails(activity.name).isMeaningful,
+      );
+      if (invalidActivity) {
+        const suggestionText = validateExerciseOtherDetails(invalidActivity.name).suggestions.join(", ");
         setClientError(
           suggestionText
             ? tr(
@@ -618,6 +670,27 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
               "Please enter a meaningful exercise type related to training.",
               "יש להזין סוג אימון משמעותי שקשור לאימון.",
             ),
+        );
+        event.preventDefault();
+        return;
+      }
+
+      const invalidActivitySchedule = draft.exercise_other_activities.some((activity) => {
+        const days = parseScheduleNumber(activity.days_per_week);
+        const minutes = parseScheduleNumber(activity.minutes_per_session);
+        return (
+          days == null || !Number.isInteger(days) || days < 1 || days > 14
+          || minutes == null || !Number.isInteger(minutes) || minutes < 1 || minutes > 600
+        );
+      });
+
+      if (invalidActivitySchedule) {
+        setClientError(
+          tr(
+            locale,
+            "Set valid frequency and duration for each other activity.",
+            "יש להגדיר תדירות ומשך תקינים לכל פעילות מסוג 'אחר'.",
+          ),
         );
         event.preventDefault();
         return;
@@ -756,7 +829,11 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
       <input type="hidden" name="biological_sex" value={draft.biological_sex} />
       <input type="hidden" name="nutritional_goal" value={draft.nutritional_goal} />
       <input type="hidden" name="dietary_preference" value={draft.dietary_preference} />
-      <input type="hidden" name="exercise_modality_other_details" value={draft.exercise_modality_other_details} />
+      <input
+        type="hidden"
+        name="exercise_other_activities"
+        value={JSON.stringify(draft.exercise_other_activities.map(({ name, days_per_week, minutes_per_session }) => ({ name, days_per_week, minutes_per_session })))}
+      />
       <input
         type="hidden"
         name="exercise_schedule_by_modality"
@@ -851,25 +928,72 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
               })}
             </div>
             {draft.exercise_modalities.includes("other") ? (
-              <label className="mt-3 block" data-field="exercise_modality_other_details">
-                <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Other exercise type", "סוג אימון אחר")}</span>
-                <input
-                  type="text"
-                  maxLength={80}
-                  value={draft.exercise_modality_other_details}
-                  onChange={(event) => updateDraft({ exercise_modality_other_details: event.target.value })}
-                  placeholder={tr(locale, "e.g. Pilates, spinning, climbing", "לדוגמה: פילאטיס, ספינינג, טיפוס")}
-                  className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("exercise_modality_other_details")}`}
-                />
-                <p className="mt-1 text-xs text-slate-500">
+              <div className="mt-3 space-y-3" data-field="exercise_other_activities">
+                <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Other exercise activities", "פעילויות גופניות אחרות")}</span>
+                <div className="grid gap-3">
+                  {draft.exercise_other_activities.map((activity) => (
+                    <div key={activity.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <div className="flex items-start gap-2">
+                        <input
+                          type="text"
+                          maxLength={80}
+                          value={activity.name}
+                          onChange={(event) => updateOtherActivity(activity.id, { name: event.target.value })}
+                          placeholder={tr(locale, "e.g. Pilates, spinning, climbing", "לדוגמה: פילאטיס, ספינינג, טיפוס")}
+                          className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("exercise_other_activities")}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeOtherActivity(activity.id)}
+                          aria-label={tr(locale, "Remove activity", "הסרת פעילות")}
+                          className="shrink-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-500 hover:bg-slate-100"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                        <label className="block">
+                          <span className="mb-1 block text-xs font-medium text-slate-700">{tr(locale, "Frequency (days/week)", "תדירות (ימים/שבוע)")}</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={14}
+                            value={activity.days_per_week}
+                            onChange={(event) => updateOtherActivity(activity.id, { days_per_week: event.target.value })}
+                            className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("exercise_other_activities")}`}
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="mb-1 block text-xs font-medium text-slate-700">{tr(locale, "Duration (minutes/session)", "משך (דקות לאימון)")}</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={600}
+                            value={activity.minutes_per_session}
+                            onChange={(event) => updateOtherActivity(activity.id, { minutes_per_session: event.target.value })}
+                            className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("exercise_other_activities")}`}
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={addOtherActivity}
+                  className="rounded-lg border border-teal-300 px-3 py-1.5 text-xs font-semibold text-teal-700 hover:bg-teal-50"
+                >
+                  {tr(locale, "+ Add another activity", "+ הוספת פעילות נוספת")}
+                </button>
+                <p className="text-xs text-slate-500">
                   {tr(
                     locale,
                     "Use a real exercise term. Typos are okay, random text is not.",
                     "יש להזין שם אמיתי של פעילות גופנית. שגיאות כתיב נסבלות, טקסט אקראי לא.",
                   )}
                 </p>
-                {renderFieldError("exercise_modality_other_details")}
-              </label>
+                {renderFieldError("exercise_other_activities")}
+              </div>
             ) : null}
             {draft.exercise_modalities.map((value) => <input key={value} type="hidden" name="exercise_modalities" value={value} />)}
             {renderFieldError("exercise_modalities")}

@@ -259,6 +259,7 @@ export type ProfileForTargets = {
   regular_medications_details: string | null;
   dietary_preference: string | null;
   exercise_modalities: string[];
+  exercise_other_activities: Array<{ name: string; days_per_week: number; minutes_per_session: number }>;
   exercise_schedule_by_modality: Record<string, { days_per_week: number; minutes_per_session: number }> | null;
   habits: string[];
   pregnancy_lactation_status: string | null;
@@ -1032,6 +1033,31 @@ export function mapTargetProfileRowToPayload(row: TargetProfileDbRow): TargetGen
  * `ProfileForTargets`. Returns null for a missing/empty/malformed snapshot
  * (e.g. rows locked before this column existed), which callers should treat
  * as "nothing to compare against" rather than a false staleness signal. */
+/** A snapshot locked before the multi-activity "other" support only ever
+ * stored a single exercise_modality_other_details string (plus a shared
+ * schedule under exercise_schedule_by_modality.other) - fold that legacy
+ * shape into one array entry so old snapshots still diff sensibly against
+ * a current profile that now uses exercise_other_activities. */
+function parseSnapshotOtherActivities(record: Record<string, unknown>): ProfileForTargets["exercise_other_activities"] {
+  if (Array.isArray(record.exercise_other_activities)) {
+    return (record.exercise_other_activities as ProfileForTargets["exercise_other_activities"]).filter(
+      (entry) => entry && typeof entry.name === "string",
+    );
+  }
+
+  const legacyName = typeof record.exercise_modality_other_details === "string"
+    ? record.exercise_modality_other_details.trim()
+    : "";
+  if (!legacyName) return [];
+
+  const legacySchedule = (record.exercise_schedule_by_modality as Record<string, { days_per_week?: number; minutes_per_session?: number }> | null)?.other;
+  return [{
+    name: legacyName,
+    days_per_week: legacySchedule?.days_per_week ?? 0,
+    minutes_per_session: legacySchedule?.minutes_per_session ?? 0,
+  }];
+}
+
 export function parseProfileSnapshot(value: unknown): ProfileForTargets | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
@@ -1050,6 +1076,7 @@ export function parseProfileSnapshot(value: unknown): ProfileForTargets | null {
     regular_medications_details: (record.regular_medications_details as string) ?? null,
     dietary_preference: (record.dietary_preference as string) ?? null,
     exercise_modalities: Array.isArray(record.exercise_modalities) ? (record.exercise_modalities as string[]) : [],
+    exercise_other_activities: parseSnapshotOtherActivities(record),
     exercise_schedule_by_modality:
       (record.exercise_schedule_by_modality as ProfileForTargets["exercise_schedule_by_modality"]) ?? null,
     habits: Array.isArray(record.habits) ? (record.habits as string[]) : [],
@@ -1079,6 +1106,17 @@ function exerciseScheduleSummary(
     .map(([modality, value]) => `${formatExerciseModality(modality, locale)} ${value.days_per_week}x/${value.minutes_per_session}min`)
     .sort();
   return entries.length ? entries.join(", ") : tr(locale, "None", "ללא");
+}
+
+function otherActivitiesSummary(
+  activities: ProfileForTargets["exercise_other_activities"],
+  locale: AppLocale,
+): string {
+  if (!activities.length) return tr(locale, "None", "ללא");
+  const entries = activities
+    .map((activity) => `${activity.name} ${activity.days_per_week}x/${activity.minutes_per_session}min`)
+    .sort();
+  return entries.join(", ");
 }
 
 /** Compares the target-relevant fields of two profile snapshots and returns
@@ -1134,6 +1172,12 @@ export function computeProfileDiff(before: ProfileForTargets, after: ProfileForT
     "סוגי פעילות",
     joinedOrNone(before.exercise_modalities, locale, formatExerciseModality),
     joinedOrNone(after.exercise_modalities, locale, formatExerciseModality),
+  );
+  addIfChanged(
+    "Other exercise activities",
+    "פעילויות גופניות אחרות",
+    otherActivitiesSummary(before.exercise_other_activities, locale),
+    otherActivitiesSummary(after.exercise_other_activities, locale),
   );
   addIfChanged(
     "Exercise schedule",
