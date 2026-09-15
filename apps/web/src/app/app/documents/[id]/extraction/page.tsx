@@ -1,10 +1,8 @@
+import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
-import {
-  acknowledgeAiExtractionConsentAction,
-  generateDemoExtractionAction,
-} from "@/app/app/documents/[id]/extraction/actions";
-import { getAiExtractionConfig } from "@/lib/ai/env";
+import { generateDemoExtractionAction } from "@/app/app/documents/[id]/extraction/actions";
+import { runDocumentExtraction } from "@/app/app/documents/actions";
 import { isPhase2DemoEnabled, isPhase2Enabled } from "@/lib/feature-flags";
 import {
   classifyComponentStatus,
@@ -30,38 +28,6 @@ function statusBadgeClasses(status: string): string {
   return "bg-slate-100 text-slate-700 border-slate-200";
 }
 
-function describeExtractionRoute(parserVersion: string | null, locale: "en" | "he"): string {
-  if (!parserVersion) {
-    return tr(locale, "Unknown", "לא ידוע");
-  }
-
-  if (parserVersion.startsWith("ai-")) {
-    return tr(locale, "AI used", "נעשה שימוש ב-AI");
-  }
-
-  if (parserVersion.includes("ai-attempted-empty") && parserVersion.includes("heuristic-fallback-v1")) {
-    return tr(locale, "AI attempted (empty result), heuristic fallback used", "בוצע ניסיון AI (תוצאה ריקה), הופעל מנגנון גיבוי יוריסטי");
-  }
-
-  if (parserVersion.includes("ai-attempted-error") && parserVersion.includes("heuristic-fallback-v1")) {
-    return tr(locale, "AI attempted (error), heuristic fallback used", "בוצע ניסיון AI (שגיאה), הופעל מנגנון גיבוי יוריסטי");
-  }
-
-  if (parserVersion.includes("ai-skipped-no-consent")) {
-    return tr(locale, "AI skipped (no consent), heuristic parser used", "דולג על AI (ללא הסכמה), הופעל מנוע יוריסטי");
-  }
-
-  if (parserVersion.includes("ai-not-configured")) {
-    return tr(locale, "AI skipped (not configured), heuristic parser used", "דולג על AI (לא מוגדר), הופעל מנוע יוריסטי");
-  }
-
-  if (parserVersion.includes("ai-configured")) {
-    return tr(locale, "AI configured, heuristic parser used", "AI מוגדר, הופעל מנוע יוריסטי");
-  }
-
-  return tr(locale, "Heuristic parser used", "הופעל מנוע יוריסטי");
-}
-
 export default async function DocumentExtractionPage({
   params,
   searchParams,
@@ -74,7 +40,6 @@ export default async function DocumentExtractionPage({
   }
 
   const isPhase2DemoMode = isPhase2DemoEnabled();
-  const aiExtractionConfig = getAiExtractionConfig();
 
   const { id } = await params;
   const { reportId: reportIdParam } = await searchParams;
@@ -98,33 +63,50 @@ export default async function DocumentExtractionPage({
     ).data?.preferred_language,
   );
 
-  const { data: documentRow } = await supabase
+  const { data: initialDocumentRow } = await supabase
     .from("user_documents")
     .select("id, file_name, extraction_status, extraction_error")
     .eq("id", id)
     .eq("user_id", user.id)
     .maybeSingle();
 
-  if (!documentRow) {
+  if (!initialDocumentRow) {
     notFound();
   }
 
-  const { data: aiConsentRow } = await supabase
-    .from("ai_extraction_consents")
-    .select("accepted_at, revoked_at")
-    .eq("user_id", user.id)
-    .maybeSingle();
+  // Older documents uploaded before extraction ran automatically on upload
+  // are still sitting at "not_started" - rather than showing an empty
+  // "nothing here yet" state, run extraction the first time anyone asks to
+  // view them, so the result is computed once and then reused on every
+  // future view instead of staying permanently un-extracted.
+  let documentRow = initialDocumentRow;
+  if (documentRow.extraction_status === "not_started") {
+    await runDocumentExtraction({
+      supabase,
+      userId: user.id,
+      documentId: id,
+      extractionMode: "auto",
+    });
 
-  const hasAiExtractionConsent = Boolean(aiConsentRow?.accepted_at) && !aiConsentRow?.revoked_at;
+    const { data: refreshedDocumentRow } = await supabase
+      .from("user_documents")
+      .select("id, file_name, extraction_status, extraction_error")
+      .eq("id", id)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (refreshedDocumentRow) {
+      documentRow = refreshedDocumentRow;
+    }
+  }
 
   const reportSelect =
-    "id, status, extraction_confidence, parser_version, extracted_at, summary_overall_status, summary_bullets";
+    "id, status, extraction_confidence, extracted_at, summary_overall_status, summary_bullets";
 
   let report: {
     id: string;
     status: string;
     extraction_confidence: number | null;
-    parser_version: string | null;
     extracted_at: string | null;
     summary_overall_status: string;
     summary_bullets: string[];
@@ -175,11 +157,14 @@ export default async function DocumentExtractionPage({
 
     const hasSummaryBullets =
       Array.isArray(reportData?.summary_bullets) && reportData.summary_bullets.length > 0;
+    // Regenerate on every view (not just the first) until the user actually
+    // confirms the report - otherwise the summary sentences get baked in
+    // English (or whichever locale was active the first time anyone viewed
+    // this report) and never catch up to a later locale switch.
     const needsReportSummaryUpdate =
       !hasSummaryBullets ||
       reportData?.summary_overall_status === "unknown" ||
-      reportData?.status === "queued" ||
-      reportData?.status === "extracted";
+      reportData?.status !== "confirmed";
 
     if (needsComponentStatusUpdate || needsReportSummaryUpdate) {
       await Promise.all(components.map(async (component) => {
@@ -246,7 +231,7 @@ export default async function DocumentExtractionPage({
       }));
 
       const summaryOverallStatus = computeOverallStatus(statuses);
-      const summaryBullets = generateObservationBullets(normalizedComponents);
+      const summaryBullets = generateObservationBullets(normalizedComponents, locale);
 
       const { error: reportUpdateError } = await supabase
         .from("extracted_reports")
@@ -269,7 +254,7 @@ export default async function DocumentExtractionPage({
         const { data: refreshedReport } = await supabase
           .from("extracted_reports")
           .select(
-            "id, status, extraction_confidence, parser_version, extracted_at, summary_overall_status, summary_bullets",
+            "id, status, extraction_confidence, extracted_at, summary_overall_status, summary_bullets",
           )
           .eq("id", reportId)
           .eq("user_id", user.id)
@@ -284,15 +269,23 @@ export default async function DocumentExtractionPage({
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-6 py-10">
       <section className="rounded-2xl border border-slate-200 bg-white p-6">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "Extraction review", "סקירת חילוץ")}</h1>
-          <p className="mt-2 text-sm text-slate-600">{documentRow.file_name}</p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "Extraction review", "סקירת חילוץ")}</h1>
+            <p className="mt-2 text-sm text-slate-600">{documentRow.file_name}</p>
+          </div>
+          <Link
+            href="/app/profile"
+            className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+          >
+            {tr(locale, "Close", "סגירה")}
+          </Link>
         </div>
 
         <div className="mt-4 rounded-lg bg-slate-50 p-4 text-sm text-slate-700">
           <p>
             <span className="font-semibold text-slate-900">{tr(locale, "Document status", "סטטוס מסמך")}:</span>{" "}
-            {documentRow.extraction_status}
+            {formatExtractionStatus(documentRow.extraction_status, locale)}
           </p>
           {documentRow.extraction_error ? (
             <p className="mt-2 text-rose-700">
@@ -300,59 +293,21 @@ export default async function DocumentExtractionPage({
               {documentRow.extraction_error}
             </p>
           ) : null}
-
-          {aiExtractionConfig ? (
-            <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 p-3">
-              <p className="font-semibold text-sky-900">{tr(locale, "AI extraction acknowledgement", "אישור חילוץ AI")}</p>
-              <p className="mt-1 text-xs text-sky-800">
-                {tr(locale, "Provider", "ספק")}: {aiExtractionConfig.provider}. {tr(locale, "AI extraction sends extracted document text to your configured provider endpoint.", "חילוץ AI שולח את הטקסט שחולץ מהמסמך לנקודת הקצה של הספק שהוגדר.")}
-              </p>
-
-              {hasAiExtractionConsent ? (
-                <p className="mt-2 text-xs font-medium text-emerald-700">
-                  {tr(locale, "Acknowledgement saved. AI extraction is enabled for your account.", "האישור נשמר. חילוץ AI מופעל עבור החשבון שלך.")}
-                </p>
-              ) : (
-                <form action={acknowledgeAiExtractionConsentAction} className="mt-2 space-y-2">
-                  <input type="hidden" name="document_id" value={id} />
-                  <input
-                    type="hidden"
-                    name="provider"
-                    value={aiExtractionConfig.provider}
-                  />
-                  <label className="flex items-start gap-2 text-xs text-sky-900">
-                    <input
-                      type="checkbox"
-                      name="accept_ai_extraction"
-                      value="yes"
-                      required
-                      className="mt-0.5"
-                    />
-                    <span>
-                      {tr(locale, "I understand that extraction text may be sent to the configured AI provider for parsing.", "אני מבין/ה שטקסט החילוץ עשוי להישלח לספק ה-AI שהוגדר לצורך עיבוד.")}
-                    </span>
-                  </label>
-                  <button
-                    type="submit"
-                    className="rounded border border-sky-300 px-3 py-1 text-xs font-semibold text-sky-700 hover:bg-sky-100"
-                  >
-                    {tr(locale, "Save acknowledgement", "שמירת אישור")}
-                  </button>
-                </form>
-              )}
-            </div>
-          ) : null}
         </div>
       </section>
 
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
         {!reportData ? (
           <p className="text-sm text-slate-600">
-            {tr(locale, "No extracted report found yet. Queue extraction from the documents page, then refresh this view.", "עדיין לא נמצא דוח חילוץ. אפשר לתזמן חילוץ מעמוד המסמכים ואז לרענן תצוגה זו.")}
+            {tr(
+              locale,
+              "Extraction didn't produce a report for this document. Check the status above, or try re-uploading the file.",
+              "החילוץ לא הפיק דוח עבור מסמך זה. יש לבדוק את הסטטוס למעלה, או לנסות להעלות את הקובץ מחדש.",
+            )}
           </p>
         ) : (
           <>
-            <div className="grid gap-3 text-sm text-slate-700 sm:grid-cols-3">
+            <div className="grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
               <p>
                 <span className="font-semibold text-slate-900">{tr(locale, "Report status", "סטטוס דוח")}:</span>{" "}
                 {formatExtractionStatus(reportData.status, locale)}
@@ -361,16 +316,7 @@ export default async function DocumentExtractionPage({
                 <span className="font-semibold text-slate-900">{tr(locale, "Confidence", "רמת ביטחון")}:</span>{" "}
                 {reportData.extraction_confidence ?? tr(locale, "n/a", "לא זמין")}
               </p>
-              <p>
-                <span className="font-semibold text-slate-900">{tr(locale, "Parser version", "גרסת מנוע")}:</span>{" "}
-                {reportData.parser_version ?? tr(locale, "n/a", "לא זמין")}
-              </p>
             </div>
-
-            <p className="mt-2 text-xs text-slate-600">
-              <span className="font-semibold text-slate-900">{tr(locale, "AI route", "מסלול AI")}:</span>{" "}
-              {describeExtractionRoute(reportData.parser_version, locale)}
-            </p>
 
             <p className="mt-3 text-xs text-slate-500">
               {tr(locale, "Deterministic insights are applied automatically when extraction components are available.", "תובנות דטרמיניסטיות מיושמות אוטומטית כאשר זמינים רכיבי חילוץ.")}
@@ -410,11 +356,11 @@ export default async function DocumentExtractionPage({
                           <td className="px-3 py-2">{String(component.category ?? "")}</td>
                           <td className="px-3 py-2">{String(component.component_name ?? "")}</td>
                           <td className="px-3 py-2">
-                            {component.measured_value ?? component.measured_value_text ?? "n/a"}{" "}
+                            {component.measured_value ?? component.measured_value_text ?? tr(locale, "n/a", "לא זמין")}{" "}
                             {component.unit ?? ""}
                           </td>
                           <td className="px-3 py-2">
-                            {component.reference_min ?? "-"} to {component.reference_max ?? "-"}
+                            {component.reference_min ?? "-"}–{component.reference_max ?? "-"}
                           </td>
                           <td className="px-3 py-2">
                             <span

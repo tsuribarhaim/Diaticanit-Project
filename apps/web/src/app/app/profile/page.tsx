@@ -4,19 +4,16 @@ import { redirect } from "next/navigation";
 import {
   deleteDocumentAction,
   openOriginalDocumentAction,
-  requestExtractionAction,
 } from "@/app/app/documents/actions";
 import { DocumentUploadForm } from "@/components/document-upload-form";
 import { TargetsStaleModal } from "@/components/targets-stale-modal";
 import { formatFileSize } from "@/lib/documents";
-import { isPhase2Enabled } from "@/lib/feature-flags";
 import {
   formatActivityLevel,
   formatDateForLocale,
   formatDateTimeForLocale,
   formatDietaryPreference,
   formatExerciseModality,
-  formatExtractionStatus,
   formatGender,
   formatHabit,
   formatMeasurementUnit,
@@ -153,57 +150,21 @@ export default async function ProfilePage({
       : {};
   const selectedScheduledModalities = (profile.exercise_modalities ?? []).filter(modalitySupportsSchedule);
 
-  const phase2Enabled = isPhase2Enabled();
-
   const { data: documents } = await supabase
     .from("user_documents")
     .select(
-      "id, category, file_name, mime_type, file_size_bytes, created_at, extraction_status",
+      "id, category, file_name, mime_type, file_size_bytes, created_at",
     )
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 
-  const { data: reports } = await supabase
-    .from("extracted_reports")
-    .select("id, document_id, parser_version")
-    .eq("user_id", user.id)
-    .order("created_at", { ascending: false });
-
-  const latestAiReportByDocument = new Map<string, { id: string }>();
-  const latestHeuristicReportByDocument = new Map<string, { id: string }>();
-
-  for (const report of reports ?? []) {
-    const parserVersion = report.parser_version ?? "";
-    const hasAiMode =
-      parserVersion.includes("mode-ai-used") ||
-      parserVersion.startsWith("ai-") ||
-      parserVersion.includes("|ai-") ||
-      parserVersion.includes("ai-attempted") ||
-      parserVersion.includes("ai-skipped") ||
-      parserVersion.includes("ai-configured");
-    const hasHeuristicMode =
-      parserVersion.includes("mode-heuristic-used") ||
-      parserVersion.includes("heuristic") ||
-      parserVersion.includes("fallback") ||
-      parserVersion.startsWith("pdf-") ||
-      parserVersion.startsWith("text-") ||
-      parserVersion.startsWith("image-");
-
-    if (hasAiMode && !latestAiReportByDocument.has(report.document_id)) {
-      latestAiReportByDocument.set(report.document_id, { id: report.id });
-    }
-
-    if (hasHeuristicMode && !latestHeuristicReportByDocument.has(report.document_id)) {
-      latestHeuristicReportByDocument.set(report.document_id, { id: report.id });
-    }
-  }
-
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-10">
-      {targetsStaleChanges ? <TargetsStaleModal locale={locale} changes={targetsStaleChanges} /> : null}
+      {targetsStaleChanges ? (
+        <TargetsStaleModal locale={locale} changes={targetsStaleChanges} dismissHref="/app/profile" />
+      ) : null}
       <section className="rounded-2xl border border-slate-200 bg-white p-6">
-        <div className="flex items-start justify-between gap-3">
-          <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "Profile", "פרופיל")}</h1>
+        <div className="flex items-start justify-end gap-3">
           <Link
             href="/app/profile/edit"
             aria-label={tr(locale, "Edit profile", "עריכת פרופיל")}
@@ -226,7 +187,13 @@ export default async function ProfilePage({
             </svg>
           </Link>
         </div>
-        <p className="mt-3 text-sm text-slate-600">{tr(locale, "Manage your profile details.", "ניהול פרטי הפרופיל שלך.")}</p>
+        <div className="mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <p className="text-sm text-slate-600">{tr(locale, "Manage your profile details.", "ניהול פרטי הפרופיל שלך.")}</p>
+          <p className="text-sm text-slate-500">
+            <span className="text-slate-300"> • </span>
+            {tr(locale, "Last updated", "עדכון אחרון")} - {formatDateForLocale(profile.updated_at, locale)}
+          </p>
+        </div>
 
         <div className="mt-5 grid gap-4">
           <section className="rounded-xl border border-slate-200 p-4">
@@ -448,10 +415,6 @@ export default async function ProfilePage({
                 <dt className="font-medium text-slate-900">{tr(locale, "Additional information", "מידע נוסף")}</dt>
                 <dd>{profile.additional_information || tr(locale, "None", "ללא")}</dd>
               </div>
-              <div>
-                <dt className="font-medium text-slate-900">{tr(locale, "Last updated", "עדכון אחרון")}</dt>
-                <dd>{formatDateTimeForLocale(profile.updated_at, locale)}</dd>
-              </div>
             </dl>
           </section>
 
@@ -476,9 +439,6 @@ export default async function ProfilePage({
             ) : (
               <ul className="mt-4 space-y-3">
                 {documents.map((doc) => {
-                  const aiReport = latestAiReportByDocument.get(doc.id);
-                  const heuristicReport = latestHeuristicReportByDocument.get(doc.id);
-
                   return (
                     <li
                       key={doc.id}
@@ -494,57 +454,15 @@ export default async function ProfilePage({
                           <p className="mt-1 text-xs text-slate-500">
                             {tr(locale, "Uploaded", "הועלה")} {formatDateTimeForLocale(doc.created_at, locale)}
                           </p>
-                          {phase2Enabled ? (
-                            <p className="mt-1 text-xs text-slate-600">
-                              {tr(locale, "Extraction status", "סטטוס חילוץ")}: {formatExtractionStatus(doc.extraction_status ?? "not_started", locale)}
-                            </p>
-                          ) : null}
                         </div>
 
                         <div className="flex flex-wrap gap-2">
-                          {phase2Enabled ? (
-                            <>
-                              {aiReport?.id ? (
-                                <Link
-                                  href={`/app/documents/${doc.id}/extraction?reportId=${aiReport.id}`}
-                                  className="rounded-lg border border-teal-300 px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50"
-                                >
-                                  {tr(locale, "AI view", "תצוגת AI")}
-                                </Link>
-                              ) : (
-                                <form action={requestExtractionAction}>
-                                  <input type="hidden" name="document_id" value={doc.id} />
-                                  <input type="hidden" name="extraction_mode" value="ai" />
-                                  <button
-                                    type="submit"
-                                    className="rounded-lg border border-teal-300 px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50"
-                                  >
-                                    {tr(locale, "AI extraction", "חילוץ AI")}
-                                  </button>
-                                </form>
-                              )}
-
-                              {heuristicReport?.id ? (
-                                <Link
-                                  href={`/app/documents/${doc.id}/extraction?reportId=${heuristicReport.id}`}
-                                  className="rounded-lg border border-indigo-300 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-50"
-                                >
-                                  {tr(locale, "Heuristic view", "תצוגת יוריסטי")}
-                                </Link>
-                              ) : (
-                                <form action={requestExtractionAction}>
-                                  <input type="hidden" name="document_id" value={doc.id} />
-                                  <input type="hidden" name="extraction_mode" value="heuristic" />
-                                  <button
-                                    type="submit"
-                                    className="rounded-lg border border-indigo-300 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-50"
-                                  >
-                                    {tr(locale, "Heuristic extraction", "חילוץ יוריסטי")}
-                                  </button>
-                                </form>
-                              )}
-                            </>
-                          ) : null}
+                          <Link
+                            href={`/app/documents/${doc.id}/extraction`}
+                            className="rounded-lg border border-teal-300 px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50"
+                          >
+                            {tr(locale, "View", "צפייה")}
+                          </Link>
 
                           <form action={openOriginalDocumentAction}>
                             <input type="hidden" name="document_id" value={doc.id} />

@@ -18,23 +18,39 @@ import { transitionDocumentExtractionStatus } from "@/lib/extraction-status";
 import { isPhase2DemoEnabled } from "@/lib/feature-flags";
 import { extractComponentsWithAi } from "@/lib/ai/extraction";
 import { getAiExtractionConfig } from "@/lib/ai/env";
+import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
 
-const uploadSchema = z.object({
-  category: z
-    .string()
-    .trim()
-    .min(1, "Category is required.")
-    .max(50, "Category must be 50 characters or less."),
-});
+function buildUploadSchema(locale: AppLocale) {
+  return z.object({
+    category: z
+      .string()
+      .trim()
+      .min(1, tr(locale, "Category is required.", "יש להזין קטגוריה."))
+      .max(50, tr(locale, "Category must be 50 characters or less.", "הקטגוריה חייבת להכיל עד 50 תווים.")),
+  });
+}
 
 export type DocumentsActionState = {
   error?: string;
   success?: string;
 };
 
-const initialUploadError = "Upload failed. Please try again.";
+async function resolveUserLocale({
+  supabase,
+  userId,
+}: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  userId: string;
+}): Promise<AppLocale> {
+  const { data } = await supabase
+    .from("user_profile")
+    .select("preferred_language")
+    .eq("user_id", userId)
+    .maybeSingle();
+  return normalizeLocale(data?.preferred_language);
+}
 
 type SeedComponent = {
   category: string;
@@ -1520,7 +1536,14 @@ export async function uploadDocumentAction(
     redirect("/auth/sign-in");
   }
 
-  const parsed = uploadSchema.safeParse({
+  const locale = await resolveUserLocale({ supabase, userId: user.id });
+  const genericFailureMessage = tr(
+    locale,
+    "Upload failed due to a server error. Please try again.",
+    "ההעלאה נכשלה עקב שגיאת שרת. יש לנסות שוב.",
+  );
+
+  const parsed = buildUploadSchema(locale).safeParse({
     category: formData.get("category"),
   });
 
@@ -1529,26 +1552,33 @@ export async function uploadDocumentAction(
       userId: user.id,
       issues: parsed.error.issues,
     });
-    return { error: parsed.error.issues[0]?.message ?? initialUploadError };
+    return {
+      error:
+        parsed.error.issues[0]?.message ??
+        tr(locale, "Upload failed. Please try again.", "ההעלאה נכשלה. יש לנסות שוב."),
+    };
   }
 
   const fileValue = formData.get("file");
   if (!(fileValue instanceof File)) {
-    return { error: "Select a file to upload." };
+    return { error: tr(locale, "Select a file to upload.", "יש לבחור קובץ להעלאה.") };
   }
 
   if (fileValue.size === 0) {
-    return { error: "Selected file is empty." };
+    return { error: tr(locale, "Selected file is empty.", "הקובץ שנבחר ריק.") };
   }
 
   if (fileValue.size > MAX_DOCUMENT_SIZE_BYTES) {
-    return { error: "File exceeds 10 MB limit." };
+    return { error: tr(locale, "File exceeds 10 MB limit.", "הקובץ חורג מהמגבלה של 10MB.") };
   }
 
   if (!ALLOWED_DOCUMENT_MIME_TYPES.includes(fileValue.type as never)) {
     return {
-      error:
+      error: tr(
+        locale,
         "Unsupported file type. Allowed: PDF, PNG, JPG, WEBP, and text files.",
+        "סוג קובץ לא נתמך. מותר: PDF, PNG, JPG, WEBP וקבצי טקסט.",
+      ),
     };
   }
 
@@ -1568,25 +1598,29 @@ export async function uploadDocumentAction(
       fileName: fileValue.name,
       error: storageError.message,
     });
-    return { error: storageError.message };
+    return { error: genericFailureMessage };
   }
 
-  const { error: insertError } = await supabase.from("user_documents").insert({
-    user_id: user.id,
-    category: parsed.data.category,
-    file_name: fileValue.name,
-    mime_type: fileValue.type,
-    file_size_bytes: fileValue.size,
-    storage_path: storagePath,
-    status: "uploaded",
-    extraction_status: "not_started",
-  });
+  const { data: insertedDocument, error: insertError } = await supabase
+    .from("user_documents")
+    .insert({
+      user_id: user.id,
+      category: parsed.data.category,
+      file_name: fileValue.name,
+      mime_type: fileValue.type,
+      file_size_bytes: fileValue.size,
+      storage_path: storagePath,
+      status: "uploaded",
+      extraction_status: "not_started",
+    })
+    .select("id")
+    .single();
 
-  if (insertError) {
+  if (insertError || !insertedDocument?.id) {
     logServerError("documents.upload", "metadata_insert_failed", {
       userId: user.id,
       storagePath,
-      error: insertError.message,
+      error: insertError?.message,
     });
 
     const { error: rollbackError } = await supabase.storage
@@ -1601,12 +1635,33 @@ export async function uploadDocumentAction(
       });
     }
 
-    return { error: insertError.message };
+    return { error: genericFailureMessage };
+  }
+
+  // Extraction ("translation" of the document into structured, trackable
+  // values) now runs automatically as part of the upload rather than
+  // requiring a separate manual trigger - it degrades gracefully to the
+  // heuristic parser without AI consent, and a failure here doesn't affect
+  // the upload's own success (the file is saved either way; the extraction
+  // page surfaces its own status/error for that document).
+  const extractionResult = await runDocumentExtraction({
+    supabase,
+    userId: user.id,
+    documentId: insertedDocument.id,
+    extractionMode: "auto",
+  });
+
+  if (!extractionResult.ok) {
+    logServerError("documents.upload", "auto_extraction_failed", {
+      userId: user.id,
+      documentId: insertedDocument.id,
+      error: extractionResult.error,
+    });
   }
 
   revalidatePath("/app/documents");
   revalidatePath("/app/profile");
-  return { success: "Document uploaded successfully." };
+  return { success: tr(locale, "Document uploaded successfully.", "המסמך הועלה בהצלחה.") };
 }
 
 /**
