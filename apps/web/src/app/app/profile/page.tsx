@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { signOutAction } from "@/app/app/actions";
 import {
   deleteDocumentAction,
   openOriginalDocumentAction,
@@ -505,6 +506,35 @@ export default async function ProfilePage({
                 })}
               </ul>
             )}
+          </section>
+
+          {/* Home for destinations that don't fit AppBottomNav's 4 tabs -
+              Manage Saved List, Settings, and Sign out stay in the top nav
+              on desktop unchanged, but only reach mobile users through here. */}
+          <section className="rounded-xl border border-slate-200 p-4">
+            <h2 className="text-sm font-semibold text-slate-900">{tr(locale, "Account", "חשבון")}</h2>
+            <div className="mt-3 flex flex-col gap-2">
+              <Link
+                href="/app/daily-report/defaults"
+                className="rounded-lg border border-slate-200 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                {tr(locale, "Manage Saved List", "ניהול רשימה שמורה")}
+              </Link>
+              <Link
+                href="/app/settings"
+                className="rounded-lg border border-slate-200 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                {tr(locale, "Settings", "הגדרות")}
+              </Link>
+              <form action={signOutAction}>
+                <button
+                  type="submit"
+                  className="w-full rounded-lg border border-rose-200 px-4 py-3 text-start text-sm font-medium text-rose-700 hover:bg-rose-50"
+                >
+                  {tr(locale, "Sign out", "התנתקות")}
+                </button>
+              </form>
+            </div>
           </section>
         </div>
       </section>

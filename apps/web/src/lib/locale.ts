@@ -28,6 +28,20 @@ export function formatDateTimeForLocale(value: Date | string, locale: AppLocale)
   }).format(date);
 }
 
+/** Time only, no date - for rows already grouped under a single day's
+ * heading (e.g. the Daily Report entries feed), where repeating the full
+ * date on every row would be redundant. */
+export function formatTimeForLocale(value: Date | string, locale: AppLocale): string {
+  const date = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(date.getTime())) {
+    return "n/a";
+  }
+
+  return new Intl.DateTimeFormat(localeTag(locale), {
+    timeStyle: "short",
+  }).format(date);
+}
+
 export function formatDateForLocale(value: Date | string, locale: AppLocale): string {
   const date = typeof value === "string"
     ? (() => {
@@ -160,6 +174,7 @@ export function formatMeasurementUnit(unit: string, locale: AppLocale): string {
   if (token === "mcg") return "מק\"ג";
   if (token === "kcal") return "קק\"ל";
   if (token === "days") return "ימים";
+  if (token === "hour" || token === "hours") return "שעות";
   return unit;
 }
 
@@ -209,7 +224,7 @@ export function formatDefaultItemKind(value: string, locale: AppLocale): string 
 
 export function formatDefaultUnit(value: string, locale: AppLocale): string {
   const token = normalizeToken(value);
-  if (token === "unit") return tr(locale, "unit", "יחידה");
+  if (token === "unit" || token === "entry" || token === "entries") return tr(locale, "unit", "יחידה");
   if (token === "ml") return tr(locale, "ml", "מ\"ל");
   if (token === "l" || token === "liters") return tr(locale, "liters", "ליטר");
   if (token === "g" || token === "grams") return tr(locale, "grams", "גרם");
@@ -218,6 +233,7 @@ export function formatDefaultUnit(value: string, locale: AppLocale): string {
   if (token === "km" || token === "kilometers") return tr(locale, "kilometers", "ק\"מ");
   if (token === "cup" || token === "cups") return tr(locale, "cups", "כוסות");
   if (token === "piece" || token === "pieces") return tr(locale, "pieces", "יחידות");
+  if (token === "serving" || token === "servings") return tr(locale, "servings", "מנות");
   if (token === "min" || token === "minutes") return tr(locale, "minutes", "דקות");
   return value;
 }

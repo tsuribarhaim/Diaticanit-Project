@@ -54,7 +54,13 @@ export function TargetsStaleModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+    // z-[60]: above the daily-report page's floating chat bubble and save
+    // icon (both z-50) - at equal z-index, later DOM order wins ties, and
+    // depending on where in the tree this modal happens to render relative
+    // to those buttons, an equal z-index risked this modal's backdrop and
+    // dialog landing visually behind/beside them instead of clearly on top
+    // of the whole page as a modal should.
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/40 p-4">
       <div className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl">
         <div className="flex items-center gap-2 bg-teal-50 px-5 py-4">
           <span className="text-lg">🎯</span>

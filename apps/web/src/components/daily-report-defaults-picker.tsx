@@ -48,6 +48,8 @@ export function DailyReportDefaultsPicker({
   defaultItems,
   onSelectionChange,
   dropDirection = "down",
+  showQuickAdd = false,
+  formId,
 }: {
   locale: AppLocale;
   defaultItems: DailyReportDefaultItem[];
@@ -56,6 +58,19 @@ export function DailyReportDefaultsPicker({
    * bottom of the chat compose row); "down" (default) anchors it below,
    * for a picker placed near the top of a section. */
   dropDirection?: "up" | "down";
+  /** Renders a row of one-tap "quick add" chips for the first few saved
+   * items, above the dropdown trigger - each toggles the exact same
+   * underlying checkbox the dropdown grid itself uses (found by value and
+   * given a native change event) rather than duplicating selection state,
+   * so it stays consistent with this component's own DOM-driven design. */
+  showQuickAdd?: boolean;
+  /** The id of the `<form>` this picker's checkboxes/quantity inputs belong
+   * to, for when this component is rendered somewhere other than a DOM
+   * descendant of that form - e.g. portaled to document.body (see the
+   * daily-report chat panel's mobile sheet). Native HTML form submission
+   * is DOM-ancestry-based, so without this, a portaled picker's selections
+   * would silently never reach the form's submitted data. */
+  formId?: string;
 }) {
   const detailsRef = useRef<HTMLDetailsElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -106,6 +121,18 @@ export function DailyReportDefaultsPicker({
     }
     onSelectionChange(selected);
   }, [defaultItems, locale, onSelectionChange]);
+
+  const toggleQuickItem = useCallback((itemId: string, chipEl: HTMLButtonElement) => {
+    const grid = gridRef.current;
+    if (!grid) return;
+    const checkbox = grid.querySelector<HTMLInputElement>(`input[name="selected_default_ids"][value="${itemId}"]`);
+    if (!checkbox) return;
+    checkbox.checked = !checkbox.checked;
+    checkbox.dispatchEvent(new Event("change", { bubbles: true }));
+    chipEl.classList.toggle("border-teal-700", checkbox.checked);
+    chipEl.classList.toggle("bg-teal-700", checkbox.checked);
+    chipEl.classList.toggle("text-white", checkbox.checked);
+  }, []);
 
   const setAllChecked = useCallback(
     (checked: boolean) => {
@@ -179,8 +206,25 @@ export function DailyReportDefaultsPicker({
 
   if (!defaultItems.length) return null;
 
+  const quickItems = showQuickAdd ? defaultItems.slice(0, 4) : [];
+
   return (
-    <details ref={detailsRef} className="relative shrink-0">
+    <>
+      {quickItems.length ? (
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto sm:flex-none">
+          {quickItems.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={(event) => toggleQuickItem(item.id, event.currentTarget)}
+              className="shrink-0 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              {formatDefaultItemName(item.name, locale)}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <details ref={detailsRef} className="relative shrink-0">
       <summary
         aria-label={tr(locale, "Add from your saved list", "הוספה מהרשימה השמורה")}
         title={tr(locale, "Add from your saved list", "הוספה מהרשימה השמורה")}
@@ -239,7 +283,7 @@ export function DailyReportDefaultsPicker({
               <label className="block rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm transition">
                 <div className="flex items-center justify-between gap-2">
                   <span className="flex items-start gap-2">
-                    <input type="checkbox" name="selected_default_ids" value={item.id} defaultChecked={false} className="mt-0.5" />
+                    <input type="checkbox" name="selected_default_ids" form={formId} value={item.id} defaultChecked={false} className="mt-0.5" />
                     <span>
                       <span className="block font-medium text-slate-800">{formatDefaultItemName(item.name, locale)}</span>
                       <span className="mt-0.5 block text-xs text-slate-500">
@@ -262,6 +306,7 @@ export function DailyReportDefaultsPicker({
                   <span className="text-xs text-slate-600">{tr(locale, "Quantity", "כמות")}</span>
                   <input
                     name={`quantity_default_${item.id}`}
+                    form={formId}
                     type="number"
                     step="1"
                     min="0"
@@ -284,5 +329,6 @@ export function DailyReportDefaultsPicker({
         </button>
       </div>
     </details>
+    </>
   );
 }

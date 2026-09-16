@@ -73,8 +73,6 @@ const aiMetricsSchema = z.object({
 });
 
 const aiDailyReportSchema = z.object({
-  confidence: numberFromUnknown.optional(),
-  requiresConfirmation: z.boolean().optional(),
   foodItems: z.array(aiFoodItemSchema).optional(),
   exerciseItems: z.array(aiExerciseItemSchema).optional(),
   metrics: aiMetricsSchema.optional(),
@@ -274,11 +272,15 @@ async function callDailyReportChatCompletion({
       }
     : computedMetrics;
 
-  const confidence = round(clamp(parsed.confidence ?? 0.72, 0.25, 0.99), 4);
-  const requiresConfirmation =
-    typeof parsed.requiresConfirmation === "boolean"
-      ? parsed.requiresConfirmation
-      : confidence < 0.72;
+  // No longer asked of the model at all (see the prompts below) - every
+  // AI-parsed report now saves straight through as "confirmed" with a
+  // fixed confidence value that exists only to satisfy the database's
+  // NOT NULL numeric column. Neither is shown to the user anywhere (the
+  // "Confidence: X%" line and "Low confidence" badge were removed from
+  // the daily-report page), and dropping the field from what the model
+  // has to produce trims a bit of generation work off every parse call.
+  const confidence = 0.9;
+  const requiresConfirmation = false;
 
   return {
     confidence,
@@ -322,12 +324,10 @@ export async function parseDailyReportWithAi({
         role: "user",
         content: [
           "Return strict JSON with this shape:",
-          `{"confidence":number,"requiresConfirmation":boolean,"foodItems":[${FOOD_ITEM_JSON_SHAPE}],"exerciseItems":[{"name":"string","minutes":number,"estimatedBurnKcal":number}],"metrics":${METRICS_JSON_SHAPE},"isDangerous":boolean,"dangerReason":"string"}`,
+          `{"foodItems":[${FOOD_ITEM_JSON_SHAPE}],"exerciseItems":[{"name":"string","minutes":number,"estimatedBurnKcal":number}],"metrics":${METRICS_JSON_SHAPE},"isDangerous":boolean,"dangerReason":"string"}`,
           "Rules:",
           "- Use only non-negative numbers.",
           "- Include reasonable estimates when exact values are unclear, including the less common nutrients (sodiumMg, addedSugarG, calciumMg, vitCMg, vitB12Mcg, vitDMcg, satFatG, omega3G) - never leave them at 0 unless the food genuinely has none.",
-          "- confidence must be between 0 and 1.",
-          "- requiresConfirmation should be true when extraction is uncertain.",
           "- SAFETY CHECK: set isDangerous to true only when daily_report_text describes consuming something that is not actually food/drink and would be dangerous or harmful (e.g. fuel, gasoline, cleaning products, poison, batteries, or other inedible/hazardous items). If so, set dangerReason to a short plain-language explanation telling the user to seek medical attention if they actually consumed it. Do NOT set isDangerous for an implausible-but-harmless amount of real food (e.g. \"I ate 50 eggs\") - estimate those literally instead; isDangerous is only for genuinely non-food/hazardous substances.",
           `- Write dangerReason and every foodItems[].name / exerciseItems[].name entirely in ${languageName}, regardless of what language daily_report_text is written in. Do not mix languages within a single name.`,
           "- STEPS: there is no separate steps field in this schema. If the user reports exercise as a step count instead of a duration (e.g. \"5000 steps\", \"5,000 צעדים\"), do not silently drop that number - include the literal step count in that exerciseItems[].name (e.g. \"Walking - 5,000 steps\") so what they actually entered is preserved and visible, and estimate minutes and estimatedBurnKcal yourself from the step count (a typical walking pace is roughly 100 steps per minute) rather than guessing an unrelated duration.",
@@ -377,14 +377,12 @@ export async function parseDailyReportPhotoWithAi({
             text: [
               "Look at the attached photo and identify each distinct food or drink item visible.",
               "Return strict JSON with this shape:",
-              `{"confidence":number,"requiresConfirmation":boolean,"foodItems":[${FOOD_ITEM_JSON_SHAPE}],"exerciseItems":[],"metrics":${METRICS_JSON_SHAPE},"isDangerous":boolean,"dangerReason":"string"}`,
+              `{"foodItems":[${FOOD_ITEM_JSON_SHAPE}],"exerciseItems":[],"metrics":${METRICS_JSON_SHAPE},"isDangerous":boolean,"dangerReason":"string"}`,
               "Rules:",
               "- Estimate realistic portion sizes from visual cues (plate size, utensils, packaging).",
               "- Use only non-negative numbers.",
               "- Include reasonable estimates for every nutrient field, including the less common ones (sodiumMg, addedSugarG, calciumMg, vitCMg, vitB12Mcg, vitDMcg, satFatG, omega3G) - never leave them at 0 unless the food genuinely has none.",
               "- exerciseItems must always be an empty array; this is a food photo only.",
-              "- Photo-based estimates are inherently uncertain: keep confidence at 0.6 or below unless the meal is very simple and fully visible.",
-              "- requiresConfirmation must always be true.",
               "- SAFETY CHECK: set isDangerous to true only if the photo shows something that is not actually food/drink and would be dangerous or harmful to consume (e.g. a container of fuel, cleaning products, poison, batteries, or other inedible/hazardous items) - not merely an unappetizing or unusual but genuinely edible item. If so, set dangerReason to a short plain-language explanation telling the user to seek medical attention if they actually consumed it.",
               `- Write dangerReason and every foodItems[].name entirely in ${languageName}. Do not mix languages within a single name.`,
               ...(trimmedNote
