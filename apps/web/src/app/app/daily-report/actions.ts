@@ -404,13 +404,23 @@ export async function saveDailyReportAction(
   // way to just log today's weight, so it bypasses the "add something"
   // requirement below.
   const hasWeightEntry = Boolean(formData.get("reported_weight_kg")?.toString().trim());
+  // Computed once here (rather than only later, right before it's written to
+  // the row) so a report consisting ONLY of a custom target value - e.g.
+  // sleep duration with nothing else filled in - is recognized as real
+  // content below instead of being rejected outright. It previously wasn't
+  // considered here at all, so entering just a sleep duration and nothing
+  // else silently failed this check with a generic "add something" error
+  // that didn't mention sleep/custom targets, making it look like saving a
+  // custom target on its own wasn't supported.
+  const customTargetValues = extractCustomTargetValues(formData);
+  const hasCustomTargetValue = Object.keys(customTargetValues).length > 0;
 
-  if (!reportText && selectedDefaultIds.length === 0 && !mealPhotoFile && !hasWeightEntry) {
+  if (!reportText && selectedDefaultIds.length === 0 && !mealPhotoFile && !hasWeightEntry && !hasCustomTargetValue) {
     return {
       error: tr(
         locale,
-        "Add free text, a meal photo, an item from your saved list, a weight, or a combination.",
-        "יש להוסיף טקסט חופשי, תמונת ארוחה, פריט מהרשימה השמורה, משקל, או שילוב ביניהם.",
+        "Add free text, a meal photo, an item from your saved list, a weight, a tracked value like sleep, or a combination.",
+        "יש להוסיף טקסט חופשי, תמונת ארוחה, פריט מהרשימה השמורה, משקל, ערך במעקב כמו שינה, או שילוב ביניהם.",
       ),
     };
   }
@@ -738,7 +748,6 @@ export async function saveDailyReportAction(
   const reportedWeightRaw = formData.get("reported_weight_kg")?.toString().trim() ?? "";
   const inferredWeightFromText = reportText ? extractReportedWeightFromText(reportText) : null;
   const enteredReportedWeightKg = reportedWeightRaw ? toNumber(reportedWeightRaw, NaN) : null;
-  const customTargetValues = extractCustomTargetValues(formData);
 
   // An explicit, deliberate entry in the Weight field gets validated
   // strictly and blocks the whole save on failure - the user clearly meant
@@ -1278,6 +1287,65 @@ export async function adjustDailyReportItemQuantitiesAction(formData: FormData):
     return [scaleExerciseItem(item, nextMinutes)];
   });
 
+  // Weight and custom targets (e.g. sleep duration) are plain scalars, not
+  // arrays of items to rescale - the field is only present in formData at
+  // all when the "Edit quantities" form actually rendered an input for it
+  // (see the page's per-entry detail view), so a missing field always means
+  // "this report has nothing of that kind," never "leave it untouched."
+  // Blank clears it (same "0 removes it" idea the food/exercise fields
+  // above already use), matching what typing over the prefilled value and
+  // deleting it would intuitively mean.
+  let nextReportedWeightKg = reportRow.reported_weight_kg;
+  const weightRaw = formData.get("reported_weight_kg");
+  if (weightRaw != null) {
+    const trimmedWeight = weightRaw.toString().trim();
+    if (trimmedWeight === "") {
+      if (reportRow.reported_weight_kg !== null) {
+        nextReportedWeightKg = null;
+        changed = true;
+      }
+    } else {
+      const parsedWeight = toNumber(trimmedWeight, Number.NaN);
+      if (Number.isFinite(parsedWeight) && parsedWeight >= 20 && parsedWeight <= 400) {
+        const roundedWeight = round(parsedWeight, 2);
+        if (reportRow.reported_weight_kg === null || Math.abs(roundedWeight - Number(reportRow.reported_weight_kg)) > 1e-9) {
+          nextReportedWeightKg = roundedWeight;
+          changed = true;
+        }
+      }
+      // Out-of-range/non-numeric input is silently ignored (kept at its
+      // current value) rather than blocking the whole save - the same
+      // "invalid input keeps the existing value" behavior the food/exercise
+      // fields above already use.
+    }
+  }
+  const weightChanged = nextReportedWeightKg !== reportRow.reported_weight_kg;
+
+  const currentCustomTargetValues =
+    reportRow.custom_target_values
+    && typeof reportRow.custom_target_values === "object"
+    && !Array.isArray(reportRow.custom_target_values)
+      ? (reportRow.custom_target_values as Record<string, number>)
+      : {};
+  const nextCustomTargetValues: Record<string, number> = { ...currentCustomTargetValues };
+  for (const [targetId, currentValue] of Object.entries(currentCustomTargetValues)) {
+    const raw = formData.get(`custom_target_value__${targetId}`);
+    if (raw == null) continue;
+    const trimmed = raw.toString().trim();
+    if (trimmed === "") {
+      delete nextCustomTargetValues[targetId];
+      changed = true;
+      continue;
+    }
+    const parsed = toNumber(trimmed, Number.NaN);
+    if (!Number.isFinite(parsed)) continue;
+    const rounded = round(parsed, 2);
+    if (Math.abs(rounded - Number(currentValue)) > 1e-9) {
+      nextCustomTargetValues[targetId] = rounded;
+      changed = true;
+    }
+  }
+
   if (!changed) {
     redirect(buildDailyReportRedirectPath({ date: selectedDateParam }));
   }
@@ -1289,18 +1357,16 @@ export async function adjustDailyReportItemQuantitiesAction(formData: FormData):
   // a report can also carry a logged weigh-in and/or custom target values
   // (e.g. sleep hours, steps) entirely independent of its food/exercise
   // items, and zeroing out "1 apple" must not silently delete those too.
-  // (No weight-resync needed here, unlike deleteDailyReportAction - a
-  // report only reaches this branch when it has no weight of its own.)
-  const hasReportedWeight = reportRow.reported_weight_kg != null;
+  // Checked against the POST-edit values (not reportRow's original ones),
+  // since this same edit may be exactly what just cleared the weight and/or
+  // every custom target, in which case an otherwise-empty report should be
+  // deleted here too, not left behind as a blank row.
+  const hasReportedWeight = nextReportedWeightKg != null;
   // A value of exactly 0 is treated the same as "not logged" here (not just
   // "key absent") - a leftover {"sleep_hours": 0} from an untouched custom
   // target field (see extractCustomTargetValues) must not by itself block
   // deleting an otherwise-empty report.
-  const hasCustomTargetValues =
-    Boolean(reportRow.custom_target_values)
-    && typeof reportRow.custom_target_values === "object"
-    && !Array.isArray(reportRow.custom_target_values)
-    && Object.values(reportRow.custom_target_values as Record<string, unknown>).some((value) => Number(value) !== 0);
+  const hasCustomTargetValues = Object.values(nextCustomTargetValues).some((value) => Number(value) !== 0);
 
   if (nextFoodItems.length === 0 && nextExerciseItems.length === 0 && !hasReportedWeight && !hasCustomTargetValues) {
     const { error: deleteError } = await supabase
@@ -1321,6 +1387,16 @@ export async function adjustDailyReportItemQuantitiesAction(formData: FormData):
           date: selectedDateParam,
         }),
       );
+    }
+
+    // The report being deleted may have carried the weigh-in that this very
+    // edit just cleared (or one it already had) - either way, if it had a
+    // weight, user_profile.weight_kg needs to be re-derived from whatever's
+    // left now that this row is gone, same as deleteDailyReportAction does
+    // for the explicit "Delete entry" button. Best-effort: a failure here
+    // shouldn't undo the deletion that already succeeded.
+    if (reportRow.reported_weight_kg != null) {
+      await resyncProfileWeightFromReports(supabase, user.id);
     }
 
     revalidatePath("/app/daily-report");
@@ -1346,6 +1422,8 @@ export async function adjustDailyReportItemQuantitiesAction(formData: FormData):
     .update({
       parsed_items: nextFoodItems,
       parsed_exercises: nextExerciseItems,
+      reported_weight_kg: nextReportedWeightKg,
+      custom_target_values: nextCustomTargetValues,
       calories_kcal: round(foodTotals.caloriesKcal),
       protein_g: round(foodTotals.proteinG),
       carbs_g: round(foodTotals.carbsG),
@@ -1382,6 +1460,16 @@ export async function adjustDailyReportItemQuantitiesAction(formData: FormData):
         date: selectedDateParam,
       }),
     );
+  }
+
+  // Keep the profile's cached current weight in sync whenever this edit
+  // touched this report's own weight - same reasoning as saveDailyReportAction,
+  // just re-derived from scratch rather than assumed to be this report's new
+  // value, so an edit to an older, non-most-recent entry can never override
+  // a genuinely more recent weigh-in. Best-effort, after the write already
+  // succeeded.
+  if (weightChanged) {
+    await resyncProfileWeightFromReports(supabase, user.id);
   }
 
   revalidatePath("/app/daily-report");

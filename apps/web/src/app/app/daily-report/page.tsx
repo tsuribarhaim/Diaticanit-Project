@@ -9,7 +9,7 @@ import {
 } from "@/app/app/daily-report/actions";
 import { DailyReportForm } from "@/components/daily-report-form";
 import { LocalizedDateInput } from "@/components/localized-date-input";
-import { DailyReportProgressRings, type RingMetric } from "@/components/daily-report-progress-rings";
+import { DailyReportGoalBars, type RingMetric } from "@/components/daily-report-goal-bars";
 import { DailyReportWeightTrend, type WeightPoint } from "@/components/daily-report-weight-trend";
 import {
   CHART_CORE_METRIC_IDS,
@@ -21,7 +21,7 @@ import {
 import { getDailyReportTotalsForRange } from "@/lib/daily-report";
 import { normalizeUserTargetsJson } from "@/lib/targets";
 import { getAiExtractionConfig } from "@/lib/ai/env";
-import { formatDateForLocale, formatDateTimeForLocale, formatDefaultUnit, formatMeasurementUnit, formatNumberForLocale, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
+import { formatDateForLocale, formatDefaultUnit, formatMeasurementUnit, formatNumberForLocale, formatTimeForLocale, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -37,12 +37,6 @@ function formatNumber(value: number | string | null, locale: AppLocale, digits =
     maximumFractionDigits: digits,
     minimumFractionDigits: digits,
   });
-}
-
-function formatConfidence(value: number | string | null, locale: AppLocale): string {
-  const parsed = Number(value ?? 0);
-  if (!Number.isFinite(parsed)) return "0%";
-  return `${formatNumberForLocale(Math.round(parsed * 100), locale)}%`;
 }
 
 type SummaryFoodItem = { name?: unknown; quantity?: unknown; unit?: unknown };
@@ -63,7 +57,7 @@ function buildEntrySummary(parsedItems: unknown, parsedExercises: unknown, local
       if (!name) return null;
       const quantity = Number(item.quantity ?? 0);
       const unit = typeof item.unit === "string" ? item.unit : "";
-      return quantity > 0 && unit ? `${name} (${formatNumber(quantity, locale, 1)} ${unit})` : name;
+      return quantity > 0 && unit ? `${name} (${formatNumber(quantity, locale, 1)} ${formatDefaultUnit(unit, locale)})` : name;
     })
     .filter((part): part is string => Boolean(part));
 
@@ -112,6 +106,35 @@ function buildEditableItems(
     .filter((item) => item.name);
 
   return { foodItems, exerciseItems };
+}
+
+/** The collapsed feed row's icon - one of a fixed small set based on what
+ * the report actually contains, not an invented "meal type" the data model
+ * has no concept of. */
+function entryIconPaths(kind: "meal" | "exercise" | "weight" | "target") {
+  if (kind === "exercise") return <path d="M6 7v10M18 7v10M2 9v6M22 9v6M6 12h12" />;
+  if (kind === "weight") {
+    return (
+      <>
+        <rect x="3.5" y="3.5" width="17" height="17" rx="4" />
+        <circle cx="12" cy="12" r="3.4" />
+      </>
+    );
+  }
+  if (kind === "target") {
+    return (
+      <>
+        <circle cx="12" cy="12" r="8" />
+        <circle cx="12" cy="12" r="3.2" />
+      </>
+    );
+  }
+  return (
+    <>
+      <path d="M4 13a8 8 0 0 0 16 0" />
+      <path d="M4 13h16l-1 2a2 2 0 0 1-2 1.5H7A2 2 0 0 1 5 15z" />
+    </>
+  );
 }
 
 /**
@@ -169,6 +192,18 @@ function parseSelectedDateParam(value: string | undefined): string {
   return getUtcDateStringToday();
 }
 
+/** Sunday-start calendar week (matching the app's primary Hebrew/Israeli
+ * locale convention) containing the given UTC date string - used for the
+ * weekly exercise-adherence badge, which tracks the week around whichever
+ * day the page is currently showing, consistent with everything else on
+ * this page reacting to the selected date rather than always "right now". */
+function getWeekBoundsIso(dateString: string): { weekStartIso: string; weekEndIso: string } {
+  const dayStart = new Date(`${dateString}T00:00:00.000Z`);
+  const weekStart = new Date(dayStart.getTime() - dayStart.getUTCDay() * 24 * 60 * 60 * 1000);
+  const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+  return { weekStartIso: weekStart.toISOString(), weekEndIso: weekEnd.toISOString() };
+}
+
 export default async function DailyReportPage({
   searchParams,
 }: {
@@ -177,6 +212,14 @@ export default async function DailyReportPage({
   const resolvedSearchParams = await searchParams;
   const selectedDate = parseSelectedDateParam(resolvedSearchParams.date);
   const editReportId = resolvedSearchParams.edit || null;
+  const todayDateString = getUtcDateStringToday();
+  const previousDateString = new Date(new Date(`${selectedDate}T00:00:00.000Z`).getTime() - 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  const nextDateString = new Date(new Date(`${selectedDate}T00:00:00.000Z`).getTime() + 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  const isNextDayDisabled = selectedDate >= todayDateString;
   const selectedDayStartIso = new Date(`${selectedDate}T00:00:00.000Z`).toISOString();
   const selectedDayEndIso = new Date(new Date(`${selectedDate}T00:00:00.000Z`).getTime() + 24 * 60 * 60 * 1000).toISOString();
   const supabase = await createClient();
@@ -189,16 +232,131 @@ export default async function DailyReportPage({
   }
 
   const aiAvailable = Boolean(getAiExtractionConfig());
+  const now = new Date();
+  const { weekStartIso, weekEndIso } = getWeekBoundsIso(selectedDate);
+  const thirtyDaysAgoIso = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  // Sentinel used to keep the "report being edited" lookup below in the same
+  // Promise.all batch as everything else even when there's nothing to edit -
+  // querying a UUID column that can never match a real row (rather than
+  // branching the query in/out of the array) keeps every element the same
+  // shape, so TypeScript doesn't have to reconcile two different response
+  // types, and the extra lookup is free since it runs concurrently with the
+  // rest anyway.
+  const editableReportLookupId = editReportId ?? "00000000-0000-0000-0000-000000000000";
 
-  const { data: profileRow } = await supabase
-    .from("user_profile")
-    .select("preferred_language, daily_report_chart_preferences, weight_kg, first_name")
-    .eq("user_id", user.id)
-    .maybeSingle();
+  // None of the reads below depends on another's result - each only needs
+  // values already known from the URL (selectedDate/editReportId/etc) - so
+  // they run as one batch of concurrent round-trips instead of one at a
+  // time. This page previously issued 8+ sequential awaits to Postgres, each
+  // paying its own network round-trip; that serial chain (not the AI parse
+  // call some page loads follow, e.g. right after "Conclude & Report") was
+  // the dominant cost behind slow daily-report loads, worth roughly 5-8x on
+  // a page that's otherwise almost entirely reads.
+  const [
+    profileRowResult,
+    weekExerciseRowsResult,
+    lastWeightReportResult,
+    editableReportRowResult,
+    activeTargetProfileResult,
+    todaysTotals,
+    weightHistoryRowsResult,
+    reportsWithWeight,
+    defaultItemsResult,
+  ] = await Promise.all([
+    supabase
+      .from("user_profile")
+      .select("preferred_language, daily_report_chart_preferences, weight_kg, first_name, exercise_modalities, exercise_schedule_by_modality, exercise_other_activities")
+      .eq("user_id", user.id)
+      .maybeSingle(),
+    supabase
+      .from("user_daily_reports")
+      .select("report_at, exercise_minutes")
+      .eq("user_id", user.id)
+      .gte("report_at", weekStartIso)
+      .lt("report_at", weekEndIso)
+      .gt("exercise_minutes", 0),
+    supabase
+      .from("user_daily_reports")
+      .select("reported_weight_kg")
+      .eq("user_id", user.id)
+      .not("reported_weight_kg", "is", null)
+      .order("report_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("user_daily_reports")
+      .select("id, raw_report_text, reported_weight_kg, report_at, selected_defaults, custom_target_values")
+      .eq("id", editableReportLookupId)
+      .eq("user_id", user.id)
+      .maybeSingle(),
+    supabase
+      .from("user_target_profiles")
+      .select(
+        "id, protein_min_g, protein_max_g, carbs_min_g, carbs_max_g, water_min_ml, water_max_ml, calories_min, calories_max, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, magnesium_min_mg, magnesium_max_mg, potassium_min_mg, potassium_max_mg, iron_min_mg, iron_max_mg, zinc_min_mg, zinc_max_mg, sodium_min_mg, sodium_max_mg, added_sugar_min_g, added_sugar_max_g, calcium_min_mg, calcium_max_mg, vit_c_min_mg, vit_c_max_mg, vit_b12_min_mcg, vit_b12_max_mcg, vit_d_min_mcg, vit_d_max_mcg, sat_fat_min_g, sat_fat_max_g, omega3_min_g, omega3_max_g, user_targets",
+      )
+      .eq("user_id", user.id)
+      .eq("is_active", true)
+      .maybeSingle(),
+    getDailyReportTotalsForRange({
+      supabase,
+      userId: user.id,
+      rangeStartIso: selectedDayStartIso,
+      rangeEndIso: selectedDayEndIso,
+    }),
+    supabase
+      .from("user_daily_reports")
+      .select("report_at, reported_weight_kg")
+      .eq("user_id", user.id)
+      .not("reported_weight_kg", "is", null)
+      .gte("report_at", thirtyDaysAgoIso)
+      .order("report_at", { ascending: true }),
+    supabase
+      .from("user_daily_reports")
+      .select(
+        "id, raw_report_text, report_at, parse_confidence, requires_confirmation, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal, reported_weight_kg, parsed_items, parsed_exercises, custom_target_values",
+      )
+      .eq("user_id", user.id)
+      .gte("report_at", selectedDayStartIso)
+      .lt("report_at", selectedDayEndIso)
+      .order("report_at", { ascending: false })
+      .limit(200),
+    supabase
+      .from("user_default_items")
+      .select("id, name, kind, default_quantity, default_unit, ingredients, is_active")
+      .eq("user_id", user.id)
+      .eq("is_active", true)
+      .order("name", { ascending: true }),
+  ]);
 
+  const profileRow = profileRowResult.data;
   const locale = normalizeLocale(profileRow?.preferred_language);
   const userDisplayName = profileRow?.first_name?.trim() || tr(locale, "You", "אתה");
   const chartPreferences = normalizeDailyReportChartPreferences(profileRow?.daily_report_chart_preferences);
+
+  // Weekly exercise-adherence badge: total sessions logged this calendar
+  // week vs. the total weekly frequency the user's profile targets across
+  // every modality (fixed + named "other" activities). Deliberately NOT
+  // broken out per modality - a logged exercise entry is free text (e.g.
+  // "walked 50 minutes") with no link back to which profile modality it
+  // belongs to, so a per-modality count would need fragile keyword-guessing
+  // rather than an accurate query. "Session" here means a distinct day with
+  // at least one exercise logged, matching days_per_week's own unit.
+  const scheduleByModalityForWeek =
+    profileRow?.exercise_schedule_by_modality
+    && typeof profileRow.exercise_schedule_by_modality === "object"
+    && !Array.isArray(profileRow.exercise_schedule_by_modality)
+      ? (profileRow.exercise_schedule_by_modality as Record<string, { days_per_week?: number }>)
+      : {};
+  const otherActivitiesForWeek = Array.isArray(profileRow?.exercise_other_activities)
+    ? (profileRow.exercise_other_activities as Array<{ days_per_week?: number }>)
+    : [];
+  const weeklyExerciseTargetDays = Math.round(
+    Object.values(scheduleByModalityForWeek).reduce((sum, entry) => sum + (Number(entry?.days_per_week) || 0), 0)
+    + otherActivitiesForWeek.reduce((sum, entry) => sum + (Number(entry?.days_per_week) || 0), 0),
+  );
+  const weeklyExerciseLoggedDays = new Set(
+    (weekExerciseRowsResult.data ?? []).map((row) => new Date(row.report_at).toISOString().slice(0, 10)),
+  ).size;
 
   // The weight field on the compose form should default to whatever the
   // user most recently reported (any prior report, not just today's),
@@ -206,15 +364,7 @@ export default async function DailyReportPage({
   // - otherwise it always shows the same static profile value regardless of
   // what was actually last logged, which looks like weight entries aren't
   // being saved at all.
-  const { data: lastWeightReport } = await supabase
-    .from("user_daily_reports")
-    .select("reported_weight_kg")
-    .eq("user_id", user.id)
-    .not("reported_weight_kg", "is", null)
-    .order("report_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const lastRecordedWeightKg = lastWeightReport?.reported_weight_kg ?? null;
+  const lastRecordedWeightKg = lastWeightReportResult.data?.reported_weight_kg ?? null;
 
   // The report being edited (via the "Edit entry" button on the list below)
   // needs its full original content - not just the summary fields the list
@@ -230,50 +380,35 @@ export default async function DailyReportPage({
     customTargetValues: Record<string, number>;
   } | null = null;
 
-  if (editReportId) {
-    const { data: editableReportRow } = await supabase
-      .from("user_daily_reports")
-      .select("id, raw_report_text, reported_weight_kg, report_at, selected_defaults, custom_target_values")
-      .eq("id", editReportId)
-      .eq("user_id", user.id)
-      .maybeSingle();
+  const editableReportRow = editReportId ? editableReportRowResult.data : null;
+  if (editableReportRow) {
+    const selectedDefaultsRaw = Array.isArray(editableReportRow.selected_defaults)
+      ? (editableReportRow.selected_defaults as Array<{ id?: unknown; quantity?: unknown }>)
+      : [];
+    const customTargetValuesRaw =
+      editableReportRow.custom_target_values && typeof editableReportRow.custom_target_values === "object"
+        ? (editableReportRow.custom_target_values as Record<string, unknown>)
+        : {};
 
-    if (editableReportRow) {
-      const selectedDefaultsRaw = Array.isArray(editableReportRow.selected_defaults)
-        ? (editableReportRow.selected_defaults as Array<{ id?: unknown; quantity?: unknown }>)
-        : [];
-      const customTargetValuesRaw =
-        editableReportRow.custom_target_values && typeof editableReportRow.custom_target_values === "object"
-          ? (editableReportRow.custom_target_values as Record<string, unknown>)
-          : {};
-
-      editingReport = {
-        id: editableReportRow.id,
-        rawReportText: editableReportRow.raw_report_text ?? "",
-        reportedWeightKg: editableReportRow.reported_weight_kg ?? null,
-        reportAt: editableReportRow.report_at,
-        selectedDefaults: selectedDefaultsRaw
-          .filter((item): item is { id: string; quantity: number } => typeof item.id === "string" && Number.isFinite(Number(item.quantity)))
-          .map((item) => ({ id: item.id, quantity: Number(item.quantity) })),
-        customTargetValues: Object.fromEntries(
-          Object.entries(customTargetValuesRaw).filter(([, value]) => Number.isFinite(Number(value))).map(([key, value]) => [key, Number(value)]),
-        ),
-      };
-    }
+    editingReport = {
+      id: editableReportRow.id,
+      rawReportText: editableReportRow.raw_report_text ?? "",
+      reportedWeightKg: editableReportRow.reported_weight_kg ?? null,
+      reportAt: editableReportRow.report_at,
+      selectedDefaults: selectedDefaultsRaw
+        .filter((item): item is { id: string; quantity: number } => typeof item.id === "string" && Number.isFinite(Number(item.quantity)))
+        .map((item) => ({ id: item.id, quantity: Number(item.quantity) })),
+      customTargetValues: Object.fromEntries(
+        Object.entries(customTargetValuesRaw).filter(([, value]) => Number.isFinite(Number(value))).map(([key, value]) => [key, Number(value)]),
+      ),
+    };
   }
 
   // Daily-report entries no longer compare against scalar targets; the active
   // target profile stores min/max ranges instead. We compare against the
   // minimum of each range here (protein_min_g / water_min_ml) as a reasonable
   // "did you hit at least the floor" signal for this simple status badge.
-  const { data: activeTargetProfile } = await supabase
-    .from("user_target_profiles")
-    .select(
-      "id, protein_min_g, protein_max_g, carbs_min_g, carbs_max_g, water_min_ml, water_max_ml, calories_min, calories_max, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, magnesium_min_mg, magnesium_max_mg, potassium_min_mg, potassium_max_mg, iron_min_mg, iron_max_mg, zinc_min_mg, zinc_max_mg, sodium_min_mg, sodium_max_mg, added_sugar_min_g, added_sugar_max_g, calcium_min_mg, calcium_max_mg, vit_c_min_mg, vit_c_max_mg, vit_b12_min_mcg, vit_b12_max_mcg, vit_d_min_mcg, vit_d_max_mcg, sat_fat_min_g, sat_fat_max_g, omega3_min_g, omega3_max_g, user_targets",
-    )
-    .eq("user_id", user.id)
-    .eq("is_active", true)
-    .maybeSingle();
+  const activeTargetProfile = activeTargetProfileResult.data;
 
   // Only entries with a full id/unit/targetMin/targetMax set are loggable -
   // a legacy or non-numeric user_targets entry (display-only) is silently
@@ -285,14 +420,7 @@ export default async function DailyReportPage({
       label: entry.label,
       unit: entry.unit!,
     }));
-
-  const now = new Date();
-  const todaysTotals = await getDailyReportTotalsForRange({
-    supabase,
-    userId: user.id,
-    rangeStartIso: selectedDayStartIso,
-    rangeEndIso: selectedDayEndIso,
-  });
+  const customTargetById = new Map(loggableCustomTargets.map((target) => [target.id, target]));
 
   // Exercise burn offsets calories gained from food/drink - net can go
   // negative on a day with heavy exercise and light intake, which is a
@@ -304,8 +432,15 @@ export default async function DailyReportPage({
   const coreMetricDefinitions: Record<DailyReportChartCoreMetric, RingMetric> = {
     calories: {
       id: "calories",
-      labelEn: "Calories",
-      labelHe: "קלוריות",
+      // "(net)" only when there's actually a gross/burned breakdown to
+      // reconcile it against (see grossTotal below) - the bar's own number
+      // is always net-of-exercise, but labeling it plain "Calories" reads
+      // as if it matched what was eaten (808 in the reported mismatch) when
+      // it's really 808 minus exercise burn. On a day with no exercise,
+      // net and eaten are the same number anyway, so the plain label stays
+      // accurate as-is.
+      labelEn: todaysTotals.estimatedBurnKcal > 0 ? "Calories (net)" : "Calories",
+      labelHe: todaysTotals.estimatedBurnKcal > 0 ? "קלוריות (נטו)" : "קלוריות",
       total: netCaloriesKcal,
       ...(todaysTotals.estimatedBurnKcal > 0 ? { grossTotal: todaysTotals.caloriesKcal } : {}),
       min: Number(activeTargetProfile?.calories_min ?? 0),
@@ -472,28 +607,23 @@ export default async function DailyReportPage({
 
   // Built in canonical order (not the order the user happened to check
   // boxes in, which `getAll()` would otherwise preserve) so the displayed
-  // ring order stays stable and predictable regardless of how the
-  // selection was saved.
-  const ringMetrics: RingMetric[] = [
-    ...CHART_CORE_METRIC_IDS.filter((id) => chartPreferences.coreMetrics.includes(id)).map((id) => coreMetricDefinitions[id]),
-    ...CHART_EXTRA_METRIC_IDS.filter((id) => chartPreferences.extraMetrics.includes(id)).map((id) => extraMetricDefinitions[id]),
-  ];
+  // order stays stable and predictable regardless of how the selection was
+  // saved. Kept as two separate arrays (rather than one merged list, as
+  // before DailyReportGoalBars replaced the ring grid) - core metrics
+  // render as always-visible bars, extra metrics render collapsed behind
+  // "Show full detail".
+  const coreDisplayMetrics: RingMetric[] = CHART_CORE_METRIC_IDS.filter((id) => chartPreferences.coreMetrics.includes(id)).map(
+    (id) => coreMetricDefinitions[id],
+  );
+  const extraDisplayMetrics: RingMetric[] = CHART_EXTRA_METRIC_IDS.filter((id) => chartPreferences.extraMetrics.includes(id)).map(
+    (id) => extraMetricDefinitions[id],
+  );
 
-  let weightHistory: WeightPoint[] = [];
-  if (chartPreferences.showWeightTrend) {
-    const thirtyDaysAgoIso = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    const { data: weightRows } = await supabase
-      .from("user_daily_reports")
-      .select("report_at, reported_weight_kg")
-      .eq("user_id", user.id)
-      .not("reported_weight_kg", "is", null)
-      .gte("report_at", thirtyDaysAgoIso)
-      .order("report_at", { ascending: true });
-
-    weightHistory = (weightRows ?? [])
-      .filter((row) => row.reported_weight_kg !== null)
-      .map((row) => ({ date: row.report_at, weightKg: Number(row.reported_weight_kg) }));
-  }
+  const weightHistory: WeightPoint[] = chartPreferences.showWeightTrend
+    ? (weightHistoryRowsResult.data ?? [])
+        .filter((row) => row.reported_weight_kg !== null)
+        .map((row) => ({ date: row.report_at, weightKg: Number(row.reported_weight_kg) }))
+    : [];
 
   let reportsError: Error | null = null;
   let reports:
@@ -502,6 +632,7 @@ export default async function DailyReportPage({
         raw_report_text: string | null;
         report_at: string;
         parse_confidence: number | null;
+        requires_confirmation: boolean | null;
         calories_kcal: number | null;
         protein_g: number | null;
         carbs_g: number | null;
@@ -516,25 +647,15 @@ export default async function DailyReportPage({
         reported_weight_kg: number | null;
         parsed_items: unknown;
         parsed_exercises: unknown;
+        custom_target_values: unknown;
       }>
     | null = null;
-
-  const reportsWithWeight = await supabase
-    .from("user_daily_reports")
-    .select(
-      "id, raw_report_text, report_at, parse_confidence, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal, reported_weight_kg, parsed_items, parsed_exercises",
-    )
-    .eq("user_id", user.id)
-    .gte("report_at", selectedDayStartIso)
-    .lt("report_at", selectedDayEndIso)
-    .order("report_at", { ascending: false })
-    .limit(200);
 
   if (reportsWithWeight.error && isMissingReportedWeightColumn(reportsWithWeight.error.message)) {
     const reportsWithoutWeight = await supabase
       .from("user_daily_reports")
       .select(
-        "id, raw_report_text, report_at, parse_confidence, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal, parsed_items, parsed_exercises",
+        "id, raw_report_text, report_at, parse_confidence, requires_confirmation, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal, parsed_items, parsed_exercises, custom_target_values",
       )
       .eq("user_id", user.id)
       .gte("report_at", selectedDayStartIso)
@@ -549,99 +670,177 @@ export default async function DailyReportPage({
     reports = reportsWithWeight.data;
   }
 
-  const { data: defaultItems } = await supabase
-    .from("user_default_items")
-    .select(
-      "id, name, kind, default_quantity, default_unit, ingredients, is_active",
-    )
-    .eq("user_id", user.id)
-    .eq("is_active", true)
-    .order("name", { ascending: true });
+  const defaultItems = defaultItemsResult.data;
 
   if (reportsError) {
     throw new Error(reportsError.message);
   }
 
+  // Today's (or whatever day is being viewed) already-logged custom target
+  // values (e.g. Sleep duration), most-recent-report-wins per target id -
+  // mirrors lastRecordedWeightKg's own "most recently reported" precedence.
+  // Lets DailyReportForm's quick-entry field keep showing an already-logged
+  // value even on a fresh page load, not just right after saving in the same
+  // browser session, so the user can tell at a glance they already logged it
+  // for this day. `reports` is already scoped to selectedDayStartIso..
+  // selectedDayEndIso and sorted newest-first, so this naturally reads as
+  // empty again on any day nothing has been logged for yet.
+  const todaysCustomTargetValues: Record<string, number> = {};
+  for (const report of reports ?? []) {
+    if (!report.custom_target_values || typeof report.custom_target_values !== "object" || Array.isArray(report.custom_target_values)) {
+      continue;
+    }
+    for (const [id, rawValue] of Object.entries(report.custom_target_values as Record<string, unknown>)) {
+      if (id in todaysCustomTargetValues) continue;
+      const value = Number(rawValue);
+      if (Number.isFinite(value)) {
+        todaysCustomTargetValues[id] = value;
+      }
+    }
+  }
+
   return (
-    <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-6 py-10">
-      <section className="rounded-2xl border border-slate-200 bg-white p-6">
-        <p className="text-sm text-slate-600">
-          {tr(
-            locale,
-            "Record your daily food, drinks, activity, and other data.",
-            "תעדו כאן את האוכל, השתייה, הפעילות והנתונים היומיים שלכם.",
-          )}
+    // Extra bottom padding below `sm` clears the chat panel's floating
+    // bubble trigger (fixed above AppBottomNav on mobile - see
+    // daily-report-chat-panel.tsx) so the last entry's tap targets are never
+    // covered by it; AppBottomNav's own height is already reserved globally
+    // in layout.tsx. Much smaller than the old pinned-composer-dock
+    // reservation this replaced - a single floating circle needs far less
+    // clearance than a full chip row + textarea + send + save dock did.
+    <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-6 pt-10 pb-[calc(8rem+env(safe-area-inset-bottom))] sm:pb-10">
+      {/* Page opens on "Today's summary" (below) instead of the compose
+          form - the form moved to the bottom of the page (see the section
+          right before </main>). Save/delete/edit-quantity feedback used to
+          live inside that form's own card; lifted to a plain page-level
+          banner here so it's still the first thing visible after any of
+          those actions, regardless of where the form itself now sits. */}
+      {resolvedSearchParams.error ? (
+        <p className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          {resolvedSearchParams.error}
         </p>
+      ) : null}
+      {resolvedSearchParams.notice ? (
+        <p className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          {resolvedSearchParams.notice}
+        </p>
+      ) : null}
+      {editingReport ? (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800">
+          <span>{tr(locale, "Editing a previously saved entry - saving will update it in place.", "עריכת רשומה שנשמרה בעבר - השמירה תעדכן אותה במקום.")}</span>
+          <Link
+            href={resolvedSearchParams.date ? `/app/daily-report?date=${resolvedSearchParams.date}` : "/app/daily-report"}
+            className="rounded-lg border border-teal-300 bg-white px-2.5 py-1 text-xs font-semibold text-teal-700 hover:bg-teal-100"
+          >
+            {tr(locale, "Cancel edit", "ביטול עריכה")}
+          </Link>
+        </div>
+      ) : null}
 
-        {resolvedSearchParams.error ? (
-          <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-            {resolvedSearchParams.error}
-          </p>
-        ) : null}
-        {resolvedSearchParams.notice ? (
-          <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-            {resolvedSearchParams.notice}
-          </p>
-        ) : null}
-
-        {editingReport ? (
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800">
-            <span>{tr(locale, "Editing a previously saved entry - saving below will update it in place.", "עריכת רשומה שנשמרה בעבר - השמירה למטה תעדכן אותה במקום.")}</span>
+      <section className="rounded-2xl border border-slate-200 bg-white p-6">
+        <div className="flex flex-col items-center gap-3">
+          {/* dir="ltr" locked here (not just on numeric spans, as usual) so
+              the two arrows stay tied to their own DOM position instead of
+              swapping sides with the page's RTL direction - a chevron
+              pointing "<" needs to sit physically left of one pointing ">",
+              same as any date-nav pager, regardless of Hebrew vs English.
+              Without it, RTL visually reverses this row so the "<" (first
+              child, previousDay) lands on the right and ">" (last child,
+              nextDay) lands on the left - both arrows pointing the "wrong"
+              way for where they'd actually appear on screen. The Hebrew
+              title/date text below still renders correctly since Hebrew
+              glyphs carry their own right-to-left directionality regardless
+              of this ancestor's dir. */}
+          <div dir="ltr" className="flex w-full items-center justify-center gap-4">
             <Link
-              href={resolvedSearchParams.date ? `/app/daily-report?date=${resolvedSearchParams.date}` : "/app/daily-report"}
-              className="rounded-lg border border-teal-300 bg-white px-2.5 py-1 text-xs font-semibold text-teal-700 hover:bg-teal-100"
+              href={`/app/daily-report?date=${previousDateString}`}
+              aria-label={tr(locale, "Previous day", "יום קודם")}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-300 text-slate-600 hover:bg-slate-50"
             >
-              {tr(locale, "Cancel edit", "ביטול עריכה")}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M15 6l-6 6 6 6" />
+              </svg>
             </Link>
+            <div className="text-center">
+              <h2 className="text-lg font-semibold text-slate-900">{tr(locale, "Today's summary", "סיכום היום שלי")}</h2>
+              <p className="text-sm text-slate-500">{formatDateForLocale(`${selectedDate}T00:00:00.000Z`, locale)}</p>
+            </div>
+            {isNextDayDisabled ? (
+              <span
+                aria-hidden="true"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-300"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M9 6l6 6-6 6" />
+                </svg>
+              </span>
+            ) : (
+              <Link
+                href={`/app/daily-report?date=${nextDateString}`}
+                aria-label={tr(locale, "Next day", "יום הבא")}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-300 text-slate-600 hover:bg-slate-50"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M9 6l6 6-6 6" />
+                </svg>
+              </Link>
+            )}
+          </div>
+
+          <details className="w-full text-center">
+            <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 rounded-full border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="18" rx="2" />
+                <path d="M16 2v4M8 2v4M3 10h18" />
+              </svg>
+              {tr(locale, "Jump to a date", "מעבר לתאריך אחר")}
+            </summary>
+            <form method="GET" className="mt-2 flex items-center justify-center gap-2">
+              <LocalizedDateInput
+                locale={locale}
+                name="date"
+                value={selectedDate}
+                max={todayDateString}
+                ariaLabel={tr(locale, "View date", "תאריך לצפייה")}
+              />
+              <button
+                type="submit"
+                className="rounded-lg border border-teal-300 px-3 py-1.5 text-sm font-medium text-teal-700 hover:bg-teal-50"
+              >
+                {tr(locale, "View", "הצגה")}
+              </button>
+            </form>
+          </details>
+        </div>
+
+        {weeklyExerciseTargetDays > 0 ? (
+          <div className="mt-3 flex justify-center">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-teal-700" aria-hidden="true">
+                {entryIconPaths("exercise")}
+              </svg>
+              {tr(locale, "Exercise this week", "פעילות השבוע")}
+              {": "}
+              <span dir="ltr" className={weeklyExerciseLoggedDays >= weeklyExerciseTargetDays ? "text-emerald-700" : "text-slate-900"}>
+                {weeklyExerciseLoggedDays}/{weeklyExerciseTargetDays}
+              </span>
+            </span>
           </div>
         ) : null}
 
-        <DailyReportForm
-          key={editingReport?.id ?? "new"}
-          defaultItems={defaultItems ?? []}
-          aiAvailable={aiAvailable}
-          locale={locale}
-          customTargets={loggableCustomTargets}
-          currentWeightKg={
-            lastRecordedWeightKg !== null
-              ? Number(lastRecordedWeightKg)
-              : profileRow?.weight_kg
-                ? Number(profileRow.weight_kg)
-                : null
-          }
-          editingReport={editingReport}
-          selectedDateParam={resolvedSearchParams.date}
-        />
-      </section>
+        {/* Empty on purpose - DailyReportForm portals its Weight/Sleep
+            fields here (see its own comment) instead of rendering them in
+            their old spot at the bottom of the page. Placed above the bar
+            charts (and outside the activeTargetProfile check below) since
+            logging weight/sleep shouldn't depend on targets being set. */}
+        <div id="daily-report-quick-metrics" className="mt-4 flex flex-wrap gap-2" />
 
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold text-slate-900">
-            {tr(locale, "Your Progress as of", "ההתקדמות שלך ליום")} {formatDateForLocale(`${selectedDate}T00:00:00.000Z`, locale)}
-          </h2>
-          <form method="GET" className="flex items-center gap-2">
-            <LocalizedDateInput
-              locale={locale}
-              name="date"
-              value={selectedDate}
-              max={getUtcDateStringToday()}
-              ariaLabel={tr(locale, "View date", "תאריך לצפייה")}
-            />
-            <button
-              type="submit"
-              className="rounded-lg border border-teal-300 px-3 py-1.5 text-sm font-medium text-teal-700 hover:bg-teal-50"
-            >
-              {tr(locale, "View", "הצגה")}
-            </button>
-          </form>
-        </div>
         {activeTargetProfile ? (
           <>
-            {ringMetrics.length ? (
+            {coreDisplayMetrics.length || extraDisplayMetrics.length ? (
               <div className="mt-4">
-                <DailyReportProgressRings locale={locale} metrics={ringMetrics} />
+                <DailyReportGoalBars locale={locale} coreMetrics={coreDisplayMetrics} extraMetrics={extraDisplayMetrics} />
               </div>
-            ) : !chartPreferences.showWeightTrend ? (
+            ) : (
               <p className="mt-4 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600">
                 {tr(
                   locale,
@@ -649,15 +848,27 @@ export default async function DailyReportPage({
                   "לא נבחרו תרשימים. יש לבחור מה להציג תחת \"התאמת התרשימים\" למטה.",
                 )}
               </p>
-            ) : null}
+            )}
 
-            {chartPreferences.showWeightTrend ? (
-              <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3">
-                <p className="text-xs font-semibold text-slate-800">{tr(locale, "Weight trend (last 30 days)", "מגמת משקל (30 הימים האחרונים)")}</p>
+            {/* Previously this chart only ever appeared inside a specific
+                weigh-in entry's own expanded detail further down the page -
+                meaning enabling "Weight trend" below showed nothing at all
+                unless you happened to open a report that itself logged a
+                weight today. That made the toggle look broken. Showing it
+                here too (gated on the same preference, plus actually having
+                at least one weigh-in in the last 30 days) makes it reachable
+                the moment it's turned on, the way every other chart here
+                already is - the per-entry copy further down still exists
+                alongside it, not instead of it. */}
+            {chartPreferences.showWeightTrend && weightHistory.length > 0 ? (
+              <details open className="mt-4 rounded-xl border border-slate-200 bg-white p-3">
+                <summary className="cursor-pointer text-xs font-semibold text-slate-800">
+                  {tr(locale, "Weight trend (last 30 days)", "מגמת משקל (30 הימים האחרונים)")}
+                </summary>
                 <div className="mt-2">
                   <DailyReportWeightTrend locale={locale} points={weightHistory} />
                 </div>
-              </div>
+              </details>
             ) : null}
 
             <details className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -754,152 +965,401 @@ export default async function DailyReportPage({
               const editHref = `/app/daily-report?edit=${report.id}${resolvedSearchParams.date ? `&date=${resolvedSearchParams.date}` : ""}`;
               const isBeingEdited = report.id === editReportId;
 
+              const hasFood = editableFoodItems.length > 0;
+              const hasExercise = editableExerciseItems.length > 0;
+              const hasWeight = report.reported_weight_kg !== null;
+
+              const reportCustomTargetValues =
+                report.custom_target_values
+                && typeof report.custom_target_values === "object"
+                && !Array.isArray(report.custom_target_values)
+                  ? (report.custom_target_values as Record<string, number>)
+                  : {};
+              const reportCustomTargetRows = Object.entries(reportCustomTargetValues)
+                .map(([id, value]) => ({ target: customTargetById.get(id), value }))
+                .filter((row): row is { target: { id: string; label: string; unit: string }; value: number } => Boolean(row.target));
+
+              // "target" covers a report that only carries a custom target
+              // value (e.g. sleep duration) with no food, exercise, or
+              // weight - previously this fell through to "weight" by
+              // default even though there was no weight at all, and the row
+              // showed a misleading scale icon with "No food or exercise
+              // items recorded" instead of the sleep value it actually held.
+              const entryKind: "meal" | "exercise" | "weight" | "target" = hasFood
+                ? "meal"
+                : hasExercise
+                  ? "exercise"
+                  : hasWeight
+                    ? "weight"
+                    : reportCustomTargetRows.length > 0
+                      ? "target"
+                      : "weight";
+              const showsCalories = hasFood || hasExercise || Number(report.calories_kcal ?? 0) > 0;
+              const formatTargetValue = (value: number, unit: string) =>
+                `${formatNumberForLocale(value, locale, { maximumFractionDigits: Number.isInteger(value) ? 0 : 1 })} ${formatMeasurementUnit(unit, locale)}`;
+              const valuePillText = showsCalories
+                ? `${formatNumber(report.calories_kcal, locale, 0)} ${tr(locale, "kcal", 'קק"ל')}`
+                : hasWeight
+                  ? `${formatNumber(report.reported_weight_kg, locale, 2)} ${formatMeasurementUnit("kg", locale)}`
+                  : reportCustomTargetRows.length === 1
+                    ? formatTargetValue(reportCustomTargetRows[0].value, reportCustomTargetRows[0].target.unit)
+                    : null;
+              // A report holding only a custom target value has nothing for
+              // buildEntrySummary to describe (it only looks at parsed food/
+              // exercise items), so the row's own custom target(s) become
+              // the summary line instead of the generic "nothing recorded"
+              // fallback - that fallback is now reserved for a report that
+              // genuinely has none of food, exercise, weight, or a tracked
+              // value (which shouldn't normally happen, but is possible for
+              // a legacy/edge-case row). A weight-only report has the exact
+              // same gap - buildEntrySummary has nothing to say about it
+              // either - so it gets the same treatment instead of also
+              // falling through to the generic "nothing recorded" text.
+              const noContentSummaryParts: string[] = [];
+              if (hasWeight) {
+                noContentSummaryParts.push(
+                  `${tr(locale, "Weight", "משקל")} (${formatNumber(report.reported_weight_kg, locale, 2)} ${formatMeasurementUnit("kg", locale)})`,
+                );
+              }
+              for (const row of reportCustomTargetRows) {
+                noContentSummaryParts.push(`${row.target.label} (${formatTargetValue(row.value, row.target.unit)})`);
+              }
+              const displaySummary =
+                entrySummary
+                || noContentSummaryParts.join(" · ")
+                || tr(locale, "No food or exercise items recorded.", "לא נרשמו פריטי מזון או פעילות.");
+
               return (
-                <article
-                  key={report.id}
-                  className={`rounded-xl border p-4 ${isBeingEdited ? "border-teal-400 bg-teal-50/40 ring-1 ring-teal-300" : "border-slate-200 bg-slate-50"}`}
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900">
-                        {formatDateTimeForLocale(report.report_at, locale)}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-600">{tr(locale, "Confidence", "רמת ביטחון")}: {formatConfidence(report.parse_confidence, locale)}</p>
-                    </div>
-                    {isBeingEdited ? (
-                      <span className="rounded-full border border-teal-300 bg-teal-100 px-2.5 py-1 text-xs font-semibold text-teal-800">
-                        {tr(locale, "Editing this entry", "עריכת רשומה זו")}
+                <div key={report.id} className="space-y-2">
+                  <details
+                    open={isBeingEdited}
+                    className={`rounded-xl border ${isBeingEdited ? "border-teal-400 bg-teal-50/40 ring-1 ring-teal-300" : "border-slate-200 bg-slate-50"}`}
+                  >
+                    <summary className="flex cursor-pointer list-none items-center gap-3 p-4 [&::-webkit-details-marker]:hidden">
+                      <span className="min-w-0 flex-1">
+                        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <span dir="ltr" className="text-sm font-semibold text-slate-900">
+                            {formatTimeForLocale(report.report_at, locale)}
+                          </span>
+                          {isBeingEdited ? (
+                            <span className="rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-semibold text-teal-800">
+                              {tr(locale, "Editing", "בעריכה")}
+                            </span>
+                          ) : null}
+                        </span>
+                        {/* No truncate here (deliberately, on purpose) - a
+                            single-line ellipsis silently hid later items
+                            once the joined summary ran past one line's
+                            width, e.g. "Pear (1 unit) · Soda (1 glass)"
+                            collapsing to just "Pear (1 unit) ..." with no
+                            indication anything followed. Reported as "I
+                            added soda from my saved list but don't see it
+                            in the log" - it WAS saved (and did count toward
+                            the day's totals), just invisible at a glance.
+                            Wrapping instead of clipping means the collapsed
+                            row can grow to two or more lines when an entry
+                            holds several items, which is the honest
+                            trade-off for never silently hiding one. */}
+                        <span className="mt-0.5 block text-xs text-slate-600">
+                          {displaySummary}
+                        </span>
                       </span>
-                    ) : null}
-                  </div>
+                      {valuePillText ? (
+                        <span dir="ltr" className="shrink-0 rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
+                          {valuePillText}
+                        </span>
+                      ) : null}
+                      {/* Two earlier placements both put the entry-kind icon at the
+                          row's OTHER edge from the chevron (first a standalone h-9 w-9
+                          slot, then inline before the time) - in RTL that content block
+                          sits flush against the row's edge regardless, so either way it
+                          mirrored the chevron across the row and read as two separate
+                          tap targets. Grouping both icons together at the same edge
+                          (trailing, right next to the chevron) removes that symmetry -
+                          there's only one icon-bearing corner now. */}
+                      <span className="flex shrink-0 items-center gap-1 text-slate-400">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          {entryIconPaths(entryKind)}
+                        </svg>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M9 6l6 6-6 6" />
+                        </svg>
+                      </span>
+                    </summary>
 
-                  <p className="mt-3 rounded-lg bg-white px-3 py-2 text-sm text-slate-700">
-                    {entrySummary || tr(locale, "No food or exercise items recorded.", "לא נרשמו פריטי מזון או פעילות.")}
-                  </p>
+                    <div className="space-y-3 border-t border-dashed border-slate-300 px-4 pb-4 pt-3">
+                      {fullConversation ? (
+                        <details>
+                          <summary className="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-700">
+                            {tr(locale, "View full conversation", "הצגת השיחה המלאה")}
+                          </summary>
+                          <p
+                            dir={locale === "he" ? "rtl" : "ltr"}
+                            className="mt-2 whitespace-pre-line rounded-lg bg-white px-3 py-2 text-xs text-slate-600"
+                          >
+                            {buildDisplayConversation(fullConversation, locale, userDisplayName)}
+                          </p>
+                        </details>
+                      ) : null}
 
-                  {fullConversation ? (
-                    <details className="mt-2">
-                      <summary className="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-700">
-                        {tr(locale, "View full conversation", "הצגת השיחה המלאה")}
-                      </summary>
-                      <p
-                        dir={locale === "he" ? "rtl" : "ltr"}
-                        className="mt-2 whitespace-pre-line rounded-lg bg-white px-3 py-2 text-xs text-slate-600"
-                      >
-                        {buildDisplayConversation(fullConversation, locale, userDisplayName)}
-                      </p>
-                    </details>
-                  ) : null}
+                      {hasWeight && chartPreferences.showWeightTrend ? (
+                        <div className="rounded-lg border border-slate-200 bg-white p-3">
+                          <p className="text-xs font-semibold text-slate-800">
+                            {tr(locale, "Weight trend (last 30 days)", "מגמת משקל (30 הימים האחרונים)")}
+                          </p>
+                          <div className="mt-2">
+                            <DailyReportWeightTrend locale={locale} points={weightHistory} />
+                          </div>
+                        </div>
+                      ) : null}
 
-                  {editableFoodItems.length > 0 || editableExerciseItems.length > 0 ? (
-                    <details className="mt-2">
-                      <summary className="cursor-pointer text-xs font-medium text-teal-700 hover:text-teal-800">
-                        {tr(locale, "Edit quantities", "עריכת כמויות")}
-                      </summary>
-                      <form
-                        action={adjustDailyReportItemQuantitiesAction}
-                        className="mt-2 space-y-2 rounded-lg border border-teal-200 bg-teal-50/40 p-3"
-                      >
-                        <input type="hidden" name="report_id" value={report.id} />
-                        {resolvedSearchParams.date ? (
-                          <input type="hidden" name="selected_date" value={resolvedSearchParams.date} />
+                      {/* The full nutrient/exercise grid only earns its
+                          place when there's actual food or exercise data to
+                          show - for a weight-only (or target-only) report
+                          every one of these fields but one is a meaningless
+                          zero, which read as a wall of irrelevant noise.
+                          Weight-only and target-only reports below get just
+                          their own relevant value(s) instead. */}
+                      {hasFood || hasExercise ? (
+                        <div className="grid gap-2 text-xs text-slate-700 sm:grid-cols-2 lg:grid-cols-4">
+                          <p>{tr(locale, "Reported weight", "משקל מדווח")}: <span className="font-semibold text-slate-900">{report.reported_weight_kg === null ? tr(locale, "n/a", "לא זמין") : formatNumber(report.reported_weight_kg, locale, 2)}</span>{report.reported_weight_kg === null ? "" : ` ${formatMeasurementUnit("kg", locale)}`}</p>
+                          <p>{tr(locale, "Calories", "קלוריות")}: <span className="font-semibold text-slate-900">{formatNumber(report.calories_kcal, locale, 0)}</span> {tr(locale, "kcal", 'קק"ל')}</p>
+                          <p>{tr(locale, "Protein", "חלבון")}: <span className="font-semibold text-slate-900">{formatNumber(report.protein_g, locale, 1)}</span> {formatMeasurementUnit("g", locale)}</p>
+                          <p>{tr(locale, "Water", "מים")}: <span className="font-semibold text-slate-900">{formatNumber(report.water_ml, locale, 0)}</span> {formatMeasurementUnit("ml", locale)}</p>
+                          <p>{tr(locale, "Exercise", "פעילות")}: <span className="font-semibold text-slate-900">{formatNumber(report.exercise_minutes, locale, 0)}</span> {formatMeasurementUnit("min", locale)}</p>
+                          <p>{tr(locale, "Magnesium", "מגנזיום")}: <span className="font-semibold text-slate-900">{formatNumber(report.magnesium_mg, locale, 1)}</span> {formatMeasurementUnit("mg", locale)}</p>
+                          <p>{tr(locale, "Potassium", "אשלגן")}: <span className="font-semibold text-slate-900">{formatNumber(report.potassium_mg, locale, 1)}</span> {formatMeasurementUnit("mg", locale)}</p>
+                          <p>{tr(locale, "Iron", "ברזל")}: <span className="font-semibold text-slate-900">{formatNumber(report.iron_mg, locale, 2)}</span> {formatMeasurementUnit("mg", locale)}</p>
+                          <p>{tr(locale, "Zinc", "אבץ")}: <span className="font-semibold text-slate-900">{formatNumber(report.zinc_mg, locale, 2)}</span> {formatMeasurementUnit("mg", locale)}</p>
+                        </div>
+                      ) : hasWeight ? (
+                        <p className="text-xs text-slate-700">
+                          {tr(locale, "Reported weight", "משקל מדווח")}: <span className="font-semibold text-slate-900">{formatNumber(report.reported_weight_kg, locale, 2)}</span> {formatMeasurementUnit("kg", locale)}
+                        </p>
+                      ) : null}
+
+                      {/* Folded in here (rather than as separate rows after
+                          this entry's details, outside its Edit/Delete
+                          controls) so a tracked value like sleep duration is
+                          part of the same expandable, deletable, editable
+                          entry instead of looking like a disconnected,
+                          non-interactive fragment with no way to manage it. */}
+                      {reportCustomTargetRows.length > 0 ? (
+                        <div className="space-y-1.5">
+                          {reportCustomTargetRows.map(({ target, value }) => (
+                            <p key={target.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
+                              <span>{target.label}</span>
+                              <span dir="ltr" className="font-semibold text-slate-900">{formatTargetValue(value, target.unit)}</span>
+                            </p>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {/* Every action for this entry lives together here as
+                          plain colored text, not a row of bordered buttons -
+                          one consistent, lightweight "form" for edit/save/
+                          delete rather than a mix of button-styled and
+                          text-styled controls doing conceptually similar
+                          things. Each keeps its own color as the only visual
+                          distinction (teal for editing, cyan for saving to
+                          the list, rose for the destructive action). */}
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                        {editableFoodItems.length > 0 || editableExerciseItems.length > 0 || hasWeight || reportCustomTargetRows.length > 0 ? (
+                          <details>
+                            <summary className="cursor-pointer text-xs font-medium text-teal-700 hover:text-teal-800">
+                              {tr(locale, "Edit", "עריכה")}
+                            </summary>
+                            <form
+                              action={adjustDailyReportItemQuantitiesAction}
+                              className="mt-2 w-full space-y-2 rounded-lg border border-teal-200 bg-teal-50/40 p-3"
+                            >
+                              <input type="hidden" name="report_id" value={report.id} />
+                              {resolvedSearchParams.date ? (
+                                <input type="hidden" name="selected_date" value={resolvedSearchParams.date} />
+                              ) : null}
+                              {/* Weight and custom targets (sleep, etc.) are
+                                  plain scalars on the report row, not items in
+                                  an array - adjustDailyReportItemQuantitiesAction
+                                  only touches them when their field is present
+                                  at all, so these only render when this report
+                                  actually has that kind of value to begin with.
+                                  Clearing the field removes it from this report
+                                  entirely, same as zeroing a food quantity. */}
+                              {hasWeight ? (
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="min-w-[120px] flex-1 text-xs text-slate-700">{tr(locale, "Weight", "משקל")}</span>
+                                  <input
+                                    type="number"
+                                    name="reported_weight_kg"
+                                    min={20}
+                                    max={400}
+                                    step="0.1"
+                                    inputMode="decimal"
+                                    defaultValue={report.reported_weight_kg ?? undefined}
+                                    className="w-24 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none ring-teal-600 focus:ring-2"
+                                  />
+                                  <span className="text-xs text-slate-500">{formatMeasurementUnit("kg", locale)}</span>
+                                </div>
+                              ) : null}
+                              {reportCustomTargetRows.map(({ target, value }) => (
+                                <div key={target.id} className="flex flex-wrap items-center gap-2">
+                                  <span className="min-w-[120px] flex-1 text-xs text-slate-700">{target.label}</span>
+                                  <input
+                                    type="number"
+                                    name={`custom_target_value__${target.id}`}
+                                    step="any"
+                                    inputMode="decimal"
+                                    defaultValue={value}
+                                    className="w-24 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none ring-teal-600 focus:ring-2"
+                                  />
+                                  <span className="text-xs text-slate-500">{formatMeasurementUnit(target.unit, locale)}</span>
+                                </div>
+                              ))}
+                              {editableFoodItems.map((item) => (
+                                <div key={`food-${item.index}`} className="flex flex-wrap items-center gap-2">
+                                  <span className="min-w-[120px] flex-1 text-xs text-slate-700">{item.name}</span>
+                                  <input
+                                    type="number"
+                                    name={`food_quantity__${item.index}`}
+                                    min={0}
+                                    step="any"
+                                    defaultValue={item.quantity}
+                                    className="w-24 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none ring-teal-600 focus:ring-2"
+                                  />
+                                  <span className="text-xs text-slate-500">{formatDefaultUnit(item.unit, locale)}</span>
+                                </div>
+                              ))}
+                              {editableExerciseItems.map((item) => (
+                                <div key={`exercise-${item.index}`} className="flex flex-wrap items-center gap-2">
+                                  <span className="min-w-[120px] flex-1 text-xs text-slate-700">{item.name}</span>
+                                  <input
+                                    type="number"
+                                    name={`exercise_minutes__${item.index}`}
+                                    min={0}
+                                    step="any"
+                                    defaultValue={item.minutes}
+                                    className="w-24 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none ring-teal-600 focus:ring-2"
+                                  />
+                                  <span className="text-xs text-slate-500">{tr(locale, "min", "דק'")}</span>
+                                </div>
+                              ))}
+                              <button
+                                type="submit"
+                                className="rounded-lg border border-teal-300 px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50"
+                              >
+                                {tr(locale, "Save", "שמור")}
+                              </button>
+                            </form>
+                          </details>
                         ) : null}
-                        {editableFoodItems.map((item) => (
-                          <div key={`food-${item.index}`} className="flex flex-wrap items-center gap-2">
-                            <span className="min-w-[120px] flex-1 text-xs text-slate-700">{item.name}</span>
-                            <input
-                              type="number"
-                              name={`food_quantity__${item.index}`}
-                              min={0}
-                              step="any"
-                              defaultValue={item.quantity}
-                              className="w-24 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none ring-teal-600 focus:ring-2"
-                            />
-                            <span className="text-xs text-slate-500">{formatDefaultUnit(item.unit, locale)}</span>
-                          </div>
-                        ))}
-                        {editableExerciseItems.map((item) => (
-                          <div key={`exercise-${item.index}`} className="flex flex-wrap items-center gap-2">
-                            <span className="min-w-[120px] flex-1 text-xs text-slate-700">{item.name}</span>
-                            <input
-                              type="number"
-                              name={`exercise_minutes__${item.index}`}
-                              min={0}
-                              step="any"
-                              defaultValue={item.minutes}
-                              className="w-24 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none ring-teal-600 focus:ring-2"
-                            />
-                            <span className="text-xs text-slate-500">{tr(locale, "min", "דק'")}</span>
-                          </div>
-                        ))}
-                        <button
-                          type="submit"
-                          className="rounded-lg border border-teal-300 px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50"
-                        >
-                          {tr(locale, "Save quantities", "שמירת כמויות")}
-                        </button>
-                      </form>
-                    </details>
-                  ) : null}
 
-                  <div className="mt-3 grid gap-2 text-xs text-slate-700 sm:grid-cols-2 lg:grid-cols-4">
-                    <p>{tr(locale, "Reported weight", "משקל מדווח")}: <span className="font-semibold text-slate-900">{report.reported_weight_kg === null ? tr(locale, "n/a", "לא זמין") : formatNumber(report.reported_weight_kg, locale, 2)}</span>{report.reported_weight_kg === null ? "" : ` ${formatMeasurementUnit("kg", locale)}`}</p>
-                    <p>{tr(locale, "Calories", "קלוריות")}: <span className="font-semibold text-slate-900">{formatNumber(report.calories_kcal, locale, 0)}</span> {tr(locale, "kcal", 'קק"ל')}</p>
-                    <p>{tr(locale, "Protein", "חלבון")}: <span className="font-semibold text-slate-900">{formatNumber(report.protein_g, locale, 1)}</span> {formatMeasurementUnit("g", locale)}</p>
-                    <p>{tr(locale, "Water", "מים")}: <span className="font-semibold text-slate-900">{formatNumber(report.water_ml, locale, 0)}</span> {formatMeasurementUnit("ml", locale)}</p>
-                    <p>{tr(locale, "Exercise", "פעילות")}: <span className="font-semibold text-slate-900">{formatNumber(report.exercise_minutes, locale, 0)}</span> {formatMeasurementUnit("min", locale)}</p>
-                    <p>{tr(locale, "Magnesium", "מגנזיום")}: <span className="font-semibold text-slate-900">{formatNumber(report.magnesium_mg, locale, 1)}</span> {formatMeasurementUnit("mg", locale)}</p>
-                    <p>{tr(locale, "Potassium", "אשלגן")}: <span className="font-semibold text-slate-900">{formatNumber(report.potassium_mg, locale, 1)}</span> {formatMeasurementUnit("mg", locale)}</p>
-                    <p>{tr(locale, "Iron", "ברזל")}: <span className="font-semibold text-slate-900">{formatNumber(report.iron_mg, locale, 2)}</span> {formatMeasurementUnit("mg", locale)}</p>
-                    <p>{tr(locale, "Zinc", "אבץ")}: <span className="font-semibold text-slate-900">{formatNumber(report.zinc_mg, locale, 2)}</span> {formatMeasurementUnit("mg", locale)}</p>
-                  </div>
+                        {/* "Edit in chat" reopens the full compose form/chat -
+                            genuinely useful for a meal/exercise entry (fix a
+                            misidentified item's name, add something new,
+                            attach a corrected photo - things the inline
+                            "Edit" above can't do, since it only adjusts
+                            numbers on items that already exist). A
+                            weight-only or target-only entry has no such
+                            item list to redescribe - inline "Edit" already
+                            covers the entire thing (it's just a number), so
+                            offering a second, heavier way to do the exact
+                            same edit would be redundant rather than useful.
+                            Kept immediately next to "Edit" (rather than
+                            after "Add to Saved List") since both are edit
+                            actions on the same entry - grouping them avoids
+                            the two "Edit..." labels reading as unrelated. */}
+                        {hasFood || hasExercise ? (
+                          <Link
+                            href={editHref}
+                            prefetch={false}
+                            className="text-xs font-medium text-teal-700 hover:text-teal-800"
+                          >
+                            {tr(locale, "Edit in chat", "עריכה בצ'אט")}
+                          </Link>
+                        ) : null}
 
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <details>
-                      <summary className="cursor-pointer list-none rounded-lg border border-cyan-300 px-3 py-2 text-xs font-semibold text-cyan-700 hover:bg-cyan-50 [&::-webkit-details-marker]:hidden">
-                        {tr(locale, "Add to Saved List", "הוספה לרשימה השמורה")}
-                      </summary>
-                      <form action={addReportToDefaultsAction} className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-cyan-200 bg-cyan-50/40 px-2 py-2">
-                        <input type="hidden" name="report_id" value={report.id} />
-                        <input
-                          type="text"
-                          name="default_name"
-                          maxLength={80}
-                          placeholder={tr(locale, "e.g. My morning eggs breakfast", "לדוגמה: ארוחת בוקר ביצים שלי")}
-                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700"
-                        />
-                        <button
-                          type="submit"
-                          className="rounded-lg border border-cyan-300 px-3 py-2 text-xs font-semibold text-cyan-700 hover:bg-cyan-50"
-                        >
-                          {tr(locale, "Save to Saved List", "שמירה לרשימה השמורה")}
-                        </button>
-                      </form>
-                    </details>
+                        {/* "Add to Saved List" copies this entry's food/
+                            exercise items into a reusable default - a
+                            weight-only or target-only entry has none of
+                            those, so there'd be nothing meaningful to save
+                            (a "default" of 0 calories representing a weigh-
+                            in doesn't mean anything as a reusable item). */}
+                        {hasFood || hasExercise ? (
+                          <details>
+                            <summary className="cursor-pointer text-xs font-medium text-cyan-700 hover:text-cyan-800">
+                              {tr(locale, "Add to Saved List", "הוספה לרשימה השמורה")}
+                            </summary>
+                            <form action={addReportToDefaultsAction} className="mt-2 flex w-full flex-wrap items-center gap-2 rounded-lg border border-cyan-200 bg-cyan-50/40 px-2 py-2">
+                              <input type="hidden" name="report_id" value={report.id} />
+                              <input
+                                type="text"
+                                name="default_name"
+                                maxLength={80}
+                                placeholder={tr(locale, "e.g. My morning eggs breakfast", "לדוגמה: ארוחת בוקר ביצים שלי")}
+                                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700"
+                              />
+                              <button
+                                type="submit"
+                                className="rounded-lg border border-cyan-300 px-3 py-2 text-xs font-semibold text-cyan-700 hover:bg-cyan-50"
+                              >
+                                {tr(locale, "Save to Saved List", "שמירה לרשימה השמורה")}
+                              </button>
+                            </form>
+                          </details>
+                        ) : null}
 
-                    <Link
-                      href={editHref}
-                      prefetch={false}
-                      className="rounded-lg border border-teal-300 px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50"
-                    >
-                      {tr(locale, "Edit entry", "עריכת רשומה")}
-                    </Link>
-
-                    <form action={deleteDailyReportAction}>
-                      <input type="hidden" name="report_id" value={report.id} />
-                      <button
-                        type="submit"
-                        className="rounded-lg border border-rose-300 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50"
-                      >
-                        {tr(locale, "Delete entry", "מחיקת רשומה")}
-                      </button>
-                    </form>
-                  </div>
-                </article>
+                        <form action={deleteDailyReportAction}>
+                          <input type="hidden" name="report_id" value={report.id} />
+                          <button
+                            type="submit"
+                            className="text-xs font-medium text-rose-700 hover:text-rose-800"
+                          >
+                            {tr(locale, "Delete entry", "מחיקת רשומה")}
+                          </button>
+                        </form>
+                      </div>
+                    </div>
+                  </details>
+                </div>
               );
             })}
           </div>
         )}
+      </section>
+
+      {/* No card here below `sm` at all - mobile's Weight/Sleep are
+          portaled up to the summary section, Date & time lives inside the
+          chat sheet, and the chat trigger/sheet themselves are portaled to
+          document.body. This still mounts DailyReportForm (it owns the
+          actual <form>, hidden fields, and the chat panel), just without a
+          visible wrapper box around it, since there's nothing left of its
+          own to show in this spot on mobile. Desktop keeps this as a real
+          card - it doesn't have a floating bubble, so its inline chat panel
+          still needs a home. */}
+      <section className="hidden sm:mt-6 sm:block sm:rounded-2xl sm:border sm:border-slate-200 sm:bg-white sm:p-6">
+        <DailyReportForm
+          // Includes selectedDate so navigating to a different day remounts
+          // the form fresh from that day's own server-provided state
+          // (weight placeholder, todaysCustomTargetValues, etc.) instead of
+          // carrying over whatever was typed/shown for the previously
+          // viewed day - see todaysCustomTargetValues' own comment on why
+          // that matters for the Sleep-duration field specifically.
+          key={`${editingReport?.id ?? "new"}-${selectedDate}`}
+          defaultItems={defaultItems ?? []}
+          aiAvailable={aiAvailable}
+          locale={locale}
+          customTargets={loggableCustomTargets}
+          currentWeightKg={
+            lastRecordedWeightKg !== null
+              ? Number(lastRecordedWeightKg)
+              : profileRow?.weight_kg
+                ? Number(profileRow.weight_kg)
+                : null
+          }
+          todaysCustomTargetValues={todaysCustomTargetValues}
+          editingReport={editingReport}
+          selectedDateParam={resolvedSearchParams.date}
+        />
       </section>
     </main>
   );

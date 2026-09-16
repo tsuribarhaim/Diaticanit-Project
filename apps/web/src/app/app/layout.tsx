@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { AppBottomNav } from "@/components/app-bottom-nav";
 import { AppNav } from "@/components/app-nav";
 import { UnsavedPreviewProvider } from "@/components/unsaved-preview-context";
 import { directionForLocale, normalizeLocale } from "@/lib/locale";
@@ -31,7 +32,16 @@ export default async function ProtectedAppLayout({
     <div lang={locale} dir={directionForLocale(locale)}>
       <UnsavedPreviewProvider locale={locale}>
         {user ? <AppNav locale={locale} /> : null}
-        {children}
+        {/* Reserves space for AppBottomNav's fixed height below `sm`, where
+            it replaces AppNav - zeroed out above that breakpoint, where
+            AppNav (not fixed-positioned) needs no such reservation. Adds
+            env(safe-area-inset-bottom) on top of the nav's own ~52px base
+            height (icon + label + padding) rather than a flat guess, since
+            AppBottomNav grows taller by that same inset on notched phones -
+            a fixed px value would undershoot there and the nav would cover
+            the page's last few pixels of content. */}
+        <div className="pb-[calc(3.25rem+env(safe-area-inset-bottom))] sm:pb-0">{children}</div>
+        {user ? <AppBottomNav locale={locale} /> : null}
       </UnsavedPreviewProvider>
     </div>
   );
