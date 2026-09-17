@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { GuardedLink } from "@/components/unsaved-preview-context";
+import { UserAvatar } from "@/components/user-avatar";
 import { tr, type AppLocale } from "@/lib/locale";
 
 const CONFIRM_MESSAGE_EN = "You have an unsaved conversation or generated target plan on the Targets page that hasn't been locked in yet. Leave this page anyway?";
@@ -17,7 +18,15 @@ const CONFIRM_MESSAGE_HE = "יש לך שיחה או תכנית יעדים שנו
  * get their own tab - they live inside the Profile page instead, so Profile
  * remains the one place that's always reachable on mobile.
  */
-export function AppBottomNav({ locale }: { locale: AppLocale }) {
+export function AppBottomNav({
+  locale,
+  avatarColor,
+  name,
+}: {
+  locale: AppLocale;
+  avatarColor?: string | null;
+  name?: string | null;
+}) {
   const pathname = usePathname();
 
   if (pathname?.startsWith("/app/onboarding")) {
@@ -40,12 +49,12 @@ export function AppBottomNav({ locale }: { locale: AppLocale }) {
       href: "/app/profile",
       label: tr(locale, "Profile", "פרופיל"),
       isActive: pathname?.startsWith("/app/profile") ?? false,
-      icon: (
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <circle cx="12" cy="8" r="4" />
-          <path d="M4 20c1.5-4 5-6 8-6s6.5 2 8 6" />
-        </svg>
-      ),
+      // The user's own picture/initial doubles as this tab's icon - "which
+      // account is this" and "go to your profile" are the same destination
+      // here, so there's no need for a separate persistent avatar element
+      // the way the desktop nav (with its own list of links, not a tab bar)
+      // needed one.
+      icon: <UserAvatar avatarColor={avatarColor} name={name} className="h-5 w-5 text-[10px]" />,
     },
     {
       href: "/app/targets",

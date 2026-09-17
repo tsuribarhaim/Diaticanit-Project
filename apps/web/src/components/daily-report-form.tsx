@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createPortal } from "react-dom";
 
 import {
@@ -13,7 +13,7 @@ import { DailyReportDefaultsPicker, type SelectedSavedListItem } from "@/compone
 import { SubmitButton } from "@/components/daily-report-submit-button";
 import { TargetsStaleModal } from "@/components/targets-stale-modal";
 import { useUnsavedPreview } from "@/components/unsaved-preview-context";
-import { formatDefaultUnit, formatMeasurementUnit, tr, type AppLocale } from "@/lib/locale";
+import { directionForLocale, formatDefaultUnit, formatMeasurementUnit, tr, type AppLocale } from "@/lib/locale";
 
 const initialState: DailyReportActionState = {};
 
@@ -48,6 +48,27 @@ function getLocalDateTimeValue(date: Date): string {
   return new Date(copy.getTime() - offsetMs).toISOString().slice(0, 16);
 }
 
+/**
+ * The wall-clock value a brand-new (non-edit) report defaults to - "now",
+ * but with the calendar day forced to whatever date is currently being
+ * browsed (selectedDateParam, e.g. from the "Jump to a date" picker or the
+ * prev/next day arrows) instead of always the real current day. Without
+ * this, saving a new entry while browsing a past day silently logged it
+ * under TODAY (wrong graphs, wrong list, nowhere near where the user was
+ * actually looking) - confirmed as the cause of "a log I saved isn't
+ * showing up" reports. Keeps the actual current time-of-day (only the date
+ * part is swapped) - there's no meaningful "what time did this happen"
+ * signal for a backdated entry beyond "whenever the user is currently
+ * logging it".
+ */
+function buildReportAtValueForSelectedDate(selectedDateParam?: string): string {
+  const nowValue = getLocalDateTimeValue(new Date());
+  if (selectedDateParam && selectedDateParam !== nowValue.slice(0, 10)) {
+    return `${selectedDateParam}T${nowValue.slice(11)}`;
+  }
+  return nowValue;
+}
+
 export type LoggableCustomTarget = { id: string; label: string; unit: string };
 
 export type EditingDailyReport = {
@@ -57,6 +78,10 @@ export type EditingDailyReport = {
   reportAt: string;
   selectedDefaults: Array<{ id: string; quantity: number }>;
   customTargetValues: Record<string, number>;
+  /** Plain-text, locale-formatted line-per-item recap of exactly what this
+   * report currently contains (see page.tsx) - shown in the chat panel's
+   * edit-mode intro so the user sees what's in the entry immediately. */
+  itemsSummaryText: string;
 };
 
 function toLocalDateTimeValue(isoString: string): string {
@@ -73,6 +98,8 @@ export function DailyReportForm({
   todaysCustomTargetValues = {},
   editingReport = null,
   selectedDateParam,
+  userFirstName,
+  userGender,
 }: {
   defaultItems: DailyReportDefaultItem[];
   aiAvailable: boolean;
@@ -100,6 +127,12 @@ export function DailyReportForm({
    * a hidden field so saveDailyReportAction's post-edit redirect returns to
    * the same day's view instead of silently jumping to today. */
   selectedDateParam?: string;
+  /** For the chat panel's own static greeting/intro copy (see
+   * DailyReportChatPanel) - an occasional first-name mention and
+   * grammatically correct Hebrew addressing, mirroring the same rules the
+   * AI chat itself now follows (see lib/ai/persona.ts). */
+  userFirstName?: string | null;
+  userGender?: "male" | "female" | null;
 }) {
   // The critical "which report does this save update" decision must never
   // depend on editingReport (a server-rendered prop) alone: Next.js's
@@ -111,12 +144,66 @@ export function DailyReportForm({
   // failure mode than briefly showing stale seed content. Reading the id
   // straight from the live URL sidesteps that: useSearchParams() always
   // reflects the browser's actual current URL, never a cached RSC payload.
-  const liveEditReportId = useSearchParams().get("edit");
+  const searchParams = useSearchParams();
+  const liveEditReportId = searchParams.get("edit");
+  const highlightReportId = searchParams.get("highlight");
+  const router = useRouter();
+  // The stale-cache risk described above isn't just theoretical for the
+  // save-target decision - it was confirmed live: switching from editing one
+  // report straight to "Edit in chat" on a different one sometimes kept
+  // showing the FIRST report's chat history/weight/custom targets even
+  // though the address bar (and liveEditReportId) already pointed at the
+  // second. This whole component still seeds its state from the editingReport
+  // PROP below (that's the only content that actually differs per report,
+  // and threading liveEditReportId through every one of those seeds instead
+  // would be far more invasive) - so the moment a mismatch between the live
+  // URL and what actually got rendered is detected, force a real server
+  // round-trip via router.refresh() rather than let anything seed from data
+  // that belongs to a different report. This never fires in the normal case
+  // (a fresh server render already has them matching) and self-clears the
+  // instant a matching render lands. Only ever retried once per distinct
+  // liveEditReportId (not on every render while it stays mismatched) - a
+  // stale-cache mismatch is expected to resolve on that first refresh, but a
+  // report that's genuinely gone (e.g. deleted while ?edit= is still in the
+  // URL) never will, and refreshing forever on every render would be an
+  // infinite loop rather than a fix.
+  const attemptedRefreshForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (liveEditReportId === (editingReport?.id ?? null)) return;
+    if (attemptedRefreshForRef.current === liveEditReportId) return;
+    attemptedRefreshForRef.current = liveEditReportId;
+    router.refresh();
+  }, [liveEditReportId, editingReport?.id, router]);
   const [state, formAction] = useActionState(saveDailyReportAction, initialState);
+  // Scrolls to and briefly highlights whichever report row a save just
+  // touched - state.savedReportId for a brand-new report (saved in place,
+  // no navigation), or the `highlight` URL param for an edit (which
+  // redirects instead - see buildDailyReportRedirectPath). Direct DOM
+  // manipulation rather than React state because the target row is
+  // rendered by the PAGE (a Server Component, a sibling of this whole
+  // form, not a descendant of it) - there's no shared React tree to pass a
+  // "highlight this one" prop through, but both ultimately land in the same
+  // DOM, which this can reach into once mounted. Uses classList directly
+  // (not a style/class toggling via React state) for the same reason: nothing
+  // here owns that DOM node.
+  useEffect(() => {
+    const targetId = state.savedReportId ?? highlightReportId;
+    if (!targetId) return;
+
+    const element = document.getElementById(`daily-report-entry-${targetId}`);
+    if (!element) return;
+
+    element.scrollIntoView({ behavior: "smooth", block: "center" });
+    element.classList.add("ring-2", "ring-teal-500", "bg-teal-50");
+    const timeoutId = setTimeout(() => {
+      element.classList.remove("ring-2", "ring-teal-500", "bg-teal-50");
+    }, 2500);
+    return () => clearTimeout(timeoutId);
+  }, [state.savedReportId, highlightReportId]);
   const [reportText, setReportText] = useState(() => editingReport?.rawReportText ?? "");
   const [chatResetKey, setChatResetKey] = useState(0);
   const [reportAtValue, setReportAtValue] = useState(() =>
-    editingReport ? toLocalDateTimeValue(editingReport.reportAt) : getLocalDateTimeValue(new Date()),
+    editingReport ? toLocalDateTimeValue(editingReport.reportAt) : buildReportAtValueForSelectedDate(selectedDateParam),
   );
   const [fallbackSelectedSavedListItems, setFallbackSelectedSavedListItems] = useState<SelectedSavedListItem[]>([]);
   // Deliberately NOT pre-filled with the user's current weight as a
@@ -145,6 +232,29 @@ export function DailyReportForm({
   // reading a ref's .current there is a lint error (react-hooks/refs) -
   // it's only ever written from an effect anyway, exactly what state is for.
   const [weightBaseline, setWeightBaseline] = useState(editingWeightValue);
+  // currentWeightKg reflects whatever the server currently considers the
+  // profile's current weight - it can change for reasons OTHER than this
+  // form's own save, e.g. deleting the report that held the value currently
+  // sitting in this field (see weightValue's own comment on why a save
+  // deliberately leaves it populated) - nothing else clears the field when
+  // that happens, so it kept showing a now-deleted number indefinitely
+  // (reported as "I deleted the weight entry and the field still shows
+  // it"). Adjusted during render (same pattern as prevState/prevFeedbackKey
+  // elsewhere in this codebase) rather than in an effect, since setState
+  // directly inside an effect body is a lint error here. Only resyncs when
+  // there's no in-progress unsaved edit (weightValue === weightBaseline) -
+  // this must never overwrite something the user is actively typing just
+  // because the background "current" value happened to change from
+  // something unrelated.
+  const [prevCurrentWeightKg, setPrevCurrentWeightKg] = useState(currentWeightKg);
+  if (currentWeightKg !== prevCurrentWeightKg) {
+    setPrevCurrentWeightKg(currentWeightKg);
+    const currentWeightString = currentWeightKg != null ? String(currentWeightKg) : "";
+    if (weightValue === weightBaseline && weightValue !== "" && weightValue !== currentWeightString) {
+      setWeightValue("");
+      setWeightBaseline("");
+    }
+  }
   // Custom target inputs (Sleep duration, etc.) - controlled, and seeded
   // from whichever is relevant: the specific report being edited, or
   // otherwise whatever's already been logged for the day being viewed (see
@@ -257,7 +367,7 @@ export function DailyReportForm({
     setPrevState(state);
     if (state.success) {
       setReportText("");
-      setReportAtValue(getLocalDateTimeValue(new Date()));
+      setReportAtValue(buildReportAtValueForSelectedDate(selectedDateParam));
       setChatResetKey((key) => key + 1);
       setFallbackSelectedSavedListItems([]);
       // weightValue/customTargetValues themselves are intentionally NOT
@@ -302,7 +412,13 @@ export function DailyReportForm({
           had the exact same latent bug already, fixed here too. */}
       {isMounted && (state.targetsStaleChanges?.length || pendingRangeConfirm)
         ? createPortal(
-            <>
+            // dir set explicitly - the app only applies dir="rtl"/"ltr" on a
+            // wrapper <div> inside app/app/layout.tsx, not on <html>/<body>,
+            // so a portal straight to document.body escapes it and falls
+            // back to the document's default LTR direction (same root cause
+            // found and fixed for the daily-report chat panel's own mobile
+            // sheet/dialogs).
+            <div dir={directionForLocale(locale)}>
               {state.targetsStaleChanges?.length ? (
                 <TargetsStaleModal locale={locale} changes={state.targetsStaleChanges} />
               ) : null}
@@ -344,12 +460,17 @@ export function DailyReportForm({
                   </div>
                 </div>
               ) : null}
-            </>,
+            </div>,
             document.body,
           )
         : null}
 
       {liveEditReportId ? <input type="hidden" name="edit_report_id" value={liveEditReportId} /> : null}
+      {/* Lets the chat panel's Save button swap to deleteDailyReportAction
+          (a plain report_id lookup, unrelated to edit_report_id above) via
+          formAction when the AI confirms a "delete the whole entry" request
+          - see DeleteEntrySubmitButton in daily-report-chat-panel.tsx. */}
+      {liveEditReportId ? <input type="hidden" name="report_id" value={liveEditReportId} /> : null}
       {editingReport ? (
         // Carries forward whatever saved-list items originally contributed
         // to this report's totals - the picker below only lets the user
@@ -380,9 +501,11 @@ export function DailyReportForm({
 
       {/* No visible date/time picker anywhere in this form (AI or
           fallback branch) - reportAtValue is set once above, either to
-          "now" for a new report or preserved from editingReport.reportAt
-          when editing an existing one, and that's the only timestamp a
-          report ever gets. Date is only ever shown two other ways: the
+          "now" on whatever day is currently being browsed (see
+          buildReportAtValueForSelectedDate) for a new report, or preserved
+          from editingReport.reportAt when editing an existing one, and
+          that's the only timestamp a report ever gets. Date is only ever
+          shown two other ways: the
           date-only navigation at the top of the daily-report page (to
           browse past days) and each already-saved entry's own displayed
           timestamp - neither is an editable control on this form. */}
@@ -418,7 +541,32 @@ export function DailyReportForm({
                   step="0.1"
                   inputMode="decimal"
                   value={weightValue}
-                  onChange={(event) => setWeightValue(event.target.value)}
+                  onChange={(event) => {
+                    setWeightValue(event.target.value);
+                    // The browser's own native validation bubble (from
+                    // min/max/step below) always renders in the BROWSER's
+                    // own language, never this app's selected locale -
+                    // reported as an English message ("round to 64.4 or
+                    // 64.5") showing up while using the app in Hebrew.
+                    // setCustomValidity replaces just the message text with
+                    // a properly localized one; the native bubble UI/timing
+                    // itself (used by handleQuickSave's reportValidity()
+                    // call) is unaffected. Must be re-evaluated on every
+                    // keystroke and cleared once valid again, or the field
+                    // would stay stuck invalid after a later correction.
+                    const el = event.currentTarget;
+                    if (el.validity.rangeUnderflow || el.validity.rangeOverflow) {
+                      el.setCustomValidity(tr(locale, "Weight must be between 20 and 400 kg.", "המשקל חייב להיות בין 20 ל-400 ק\"ג."));
+                    } else if (el.validity.stepMismatch) {
+                      el.setCustomValidity(
+                        tr(locale, "Please enter weight to one decimal place (e.g. 63.1).", "יש להזין משקל עם ספרה עשרונית אחת (למשל 63.1)."),
+                      );
+                    } else if (el.validity.badInput) {
+                      el.setCustomValidity(tr(locale, "Please enter a valid number.", "יש להזין מספר תקין."));
+                    } else {
+                      el.setCustomValidity("");
+                    }
+                  }}
                   placeholder={
                     initialWeightValue
                       ? tr(locale, `Current: ${initialWeightValue}`, `נוכחי: ${initialWeightValue}`)
@@ -426,15 +574,6 @@ export function DailyReportForm({
                   }
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2"
                 />
-                {weightValue.trim() ? (
-                  <p className="mt-1 text-xs text-teal-700">
-                    {tr(
-                      locale,
-                      "This will be recorded as today's weight when you conclude & report.",
-                      "המשקל הזה יירשם כמשקל של היום עם סיום ודיווח.",
-                    )}
-                  </p>
-                ) : null}
               </label>
               {customTargets.map((target) => (
                 <label key={target.id} className="block min-w-[110px] flex-1">
@@ -487,8 +626,12 @@ export function DailyReportForm({
             bmiWarning={state.bmiWarning}
             initialTranscriptText={editingReport?.rawReportText}
             isEditing={Boolean(liveEditReportId)}
+            editingReportId={liveEditReportId ?? undefined}
+            editingEntrySummary={editingReport?.itemsSummaryText}
             hasChanges={isDirty}
             saveBlockedSignal={saveBlockedSignal}
+            userFirstName={userFirstName}
+            userGender={userGender}
           />
           <textarea name="report_text" value={reportText} readOnly hidden />
           <input type="hidden" name="parse_mode" value="ai" />

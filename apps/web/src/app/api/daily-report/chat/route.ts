@@ -7,6 +7,7 @@ import {
   type DailyReportChatTargets,
 } from "@/lib/ai/daily-report-chat";
 import { getAiExtractionConfig } from "@/lib/ai/env";
+import { resolveUserGenderForAddressing } from "@/lib/ai/persona";
 import { getTodaysDailyReportTotals, getTodaysLoggedItems } from "@/lib/daily-report";
 import { normalizeLocale, tr } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
@@ -28,7 +29,14 @@ export async function POST(request: NextRequest) {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  let body: { message?: unknown; chatHistory?: unknown; imageBase64?: unknown; mimeType?: unknown };
+  let body: {
+    message?: unknown;
+    chatHistory?: unknown;
+    imageBase64?: unknown;
+    mimeType?: unknown;
+    isEditingExistingEntry?: unknown;
+    editingReportId?: unknown;
+  };
   try {
     body = await request.json();
   } catch {
@@ -46,6 +54,8 @@ export async function POST(request: NextRequest) {
     : [];
   const imageBase64 = typeof body.imageBase64 === "string" && body.imageBase64 ? body.imageBase64 : undefined;
   const mimeType = typeof body.mimeType === "string" && body.mimeType ? body.mimeType : undefined;
+  const isEditingExistingEntry = body.isEditingExistingEntry === true;
+  const editingReportId = typeof body.editingReportId === "string" && body.editingReportId ? body.editingReportId : undefined;
 
   if (!userMessage && !imageBase64) {
     return new Response("Message or photo is required", { status: 400 });
@@ -59,12 +69,13 @@ export async function POST(request: NextRequest) {
   const { data: profileRow } = await supabase
     .from("user_profile")
     .select(
-      "preferred_language, dietary_preference, allergies, medical_conditions, medical_conditions_details, regular_medications_details, pregnancy_lactation_status",
+      "preferred_language, dietary_preference, allergies, medical_conditions, medical_conditions_details, regular_medications_details, pregnancy_lactation_status, first_name, gender, biological_sex",
     )
     .eq("user_id", user.id)
     .maybeSingle();
 
   const locale = normalizeLocale(profileRow?.preferred_language);
+  const userGender = resolveUserGenderForAddressing(profileRow?.gender, profileRow?.biological_sex);
   const profile: DailyReportChatProfile = {
     dietary_preference: profileRow?.dietary_preference ?? null,
     allergies: Array.isArray(profileRow?.allergies) ? (profileRow.allergies as string[]) : null,
@@ -72,6 +83,8 @@ export async function POST(request: NextRequest) {
     medical_conditions_details: profileRow?.medical_conditions_details ?? null,
     regular_medications_details: profileRow?.regular_medications_details ?? null,
     pregnancy_lactation_status: profileRow?.pregnancy_lactation_status ?? null,
+    first_name: profileRow?.first_name?.trim() || null,
+    user_gender: userGender,
   };
 
   const { data: targetRow } = await supabase
@@ -84,8 +97,8 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
   const targets: DailyReportChatTargets = targetRow ?? null;
 
-  const todaysTotals = await getTodaysDailyReportTotals({ supabase, userId: user.id });
-  const todaysLoggedItems = await getTodaysLoggedItems({ supabase, userId: user.id });
+  const todaysTotals = await getTodaysDailyReportTotals({ supabase, userId: user.id, excludeReportId: editingReportId });
+  const todaysLoggedItems = await getTodaysLoggedItems({ supabase, userId: user.id, excludeReportId: editingReportId });
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -101,6 +114,7 @@ export async function POST(request: NextRequest) {
           targets,
           todaysTotals,
           todaysLoggedItems,
+          isEditingExistingEntry,
         });
 
         if (!upstream.ok || !upstream.body) {
@@ -114,42 +128,84 @@ export async function POST(request: NextRequest) {
 
         const MARKER_ACTIONABLE = "ACTIONABLE ";
         const MARKER_INFO = "INFO ";
+        const MARKER_KEEP = "KEEP ";
+        const MARKER_DELETE_ALL = "DELETE_ALL ";
         const MAX_MARKER_BUFFER = 12;
-        let markerResolved = false;
+        let actionableResolved = false;
+        // The second (delete-intent) marker only ever appears in edit mode
+        // (see the EDITING AN EXISTING ENTRY system instruction) - treating
+        // it as already-resolved outside that mode keeps this a no-op there,
+        // so the normal new-entry stream is byte-for-byte unchanged.
+        let deleteMarkerResolved = !isEditingExistingEntry;
         let markerPending = "";
 
         function emitToken(text: string) {
           if (text) controller.enqueue(sseEvent({ type: "token", text }));
         }
 
+        function resolveDeletePhase() {
+          if (markerPending.startsWith(MARKER_KEEP)) {
+            controller.enqueue(sseEvent({ type: "delete_intent", value: false }));
+            deleteMarkerResolved = true;
+            emitToken(markerPending.slice(MARKER_KEEP.length));
+            markerPending = "";
+            return;
+          }
+
+          if (markerPending.startsWith(MARKER_DELETE_ALL)) {
+            controller.enqueue(sseEvent({ type: "delete_intent", value: true }));
+            deleteMarkerResolved = true;
+            emitToken(markerPending.slice(MARKER_DELETE_ALL.length));
+            markerPending = "";
+            return;
+          }
+
+          const stillPossible = MARKER_KEEP.startsWith(markerPending) || MARKER_DELETE_ALL.startsWith(markerPending);
+          if (!stillPossible || markerPending.length >= MAX_MARKER_BUFFER) {
+            // The model skipped the second marker entirely - default to
+            // "keep" rather than silently blocking the reply from ever
+            // reaching the user.
+            controller.enqueue(sseEvent({ type: "delete_intent", value: false }));
+            deleteMarkerResolved = true;
+            emitToken(markerPending);
+            markerPending = "";
+          }
+        }
+
         function handleToken(token: string) {
-          if (markerResolved) {
+          if (actionableResolved && deleteMarkerResolved) {
             emitToken(token);
             return;
           }
 
           markerPending += token;
 
-          if (markerPending.startsWith(MARKER_ACTIONABLE)) {
-            controller.enqueue(sseEvent({ type: "actionable", value: true }));
-            markerResolved = true;
-            emitToken(markerPending.slice(MARKER_ACTIONABLE.length));
-            markerPending = "";
+          if (!actionableResolved) {
+            if (markerPending.startsWith(MARKER_ACTIONABLE)) {
+              controller.enqueue(sseEvent({ type: "actionable", value: true }));
+              actionableResolved = true;
+              markerPending = markerPending.slice(MARKER_ACTIONABLE.length);
+            } else if (markerPending.startsWith(MARKER_INFO)) {
+              controller.enqueue(sseEvent({ type: "actionable", value: false }));
+              actionableResolved = true;
+              markerPending = markerPending.slice(MARKER_INFO.length);
+            } else {
+              const stillPossible = MARKER_ACTIONABLE.startsWith(markerPending) || MARKER_INFO.startsWith(markerPending);
+              if (!stillPossible || markerPending.length >= MAX_MARKER_BUFFER) {
+                controller.enqueue(sseEvent({ type: "actionable", value: false }));
+                actionableResolved = true;
+              } else {
+                return;
+              }
+            }
+          }
+
+          if (!deleteMarkerResolved) {
+            resolveDeletePhase();
             return;
           }
 
-          if (markerPending.startsWith(MARKER_INFO)) {
-            controller.enqueue(sseEvent({ type: "actionable", value: false }));
-            markerResolved = true;
-            emitToken(markerPending.slice(MARKER_INFO.length));
-            markerPending = "";
-            return;
-          }
-
-          const stillPossible = MARKER_ACTIONABLE.startsWith(markerPending) || MARKER_INFO.startsWith(markerPending);
-          if (!stillPossible || markerPending.length >= MAX_MARKER_BUFFER) {
-            controller.enqueue(sseEvent({ type: "actionable", value: false }));
-            markerResolved = true;
+          if (markerPending) {
             emitToken(markerPending);
             markerPending = "";
           }
@@ -183,8 +239,12 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        if (!markerResolved) {
+        if (!actionableResolved) {
           controller.enqueue(sseEvent({ type: "actionable", value: false }));
+          if (isEditingExistingEntry) controller.enqueue(sseEvent({ type: "delete_intent", value: false }));
+          emitToken(markerPending);
+        } else if (!deleteMarkerResolved) {
+          controller.enqueue(sseEvent({ type: "delete_intent", value: false }));
           emitToken(markerPending);
         }
 

@@ -6,8 +6,10 @@ import {
   deleteDocumentAction,
   openOriginalDocumentAction,
 } from "@/app/app/documents/actions";
+import { AvatarColorPicker } from "@/components/avatar-color-picker";
 import { DocumentUploadForm } from "@/components/document-upload-form";
 import { TargetsStaleModal } from "@/components/targets-stale-modal";
+import { DEFAULT_AVATAR_COLOR, isAvatarColorId } from "@/lib/avatar-colors";
 import { formatFileSize } from "@/lib/documents";
 import {
   formatActivityLevel,
@@ -95,15 +97,28 @@ export default async function ProfilePage({
     redirect("/app/onboarding");
   }
 
-  const locale = normalizeLocale(
-    (
-      await supabase
-        .from("user_profile")
-        .select("preferred_language")
-        .eq("user_id", user.id)
-        .maybeSingle()
-    ).data?.preferred_language,
-  );
+  // Falls back to a query without avatar_color when that column doesn't
+  // exist yet (migration 033 not applied) - same reasoning/pattern as
+  // layout.tsx's own copy of this fallback: a missing-column error here
+  // must not also break locale detection (preferred_language), which has
+  // nothing to do with avatars.
+  const localeAndAvatarSelect = await supabase
+    .from("user_profile")
+    .select("preferred_language, avatar_color")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  let preferredLanguage: string | null = localeAndAvatarSelect.data?.preferred_language ?? null;
+  let avatarColorRaw: string | null = localeAndAvatarSelect.data?.avatar_color ?? null;
+  if (localeAndAvatarSelect.error?.message.includes("avatar_color")) {
+    preferredLanguage = (
+      await supabase.from("user_profile").select("preferred_language").eq("user_id", user.id).maybeSingle()
+    ).data?.preferred_language ?? null;
+    avatarColorRaw = null;
+  }
+
+  const locale = normalizeLocale(preferredLanguage);
+  const avatarColor = isAvatarColorId(avatarColorRaw) ? avatarColorRaw : DEFAULT_AVATAR_COLOR;
 
   // Only computed when the profile-save action just flagged this via the
   // one-time query param (see updateProfileAction) - reuses the exact same
@@ -168,7 +183,8 @@ export default async function ProfilePage({
         <TargetsStaleModal locale={locale} changes={targetsStaleChanges} dismissHref="/app/profile" />
       ) : null}
       <section className="rounded-2xl border border-slate-200 bg-white p-6">
-        <div className="flex items-start justify-end gap-3">
+        <div className="flex items-start justify-between gap-3">
+          <AvatarColorPicker locale={locale} currentColor={avatarColor} name={profile.first_name} />
           <Link
             href="/app/profile/edit"
             aria-label={tr(locale, "Edit profile", "עריכת פרופיל")}

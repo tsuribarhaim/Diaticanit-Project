@@ -39,6 +39,13 @@ export type DailyReportActionState = {
   /** Set when the newly reported weight puts BMI outside the healthy
    * range - a plain-language warning plus general recommendations. */
   bmiWarning?: string;
+  /** The id of the report row this save just created (new reports only -
+   * an edit redirects instead, carrying the same id as `highlight` on that
+   * URL, see buildDailyReportRedirectPath) - lets the form scroll to and
+   * briefly highlight that entry in the list below once it re-renders, so
+   * a fresh save is easy to spot instead of blending into whatever else was
+   * already logged that day. */
+  savedReportId?: string;
 };
 
 type DailyReportParseMode = "heuristic" | "ai" | "ai_photo";
@@ -129,7 +136,7 @@ function getRequestedParseMode(formData: FormData): DailyReportParseMode {
   return "heuristic";
 }
 
-function buildDailyReportRedirectPath(params: { notice?: string; error?: string; date?: string }): string {
+function buildDailyReportRedirectPath(params: { notice?: string; error?: string; date?: string; highlight?: string }): string {
   const search = new URLSearchParams();
   if (params.notice) {
     search.set("notice", params.notice);
@@ -139,6 +146,9 @@ function buildDailyReportRedirectPath(params: { notice?: string; error?: string;
   }
   if (params.date) {
     search.set("date", params.date);
+  }
+  if (params.highlight) {
+    search.set("highlight", params.highlight);
   }
 
   const query = search.toString();
@@ -168,7 +178,14 @@ async function resyncProfileWeightFromReports(
     .select("reported_weight_kg")
     .eq("user_id", userId)
     .not("reported_weight_kg", "is", null)
+    // report_at is truncated to minute precision at save time (see
+    // getLocalDateTimeValue) - two reports saved within the same minute tie
+    // on it, and without a secondary sort Postgres picks an arbitrary
+    // winner among ties, not necessarily the one actually saved last, which
+    // is exactly why this needs a real tiebreaker. created_at (set once at
+    // insert, full timestamp precision) always reflects true save order.
     .order("report_at", { ascending: false })
+    .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
@@ -203,6 +220,10 @@ function isMissingSelectedDefaultsColumn(errorMessage: string): boolean {
 
 function isMissingCustomTargetValuesColumn(errorMessage: string): boolean {
   return errorMessage.includes("custom_target_values") && errorMessage.includes("does not exist");
+}
+
+function isMissingEditHistoryColumn(errorMessage: string): boolean {
+  return errorMessage.includes("edit_history") && errorMessage.includes("does not exist");
 }
 
 /** Reads every `custom_target_value__<id>` field the Daily Report form
@@ -372,19 +393,38 @@ export async function saveDailyReportAction(
   // write is an update of the existing row instead of an insert, once we've
   // confirmed the report being edited actually belongs to this user.
   const editReportId = formData.get("edit_report_id")?.toString() || null;
+  // Appended to on every edit save below (see nextEditHistory) - a
+  // lightweight "this was modified after its original save" audit trail,
+  // not a full diff/transcript (raw_report_text already carries the full
+  // updated conversation).
+  let previousEditHistory: unknown[] = [];
+  let editHistoryColumnMissing = false;
   if (editReportId) {
-    const { data: editableReport, error: editableReportError } = await supabase
+    let { data: editableReport, error: editableReportError } = await supabase
       .from("user_daily_reports")
-      .select("id")
+      .select("id, edit_history")
       .eq("id", editReportId)
       .eq("user_id", user.id)
       .maybeSingle();
+
+    if (editableReportError && isMissingEditHistoryColumn(editableReportError.message)) {
+      editHistoryColumnMissing = true;
+      ({ data: editableReport, error: editableReportError } = await supabase
+        .from("user_daily_reports")
+        .select("id")
+        .eq("id", editReportId)
+        .eq("user_id", user.id)
+        .maybeSingle());
+    }
 
     if (editableReportError || !editableReport) {
       return {
         error: tr(locale, "The report you're editing could not be found.", "הדיווח שאתם עורכים לא נמצא."),
       };
     }
+    previousEditHistory = Array.isArray((editableReport as { edit_history?: unknown }).edit_history)
+      ? ((editableReport as { edit_history: unknown[] }).edit_history)
+      : [];
   }
   const isEditing = editReportId !== null;
 
@@ -779,6 +819,13 @@ export async function saveDailyReportAction(
   const status = requiresConfirmation ? "needs_confirmation" : "confirmed";
   const confirmedAt = requiresConfirmation ? null : new Date().toISOString();
 
+  // Capped so a report edited back and forth many times doesn't grow this
+  // column unboundedly - only the most recent edits are actually useful to
+  // look back on.
+  const nextEditHistory = isEditing
+    ? [...previousEditHistory, { edited_at: new Date().toISOString(), source: "chat" }].slice(-20)
+    : undefined;
+
   const baseInsertPayload = {
     user_id: user.id,
     target_profile_id: activeTargetProfile?.id ?? null,
@@ -816,6 +863,7 @@ export async function saveDailyReportAction(
     parser_version: parserVersionUsed,
     parsed_items: [...parsedResult.foodItems, ...defaultFoodItems],
     parsed_exercises: [...parsedResult.exerciseItems, ...defaultExerciseItems],
+    ...(nextEditHistory && !editHistoryColumnMissing ? { edit_history: nextEditHistory } : {}),
   };
 
   let insertError: { message: string } | null = null;
@@ -826,17 +874,19 @@ export async function saveDailyReportAction(
   const userId = user.id;
   function writeReport(payload: Record<string, unknown>) {
     return isEditing
-      ? supabase.from("user_daily_reports").update(payload).eq("id", editReportId!).eq("user_id", userId)
-      : supabase.from("user_daily_reports").insert(payload);
+      ? supabase.from("user_daily_reports").update(payload).eq("id", editReportId!).eq("user_id", userId).select("id")
+      : supabase.from("user_daily_reports").insert(payload).select("id");
   }
 
   const writeWithWeight = await writeReport(baseInsertPayload);
+  let insertedId: string | null = (writeWithWeight.data?.[0] as { id?: string } | undefined)?.id ?? null;
 
   if (
     writeWithWeight.error &&
     (isMissingReportedWeightColumn(writeWithWeight.error.message) ||
       isMissingSelectedDefaultsColumn(writeWithWeight.error.message) ||
-      isMissingCustomTargetValuesColumn(writeWithWeight.error.message))
+      isMissingCustomTargetValuesColumn(writeWithWeight.error.message) ||
+      isMissingEditHistoryColumn(writeWithWeight.error.message))
   ) {
     reportedWeightNotPersisted =
       reportedWeightKg !== null && isMissingReportedWeightColumn(writeWithWeight.error.message);
@@ -855,11 +905,16 @@ export async function saveDailyReportAction(
           return false;
         }
 
+        if (key === "edit_history" && isMissingEditHistoryColumn(writeWithWeight.error!.message)) {
+          return false;
+        }
+
         return true;
       }),
     );
     const legacyWrite = await writeReport(legacyPayload);
     insertError = legacyWrite.error;
+    insertedId = (legacyWrite.data?.[0] as { id?: string } | undefined)?.id ?? null;
   } else {
     insertError = writeWithWeight.error;
   }
@@ -967,6 +1022,7 @@ export async function saveDailyReportAction(
       buildDailyReportRedirectPath({
         notice: tr(locale, "Daily report updated.", "הדיווח היומי עודכן.") + weightNotice,
         date: selectedDateParam,
+        highlight: editReportId ?? undefined,
       }),
     );
   }
@@ -975,6 +1031,7 @@ export async function saveDailyReportAction(
     success: tr(locale, "Daily report saved.", "הדיווח היומי נשמר.") + weightNotice,
     targetsStaleChanges,
     bmiWarning,
+    savedReportId: insertedId ?? undefined,
   };
 }
 
@@ -1215,6 +1272,27 @@ function sumExerciseTotals(items: Array<Record<string, unknown>>): { exerciseMin
  * item's quantity/duration to 0 removes it from the log entirely (see the
  * flatMap below), rather than leaving a zeroed-out entry behind.
  */
+/**
+ * The nutrient totals a user can correct directly (e.g. typing in the exact
+ * calorie count printed on a food package, overriding what the AI parser
+ * estimated) - each maps its DB column (also this field's form input name,
+ * `nutrient_value__<dbColumn>`) to where its *automatically calculated*
+ * value lives on the same-shaped objects sumFoodTotals/sumExerciseTotals
+ * already return. Deliberately a subset, not every nutrient tracked - only
+ * the ones actually shown (and therefore editable) in the page's own
+ * per-entry detail grid.
+ */
+const OVERRIDABLE_NUTRIENT_FIELDS: Array<{ dbColumn: string; autoKey: string; source: "food" | "exercise" }> = [
+  { dbColumn: "calories_kcal", autoKey: "caloriesKcal", source: "food" },
+  { dbColumn: "protein_g", autoKey: "proteinG", source: "food" },
+  { dbColumn: "water_ml", autoKey: "waterMl", source: "food" },
+  { dbColumn: "magnesium_mg", autoKey: "magnesiumMg", source: "food" },
+  { dbColumn: "potassium_mg", autoKey: "potassiumMg", source: "food" },
+  { dbColumn: "iron_mg", autoKey: "ironMg", source: "food" },
+  { dbColumn: "zinc_mg", autoKey: "zincMg", source: "food" },
+  { dbColumn: "estimated_burn_kcal", autoKey: "estimatedBurnKcal", source: "exercise" },
+];
+
 export async function adjustDailyReportItemQuantitiesAction(formData: FormData): Promise<void> {
   const supabase = await createClient();
   const {
@@ -1240,7 +1318,9 @@ export async function adjustDailyReportItemQuantitiesAction(formData: FormData):
 
   const { data: reportRow, error: reportError } = await supabase
     .from("user_daily_reports")
-    .select("id, parsed_items, parsed_exercises, reported_weight_kg, custom_target_values")
+    .select(
+      "id, parsed_items, parsed_exercises, reported_weight_kg, custom_target_values, nutrient_overrides, calories_kcal, protein_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, estimated_burn_kcal",
+    )
     .eq("id", reportId)
     .eq("user_id", user.id)
     .maybeSingle();
@@ -1346,6 +1426,50 @@ export async function adjustDailyReportItemQuantitiesAction(formData: FormData):
     }
   }
 
+  // A nutrient field is only ever touched here when the form actually
+  // marks it so (a hidden `nutrient_value__<column>__touched` field the
+  // client sets the moment the user types into that specific input - see
+  // the page's own edit form) - never inferred from "the submitted number
+  // differs from the current one", which would be true for every override-
+  // able field any time this same save ALSO changed an item, since those
+  // fields' own inputs are pre-filled with the report's LAST totals, not
+  // whatever this save is about to recompute. Blank clears a field's own
+  // override (back to automatically derived from items); a real number
+  // pins it so a later item edit/delete can't silently overwrite a
+  // deliberate correction (e.g. the exact calorie count off a food
+  // package) - see this action's own final write below for how overridden
+  // fields are protected from the auto-recalculated totals.
+  const currentOverrides =
+    reportRow.nutrient_overrides && typeof reportRow.nutrient_overrides === "object" && !Array.isArray(reportRow.nutrient_overrides)
+      ? (reportRow.nutrient_overrides as Record<string, boolean>)
+      : {};
+  const nextOverrides: Record<string, boolean> = { ...currentOverrides };
+  const overrideValues: Record<string, number> = {};
+
+  for (const field of OVERRIDABLE_NUTRIENT_FIELDS) {
+    const touched = formData.get(`nutrient_value__${field.dbColumn}__touched`) != null;
+    if (!touched) continue;
+
+    const raw = formData.get(`nutrient_value__${field.dbColumn}`)?.toString().trim() ?? "";
+    if (raw === "") {
+      if (nextOverrides[field.dbColumn]) {
+        delete nextOverrides[field.dbColumn];
+        changed = true;
+      }
+      continue;
+    }
+
+    const parsed = toNumber(raw, Number.NaN);
+    if (!Number.isFinite(parsed) || parsed < 0) continue;
+    const rounded = round(parsed, 2);
+    const currentValue = toNumber((reportRow as Record<string, unknown>)[field.dbColumn], 0);
+    if (!currentOverrides[field.dbColumn] || Math.abs(rounded - currentValue) > 1e-9) {
+      nextOverrides[field.dbColumn] = true;
+      overrideValues[field.dbColumn] = rounded;
+      changed = true;
+    }
+  }
+
   if (!changed) {
     redirect(buildDailyReportRedirectPath({ date: selectedDateParam }));
   }
@@ -1416,6 +1540,22 @@ export async function adjustDailyReportItemQuantitiesAction(formData: FormData):
 
   const foodTotals = sumFoodTotals(nextFoodItems);
   const exerciseTotals = sumExerciseTotals(nextExerciseItems);
+  const autoTotalsByKey: Record<string, number> = { ...foodTotals, ...exerciseTotals };
+
+  // A field pinned via nutrient_overrides never takes the freshly
+  // recalculated auto value below, regardless of what item changes this
+  // exact save also made - it takes this save's own new override value
+  // when the user just set one, otherwise the value it already had
+  // (reportRow's own current column), never the recomputed total.
+  function resolveNutrientValue(field: (typeof OVERRIDABLE_NUTRIENT_FIELDS)[number]): number {
+    if (field.dbColumn in overrideValues) return overrideValues[field.dbColumn];
+    if (nextOverrides[field.dbColumn]) return toNumber((reportRow as Record<string, unknown>)[field.dbColumn], 0);
+    return round(autoTotalsByKey[field.autoKey] ?? 0);
+  }
+
+  const nutrientColumnValues = Object.fromEntries(
+    OVERRIDABLE_NUTRIENT_FIELDS.map((field) => [field.dbColumn, resolveNutrientValue(field)]),
+  ) as Record<string, number>;
 
   const { error: updateError } = await supabase
     .from("user_daily_reports")
@@ -1424,16 +1564,17 @@ export async function adjustDailyReportItemQuantitiesAction(formData: FormData):
       parsed_exercises: nextExerciseItems,
       reported_weight_kg: nextReportedWeightKg,
       custom_target_values: nextCustomTargetValues,
-      calories_kcal: round(foodTotals.caloriesKcal),
-      protein_g: round(foodTotals.proteinG),
+      nutrient_overrides: nextOverrides,
+      calories_kcal: nutrientColumnValues.calories_kcal,
+      protein_g: nutrientColumnValues.protein_g,
       carbs_g: round(foodTotals.carbsG),
       fat_g: round(foodTotals.fatG),
       fiber_g: round(foodTotals.fiberG),
-      water_ml: round(foodTotals.waterMl),
-      magnesium_mg: round(foodTotals.magnesiumMg),
-      potassium_mg: round(foodTotals.potassiumMg),
-      iron_mg: round(foodTotals.ironMg),
-      zinc_mg: round(foodTotals.zincMg),
+      water_ml: nutrientColumnValues.water_ml,
+      magnesium_mg: nutrientColumnValues.magnesium_mg,
+      potassium_mg: nutrientColumnValues.potassium_mg,
+      iron_mg: nutrientColumnValues.iron_mg,
+      zinc_mg: nutrientColumnValues.zinc_mg,
       sodium_mg: round(foodTotals.sodiumMg),
       added_sugar_g: round(foodTotals.addedSugarG),
       calcium_mg: round(foodTotals.calciumMg),
@@ -1443,7 +1584,7 @@ export async function adjustDailyReportItemQuantitiesAction(formData: FormData):
       sat_fat_g: round(foodTotals.satFatG),
       omega3_g: round(foodTotals.omega3G),
       exercise_minutes: exerciseTotals.exerciseMinutes,
-      estimated_burn_kcal: exerciseTotals.estimatedBurnKcal,
+      estimated_burn_kcal: nutrientColumnValues.estimated_burn_kcal,
     })
     .eq("id", reportId)
     .eq("user_id", user.id);

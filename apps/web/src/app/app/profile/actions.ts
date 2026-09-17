@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
+import { isAvatarColorId } from "@/lib/avatar-colors";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { evaluateProfileTextWithAi } from "@/lib/ai/profile-text";
 import {
@@ -25,6 +26,69 @@ export type ProfileUpdateActionState = {
   error?: string;
   fieldErrors?: Array<{ field: string; message: string }>;
 };
+
+export type AvatarActionState = {
+  error?: string;
+  success?: string;
+};
+
+async function resolveUserLocale(supabase: Awaited<ReturnType<typeof createClient>>, userId: string) {
+  const { data } = await supabase
+    .from("user_profile")
+    .select("preferred_language")
+    .eq("user_id", userId)
+    .maybeSingle();
+  return normalizeLocale(data?.preferred_language);
+}
+
+/**
+ * Sets which solid color the user's initial-letter avatar shows in - no
+ * file upload, no icon set, just picking one of a small fixed palette (see
+ * lib/avatar-colors.ts), so there's nothing here beyond validating the
+ * chosen id is one of that fixed set and writing it. Always sets a real
+ * color (there's no "None" option - the avatar always shows the initial on
+ * some color, defaulting to the app's own teal when nothing's chosen yet).
+ */
+export async function setAvatarColorAction(_prevState: AvatarActionState, formData: FormData): Promise<AvatarActionState> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/sign-in");
+  }
+
+  const locale = await resolveUserLocale(supabase, user.id);
+
+  const colorRaw = formData.get("color")?.toString() ?? "";
+  if (!isAvatarColorId(colorRaw)) {
+    return { error: tr(locale, "Unknown color option.", "אפשרות צבע לא מוכרת.") };
+  }
+
+  const { error: updateError } = await supabase
+    .from("user_profile")
+    .update({ avatar_color: colorRaw })
+    .eq("user_id", user.id);
+
+  if (updateError) {
+    logServerError("profile.avatar", "set_color_failed", { userId: user.id, error: updateError.message });
+    return {
+      error: updateError.message.includes("avatar_color")
+        ? tr(
+            locale,
+            "Database migration missing: apply db/migrations/033_phase11_profile_avatar_color.sql, then try again.",
+            "חסרה מיגרציית בסיס נתונים: יש להחיל את db/migrations/033_phase11_profile_avatar_color.sql ואז לנסות שוב.",
+          )
+        : tr(locale, "Failed to update your avatar. Please try again.", "עדכון האווטאר נכשל. יש לנסות שוב."),
+    };
+  }
+
+  revalidatePath("/app");
+  revalidatePath("/app/profile");
+
+  return { success: tr(locale, "Avatar color updated.", "צבע האווטאר עודכן.") };
+}
 
 const LOCALE_COOKIE = "phc_locale";
 

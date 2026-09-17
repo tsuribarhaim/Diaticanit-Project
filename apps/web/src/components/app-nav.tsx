@@ -4,12 +4,21 @@ import { usePathname } from "next/navigation";
 
 import { signOutAction } from "@/app/app/actions";
 import { GuardedLink } from "@/components/unsaved-preview-context";
+import { UserAvatar } from "@/components/user-avatar";
 import { tr, type AppLocale } from "@/lib/locale";
 
 const CONFIRM_MESSAGE_EN = "You have an unsaved conversation or generated target plan on the Targets page that hasn't been locked in yet. Leave this page anyway?";
 const CONFIRM_MESSAGE_HE = "יש לך שיחה או תכנית יעדים שנוצרה בדף היעדים שטרם ננעלה. לעזוב את הדף בכל זאת?";
 
-export function AppNav({ locale }: { locale: AppLocale }) {
+export function AppNav({
+  locale,
+  avatarColor,
+  name,
+}: {
+  locale: AppLocale;
+  avatarColor?: string | null;
+  name?: string | null;
+}) {
   const pathname = usePathname();
 
   if (pathname?.startsWith("/app/onboarding")) {
@@ -56,7 +65,22 @@ export function AppNav({ locale }: { locale: AppLocale }) {
           </GuardedLink>
         ))}
 
-        <form action={signOutAction} className="ms-auto">
+        {/* "Which account is this" at a glance on every page - separate from
+            the "Profile" nav link above (which still goes to the same
+            place), the way most apps keep a persistent account avatar
+            distinct from an in-list nav entry. ms-auto here (not on the
+            sign-out form below it) pushes this avatar + sign-out together
+            as one trailing cluster, in normal flow order after it. */}
+        <GuardedLink
+          href="/app/profile"
+          confirmMessage={tr(locale, CONFIRM_MESSAGE_EN, CONFIRM_MESSAGE_HE)}
+          aria-label={tr(locale, "Profile", "פרופיל")}
+          className="ms-auto flex items-center rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+        >
+          <UserAvatar avatarColor={avatarColor} name={name} className="h-8 w-8 text-xs" />
+        </GuardedLink>
+
+        <form action={signOutAction}>
           <button
             type="submit"
             className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
