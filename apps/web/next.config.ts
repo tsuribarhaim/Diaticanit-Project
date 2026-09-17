@@ -25,6 +25,24 @@ const nextConfig: NextConfig = {
       // runs. Leave headroom for multipart boundary/field overhead.
       bodySizeLimit: "12mb",
     },
+    // Separate from (and enforced before) serverActions.bodySizeLimit above
+    // - this app's proxy/middleware sees every request first, and Next's
+    // own default cap there is a lower, independent 10 MB, regardless of
+    // the Server Action's own configured limit. A request over it doesn't
+    // get a clean "too large" response - it gets silently truncated
+    // mid-body, which then crashes the multipart parser with "Unexpected
+    // end of form" once the (now-corrupt) body reaches the action, instead
+    // of ever running that action's own size-limit check. Hit for real
+    // trying to upload a profile picture: a phone photo can easily run past
+    // 10 MB even though the app's own avatar limit is 5 MB. (The older name
+    // for this, middlewareClientMaxBodySize, is deprecated in this Next
+    // version in favor of proxyClientMaxBodySize - matches the "middleware"
+    // file convention itself also being deprecated in favor of "proxy"
+    // here.) Set comfortably above every per-feature limit (5 MB avatars,
+    // 10 MB documents/meal photos) plus multipart boundary/field overhead,
+    // so a too-large upload always reaches its own action's clean
+    // validation message instead of crashing here first.
+    proxyClientMaxBodySize: "15mb",
   },
 };
 

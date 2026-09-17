@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
-import { formatDefaultItemKind, formatDefaultItemName, formatDefaultUnit, tr, type AppLocale } from "@/lib/locale";
+import { directionForLocale, formatDefaultItemKind, formatDefaultItemName, formatDefaultUnit, tr, type AppLocale } from "@/lib/locale";
 
 export type DailyReportDefaultItem = {
   id: string;
@@ -50,19 +51,22 @@ export function DailyReportDefaultsPicker({
   dropDirection = "down",
   showQuickAdd = false,
   formId,
+  portalPopover = false,
 }: {
   locale: AppLocale;
   defaultItems: DailyReportDefaultItem[];
   onSelectionChange: (selected: SelectedSavedListItem[]) => void;
   /** "up" anchors the popover above the icon (for a picker sitting at the
    * bottom of the chat compose row); "down" (default) anchors it below,
-   * for a picker placed near the top of a section. */
+   * for a picker placed near the top of a section. Ignored when
+   * `portalPopover` is set - that mode has its own fixed placement. */
   dropDirection?: "up" | "down";
-  /** Renders a row of one-tap "quick add" chips for the first few saved
-   * items, above the dropdown trigger - each toggles the exact same
-   * underlying checkbox the dropdown grid itself uses (found by value and
-   * given a native change event) rather than duplicating selection state,
-   * so it stays consistent with this component's own DOM-driven design. */
+  /** Renders a row of one-tap "quick add" chips for every saved item, above
+   * the dropdown trigger, horizontally scrollable - each toggles the exact
+   * same underlying checkbox the dropdown grid itself uses (found by value
+   * and given a native change event) rather than duplicating selection
+   * state, so it stays consistent with this component's own DOM-driven
+   * design. */
   showQuickAdd?: boolean;
   /** The id of the `<form>` this picker's checkboxes/quantity inputs belong
    * to, for when this component is rendered somewhere other than a DOM
@@ -71,8 +75,21 @@ export function DailyReportDefaultsPicker({
    * is DOM-ancestry-based, so without this, a portaled picker's selections
    * would silently never reach the form's submitted data. */
   formId?: string;
+  /** Renders the popover content via a portal to document.body, as a fixed
+   * bottom sheet with its own backdrop, instead of `position: absolute`
+   * anchored to the trigger icon. Needed specifically where this picker
+   * lives inside another `overflow-hidden` + `transform` container (the
+   * mobile daily-report chat sheet) - a plain absolutely-positioned popover
+   * there gets silently clipped by that ancestor's overflow the moment it's
+   * taller than the remaining space above the trigger, which read as "the
+   * icon doesn't do anything" (it was opening, just invisible). `position:
+   * fixed` can't escape a `transform`-ed ancestor either (it still resolves
+   * relative to it, not the true viewport), so only an actual DOM-level
+   * portal actually escapes both. */
+  portalPopover?: boolean;
 }) {
   const detailsRef = useRef<HTMLDetailsElement | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
   const selectedCountRef = useRef<HTMLSpanElement | null>(null);
@@ -155,6 +172,23 @@ export function DailyReportDefaultsPicker({
     return () => grid.removeEventListener("change", syncSelectionUi);
   }, [syncSelectionUi]);
 
+  // Only needed for portalPopover mode - the portaled content isn't a DOM
+  // descendant of <details> anymore, so it can't rely on the browser's own
+  // open/closed visibility of a descendant; it needs to know as real React
+  // state instead. The <details> element's native "toggle" event (fired for
+  // both the summary click that opens it and the .open=false a "Close"/
+  // backdrop click sets) is the single source of truth for this, so this
+  // only mirrors it - it never itself decides open/closed.
+  useEffect(() => {
+    if (!portalPopover) return;
+    const details = detailsRef.current;
+    if (!details) return;
+
+    const handleToggle = () => setIsOpen(details.open);
+    details.addEventListener("toggle", handleToggle);
+    return () => details.removeEventListener("toggle", handleToggle);
+  }, [portalPopover]);
+
   // "Select all" / "Clear" / "Close" are wired via native addEventListener
   // rather than React's onClick, for the same reason as the checkbox grid: a
   // real click's event isn't guaranteed to reach a React synthetic handler
@@ -206,7 +240,103 @@ export function DailyReportDefaultsPicker({
 
   if (!defaultItems.length) return null;
 
-  const quickItems = showQuickAdd ? defaultItems.slice(0, 4) : [];
+  // Every saved item, not just the first few - previously capped at 4 with
+  // no way to reach the rest, reported as only seeing "4 that can move
+  // right and left but no other list items appear". The row already
+  // scrolls horizontally (overflow-x-auto below), so showing the full list
+  // just means there's more to scroll through, not a layout change.
+  const quickItems = showQuickAdd ? defaultItems : [];
+
+  function closeDetails() {
+    if (detailsRef.current) detailsRef.current.open = false;
+  }
+
+  const pickerBody = (
+    <>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
+          <span ref={selectedCountRef}>0</span> {tr(locale, "selected", "נבחרו")}
+        </span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            ref={selectAllButtonRef}
+            className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+          >
+            {tr(locale, "Select all", "בחירת הכל")}
+          </button>
+          <button
+            type="button"
+            ref={clearButtonRef}
+            className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+          >
+            {tr(locale, "Clear", "ניקוי")}
+          </button>
+        </div>
+      </div>
+
+      {defaultItems.length > 5 ? (
+        <input
+          ref={searchInputRef}
+          type="text"
+          defaultValue=""
+          placeholder={tr(locale, "Search your saved list...", "חיפוש ברשימה השמורה שלך...")}
+          className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2"
+        />
+      ) : null}
+
+      <div ref={gridRef} className={`mt-2 space-y-2 overflow-y-auto ${portalPopover ? "max-h-[50vh]" : "max-h-64"}`}>
+        {defaultItems.map((item) => (
+          <div key={item.id} data-default-name={formatDefaultItemName(item.name, locale).toLowerCase()}>
+            <label className="block rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm transition">
+              <div className="flex items-center justify-between gap-2">
+                <span className="flex items-start gap-2">
+                  <input type="checkbox" name="selected_default_ids" form={formId} value={item.id} defaultChecked={false} className="mt-0.5" />
+                  <span>
+                    <span className="block font-medium text-slate-800">{formatDefaultItemName(item.name, locale)}</span>
+                    <span className="mt-0.5 block text-xs text-slate-500">
+                      {tr(locale, "Usual amount", "כמות רגילה")}: {item.default_quantity} {formatDefaultUnit(item.default_unit, locale)}
+                    </span>
+                    {item.ingredients && item.ingredients.length > 1 ? (
+                      <span className="mt-0.5 block text-xs text-slate-400">
+                        {item.ingredients
+                          .map((ingredient) => `${ingredient.quantity} ${formatDefaultUnit(ingredient.unit, locale)} ${formatDefaultItemName(ingredient.name, locale)}`)
+                          .join(", ")}
+                      </span>
+                    ) : null}
+                  </span>
+                </span>
+                <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${kindBadgeClass(item.kind)}`}>
+                  {formatDefaultItemKind(item.kind, locale)}
+                </span>
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <span className="text-xs text-slate-600">{tr(locale, "Quantity", "כמות")}</span>
+                <input
+                  name={`quantity_default_${item.id}`}
+                  form={formId}
+                  type="number"
+                  step="1"
+                  min="0"
+                  defaultValue={item.default_quantity}
+                  disabled
+                  className="w-24 rounded-md border border-slate-300 px-2 py-1 text-xs disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                />
+              </div>
+            </label>
+          </div>
+        ))}
+      </div>
+
+      <button
+        type="button"
+        ref={closeButtonRef}
+        className="mt-3 w-full rounded-lg bg-teal-700 px-3 py-2 text-sm font-semibold text-white hover:bg-teal-800"
+      >
+        {tr(locale, "Close", "סגירה")}
+      </button>
+    </>
+  );
 
   return (
     <>
@@ -225,110 +355,71 @@ export function DailyReportDefaultsPicker({
         </div>
       ) : null}
       <details ref={detailsRef} className="relative shrink-0">
-      <summary
-        aria-label={tr(locale, "Add from your saved list", "הוספה מהרשימה השמורה")}
-        title={tr(locale, "Add from your saved list", "הוספה מהרשימה השמורה")}
-        className="flex h-9 w-9 list-none items-center justify-center rounded-full border border-teal-300 text-teal-700 hover:bg-teal-50 [&::-webkit-details-marker]:hidden"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
-          <line x1="8" y1="6" x2="21" y2="6" />
-          <line x1="8" y1="12" x2="21" y2="12" />
-          <line x1="8" y1="18" x2="21" y2="18" />
-          <line x1="3" y1="6" x2="3.01" y2="6" />
-          <line x1="3" y1="12" x2="3.01" y2="12" />
-          <line x1="3" y1="18" x2="3.01" y2="18" />
-        </svg>
-      </summary>
-
-      <div
-        className={`absolute z-10 w-[min(22rem,85vw)] rounded-xl border border-slate-200 bg-white p-3 shadow-lg ${
-          dropDirection === "up" ? "bottom-full mb-2" : "top-full mt-2"
-        }`}
-      >
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
-            <span ref={selectedCountRef}>0</span> {tr(locale, "selected", "נבחרו")}
-          </span>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              ref={selectAllButtonRef}
-              className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
-            >
-              {tr(locale, "Select all", "בחירת הכל")}
-            </button>
-            <button
-              type="button"
-              ref={clearButtonRef}
-              className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
-            >
-              {tr(locale, "Clear", "ניקוי")}
-            </button>
-          </div>
-        </div>
-
-        {defaultItems.length > 5 ? (
-          <input
-            ref={searchInputRef}
-            type="text"
-            defaultValue=""
-            placeholder={tr(locale, "Search your saved list...", "חיפוש ברשימה השמורה שלך...")}
-            className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2"
-          />
-        ) : null}
-
-        <div ref={gridRef} className="mt-2 max-h-64 space-y-2 overflow-y-auto">
-          {defaultItems.map((item) => (
-            <div key={item.id} data-default-name={formatDefaultItemName(item.name, locale).toLowerCase()}>
-              <label className="block rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm transition">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="flex items-start gap-2">
-                    <input type="checkbox" name="selected_default_ids" form={formId} value={item.id} defaultChecked={false} className="mt-0.5" />
-                    <span>
-                      <span className="block font-medium text-slate-800">{formatDefaultItemName(item.name, locale)}</span>
-                      <span className="mt-0.5 block text-xs text-slate-500">
-                        {tr(locale, "Usual amount", "כמות רגילה")}: {item.default_quantity} {formatDefaultUnit(item.default_unit, locale)}
-                      </span>
-                      {item.ingredients && item.ingredients.length > 1 ? (
-                        <span className="mt-0.5 block text-xs text-slate-400">
-                          {item.ingredients
-                            .map((ingredient) => `${ingredient.quantity} ${formatDefaultUnit(ingredient.unit, locale)} ${formatDefaultItemName(ingredient.name, locale)}`)
-                            .join(", ")}
-                        </span>
-                      ) : null}
-                    </span>
-                  </span>
-                  <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${kindBadgeClass(item.kind)}`}>
-                    {formatDefaultItemKind(item.kind, locale)}
-                  </span>
-                </div>
-                <div className="mt-2 flex items-center gap-2">
-                  <span className="text-xs text-slate-600">{tr(locale, "Quantity", "כמות")}</span>
-                  <input
-                    name={`quantity_default_${item.id}`}
-                    form={formId}
-                    type="number"
-                    step="1"
-                    min="0"
-                    defaultValue={item.default_quantity}
-                    disabled
-                    className="w-24 rounded-md border border-slate-300 px-2 py-1 text-xs disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-                  />
-                </div>
-              </label>
-            </div>
-          ))}
-        </div>
-
-        <button
-          type="button"
-          ref={closeButtonRef}
-          className="mt-3 w-full rounded-lg bg-teal-700 px-3 py-2 text-sm font-semibold text-white hover:bg-teal-800"
+        <summary
+          aria-label={tr(locale, "Add from your saved list", "הוספה מהרשימה השמורה")}
+          title={tr(locale, "Add from your saved list", "הוספה מהרשימה השמורה")}
+          className="flex h-9 w-9 list-none items-center justify-center rounded-full border border-teal-300 text-teal-700 hover:bg-teal-50 [&::-webkit-details-marker]:hidden"
         >
-          {tr(locale, "Close", "סגירה")}
-        </button>
-      </div>
-    </details>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
+            <line x1="8" y1="6" x2="21" y2="6" />
+            <line x1="8" y1="12" x2="21" y2="12" />
+            <line x1="8" y1="18" x2="21" y2="18" />
+            <line x1="3" y1="6" x2="3.01" y2="6" />
+            <line x1="3" y1="12" x2="3.01" y2="12" />
+            <line x1="3" y1="18" x2="3.01" y2="18" />
+          </svg>
+        </summary>
+
+        {portalPopover
+          ? null
+          : (
+            <div
+              className={`absolute z-10 w-[min(22rem,85vw)] rounded-xl border border-slate-200 bg-white p-3 shadow-lg ${
+                dropDirection === "up" ? "bottom-full mb-2" : "top-full mt-2"
+              }`}
+            >
+              {pickerBody}
+            </div>
+          )}
+      </details>
+
+      {/* Portaled straight to document.body, escaping both this picker's
+          own (non-transformed) ancestors AND, more importantly, the mobile
+          chat sheet's overflow-hidden + transform-gpu ancestor further up -
+          see portalPopover's own comment for why a plain absolute/fixed
+          popover can't escape that on its own. A simple fixed bottom sheet
+          (not trying to anchor precisely above the small trigger icon) so
+          no position measurement/JS is needed at all.
+          Always portaled (not only while isOpen) and toggled with `hidden`
+          instead - only the backdrop is conditionally mounted. The
+          checkboxes inside pickerBody must stay mounted at all times
+          exactly like the non-portal branch above always has (see this
+          component's own top-of-file comment: "the grid stays mounted at
+          all times... so checkbox state survives opening/closing") -
+          portaling only while open would unmount them on every close,
+          silently dropping the user's selections from the form the moment
+          they closed this instead of only when they actually cleared them. */}
+      {portalPopover
+        ? createPortal(
+            // dir set explicitly - the app only applies dir="rtl"/"ltr" on a
+            // wrapper <div> inside app/app/layout.tsx, not on <html>/<body>,
+            // so a portal straight to document.body escapes it and falls
+            // back to the document's default LTR direction (same root cause
+            // already found and fixed for the daily-report chat panel's own
+            // mobile sheet).
+            <div dir={directionForLocale(locale)}>
+              {isOpen ? <div role="presentation" onClick={closeDetails} className="fixed inset-0 z-[60] bg-slate-900/40" /> : null}
+              <div
+                className={`fixed inset-x-3 bottom-[calc(8rem+env(safe-area-inset-bottom))] z-[60] max-h-[70vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl ${
+                  isOpen ? "" : "hidden"
+                }`}
+              >
+                {pickerBody}
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </>
   );
 }

@@ -5,6 +5,7 @@ import { TargetsChatWorkspace } from "@/components/targets-chat-workspace";
 import { TargetsWorkspace } from "@/components/targets-workspace";
 import type { TargetsHistoryInfo } from "@/components/targets-section-tabs";
 import { getAiExtractionConfig } from "@/lib/ai/env";
+import { resolveUserGenderForAddressing } from "@/lib/ai/persona";
 import { buildBmiWarningMessage } from "@/lib/bmi";
 import { formatDateTimeForLocale, normalizeLocale, tr } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
@@ -47,6 +48,10 @@ export default async function TargetsPage() {
   }
 
   const locale = normalizeLocale(profileRow.preferred_language);
+  // For the chat workspace's own static UI copy (not AI-generated) -
+  // grammatically correct Hebrew addressing, same rules/normalization the
+  // AI chat itself follows (see lib/ai/persona.ts).
+  const userGender = resolveUserGenderForAddressing(profileRow.gender, profileRow.biological_sex);
 
   const profile: ProfileForTargets = {
     age: Number(profileRow.age ?? 0),
@@ -197,6 +202,7 @@ export default async function TargetsPage() {
                 profileChanges={profileChanges}
                 bmiWarning={bmiWarning}
                 firstName={profileRow.first_name ?? null}
+                userGender={userGender}
                 history={targetsHistory}
               />
             ) : (

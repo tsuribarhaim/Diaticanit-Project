@@ -95,6 +95,7 @@ function toProfileForTargets(profile: Record<string, unknown>): ProfileForTarget
     habits: Array.isArray(profile.habits) ? (profile.habits as string[]) : [],
     pregnancy_lactation_status: (profile.pregnancy_lactation_status as string) ?? null,
     hot_climate_or_heavy_sweating: Boolean(profile.hot_climate_or_heavy_sweating),
+    first_name: (profile.first_name as string) ?? null,
   };
 }
 
@@ -144,7 +145,7 @@ export async function POST(request: NextRequest) {
   const { data: profileRow, error: profileError } = await supabase
     .from("user_profile")
     .select(
-      "age, gender, biological_sex, height_cm, weight_kg, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, habits, pregnancy_lactation_status, hot_climate_or_heavy_sweating, preferred_language",
+      "age, gender, biological_sex, height_cm, weight_kg, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, habits, pregnancy_lactation_status, hot_climate_or_heavy_sweating, preferred_language, first_name",
     )
     .eq("user_id", user.id)
     .maybeSingle();

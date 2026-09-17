@@ -163,15 +163,22 @@ const EMPTY_METRICS: DailyReportMetrics = {
 export async function getTodaysDailyReportTotals({
   supabase,
   userId,
+  excludeReportId,
 }: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   userId: string;
+  /** Leaves this one report's own contribution out of the totals - used by
+   * the Daily Report chat route while editing an existing entry, so
+   * "everything already logged today" doesn't silently include the very
+   * entry being edited (its full content is already in the conversation
+   * history sent alongside it). */
+  excludeReportId?: string;
 }): Promise<DailyReportMetrics> {
   const now = new Date();
   const todayStartIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
   const todayEndIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString();
 
-  return getDailyReportTotalsForRange({ supabase, userId, rangeStartIso: todayStartIso, rangeEndIso: todayEndIso });
+  return getDailyReportTotalsForRange({ supabase, userId, rangeStartIso: todayStartIso, rangeEndIso: todayEndIso, excludeReportId });
 }
 
 /** Same aggregation as getTodaysDailyReportTotals, but for an arbitrary
@@ -182,21 +189,26 @@ export async function getDailyReportTotalsForRange({
   userId,
   rangeStartIso,
   rangeEndIso,
+  excludeReportId,
 }: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   userId: string;
   rangeStartIso: string;
   rangeEndIso: string;
+  excludeReportId?: string;
 }): Promise<DailyReportMetrics> {
   const todayStartIso = rangeStartIso;
   const todayEndIso = rangeEndIso;
 
-  const { data: todaysReports } = await supabase
+  let query = supabase
     .from("user_daily_reports")
     .select(
       "calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, sodium_mg, added_sugar_g, calcium_mg, vit_c_mg, vit_b12_mcg, vit_d_mcg, sat_fat_g, omega3_g, exercise_minutes, estimated_burn_kcal",
     )
-    .eq("user_id", userId)
+    .eq("user_id", userId);
+  if (excludeReportId) query = query.neq("id", excludeReportId);
+
+  const { data: todaysReports } = await query
     .gte("report_at", todayStartIso)
     .lt("report_at", todayEndIso);
 
@@ -245,18 +257,25 @@ export type TodaysLoggedItems = {
 export async function getTodaysLoggedItems({
   supabase,
   userId,
+  excludeReportId,
 }: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   userId: string;
+  /** See getTodaysDailyReportTotals' own comment - leaves this one report
+   * out of "today's already-logged items" while it's the one being edited. */
+  excludeReportId?: string;
 }): Promise<TodaysLoggedItems> {
   const now = new Date();
   const todayStartIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
   const todayEndIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString();
 
-  const { data: rows } = await supabase
+  let itemsQuery = supabase
     .from("user_daily_reports")
     .select("report_at, parsed_items, parsed_exercises, reported_weight_kg")
-    .eq("user_id", userId)
+    .eq("user_id", userId);
+  if (excludeReportId) itemsQuery = itemsQuery.neq("id", excludeReportId);
+
+  const { data: rows } = await itemsQuery
     .gte("report_at", todayStartIso)
     .lt("report_at", todayEndIso)
     .order("report_at", { ascending: true });

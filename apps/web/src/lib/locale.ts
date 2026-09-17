@@ -16,6 +16,26 @@ export function tr(locale: AppLocale, en: string, he: string): string {
   return locale === "he" ? he : en;
 }
 
+/**
+ * Like tr(), but for a Hebrew string whose grammar (verb conjugation,
+ * imperative form) genuinely differs by the ADDRESSEE's gender - English
+ * has no such distinction ("you" either way), so only the Hebrew half ever
+ * branches. gender "unknown"/null falls back to heMale, matching Hebrew's
+ * standard masculine-generic form - the same fallback the AI chat system
+ * prompts use (see resolveUserGenderForAddressing in lib/ai/persona.ts) -
+ * rather than guessing.
+ */
+export function trGendered(
+  locale: AppLocale,
+  gender: "male" | "female" | null | undefined,
+  en: string,
+  heMale: string,
+  heFemale: string,
+): string {
+  if (locale !== "he") return en;
+  return gender === "female" ? heFemale : heMale;
+}
+
 export function formatDateTimeForLocale(value: Date | string, locale: AppLocale): string {
   const date = typeof value === "string" ? new Date(value) : value;
   if (Number.isNaN(date.getTime())) {

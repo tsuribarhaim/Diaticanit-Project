@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { createPortal, flushSync } from "react-dom";
+import { createPortal, flushSync, useFormStatus } from "react-dom";
 
+import { deleteDailyReportAction } from "@/app/app/daily-report/actions";
 import { DailyReportDefaultsPicker, type DailyReportDefaultItem, type SelectedSavedListItem } from "@/components/daily-report-defaults-picker";
 import { SubmitButton } from "@/components/daily-report-submit-button";
-import { formatDefaultUnit, tr, type AppLocale } from "@/lib/locale";
+import { directionForLocale, formatDefaultUnit, tr, trGendered, type AppLocale } from "@/lib/locale";
 
 export type { DailyReportDefaultItem };
 
@@ -66,6 +67,11 @@ type ChatMessage = { role: "user" | "assistant"; content: string; imagePreviewUr
 type SseEvent =
   | { type: "token"; text: string }
   | { type: "actionable"; value: boolean }
+  /** Edit-mode only (see isEditingExistingEntry in the request body) - true
+   * once the model's reply confirms the user wants to delete this entire
+   * entry rather than change part of it, so Save can swap to a delete
+   * action instead. Always false outside edit mode. */
+  | { type: "delete_intent"; value: boolean }
   | { type: "error"; message: string }
   | { type: "done" };
 
@@ -122,6 +128,79 @@ function Spinner({ className }: { className: string }) {
   );
 }
 
+function TrashIcon({ className }: { className: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 6h18" />
+      <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6h14Z" />
+      <path d="M10 11v6M14 11v6" />
+    </svg>
+  );
+}
+
+function NewChatIcon({ className }: { className: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+      <path d="M21 3v6h-6" />
+    </svg>
+  );
+}
+
+/**
+ * Edit mode's Save button becomes this instead of SubmitButton once the AI
+ * has confirmed (via the delete_intent marker) that the user wants the
+ * whole entry gone - same position, same submit gesture, but formAction
+ * overrides the shared form's normal save action with the already-existing
+ * deleteDailyReportAction for this one click, reusing report_id (see the
+ * hidden input DailyReportForm renders for it whenever an edit is live)
+ * rather than re-deriving anything new.
+ */
+function DeleteEntrySubmitButton({
+  locale,
+  variant,
+  busy = false,
+}: {
+  locale: AppLocale;
+  variant: "icon" | "text";
+  busy?: boolean;
+}) {
+  const { pending } = useFormStatus();
+  const isBusy = pending || busy;
+  const label = tr(locale, "Delete entry", "מחיקת רשומה");
+  const pendingLabel = tr(locale, "Deleting...", "מוחק...");
+
+  if (variant === "icon") {
+    return (
+      <button
+        type="submit"
+        form="daily-report-form"
+        formAction={deleteDailyReportAction}
+        disabled={pending}
+        aria-label={isBusy ? pendingLabel : label}
+        title={isBusy ? pendingLabel : label}
+        className={`flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-colors ${
+          pending ? "cursor-not-allowed bg-slate-200 text-slate-400 shadow-none" : "bg-rose-700 text-white hover:bg-rose-800"
+        }`}
+      >
+        {isBusy ? <Spinner className="h-5 w-5 animate-spin" /> : <TrashIcon className="h-6 w-6" />}
+      </button>
+    );
+  }
+
+  return (
+    <button
+      type="submit"
+      form="daily-report-form"
+      formAction={deleteDailyReportAction}
+      disabled={pending}
+      className="inline-flex w-full items-center justify-center rounded-xl bg-rose-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-rose-800"
+    >
+      {isBusy ? pendingLabel : label}
+    </button>
+  );
+}
+
 function readFileAsBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -160,8 +239,12 @@ export function DailyReportChatPanel({
   bmiWarning,
   initialTranscriptText,
   isEditing = false,
+  editingReportId,
+  editingEntrySummary,
   hasChanges = false,
   saveBlockedSignal,
+  userFirstName,
+  userGender,
 }: {
   locale: AppLocale;
   defaultItems: DailyReportDefaultItem[];
@@ -183,6 +266,20 @@ export function DailyReportChatPanel({
   /** True when Send/Conclude will update that same previously saved report
    * rather than create a new one - see SubmitButton's isEditing. */
   isEditing?: boolean;
+  /** The report id being edited, straight from the live URL (see
+   * DailyReportForm's own liveEditReportId) - sent with every chat request
+   * so the server can exclude this report's own contribution from
+   * todays_logged_totals_summary/todays_logged_items (see route.ts), which
+   * otherwise describe every report logged today INCLUDING this one, easily
+   * read by the model as "what's in the entry being edited" and blending in
+   * whatever else the user logged the same day. */
+  editingReportId?: string;
+  /** Plain-text, locale-formatted recap of exactly what this report
+   * currently contains (see page.tsx) - shown as part of the edit-mode
+   * intro message below instead of a generic "you're editing this" line, so
+   * the user sees the actual contents immediately without scrolling up
+   * through the original conversation. */
+  editingEntrySummary?: string;
   /** Whether anything outside this panel (weight, a custom target like
    * sleep duration, or a previously-sent chat message already folded into
    * the parent's report_text) has changed since the last save - drives the
@@ -204,13 +301,67 @@ export function DailyReportChatPanel({
    * sit there until the 20-second safety-net timeout below, reading as a
    * hung save that silently did nothing. */
   saveBlockedSignal?: number;
+  /** For this panel's own static greeting/intro copy below (not AI-
+   * generated) - an occasional first-name mention and grammatically
+   * correct Hebrew addressing, mirroring the rules the AI chat itself now
+   * follows (see lib/ai/persona.ts, which resolveUserGenderForAddressing's
+   * normalization is shared with). */
+  userFirstName?: string | null;
+  userGender?: "male" | "female" | null;
 }) {
-  const [messages, setMessages] = useState<ChatMessage[]>(() => parseTranscriptToMessages(initialTranscriptText ?? ""));
+  // Editing an existing report reopens its original conversation instead of
+  // starting blank - appends one local (non-AI) prompt so it's obvious this
+  // is a continuation to edit, not a fresh log, and so there's somewhere for
+  // the user to look to see what to type next. Includes the entry's own
+  // computed items recap (see editingEntrySummary) rather than just a
+  // generic "you're editing this" line, so what's actually in the entry is
+  // visible immediately without scrolling up through its original
+  // conversation. A named function (not inlined into useState below) since
+  // "New chat" needs this exact same construction again - see
+  // confirmClearChat, which resets back to it in place rather than
+  // remounting the whole panel (a remount would also reset `isOpen`,
+  // closing the mobile sheet right when the user asked to keep chatting).
+  function buildInitialMessages(): ChatMessage[] {
+    const parsed = parseTranscriptToMessages(initialTranscriptText ?? "");
+    const trimmedSummary = editingEntrySummary?.trim();
+    // Singular, gender-correct Hebrew (את/אתה + matching verb forms) - the
+    // original wording used plural/formal conjugations throughout
+    // ("ספרו"/"תוכלו"), inconsistent with the app's actual one-user-at-a-
+    // time addressing and with the AI chat's own persona rules (see
+    // lib/ai/persona.ts). userGender "unknown"/null falls back to the male
+    // forms via trGendered, same fallback the AI system prompts use.
+    const namePrefix = userFirstName ? `${userFirstName}, ` : "";
+    const includesEn = trimmedSummary ? ` It currently includes:\n${trimmedSummary}\n\n` : " ";
+    const includesHe = trimmedSummary ? ` היא כוללת כרגע:\n${trimmedSummary}\n\n` : " ";
+    const introLine = trGendered(
+      locale,
+      userGender,
+      `${namePrefix}you're editing this saved entry.${includesEn}Tell me what to add, change, or remove, and I'll update it - you can save once you're happy with it.`,
+      `${namePrefix}אתה עורך את הרשומה השמורה הזו.${includesHe}ספר לי מה להוסיף, לשנות או להסיר, ואעדכן אותה - תוכל לשמור ברגע שתהיה מרוצה מהתוצאה.`,
+      `${namePrefix}את עורכת את הרשומה השמורה הזו.${includesHe}ספרי לי מה להוסיף, לשנות או להסיר, ואעדכן אותה - תוכלי לשמור ברגע שתהיי מרוצה מהתוצאה.`,
+    );
+    return isEditing
+      ? [
+          ...parsed,
+          {
+            role: "assistant",
+            content: introLine,
+          },
+        ]
+      : parsed;
+  }
+
+  const [messages, setMessages] = useState<ChatMessage[]>(buildInitialMessages);
   // Mobile-only: the whole panel (thread + composer) collapses behind a
   // floating bubble instead of always occupying page space - see the
   // trigger button and sheet in the JSX below. Irrelevant at `sm` and up,
-  // where the panel is always visible inline as before.
-  const [isOpen, setIsOpen] = useState(false);
+  // where the panel is always visible inline as before. Starts open when
+  // editing an existing report so its just-restored conversation (above) is
+  // actually visible immediately - previously this always started closed
+  // regardless of isEditing, so on mobile the transcript was silently
+  // restored into state but stayed hidden behind the unopened sheet, which
+  // read as "the chat history isn't being copied over" even though it was.
+  const [isOpen, setIsOpen] = useState(() => isEditing);
   const [inputValue, setInputValue] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
@@ -218,6 +369,19 @@ export function DailyReportChatPanel({
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [selectedSavedListItems, setSelectedSavedListItems] = useState<SelectedSavedListItem[]>([]);
+  // Edit mode only - true once the model's latest reply confirmed the user
+  // wants to delete this whole entry (see the "delete_intent" SSE event and
+  // isEditingExistingEntry below), swapping Save for a delete action so
+  // hitting the same button removes the entry instead of updating it.
+  const [pendingDeleteOnSave, setPendingDeleteOnSave] = useState(false);
+  // "New chat" - shown only while there's actually something to lose (see
+  // hasChatContent below); otherwise the button clears immediately with no
+  // prompt. Deliberately false-by-default and only ever flipped true from a
+  // real click handler, never during the initial render - a portal keyed on
+  // it further below (see pendingClearConfirm's own JSX) can therefore
+  // never fire during SSR/hydration, no separate "is this mounted yet" gate
+  // needed the way isDesktopViewport's portal requires one.
+  const [pendingClearConfirm, setPendingClearConfirm] = useState(false);
   // Tracks "a save was just triggered" independently of useFormStatus's own
   // pending flag - see the effect below for why. Purely a visual signal
   // (spinner + disabled) for the save buttons; it never gates what actually
@@ -461,6 +625,8 @@ export function DailyReportChatPanel({
           chatHistory: historyForRequest.map((message) => ({ role: message.role, content: message.content })),
           imageBase64: image?.base64,
           mimeType: image?.mimeType,
+          isEditingExistingEntry: isEditing,
+          editingReportId: isEditing ? editingReportId : undefined,
         }),
         signal: controller.signal,
       });
@@ -502,6 +668,8 @@ export function DailyReportChatPanel({
               next[next.length - 1] = { role: "assistant", content: assistantText };
               return next;
             });
+          } else if (event.type === "delete_intent") {
+            setPendingDeleteOnSave(event.value);
           } else if (event.type === "error") {
             errorMessage = event.message;
           }
@@ -556,6 +724,21 @@ export function DailyReportChatPanel({
    * reflect the merged text by then, not on React's next scheduled render.
    */
   function handleQuickSave() {
+    // A native HTML constraint failing (e.g. the weight field's min/max/
+    // step) makes the browser silently cancel the submit before it ever
+    // reaches handleFormSubmit/saveBlockedSignal in the parent - neither of
+    // those ever runs, so nothing would ever clear an optimistically-set
+    // spinner (confirmed: reported as "the save icon spins forever" after
+    // typing an out-of-range/too-precise weight). reportValidity() both
+    // checks and - if something fails - shows the browser's own inline
+    // validation bubble on the offending field, exactly like a normal
+    // failed submit attempt would, so bailing out here needs no extra
+    // messaging of its own.
+    const form = document.getElementById("daily-report-form") as HTMLFormElement | null;
+    if (form && !form.reportValidity()) {
+      return;
+    }
+
     // Set regardless of whether there's unsent text to fold below - a
     // click here always means a real submit is about to happen (there's
     // nothing else this button does), so the spinner should reflect that
@@ -572,6 +755,42 @@ export function DailyReportChatPanel({
       onTranscriptChange(transcript);
     });
     setInputValue("");
+  }
+
+  // Whether "New chat" has anything to actually lose - a fresh, never-typed-
+  // in panel just clears silently instead of prompting over nothing.
+  const hasChatContent =
+    messages.length > 0 || inputValue.trim().length > 0 || photoPreviewUrl !== null || selectedSavedListItems.length > 0;
+
+  function handleNewChatClick() {
+    if (hasChatContent) {
+      setPendingClearConfirm(true);
+    } else {
+      confirmClearChat();
+    }
+  }
+
+  /** Resets every piece of this panel's own state back to a fresh start -
+   * in place, not via a remount (a remount would also reset `isOpen`,
+   * silently closing the mobile sheet right when the user asked to keep
+   * chatting - reported as "New chat closes the chat box instead of
+   * clearing it"). messages resetting is enough on its own to clear
+   * report_text too - see the onTranscriptChange effect above, which fires
+   * on every messages change including down to empty. */
+  function confirmClearChat() {
+    setPendingClearConfirm(false);
+    abortRef.current?.abort();
+    setIsStreaming(false);
+    setMessages(buildInitialMessages());
+    setInputValue("");
+    setPhotoPreviewUrl(null);
+    setPhotoError(null);
+    setSelectedSavedListItems([]);
+    setPendingDeleteOnSave(false);
+    setStreamError(null);
+    setRetryAction(null);
+    hasSentOnceRef.current = false;
+    hasDoneInitialScrollRef.current = false;
   }
 
   async function handlePhotoSelected(file: File | null) {
@@ -637,8 +856,10 @@ export function DailyReportChatPanel({
   // z-50 - reported as the buttons "blocking the list of saved items".
   // Generous on purpose (comfortably covers the button row's own
   // height/offset/safe-area on any real device) rather than trying to
-  // compute an exact fit.
-  const SHEET_BUTTON_CLEARANCE_PX = 128;
+  // compute an exact fit. 144, not 128: the chat toggle button grew from
+  // h-14 (56px) to h-16 (64px), so 128 (offset ~64px + old 56px button, no
+  // spare margin) stopped leaving any real buffer above it.
+  const SHEET_BUTTON_CLEARANCE_PX = 144;
   // 72% of the actually-measured visible height (see getVisualViewportHeight)
   // for the mobile sheet - null until that measurement lands, in which case
   // the sheet falls back to a fixed CSS height for that brief instant (see
@@ -671,9 +892,46 @@ export function DailyReportChatPanel({
           <div>
             <p className="text-sm font-semibold text-slate-900">{tr(locale, "Chat about your day", "צ'אט על היום שלך")}</p>
             <p className="text-xs text-slate-500">
-              {tr(locale, "Log meals, activity, and weight in one conversation", "רשמו ארוחות, פעילות ומשקל בשיחה אחת")}
+              {/* Singular, gender-correct Hebrew imperative (רשום/רשמי) -
+                  the original used the plural form ("רשמו"), inconsistent
+                  with the app's one-user addressing and the persona rules
+                  elsewhere (see lib/ai/persona.ts). */}
+              {trGendered(
+                locale,
+                userGender,
+                "Log meals, activity, and weight in one conversation",
+                "רשום ארוחות, פעילות ומשקל בשיחה אחת",
+                "רשמי ארוחות, פעילות ומשקל בשיחה אחת",
+              )}
             </p>
           </div>
+          <button
+            type="button"
+            onClick={handleNewChatClick}
+            aria-label={tr(locale, "Start a new chat", "התחלת צ'אט חדש")}
+            title={tr(locale, "Start a new chat", "התחלת צ'אט חדש")}
+            className="flex shrink-0 items-center gap-1 rounded-full border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            <NewChatIcon className="h-3.5 w-3.5" />
+            {tr(locale, "New chat", "צ'אט חדש")}
+          </button>
+        </div>
+
+        {/* Desktop only - the mobile header above already carries this
+            button, but desktop's own "Chat about your day" title lives in
+            DailyReportForm (outside this shared JSX), so this thin bar is
+            the only place left for it there. */}
+        <div className="hidden items-center justify-end border-b border-slate-200 px-3 py-1.5 sm:flex">
+          <button
+            type="button"
+            onClick={handleNewChatClick}
+            aria-label={tr(locale, "Start a new chat", "התחלת צ'אט חדש")}
+            title={tr(locale, "Start a new chat", "התחלת צ'אט חדש")}
+            className="flex items-center gap-1 rounded-full border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            <NewChatIcon className="h-3.5 w-3.5" />
+            {tr(locale, "New chat", "צ'אט חדש")}
+          </button>
         </div>
 
         {/* min-h-0 on both this wrapper and threadRef below: without it, a
@@ -791,6 +1049,17 @@ export function DailyReportChatPanel({
               dropDirection="up"
               showQuickAdd
               formId="daily-report-form"
+              // Only on mobile: the desktop inline card isn't nested inside
+              // any overflow-hidden/transform ancestor, so its own plain
+              // absolute-positioned popover already opens correctly there -
+              // portalPopover exists specifically for the mobile sheet's
+              // clipping problem (see that prop's own comment). Tied to
+              // isDesktopViewport (not a plain `true`) so this is `false`
+              // during SSR too (getServerViewportSnapshot assumes desktop),
+              // the same trick this file's own sheet portal below already
+              // relies on to avoid touching `document` before the client
+              // has actually mounted.
+              portalPopover={!isDesktopViewport}
             />
           </div>
 
@@ -809,10 +1078,17 @@ export function DailyReportChatPanel({
               before the first message, same as before. */}
           {messages.length === 0 ? (
             <p className="px-0 text-xs text-slate-500 sm:px-3">
-              {tr(
+              {/* Singular, gender-correct Hebrew (את/אתה + matching verb
+                  forms) - see buildInitialMessages' own comment on why the
+                  original plural/formal conjugations were wrong here.
+                  userGender "unknown"/null falls back to the male forms via
+                  trGendered, same fallback the AI system prompts use. */}
+              {trGendered(
                 locale,
-                "Tell me what you ate, drank, or did for exercise today (or attach a photo), and I'll help fill in the details. When you're ready, save to add it to today's log.",
-                "ספרו לי מה אכלתם, שתיתם או עשיתם מבחינת פעילות גופנית היום (או צרפו תמונה), ואעזור להשלים את הפרטים. כשתהיו מוכנים, שמרו כדי להוסיף זאת ליומן של היום.",
+                userGender,
+                `${userFirstName ? `Hi ${userFirstName}, tell` : "Tell"} me what you ate, drank, or did for exercise today (or attach a photo), and I'll help fill in the details. When you're ready, save to add it to today's log.`,
+                `${userFirstName ? `היי ${userFirstName}, ` : ""}ספר לי מה אכלת, שתית או עשית מבחינת פעילות גופנית היום (או צרף תמונה), ואעזור להשלים את הפרטים. כשתהיה מוכן, שמור כדי להוסיף זאת ליומן של היום.`,
+                `${userFirstName ? `היי ${userFirstName}, ` : ""}ספרי לי מה אכלת, שתית או עשית מבחינת פעילות גופנית היום (או צרפי תמונה), ואעזור להשלים את הפרטים. כשתהיי מוכנה, שמרי כדי להוסיף זאת ליומן של היום.`,
               )}
             </p>
           ) : null}
@@ -871,7 +1147,10 @@ export function DailyReportChatPanel({
                 rows={2}
                 maxLength={500}
                 disabled={isStreaming}
-                placeholder={tr(locale, "Type a message...", "כתבו הודעה...")}
+                // Singular, gender-correct Hebrew imperative (כתוב/כתבי) -
+                // see the subtitle above for why the original plural form
+                // ("כתבו") was wrong here too.
+                placeholder={trGendered(locale, userGender, "Type a message...", "כתוב הודעה...", "כתבי הודעה...")}
                 className="flex-1 resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 disabled:opacity-70"
               />
               <button
@@ -893,14 +1172,18 @@ export function DailyReportChatPanel({
               (there's no sheet there, no separate floating icon to collide
               with), so it keeps its original always-visible button. */}
           <div className="hidden sm:block sm:px-3 sm:pb-3">
-            <SubmitButton
-              locale={locale}
-              onClick={handleQuickSave}
-              isEditing={isEditing}
-              fullWidth
-              busy={isSaving}
-              form="daily-report-form"
-            />
+            {isEditing && pendingDeleteOnSave ? (
+              <DeleteEntrySubmitButton locale={locale} variant="text" />
+            ) : (
+              <SubmitButton
+                locale={locale}
+                onClick={handleQuickSave}
+                isEditing={isEditing}
+                fullWidth
+                busy={isSaving}
+                form="daily-report-form"
+              />
+            )}
           </div>
         </div>
       </div>
@@ -952,7 +1235,19 @@ export function DailyReportChatPanel({
           notes on chatBodyContent and DailyReportForm's <form id=...>. */}
       {!isDesktopViewport
         ? createPortal(
-            <>
+            // dir set explicitly here - the app only applies dir="rtl"/"ltr"
+            // on a wrapper <div> inside app/app/layout.tsx, not on
+            // <html>/<body> - portaling straight to document.body (see the
+            // big comment above) escapes that wrapper entirely, so without
+            // this the whole sheet/bubble silently fell back to the
+            // document's default LTR direction on mobile even in Hebrew,
+            // left-aligning Hebrew text instead of right-aligning it
+            // (confirmed: desktop, which renders chatBodyContent inline and
+            // stays inside that wrapper, never had this problem). The
+            // fixed-position buttons inside are unaffected either way -
+            // they're deliberately pinned with physical left-4/right-4
+            // classes, not logical ones (see their own comment).
+            <div dir={directionForLocale(locale)}>
               {/* Opposite corners on purpose - having Save right next to the
                   chat open/close toggle (they used to sit side by side at
                   bottom-right) made it too easy to hit Save by mistake while
@@ -966,15 +1261,19 @@ export function DailyReportChatPanel({
                   page width) still clears both without needing its own
                   adjustment. */}
               <div className="fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom)+0.75rem)] left-4 z-50 transform-gpu">
-                <SubmitButton
-                  locale={locale}
-                  onClick={handleQuickSave}
-                  isEditing={isEditing}
-                  variant="icon"
-                  disabled={!canSave}
-                  busy={isSaving}
-                  form="daily-report-form"
-                />
+                {isEditing && pendingDeleteOnSave ? (
+                  <DeleteEntrySubmitButton locale={locale} variant="icon" />
+                ) : (
+                  <SubmitButton
+                    locale={locale}
+                    onClick={handleQuickSave}
+                    isEditing={isEditing}
+                    variant="icon"
+                    disabled={!canSave}
+                    busy={isSaving}
+                    form="daily-report-form"
+                  />
+                )}
               </div>
 
               {/* Fixed at the screen's actual physical bottom-right
@@ -983,18 +1282,46 @@ export function DailyReportChatPanel({
                   (WhatsApp/Messenger/Intercom all keep theirs bottom-right
                   in Hebrew/Arabic too) - and positioned above AppBottomNav
                   using the same safe-area-aware offset established for the
-                  composer dock this replaced. */}
+                  composer dock this replaced.
+                  right: calc(12.5vw - 2rem), not a flat right-4 - AppBottomNav
+                  lays its 4 tabs out as equal flex-1 quarters (justify-around,
+                  no horizontal padding of its own on mobile), so the
+                  rightmost tab (Home, first in its array - see that
+                  component's own RTL-order comment) is centered 1/8 of the
+                  screen width (12.5vw) in from the right edge. Centering
+                  this h-16 (2rem radius) button on that same point - not
+                  just "near" the corner - is what actually puts it directly
+                  above the Home icon on any phone width, instead of a fixed
+                  px offset that only lines up by coincidence on some widths
+                  and drifts on others. Only matters below `sm` (this button
+                  never renders at/above that breakpoint, where AppBottomNav
+                  itself is hidden and max-w-6xl would break the 100vw
+                  assumption anyway).
+                  The underscores in calc(12.5vw_-_2rem) are load-bearing,
+                  not stylistic - Tailwind needs them to represent the actual
+                  spaces around the `-`, and the browser's own CSS tokenizer
+                  needs THAT whitespace to parse "-" as subtraction: written
+                  without it, "12.5vw-2rem" tokenizes as two back-to-back
+                  values ("12.5vw" then a separate, sign-absorbed "-2rem")
+                  with no operator between them, which is invalid and makes
+                  the whole calc() (and therefore `right`) silently fail -
+                  exactly what happened here on a real device (the button
+                  rendered with no horizontal offset at all instead of
+                  dropping the intended centering). The `+`-only calc()s
+                  elsewhere in this file never hit this: a bare "+" can't be
+                  absorbed as a number's sign the way "-" can, so it stays
+                  unambiguous even without surrounding whitespace. */}
               <button
                 type="button"
                 onClick={() => setIsOpen((open) => !open)}
                 aria-expanded={isOpen}
                 aria-label={isOpen ? tr(locale, "Close chat", "סגירת הצ'אט") : tr(locale, "Open chat", "פתיחת הצ'אט")}
-                className="fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom)+0.75rem)] right-4 z-50 flex h-14 w-14 transform-gpu items-center justify-center rounded-full bg-teal-700 text-white shadow-lg hover:bg-teal-800"
+                className="fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom)+0.75rem)] right-[calc(12.5vw_-_2rem)] z-50 flex h-16 w-16 transform-gpu items-center justify-center rounded-full bg-teal-700 text-white shadow-lg hover:bg-teal-800"
               >
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={isOpen ? "hidden" : "block"} aria-hidden="true">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={isOpen ? "hidden" : "block"} aria-hidden="true">
                   <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
                 </svg>
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" className={isOpen ? "block" : "hidden"} aria-hidden="true">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" className={isOpen ? "block" : "hidden"} aria-hidden="true">
                   <path d="M18 6 6 18M6 6l12 12" />
                 </svg>
               </button>
@@ -1029,12 +1356,57 @@ export function DailyReportChatPanel({
                     : undefined
                 }
                 className={`${isOpen ? "flex" : "hidden"} fixed inset-x-0 z-40 ${
-                  sheetHeightPx === null ? "bottom-[calc(8rem+env(safe-area-inset-bottom))] h-[70svh]" : ""
+                  sheetHeightPx === null ? "bottom-[calc(9rem+env(safe-area-inset-bottom))] h-[70svh]" : ""
                 } transform-gpu flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl`}
               >
                 {chatBodyContent}
               </div>
-            </>,
+            </div>,
+            document.body,
+          )
+        : null}
+
+      {/* Portaled to document.body regardless of desktop/mobile - even the
+          desktop inline card sits inside an overflow-hidden wrapper (see
+          DailyReportForm), the exact ancestor shape that already silently
+          clipped a fixed-positioned confirmation elsewhere in this form.
+          pendingClearConfirm only ever flips true from a real click, never
+          during the initial render, so this never runs during SSR/hydration
+          - no separate mounted-gate needed the way the sheet above needs
+          isDesktopViewport's. */}
+      {pendingClearConfirm
+        ? createPortal(
+            // dir set explicitly - see the sheet portal's own comment above
+            // on why a portal to document.body can't rely on inheriting it.
+            <div dir={directionForLocale(locale)} className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/40 p-4">
+              <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl">
+                <div className="px-5 py-4">
+                  <p className="text-sm text-slate-700">
+                    {tr(
+                      locale,
+                      "Start a new chat? This clears the current conversation - anything not yet saved will be lost.",
+                      "להתחיל צ'אט חדש? פעולה זו מנקה את השיחה הנוכחית - כל מה שלא נשמר עדיין יאבד.",
+                    )}
+                  </p>
+                </div>
+                <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3">
+                  <button
+                    type="button"
+                    onClick={() => setPendingClearConfirm(false)}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    {tr(locale, "Cancel", "ביטול")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={confirmClearChat}
+                    className="rounded-lg bg-rose-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-rose-800"
+                  >
+                    {tr(locale, "Start new chat", "התחלת צ'אט חדש")}
+                  </button>
+                </div>
+              </div>
+            </div>,
             document.body,
           )
         : null}

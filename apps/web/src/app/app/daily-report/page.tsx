@@ -3,12 +3,12 @@ import { redirect } from "next/navigation";
 
 import {
   addReportToDefaultsAction,
-  adjustDailyReportItemQuantitiesAction,
   deleteDailyReportAction,
   updateDailyReportChartPreferencesAction,
 } from "@/app/app/daily-report/actions";
+import { DailyReportDateJumpForm } from "@/components/daily-report-date-jump-form";
+import { DailyReportEditPencilIcon, DailyReportEntryEditForm } from "@/components/daily-report-entry-edit-form";
 import { DailyReportForm } from "@/components/daily-report-form";
-import { LocalizedDateInput } from "@/components/localized-date-input";
 import { DailyReportGoalBars, type RingMetric } from "@/components/daily-report-goal-bars";
 import { DailyReportWeightTrend, type WeightPoint } from "@/components/daily-report-weight-trend";
 import {
@@ -18,6 +18,7 @@ import {
   type DailyReportChartCoreMetric,
   type DailyReportChartExtraMetric,
 } from "@/lib/daily-report-chart-preferences";
+import { resolveUserGenderForAddressing } from "@/lib/ai/persona";
 import { getDailyReportTotalsForRange } from "@/lib/daily-report";
 import { normalizeUserTargetsJson } from "@/lib/targets";
 import { getAiExtractionConfig } from "@/lib/ai/env";
@@ -265,7 +266,7 @@ export default async function DailyReportPage({
   ] = await Promise.all([
     supabase
       .from("user_profile")
-      .select("preferred_language, daily_report_chart_preferences, weight_kg, first_name, exercise_modalities, exercise_schedule_by_modality, exercise_other_activities")
+      .select("preferred_language, daily_report_chart_preferences, weight_kg, first_name, gender, biological_sex, exercise_modalities, exercise_schedule_by_modality, exercise_other_activities")
       .eq("user_id", user.id)
       .maybeSingle(),
     supabase
@@ -280,12 +281,23 @@ export default async function DailyReportPage({
       .select("reported_weight_kg")
       .eq("user_id", user.id)
       .not("reported_weight_kg", "is", null)
+      // report_at is minute-precision (see getLocalDateTimeValue in
+      // daily-report-form.tsx) - two reports saved within the same minute
+      // tie on it, and without a tiebreaker Postgres can return either one
+      // regardless of which was actually saved last (confirmed as the
+      // cause of the weight field's placeholder showing a stale value right
+      // after saving a newer one). created_at (full precision, set once at
+      // insert) reflects true save order - same fix as
+      // resyncProfileWeightFromReports in daily-report/actions.ts, which
+      // this must stay consistent with since both claim to answer the same
+      // "what's the current weight" question.
       .order("report_at", { ascending: false })
+      .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
     supabase
       .from("user_daily_reports")
-      .select("id, raw_report_text, reported_weight_kg, report_at, selected_defaults, custom_target_values")
+      .select("id, raw_report_text, reported_weight_kg, report_at, selected_defaults, custom_target_values, parsed_items, parsed_exercises")
       .eq("id", editableReportLookupId)
       .eq("user_id", user.id)
       .maybeSingle(),
@@ -313,7 +325,7 @@ export default async function DailyReportPage({
     supabase
       .from("user_daily_reports")
       .select(
-        "id, raw_report_text, report_at, parse_confidence, requires_confirmation, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal, reported_weight_kg, parsed_items, parsed_exercises, custom_target_values",
+        "id, raw_report_text, report_at, parse_confidence, requires_confirmation, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal, reported_weight_kg, parsed_items, parsed_exercises, custom_target_values, nutrient_overrides",
       )
       .eq("user_id", user.id)
       .gte("report_at", selectedDayStartIso)
@@ -331,6 +343,13 @@ export default async function DailyReportPage({
   const profileRow = profileRowResult.data;
   const locale = normalizeLocale(profileRow?.preferred_language);
   const userDisplayName = profileRow?.first_name?.trim() || tr(locale, "You", "אתה");
+  // For the chat panel's own static greeting/intro copy (see
+  // DailyReportChatPanel) - grammatically correct Hebrew addressing and an
+  // occasional first-name mention, same rules the AI chat itself now
+  // follows (see lib/ai/persona.ts, which this shares its normalization
+  // logic with).
+  const userFirstName = profileRow?.first_name?.trim() || null;
+  const userGender = resolveUserGenderForAddressing(profileRow?.gender, profileRow?.biological_sex);
   const chartPreferences = normalizeDailyReportChartPreferences(profileRow?.daily_report_chart_preferences);
 
   // Weekly exercise-adherence badge: total sessions logged this calendar
@@ -378,6 +397,7 @@ export default async function DailyReportPage({
     reportAt: string;
     selectedDefaults: Array<{ id: string; quantity: number }>;
     customTargetValues: Record<string, number>;
+    itemsSummaryText: string;
   } | null = null;
 
   const editableReportRow = editReportId ? editableReportRowResult.data : null;
@@ -390,6 +410,33 @@ export default async function DailyReportPage({
         ? (editableReportRow.custom_target_values as Record<string, unknown>)
         : {};
 
+    // A plain-text, locale-formatted line-per-item recap of exactly what
+    // THIS entry (and only this entry - never anything else logged the same
+    // day) currently contains, computed straight from its own parsed_items/
+    // parsed_exercises rather than asking the AI to describe it - shown as
+    // part of the chat panel's edit-mode intro so the user sees what's in
+    // the entry immediately, without scrolling up through its original
+    // conversation or risking the AI blending in some other entry.
+    const editableFoodItemsRaw = Array.isArray(editableReportRow.parsed_items)
+      ? (editableReportRow.parsed_items as Array<Record<string, unknown>>)
+      : [];
+    const editableExerciseItemsRaw = Array.isArray(editableReportRow.parsed_exercises)
+      ? (editableReportRow.parsed_exercises as Array<Record<string, unknown>>)
+      : [];
+    const itemsSummaryLines = [
+      ...editableFoodItemsRaw.map((item) => {
+        const quantity = formatNumber(Number(item.quantity ?? 0), locale, Number.isInteger(Number(item.quantity)) ? 0 : 1);
+        const unit = formatMeasurementUnit(String(item.unit ?? ""), locale);
+        const kcal = formatNumber(Number(item.caloriesKcal ?? 0), locale, 0);
+        return `${quantity} ${unit} ${tr(locale, "of", "של")} ${String(item.name ?? "")} (${kcal} ${tr(locale, "kcal", "קק\"ל")})`;
+      }),
+      ...editableExerciseItemsRaw.map((item) => {
+        const minutes = formatNumber(Number(item.minutes ?? 0), locale, 0);
+        const kcal = formatNumber(Number(item.estimatedBurnKcal ?? 0), locale, 0);
+        return `${String(item.name ?? "")} - ${minutes} ${tr(locale, "min", "דקות")} (${tr(locale, "~", "~")}${kcal} ${tr(locale, "kcal burned", "קק\"ל נשרפו")})`;
+      }),
+    ];
+
     editingReport = {
       id: editableReportRow.id,
       rawReportText: editableReportRow.raw_report_text ?? "",
@@ -401,6 +448,7 @@ export default async function DailyReportPage({
       customTargetValues: Object.fromEntries(
         Object.entries(customTargetValuesRaw).filter(([, value]) => Number.isFinite(Number(value))).map(([key, value]) => [key, Number(value)]),
       ),
+      itemsSummaryText: itemsSummaryLines.join("\n"),
     };
   }
 
@@ -648,6 +696,7 @@ export default async function DailyReportPage({
         parsed_items: unknown;
         parsed_exercises: unknown;
         custom_target_values: unknown;
+        nutrient_overrides: unknown;
       }>
     | null = null;
 
@@ -655,7 +704,7 @@ export default async function DailyReportPage({
     const reportsWithoutWeight = await supabase
       .from("user_daily_reports")
       .select(
-        "id, raw_report_text, report_at, parse_confidence, requires_confirmation, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal, parsed_items, parsed_exercises, custom_target_values",
+        "id, raw_report_text, report_at, parse_confidence, requires_confirmation, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal, parsed_items, parsed_exercises, custom_target_values, nutrient_overrides",
       )
       .eq("user_id", user.id)
       .gte("report_at", selectedDayStartIso)
@@ -794,21 +843,7 @@ export default async function DailyReportPage({
               </svg>
               {tr(locale, "Jump to a date", "מעבר לתאריך אחר")}
             </summary>
-            <form method="GET" className="mt-2 flex items-center justify-center gap-2">
-              <LocalizedDateInput
-                locale={locale}
-                name="date"
-                value={selectedDate}
-                max={todayDateString}
-                ariaLabel={tr(locale, "View date", "תאריך לצפייה")}
-              />
-              <button
-                type="submit"
-                className="rounded-lg border border-teal-300 px-3 py-1.5 text-sm font-medium text-teal-700 hover:bg-teal-50"
-              >
-                {tr(locale, "View", "הצגה")}
-              </button>
-            </form>
+            <DailyReportDateJumpForm locale={locale} selectedDate={selectedDate} todayDateString={todayDateString} />
           </details>
         </div>
 
@@ -979,6 +1014,94 @@ export default async function DailyReportPage({
                 .map(([id, value]) => ({ target: customTargetById.get(id), value }))
                 .filter((row): row is { target: { id: string; label: string; unit: string }; value: number } => Boolean(row.target));
 
+              // Which of this report's own nutrient totals are directly
+              // editable in "Edit" below, and whether each is currently
+              // pinned to a manually-entered value (see nutrient_overrides -
+              // db/migrations/034_phase12_daily_report_nutrient_overrides.sql)
+              // rather than derived from its items. Only the fields the
+              // detail grid above actually shows, same as that grid's own
+              // hasFood/hasExercise gating - a weight/target-only report has
+              // nothing meaningful here to correct.
+              const reportNutrientOverrides =
+                report.nutrient_overrides
+                && typeof report.nutrient_overrides === "object"
+                && !Array.isArray(report.nutrient_overrides)
+                  ? (report.nutrient_overrides as Record<string, boolean>)
+                  : {};
+              const nutrientFields =
+                hasFood || hasExercise
+                  ? [
+                      {
+                        dbColumn: "calories_kcal",
+                        labelEn: "Calories",
+                        labelHe: "קלוריות",
+                        unit: "kcal",
+                        value: report.calories_kcal ?? 0,
+                        overridden: Boolean(reportNutrientOverrides.calories_kcal),
+                      },
+                      {
+                        dbColumn: "protein_g",
+                        labelEn: "Protein",
+                        labelHe: "חלבון",
+                        unit: "g",
+                        value: report.protein_g ?? 0,
+                        overridden: Boolean(reportNutrientOverrides.protein_g),
+                      },
+                      {
+                        dbColumn: "water_ml",
+                        labelEn: "Water",
+                        labelHe: "מים",
+                        unit: "ml",
+                        value: report.water_ml ?? 0,
+                        overridden: Boolean(reportNutrientOverrides.water_ml),
+                      },
+                      ...(hasExercise
+                        ? [
+                            {
+                              dbColumn: "estimated_burn_kcal",
+                              labelEn: "Calories burned",
+                              labelHe: "קלוריות שנשרפו",
+                              unit: "kcal",
+                              value: report.estimated_burn_kcal ?? 0,
+                              overridden: Boolean(reportNutrientOverrides.estimated_burn_kcal),
+                            },
+                          ]
+                        : []),
+                      {
+                        dbColumn: "magnesium_mg",
+                        labelEn: "Magnesium",
+                        labelHe: "מגנזיום",
+                        unit: "mg",
+                        value: report.magnesium_mg ?? 0,
+                        overridden: Boolean(reportNutrientOverrides.magnesium_mg),
+                      },
+                      {
+                        dbColumn: "potassium_mg",
+                        labelEn: "Potassium",
+                        labelHe: "אשלגן",
+                        unit: "mg",
+                        value: report.potassium_mg ?? 0,
+                        overridden: Boolean(reportNutrientOverrides.potassium_mg),
+                      },
+                      {
+                        dbColumn: "iron_mg",
+                        labelEn: "Iron",
+                        labelHe: "ברזל",
+                        unit: "mg",
+                        value: report.iron_mg ?? 0,
+                        overridden: Boolean(reportNutrientOverrides.iron_mg),
+                      },
+                      {
+                        dbColumn: "zinc_mg",
+                        labelEn: "Zinc",
+                        labelHe: "אבץ",
+                        unit: "mg",
+                        value: report.zinc_mg ?? 0,
+                        overridden: Boolean(reportNutrientOverrides.zinc_mg),
+                      },
+                    ]
+                  : [];
+
               // "target" covers a report that only carries a custom target
               // value (e.g. sleep duration) with no food, exercise, or
               // weight - previously this fell through to "weight" by
@@ -994,16 +1117,64 @@ export default async function DailyReportPage({
                     : reportCustomTargetRows.length > 0
                       ? "target"
                       : "weight";
-              const showsCalories = hasFood || hasExercise || Number(report.calories_kcal ?? 0) > 0;
               const formatTargetValue = (value: number, unit: string) =>
                 `${formatNumberForLocale(value, locale, { maximumFractionDigits: Number.isInteger(value) ? 0 : 1 })} ${formatMeasurementUnit(unit, locale)}`;
-              const valuePillText = showsCalories
-                ? `${formatNumber(report.calories_kcal, locale, 0)} ${tr(locale, "kcal", 'קק"ל')}`
-                : hasWeight
-                  ? `${formatNumber(report.reported_weight_kg, locale, 2)} ${formatMeasurementUnit("kg", locale)}`
-                  : reportCustomTargetRows.length === 1
-                    ? formatTargetValue(reportCustomTargetRows[0].value, reportCustomTargetRows[0].target.unit)
-                    : null;
+              // An exercise-only entry (no food) has nothing meaningful in
+              // calories_kcal - that column only ever holds calories EATEN,
+              // always 0 with nothing logged to eat - the calories the
+              // exercise itself burned live in the separate
+              // estimated_burn_kcal column instead. The pill used to always
+              // show calories_kcal regardless, so a pure exercise entry
+              // (e.g. "Strength training (60 min)") displayed "0 kcal" even
+              // though real burn had been estimated and counted toward the
+              // day's totals - reported as "the number of calories does not
+              // change" when logging exercise. hasFood still wins when an
+              // entry has both (matching entryKind's own meal-first
+              // priority above) since calories eaten is the more relevant
+              // headline number there. estimated_burn_kcal is shown as a
+              // negative number with the plain "kcal" unit (e.g. "-220
+              // kcal") rather than a positive number plus a "burned"
+              // qualifier - reads at a glance as a deduction the same way an
+              // expense-tracking app shows a refund, without needing an
+              // extra word to explain the direction.
+              //
+              // number/unit kept as two separate fields (rendered as two
+              // separate flex items below, not one concatenated string) -
+              // a plain "${number} ${unit}" string, even inside a dir="ltr"
+              // wrapper, still let the Hebrew unit word visually swap
+              // places with its own number (reported as "קק"ל 0" instead of
+              // "0 קק"ל") because the two were never actually isolated from
+              // each other's bidi run, just forced into an LTR paragraph
+              // that couldn't fully pin a lone RTL word's position within
+              // it - the exact same class of bug the goal-bars "eaten -
+              // burned = net" line had. Separate flex items sidestep it by
+              // construction: layout order comes from flex-direction, which
+              // bidi text reordering can't touch, regardless of the
+              // *value*'s own reading direction - and rendering with NO
+              // forced dir on the pill itself (only the number span keeps
+              // its own dir="ltr", to protect the digits themselves from
+              // ever reversing) means each locale's natural direction
+              // decides the number/unit order on its own: Hebrew (RTL)
+              // reads the number first, landing physically on the right
+              // with the unit trailing to its left; English (LTR) reads
+              // the same number-first order onto the left instead - both
+              // exactly matching how each locale would order it naturally.
+              const valuePill: { number: string; unit: string } | null = hasFood
+                ? { number: formatNumber(report.calories_kcal, locale, 0), unit: tr(locale, "kcal", 'קק"ל') }
+                : hasExercise
+                  ? { number: formatNumber(-Math.abs(Number(report.estimated_burn_kcal ?? 0)), locale, 0), unit: tr(locale, "kcal", 'קק"ל') }
+                  : hasWeight
+                    ? { number: formatNumber(report.reported_weight_kg, locale, 2), unit: formatMeasurementUnit("kg", locale) }
+                    : reportCustomTargetRows.length === 1
+                      ? {
+                          number: formatNumberForLocale(reportCustomTargetRows[0].value, locale, {
+                            maximumFractionDigits: Number.isInteger(reportCustomTargetRows[0].value) ? 0 : 1,
+                          }),
+                          unit: formatMeasurementUnit(reportCustomTargetRows[0].target.unit, locale),
+                        }
+                      : Number(report.calories_kcal ?? 0) > 0
+                        ? { number: formatNumber(report.calories_kcal, locale, 0), unit: tr(locale, "kcal", 'קק"ל') }
+                        : null;
               // A report holding only a custom target value has nothing for
               // buildEntrySummary to describe (it only looks at parsed food/
               // exercise items), so the row's own custom target(s) become
@@ -1032,8 +1203,9 @@ export default async function DailyReportPage({
               return (
                 <div key={report.id} className="space-y-2">
                   <details
+                    id={`daily-report-entry-${report.id}`}
                     open={isBeingEdited}
-                    className={`rounded-xl border ${isBeingEdited ? "border-teal-400 bg-teal-50/40 ring-1 ring-teal-300" : "border-slate-200 bg-slate-50"}`}
+                    className={`rounded-xl border transition-colors duration-700 ${isBeingEdited ? "border-teal-400 bg-teal-50/40 ring-1 ring-teal-300" : "border-slate-200 bg-slate-50"}`}
                   >
                     <summary className="flex cursor-pointer list-none items-center gap-3 p-4 [&::-webkit-details-marker]:hidden">
                       <span className="min-w-0 flex-1">
@@ -1064,9 +1236,10 @@ export default async function DailyReportPage({
                           {displaySummary}
                         </span>
                       </span>
-                      {valuePillText ? (
-                        <span dir="ltr" className="shrink-0 rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
-                          {valuePillText}
+                      {valuePill ? (
+                        <span className="flex shrink-0 items-center gap-1 rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
+                          <span dir="ltr" className="tabular-nums">{valuePill.number}</span>
+                          <span>{valuePill.unit}</span>
                         </span>
                       ) : null}
                       {/* Two earlier placements both put the entry-kind icon at the
@@ -1127,6 +1300,9 @@ export default async function DailyReportPage({
                           <p>{tr(locale, "Protein", "חלבון")}: <span className="font-semibold text-slate-900">{formatNumber(report.protein_g, locale, 1)}</span> {formatMeasurementUnit("g", locale)}</p>
                           <p>{tr(locale, "Water", "מים")}: <span className="font-semibold text-slate-900">{formatNumber(report.water_ml, locale, 0)}</span> {formatMeasurementUnit("ml", locale)}</p>
                           <p>{tr(locale, "Exercise", "פעילות")}: <span className="font-semibold text-slate-900">{formatNumber(report.exercise_minutes, locale, 0)}</span> {formatMeasurementUnit("min", locale)}</p>
+                          {hasExercise ? (
+                            <p>{tr(locale, "Calories burned", "קלוריות שנשרפו")}: <span className="font-semibold text-slate-900">{formatNumber(report.estimated_burn_kcal, locale, 0)}</span> {tr(locale, "kcal", 'קק"ל')}</p>
+                          ) : null}
                           <p>{tr(locale, "Magnesium", "מגנזיום")}: <span className="font-semibold text-slate-900">{formatNumber(report.magnesium_mg, locale, 1)}</span> {formatMeasurementUnit("mg", locale)}</p>
                           <p>{tr(locale, "Potassium", "אשלגן")}: <span className="font-semibold text-slate-900">{formatNumber(report.potassium_mg, locale, 1)}</span> {formatMeasurementUnit("mg", locale)}</p>
                           <p>{tr(locale, "Iron", "ברזל")}: <span className="font-semibold text-slate-900">{formatNumber(report.iron_mg, locale, 2)}</span> {formatMeasurementUnit("mg", locale)}</p>
@@ -1166,90 +1342,27 @@ export default async function DailyReportPage({
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                         {editableFoodItems.length > 0 || editableExerciseItems.length > 0 || hasWeight || reportCustomTargetRows.length > 0 ? (
                           <details>
-                            <summary className="cursor-pointer text-xs font-medium text-teal-700 hover:text-teal-800">
+                            <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-medium text-teal-700 hover:text-teal-800 [&::-webkit-details-marker]:hidden">
+                              <DailyReportEditPencilIcon className="h-3.5 w-3.5" />
                               {tr(locale, "Edit", "עריכה")}
                             </summary>
-                            <form
-                              action={adjustDailyReportItemQuantitiesAction}
-                              className="mt-2 w-full space-y-2 rounded-lg border border-teal-200 bg-teal-50/40 p-3"
-                            >
-                              <input type="hidden" name="report_id" value={report.id} />
-                              {resolvedSearchParams.date ? (
-                                <input type="hidden" name="selected_date" value={resolvedSearchParams.date} />
-                              ) : null}
-                              {/* Weight and custom targets (sleep, etc.) are
-                                  plain scalars on the report row, not items in
-                                  an array - adjustDailyReportItemQuantitiesAction
-                                  only touches them when their field is present
-                                  at all, so these only render when this report
-                                  actually has that kind of value to begin with.
-                                  Clearing the field removes it from this report
-                                  entirely, same as zeroing a food quantity. */}
-                              {hasWeight ? (
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className="min-w-[120px] flex-1 text-xs text-slate-700">{tr(locale, "Weight", "משקל")}</span>
-                                  <input
-                                    type="number"
-                                    name="reported_weight_kg"
-                                    min={20}
-                                    max={400}
-                                    step="0.1"
-                                    inputMode="decimal"
-                                    defaultValue={report.reported_weight_kg ?? undefined}
-                                    className="w-24 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none ring-teal-600 focus:ring-2"
-                                  />
-                                  <span className="text-xs text-slate-500">{formatMeasurementUnit("kg", locale)}</span>
-                                </div>
-                              ) : null}
-                              {reportCustomTargetRows.map(({ target, value }) => (
-                                <div key={target.id} className="flex flex-wrap items-center gap-2">
-                                  <span className="min-w-[120px] flex-1 text-xs text-slate-700">{target.label}</span>
-                                  <input
-                                    type="number"
-                                    name={`custom_target_value__${target.id}`}
-                                    step="any"
-                                    inputMode="decimal"
-                                    defaultValue={value}
-                                    className="w-24 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none ring-teal-600 focus:ring-2"
-                                  />
-                                  <span className="text-xs text-slate-500">{formatMeasurementUnit(target.unit, locale)}</span>
-                                </div>
-                              ))}
-                              {editableFoodItems.map((item) => (
-                                <div key={`food-${item.index}`} className="flex flex-wrap items-center gap-2">
-                                  <span className="min-w-[120px] flex-1 text-xs text-slate-700">{item.name}</span>
-                                  <input
-                                    type="number"
-                                    name={`food_quantity__${item.index}`}
-                                    min={0}
-                                    step="any"
-                                    defaultValue={item.quantity}
-                                    className="w-24 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none ring-teal-600 focus:ring-2"
-                                  />
-                                  <span className="text-xs text-slate-500">{formatDefaultUnit(item.unit, locale)}</span>
-                                </div>
-                              ))}
-                              {editableExerciseItems.map((item) => (
-                                <div key={`exercise-${item.index}`} className="flex flex-wrap items-center gap-2">
-                                  <span className="min-w-[120px] flex-1 text-xs text-slate-700">{item.name}</span>
-                                  <input
-                                    type="number"
-                                    name={`exercise_minutes__${item.index}`}
-                                    min={0}
-                                    step="any"
-                                    defaultValue={item.minutes}
-                                    className="w-24 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none ring-teal-600 focus:ring-2"
-                                  />
-                                  <span className="text-xs text-slate-500">{tr(locale, "min", "דק'")}</span>
-                                </div>
-                              ))}
-                              <button
-                                type="submit"
-                                className="rounded-lg border border-teal-300 px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50"
-                              >
-                                {tr(locale, "Save", "שמור")}
-                              </button>
-                            </form>
+                            <DailyReportEntryEditForm
+                              locale={locale}
+                              reportId={report.id}
+                              selectedDateParam={resolvedSearchParams.date}
+                              hasWeight={hasWeight}
+                              reportedWeightKg={report.reported_weight_kg}
+                              customTargets={reportCustomTargetRows.map(({ target, value }) => ({
+                                id: target.id,
+                                label: target.label,
+                                unit: target.unit,
+                                value,
+                              }))}
+                              foodItems={editableFoodItems}
+                              exerciseItems={editableExerciseItems}
+                              nutrientFields={nutrientFields}
+                              userGender={userGender}
+                            />
                           </details>
                         ) : null}
 
@@ -1359,6 +1472,8 @@ export default async function DailyReportPage({
           todaysCustomTargetValues={todaysCustomTargetValues}
           editingReport={editingReport}
           selectedDateParam={resolvedSearchParams.date}
+          userFirstName={userFirstName}
+          userGender={userGender}
         />
       </section>
     </main>

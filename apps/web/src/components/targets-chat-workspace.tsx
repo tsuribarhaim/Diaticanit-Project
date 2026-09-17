@@ -8,7 +8,7 @@ import { LockSubmitButton } from "@/components/targets-workspace";
 import { TargetsSectionTabs, type TargetsHistoryInfo } from "@/components/targets-section-tabs";
 import { TargetsDiffTable } from "@/components/targets-diff-table";
 import { useUnsavedPreview } from "@/components/unsaved-preview-context";
-import { tr, type AppLocale } from "@/lib/locale";
+import { tr, trGendered, type AppLocale } from "@/lib/locale";
 import { computeTargetsDiff } from "@/lib/targets-diff";
 import type { ProfileDiffRow, TargetGenerationPayload } from "@/lib/targets";
 
@@ -69,6 +69,7 @@ export function TargetsChatWorkspace({
   profileChanges,
   bmiWarning,
   firstName,
+  userGender,
   history,
 }: {
   locale: AppLocale;
@@ -80,6 +81,11 @@ export function TargetsChatWorkspace({
    * waiting on the AI to notice it when asked to recalculate. */
   bmiWarning?: string;
   firstName?: string | null;
+  /** For this workspace's own static UI copy (not AI-generated) -
+   * grammatically correct Hebrew addressing, same rules/normalization the
+   * AI chat itself follows (see lib/ai/persona.ts). null/unknown falls
+   * back to the male form, same convention used everywhere else. */
+  userGender?: "male" | "female" | null;
   history?: TargetsHistoryInfo | null;
 }) {
   const router = useRouter();
@@ -232,17 +238,24 @@ export function TargetsChatWorkspace({
       }
 
       const isNetworkError = error instanceof TypeError;
+      // Singular, gender-correct Hebrew (both used plural forms - "אתם
+      // משתמשים"/"ודאו"/"נסו" - originally) - see lib/ai/persona.ts for
+      // the same addressing convention used elsewhere in this app.
       const errorMessage = isTimeout
-        ? tr(
+        ? trGendered(
             locale,
+            userGender,
             "This is taking longer than expected. If you're on a phone, make sure it's on the same Wi-Fi network as this computer — tap retry to try again.",
-            "זה לוקח יותר זמן מהצפוי. אם אתם משתמשים בטלפון, ודאו שהוא מחובר לאותה רשת Wi-Fi כמו המחשב הזה - יש ללחוץ על ניסיון חוזר.",
+            "זה לוקח יותר זמן מהצפוי. אם אתה משתמש בטלפון, ודא שהוא מחובר לאותה רשת Wi-Fi כמו המחשב הזה - יש ללחוץ על ניסיון חוזר.",
+            "זה לוקח יותר זמן מהצפוי. אם את משתמשת בטלפון, ודאי שהוא מחובר לאותה רשת Wi-Fi כמו המחשב הזה - יש ללחוץ על ניסיון חוזר.",
           )
         : isNetworkError
-          ? tr(
+          ? trGendered(
               locale,
+              userGender,
               "Couldn't reach the server. If you're on a phone, make sure it's on the same Wi-Fi network as this computer, then retry.",
-              "לא ניתן להתחבר לשרת. אם אתם משתמשים בטלפון, ודאו שהוא מחובר לאותה רשת Wi-Fi כמו המחשב הזה, ולאחר מכן נסו שוב.",
+              "לא ניתן להתחבר לשרת. אם אתה משתמש בטלפון, ודא שהוא מחובר לאותה רשת Wi-Fi כמו המחשב הזה, ולאחר מכן נסה שוב.",
+              "לא ניתן להתחבר לשרת. אם את משתמשת בטלפון, ודאי שהוא מחובר לאותה רשת Wi-Fi כמו המחשב הזה, ולאחר מכן נסי שוב.",
             )
           : error instanceof Error
             ? error.message
@@ -423,16 +436,23 @@ export function TargetsChatWorkspace({
         ...previous,
         {
           role: "assistant",
+          // Singular, gender-correct Hebrew (כשתהיה/כשתהיי מוכן/ה) - see
+          // lib/ai/persona.ts for the same addressing convention used
+          // elsewhere in this app.
           content: explanation
-            ? tr(
+            ? trGendered(
                 locale,
+                userGender,
                 `Your targets have been updated based on this profile change. ${explanation} Please review the differences below and lock them in when you're ready.`,
-                `היעדים שלך עודכנו בעקבות שינוי הפרופיל. ${explanation} נא לסקור את ההבדלים למטה ולנעול אותם כשתהיו מוכנים.`,
+                `היעדים שלך עודכנו בעקבות שינוי הפרופיל. ${explanation} נא לסקור את ההבדלים למטה ולנעול אותם כשתהיה מוכן.`,
+                `היעדים שלך עודכנו בעקבות שינוי הפרופיל. ${explanation} נא לסקור את ההבדלים למטה ולנעול אותם כשתהיי מוכנה.`,
               )
-            : tr(
+            : trGendered(
                 locale,
+                userGender,
                 "Your targets have been updated based on this profile change. Please review the differences below and lock them in when you're ready.",
-                "היעדים שלך עודכנו בעקבות שינוי הפרופיל. נא לסקור את ההבדלים למטה ולנעול אותם כשתהיו מוכנים.",
+                "היעדים שלך עודכנו בעקבות שינוי הפרופיל. נא לסקור את ההבדלים למטה ולנעול אותם כשתהיה מוכן.",
+                "היעדים שלך עודכנו בעקבות שינוי הפרופיל. נא לסקור את ההבדלים למטה ולנעול אותם כשתהיי מוכנה.",
               ),
         },
       ]);
@@ -602,10 +622,14 @@ export function TargetsChatWorkspace({
           <div className="flex-1 space-y-3 overflow-y-auto p-3">
             {messages.length === 0 ? (
               <p className="text-sm text-slate-500">
-                {tr(
+                {/* Singular, gender-correct Hebrew - see lib/ai/persona.ts
+                    for the same addressing convention used elsewhere. */}
+                {trGendered(
                   locale,
+                  userGender,
                   "Ask a question or describe a change, e.g. \"reduce my workout days to 2 times a week\". Chatting won't change anything by itself - you'll always get to choose.",
-                  "שאלו שאלה או תארו שינוי, לדוגמה \"להפחית את ימי האימון שלי לפעמיים בשבוע\". שיחה בלבד לא תשנה דבר - תמיד תוכלו לבחור בעצמכם.",
+                  "שאל שאלה או תאר שינוי, לדוגמה \"להפחית את ימי האימון שלי לפעמיים בשבוע\". שיחה בלבד לא תשנה דבר - תמיד תוכל לבחור בעצמך.",
+                  "שאלי שאלה או תארי שינוי, לדוגמה \"להפחית את ימי האימון שלי לפעמיים בשבוע\". שיחה בלבד לא תשנה דבר - תמיד תוכלי לבחור בעצמך.",
                 )}
               </p>
             ) : null}
@@ -669,7 +693,7 @@ export function TargetsChatWorkspace({
               // on every single message. readOnly blocks editing during the
               // request without touching focus, so scroll position stays put.
               readOnly={isStreaming}
-              placeholder={tr(locale, "Type a message...", "כתבו הודעה...")}
+              placeholder={trGendered(locale, userGender, "Type a message...", "כתוב הודעה...", "כתבי הודעה...")}
               className="flex-1 resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 disabled:opacity-70"
             />
             <ChatSendButton locale={locale} disabled={isStreaming || !inputValue.trim()} />
@@ -714,7 +738,7 @@ export function TargetsChatWorkspace({
               disabled={isStreaming}
               className="rounded-lg border border-teal-300 bg-teal-50 px-3 py-1.5 text-sm font-semibold text-teal-800 hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-70"
             >
-              {tr(locale, "Try updating targets from this conversation", "נסו לעדכן את היעדים לפי השיחה")}
+              {trGendered(locale, userGender, "Try updating targets from this conversation", "נסה לעדכן את היעדים לפי השיחה", "נסי לעדכן את היעדים לפי השיחה")}
             </button>
             <p className="text-xs text-slate-500">
               {tr(

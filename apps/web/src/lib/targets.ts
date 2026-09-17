@@ -264,6 +264,10 @@ export type ProfileForTargets = {
   habits: string[];
   pregnancy_lactation_status: string | null;
   hot_climate_or_heavy_sweating?: boolean | null;
+  /** Optional - only the Targets chat (see targets-chat.ts) actually uses
+   * this, for the shared ADDRESSING THE USER persona rule. Every other
+   * caller of this type can safely omit it. */
+  first_name?: string | null;
 };
 
 function round(value: number, digits = 1): number {
