@@ -69,6 +69,7 @@ const aiUserTargetEntrySchema = z.object({
   unit: z.string().trim().min(1).max(30).optional(),
   target_min: z.number().min(0).max(100000).optional(),
   target_max: z.number().min(0).max(100000).optional(),
+  higher_is_better: z.boolean().optional(),
 });
 
 const aiTargetsSchema = z.object({
@@ -202,7 +203,16 @@ function toUserTargets(items: z.infer<typeof aiUserTargetEntrySchema>[]): UserTa
     // in this file: a partial set (e.g. unit without target_min) isn't
     // enough to log against, so it's treated the same as absent.
     ...(item.id && item.unit && item.target_min !== undefined && item.target_max !== undefined
-      ? { id: item.id, unit: item.unit, targetMin: item.target_min, targetMax: item.target_max }
+      ? {
+          id: item.id,
+          unit: item.unit,
+          targetMin: item.target_min,
+          targetMax: item.target_max,
+          // Defaults true (see UserTargetEntry's own comment) for the rare
+          // case a model response omits it despite the prompt asking for it
+          // on every entry.
+          higherIsBetter: item.higher_is_better ?? true,
+        }
       : {}),
   }));
 }
@@ -330,6 +340,7 @@ export async function generateTargetsWithAi({
   locale,
   currentTargets,
   medicalDocumentsContext,
+  recentCustomTargetLogs,
   onProgress,
 }: {
   config: AiExtractionConfig;
@@ -346,6 +357,14 @@ export async function generateTargetsWithAi({
    * results), when any are available - see buildMedicalDocumentsContextRules
    * for how the model is instructed to weigh these. */
   medicalDocumentsContext?: string;
+  /** Recent raw values (most recent last) the user has actually logged in
+   * Daily Report for each of current_active_targets.user_targets' loggable
+   * ids, when any exist - lets the model notice when a target's stored unit
+   * doesn't match what the user is really tracking (e.g. a "40 minutes"
+   * walking target against logged values in the thousands - clearly a step
+   * count) and reconcile it, instead of the two silently drifting apart.
+   * Only meaningful for an adjustment request (currentTargets present). */
+  recentCustomTargetLogs?: Record<string, number[]>;
   /** Forwarded to callAiChatCompletionWithProgress - lets a caller (the
    * targets chat route) drive a live "still working" status instead of a
    * fixed timer, since this call routinely takes 30s+ (see the timeoutMs
@@ -359,6 +378,15 @@ export async function generateTargetsWithAi({
   }
 
   const languageName = locale === "he" ? "Hebrew" : "English";
+
+  const customTargetLoggingContextLines =
+    currentTargets && recentCustomTargetLogs && Object.keys(recentCustomTargetLogs).length > 0
+      ? [
+          "recently_logged_custom_target_values (JSON, by user_targets id - the raw numbers the user has actually been typing into Daily Report for each existing custom target, most recent last):",
+          JSON.stringify(recentCustomTargetLogs),
+          "UNIT RECONCILIATION: for each id above, compare these logged numbers against that same entry's stored unit/target_min/target_max in current_active_targets.user_targets. If they're a plausible match for the stored unit (e.g. values around 6-9 for \"hours\" of sleep), leave that entry's unit/target_min/target_max unchanged. If they clearly look like a DIFFERENT unit than what's stored (e.g. stored unit is \"minutes\" with a target around 30-60, but the user has actually been logging numbers in the thousands - almost certainly a step count, not minutes), rewrite that entry's unit, target_min, and target_max to the unit the user is actually tracking, converting the numeric target accordingly (rough anchor for walking specifically: about 100 steps per minute of brisk walking, so a 40-minute goal is roughly 4,000 steps) - keep the underlying goal itself the same (e.g. still \"walk more\"), just expressed in the unit that matches reality. Trust the user's own logged numbers over a previously stored unit when they disagree.",
+        ]
+      : [];
 
   const adjustmentContextLines = currentTargets
     ? [
@@ -404,7 +432,7 @@ export async function generateTargetsWithAi({
           `"exercise_targets":[{"modality":"${AI_EXERCISE_MODALITY_TOKENS.join("|")}","frequency_per_week":number,"duration_minutes_per_session":number,"ai_adjustment_note":"string","search_keywords":["string"]}],`,
           '"habits_do":[{"id":"string","habit_instruction":"string","rationale":"string"}],',
           '"habits_dont":[{"id":"string","habit_instruction":"string","rationale":"string"}],',
-          '"user_targets":[{"id":"string","label":"string","value":"string","unit":"string","target_min":number,"target_max":number}],',
+          '"user_targets":[{"id":"string","label":"string","value":"string","unit":"string","target_min":number,"target_max":number,"higher_is_better":boolean}],',
           '"global_coaching_explanation":"string","confidence":number,"profile_discrepancy_message":"string"}',
           "Rules:",
           "- target_weight_kg and duration_days must be a FAITHFUL, literal translation of what goal_text actually asks for (e.g. \"lose 5kg\" against a known current weight, or an explicit target weight) - never silently substitute a different, \"safer\" number of your own choosing, even if the literal ask looks medically unwise. The application runs its own independent, deterministic safety check on target_weight_kg after you respond and will reject the whole request if it's unsafe; your job here is accurate translation, not moderation. If goal_text does not state or imply a weight/duration change, leave the current value(s) unchanged.",
@@ -416,13 +444,16 @@ export async function generateTargetsWithAi({
           "- When user_profile includes exercise_other_activities (one or more specific activity names the user typed, e.g. \"Dance\", \"Pilates\", each with its own weekly frequency/duration), each one is a real, named part of the user's routine, not a generic placeholder - give each its own exercise_targets entry with modality \"other\" (per the fixed token list above; multiple entries may share modality \"other\", one per named activity), anchored on that activity's own days_per_week/minutes_per_session unless goal_text asks to change it, and name the activity explicitly and by name (e.g. \"Dance\", not just \"other workouts\") in that entry's ai_adjustment_note and search_keywords. Refer to each by its specific name rather than the generic word \"other\" in global_coaching_explanation whenever you mention it - talk about it exactly like you would talk about any other activity (e.g. \"your Dance sessions\"). Never explain, mention, or allude to the fact that the app internally files it under an \"other\" category/modality/token, that this required a definition or naming step, or any other detail about how the app's taxonomy works internally; the user only ever typed an activity name and should only ever read that plain activity name back. If exercise_other_activities lists more named activities than the 2-4 exercise_targets slots allow alongside the user's other modalities, prioritize by weekly frequency and keep the rest implicit rather than dropping them from global_coaching_explanation silently.",
           "- habits_do and habits_dont: 2 to 4 entries each, each with a short actionable instruction and a one-sentence rationale.",
           "- user_targets: 0 to 5 entries. For each concrete, health-relevant OUTCOME the user actually asked for in goal_text (e.g. losing/gaining a specific amount of weight, a sleep-duration goal, a hydration goal, a step-count goal), add one entry with a short clean label (e.g. \"Target weight\", \"Lose weight\", \"Sleep duration\") and a short concrete value (e.g. \"62 kg\", \"2 kg\", \"8 hours\"). Only include asks that are genuinely about health, nutrition, exercise, sleep, or a related wellbeing topic and that you judged safe to apply; silently omit anything irrelevant, unsafe, or too vague to state as a concrete value. Do not invent entries the user didn't ask for - leave user_targets empty if goal_text has no concrete ask. user_targets is NEVER for an exercise activity or modality itself (e.g. \"Walking\", \"Running\", \"Yoga\") - any activity you add or recommend, including one chosen specifically to help reach a user_targets goal like weight loss, belongs in exercise_targets instead, never as its own user_targets entry.",
-          "- user_targets id/unit/target_min/target_max (required on every entry, not just label/value): these make the target loggable - the app shows the user a numeric input for it in their Daily Report and tracks real progress against it, so every entry needs all four, not just the ones that feel like an obvious number. id is a short, stable, lowercase snake_case machine key you invent from the label (e.g. \"sleep_hours\", \"daily_steps\") - use ASCII only even when label/value are in Hebrew. unit is a short plain-language unit (\"hours\", \"steps\", \"ml\", \"kg\"). target_min/target_max are the numeric range this entry represents (set them equal for an exact single-value goal, e.g. both 8 for \"8 hours of sleep\"); value stays the short human-readable string as before (e.g. \"8 hours\") - it is display text, target_min/target_max are what tracking actually runs on and must be consistent with it.",
+          "- user_targets id/unit/target_min/target_max/higher_is_better (required on every entry, not just label/value): these make the target loggable - the app shows the user a numeric input for it in their Daily Report and tracks real progress against it, so every entry needs all five, not just the ones that feel like an obvious number. id is a short, stable, lowercase snake_case machine key you invent from the label (e.g. \"sleep_hours\", \"daily_steps\") - use ASCII only even when label/value are in Hebrew. target_min/target_max are the numeric range this entry represents (set them equal for an exact single-value goal, e.g. both 8 for \"8 hours of sleep\"); value stays the short human-readable string as before (e.g. \"8 hours\") - it is display text, target_min/target_max are what tracking actually runs on and must be consistent with it.",
+          "- user_targets UNIT CHOICE: pick the unit a person would naturally type as a single running number into their daily log for THIS SPECIFIC goal - the app has no way to convert between units later, so getting this wrong makes every future comparison meaningless (e.g. logging a step count of 3,000 against a target stored as \"40 minutes\" shows as 7,500% complete, not 100%). A step-count ask (\"walk 3000 steps\", \"10k steps a day\", or just a bare number like \"3000\" with no unit stated in a walking context) must use unit \"steps\" with target_min/target_max as a step count - never default to a time duration just because a nearby exercise_targets entry happens to be minutes-based. Only use a duration unit (\"minutes\") when goal_text is explicitly about TIME spent (e.g. \"walk for 30 minutes a day\"), not a count. Other common units: \"hours\" (sleep), \"ml\" (hydration), \"kg\" (weight).",
+          "- user_targets higher_is_better (boolean): true when logging MORE than target_max is still a good outcome for this specific goal (e.g. steps, sleep duration, hydration, a workout-minutes goal - exceeding the number is an achievement worth celebrating, not a problem); false when target_max is a genuine ceiling this goal wants to stay under (e.g. an explicit ask to reduce or cap something). Judge this from the nature of the SPECIFIC goal, not a fixed per-label rule - default to true when genuinely unsure, since most user_targets are asks to reach or exceed a number rather than stay under one.",
           "- confidence must be between 0 and 1.",
           "- PROFILE CONSISTENCY CHECK: compare goal_text against user_profile. If goal_text clearly states something that factually contradicts a specific profile field (e.g. the user states an age that doesn't match user_profile's age, says they are no longer pregnant while user_profile marks them as pregnant, mentions a medical condition or medication that isn't reflected in user_profile, or similar), set profile_discrepancy_message to one short plain-language sentence describing the specific mismatch (in the reply language) so the app can alert the user to review their profile or their input - name both the profile's value and what goal_text stated. Leave profile_discrepancy_message empty when there is no clear, specific factual contradiction (do not flag vague, ambiguous, or merely-updated-over-time statements). This check never blocks generation and is independent of the no_actionable_change and safety checks - still generate the best targets you can even when a discrepancy is flagged.",
           `- Write every text field (ai_adjustment_note, habit_instruction, rationale, global_coaching_explanation, user_targets label/value/unit) entirely in ${languageName}, EXCEPT user_targets id which must stay ASCII snake_case regardless of reply language. Do not mix languages within a field.`,
           "- Address the user directly in second person (\"you\"/\"your\") in every text field. Never refer to the user in third person (\"he\", \"she\", \"his\", \"her\", or the user's inferred gender) even when their biological_sex is known.",
           "- In Hebrew specifically, prefer gender-neutral or mixed-form second-person phrasing (e.g. \"שלך\", \"את/ה\") over a gendered third-person construction like \"בשל מצבו הרפואי\" or \"בשל מצבה הרפואי\" — write \"בשל המצב הרפואי שלך\" instead.",
           ...adjustmentContextLines,
+          ...customTargetLoggingContextLines,
           ...medicalDocumentsContextLines,
           "user_profile:",
           buildProfileSummary(profile),

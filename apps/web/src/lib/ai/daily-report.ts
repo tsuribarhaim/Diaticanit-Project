@@ -9,6 +9,7 @@ import type {
 import type { AiExtractionConfig } from "@/lib/ai/env";
 import { callAiChatCompletion, type AiChatMessage } from "@/lib/ai/provider-client";
 import type { AppLocale } from "@/lib/locale";
+import { logServerError } from "@/lib/server-log";
 
 const numberFromUnknown = z.preprocess((value) => {
   if (typeof value === "number") return value;
@@ -412,4 +413,134 @@ export async function parseDailyReportPhotoWithAi({
       },
     ],
   });
+}
+
+export type CustomTargetUnitReconciliation = {
+  /** The value to store in custom_target_values (the target's own
+   * canonical unit) - identical to the typed value when no conversion was
+   * needed. */
+  canonicalValue: number;
+  /** Set only when a conversion actually happened - the value and unit
+   * exactly as the user typed it, preserved alongside the converted one so
+   * nothing about what they entered is lost. */
+  original?: { value: number; unit: string };
+};
+
+/** Below this ratio away from the target's own range, a logged value is
+ * left alone with no AI call at all - the common case (a value that's
+ * actually in the target's own unit) never pays any AI latency here. Above
+ * it, the number is implausible enough for the stated unit (e.g. "3000"
+ * against a 40-minute walking target) to be worth checking. */
+const CUSTOM_TARGET_IMPLAUSIBILITY_RATIO = 5;
+
+function looksImplausibleForUnit(value: number, targetMin: number, targetMax: number): boolean {
+  if (targetMax <= 0) return false;
+  if (value > targetMax * CUSTOM_TARGET_IMPLAUSIBILITY_RATIO) return true;
+  if (targetMin > 0 && value < targetMin / CUSTOM_TARGET_IMPLAUSIBILITY_RATIO) return true;
+  return false;
+}
+
+/**
+ * For each submitted custom-target value that looks implausible for its
+ * target's own stored unit (e.g. logging "3000" against a target tracked in
+ * "minutes" - almost certainly a step count typed under the wrong unit),
+ * asks the AI what unit the user probably meant and converts it into the
+ * target's canonical unit - in ONE batched call covering every suspicious
+ * entry from this save, not one call per field. Entries that already look
+ * plausible are returned unchanged with no AI call involved, so a normal
+ * save (no custom targets, or values that already match their unit) never
+ * pays any AI latency here - only a save with a genuinely mismatched value
+ * does.
+ */
+export async function reconcileCustomTargetValueUnits({
+  config,
+  locale,
+  entries,
+}: {
+  config: AiExtractionConfig;
+  locale: AppLocale;
+  entries: Array<{ id: string; label: string; unit: string; targetMin: number; targetMax: number; typedValue: number }>;
+}): Promise<Record<string, CustomTargetUnitReconciliation>> {
+  const result: Record<string, CustomTargetUnitReconciliation> = {};
+  const suspicious = entries.filter((entry) => looksImplausibleForUnit(entry.typedValue, entry.targetMin, entry.targetMax));
+  const suspiciousIds = new Set(suspicious.map((entry) => entry.id));
+
+  for (const entry of entries) {
+    if (!suspiciousIds.has(entry.id)) {
+      result[entry.id] = { canonicalValue: entry.typedValue };
+    }
+  }
+
+  if (suspicious.length === 0) return result;
+
+  const languageName = locale === "he" ? "Hebrew" : "English";
+
+  try {
+    const contentText = await callAiChatCompletion({
+      config,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You reconcile a user-logged health/fitness number against a target's own tracking unit when the two clearly don't match (e.g. a walking goal tracked in minutes, but the user actually logged a step count). Return strict JSON only.",
+        },
+        {
+          role: "user",
+          content: [
+            "For each entry below, the user just logged \"typed_value\" for a target tracked in \"unit\" with a typical daily range of target_min-target_max - and typed_value does not look plausible for that unit.",
+            "Figure out what unit the user most likely meant, and convert typed_value into the target's own unit as accurately as you reasonably can (rough anchor for walking specifically: about 100 steps per minute of brisk walking; use your own best judgment for other unit pairs).",
+            "If, on reflection, typed_value actually IS a reasonable value in the target's own unit after all, return it unchanged (converted_value equal to typed_value).",
+            "entries (JSON):",
+            JSON.stringify(
+              suspicious.map((entry) => ({
+                id: entry.id,
+                label: entry.label,
+                unit: entry.unit,
+                target_min: entry.targetMin,
+                target_max: entry.targetMax,
+                typed_value: entry.typedValue,
+              })),
+            ),
+            `Return strict JSON: {"conversions":[{"id":"string","likely_unit":"string","converted_value":number}]} - one entry per id above. likely_unit is a short plain-language unit (the unit typed_value is actually in) written in ${languageName}.`,
+          ].join("\n"),
+        },
+      ],
+      temperature: 0,
+      jsonMode: true,
+      timeoutMs: 15000,
+    });
+
+    const parsed = JSON.parse(contentText) as {
+      conversions?: Array<{ id?: unknown; likely_unit?: unknown; converted_value?: unknown }>;
+    };
+    const conversions = Array.isArray(parsed.conversions) ? parsed.conversions : [];
+    const byId = new Map(conversions.map((entry) => [String(entry.id), entry]));
+
+    for (const entry of suspicious) {
+      const conversion = byId.get(entry.id);
+      const convertedValue = Number(conversion?.converted_value);
+      const likelyUnit = typeof conversion?.likely_unit === "string" ? conversion.likely_unit.trim() : "";
+
+      if (!conversion || !Number.isFinite(convertedValue) || convertedValue <= 0 || Math.abs(convertedValue - entry.typedValue) < 1e-6) {
+        result[entry.id] = { canonicalValue: entry.typedValue };
+        continue;
+      }
+
+      result[entry.id] = {
+        canonicalValue: convertedValue,
+        original: { value: entry.typedValue, unit: likelyUnit || entry.unit },
+      };
+    }
+  } catch (error) {
+    logServerError("daily_report.custom_target_unit_reconcile", "failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    // Best-effort: a failed AI call falls back to storing every suspicious
+    // value exactly as typed, rather than blocking the save entirely.
+    for (const entry of suspicious) {
+      result[entry.id] = { canonicalValue: entry.typedValue };
+    }
+  }
+
+  return result;
 }

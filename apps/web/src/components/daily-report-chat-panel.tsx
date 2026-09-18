@@ -1409,20 +1409,20 @@ export function DailyReportChatPanel({
                   in Hebrew/Arabic too) - and positioned above AppBottomNav
                   using the same safe-area-aware offset established for the
                   composer dock this replaced.
-                  right: calc(12.5vw - 2rem), not a flat right-4 - AppBottomNav
-                  lays its 4 tabs out as equal flex-1 quarters (justify-around,
-                  no horizontal padding of its own on mobile), so the
-                  rightmost tab (Home, first in its array - see that
-                  component's own RTL-order comment) is centered 1/8 of the
-                  screen width (12.5vw) in from the right edge. Centering
-                  this h-16 (2rem radius) button on that same point - not
-                  just "near" the corner - is what actually puts it directly
-                  above the Home icon on any phone width, instead of a fixed
-                  px offset that only lines up by coincidence on some widths
-                  and drifts on others. Only matters below `sm` (this button
-                  never renders at/above that breakpoint, where AppBottomNav
-                  itself is hidden and max-w-6xl would break the 100vw
-                  assumption anyway).
+                  right: calc(12.5vw - 2rem), not a flat right-4 - originally
+                  chosen to center this h-16 (2rem radius) button directly
+                  above AppBottomNav's then-rightmost tab (Home, back when it
+                  had 4 equal-width tabs). Home has since been removed from
+                  the nav (now 3 tabs, and their screen position - and even
+                  which one renders rightmost - shifts with locale, since
+                  AppBottomNav doesn't force LTR tab order), so this no
+                  longer lines up with any specific tab - it's now simply a
+                  fixed, deliberately-shared point used by BOTH this bubble
+                  and the Targets chat's own floating bubble (see
+                  targets-chat-workspace.tsx), so the two look consistent
+                  with each other across pages. Left as-is rather than
+                  reworked to track a specific tab again, since nothing
+                  reported the current position as actually wrong.
                   The underscores in calc(12.5vw_-_2rem) are load-bearing,
                   not stylistic - Tailwind needs them to represent the actual
                   spaces around the `-`, and the browser's own CSS tokenizer

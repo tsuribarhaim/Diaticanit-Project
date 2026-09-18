@@ -159,6 +159,8 @@ export default async function TargetsPage({
           range,
           activeTargetProfile,
           aiConfig,
+          userGender,
+          userFirstName: profileRow.first_name,
         })
       : null;
 

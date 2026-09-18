@@ -506,6 +506,7 @@ export default async function DailyReportPage({
       min: Number(activeTargetProfile?.protein_min_g ?? 0),
       max: Number(activeTargetProfile?.protein_max_g ?? 0),
       unit: "g",
+      exceedingIsPositive: true,
     },
     carbs: {
       id: "carbs",
@@ -515,6 +516,7 @@ export default async function DailyReportPage({
       min: Number(activeTargetProfile?.carbs_min_g ?? 0),
       max: Number(activeTargetProfile?.carbs_max_g ?? 0),
       unit: "g",
+      exceedingIsPositive: true,
     },
     fats: {
       id: "fats",
@@ -524,6 +526,7 @@ export default async function DailyReportPage({
       min: Number(activeTargetProfile?.fats_min_g ?? 0),
       max: Number(activeTargetProfile?.fats_max_g ?? 0),
       unit: "g",
+      exceedingIsPositive: true,
     },
     fiber: {
       id: "fiber",
@@ -533,6 +536,7 @@ export default async function DailyReportPage({
       min: Number(activeTargetProfile?.fiber_min_g ?? 0),
       max: Number(activeTargetProfile?.fiber_max_g ?? 0),
       unit: "g",
+      exceedingIsPositive: true,
     },
     water: {
       id: "water",
@@ -542,6 +546,7 @@ export default async function DailyReportPage({
       min: Number(activeTargetProfile?.water_min_ml ?? 0),
       max: Number(activeTargetProfile?.water_max_ml ?? 0),
       unit: "ml",
+      exceedingIsPositive: true,
     },
   };
 
@@ -554,6 +559,7 @@ export default async function DailyReportPage({
       min: Number(activeTargetProfile?.magnesium_min_mg ?? 0),
       max: Number(activeTargetProfile?.magnesium_max_mg ?? 0),
       unit: "mg",
+      exceedingIsPositive: true,
     },
     potassium: {
       id: "potassium",
@@ -563,6 +569,7 @@ export default async function DailyReportPage({
       min: Number(activeTargetProfile?.potassium_min_mg ?? 0),
       max: Number(activeTargetProfile?.potassium_max_mg ?? 0),
       unit: "mg",
+      exceedingIsPositive: true,
     },
     iron: {
       id: "iron",
@@ -572,6 +579,7 @@ export default async function DailyReportPage({
       min: Number(activeTargetProfile?.iron_min_mg ?? 0),
       max: Number(activeTargetProfile?.iron_max_mg ?? 0),
       unit: "mg",
+      exceedingIsPositive: true,
     },
     zinc: {
       id: "zinc",
@@ -581,6 +589,7 @@ export default async function DailyReportPage({
       min: Number(activeTargetProfile?.zinc_min_mg ?? 0),
       max: Number(activeTargetProfile?.zinc_max_mg ?? 0),
       unit: "mg",
+      exceedingIsPositive: true,
     },
     sodium: {
       id: "sodium",
@@ -608,6 +617,7 @@ export default async function DailyReportPage({
       min: Number(activeTargetProfile?.calcium_min_mg ?? 0),
       max: Number(activeTargetProfile?.calcium_max_mg ?? 0),
       unit: "mg",
+      exceedingIsPositive: true,
     },
     vitC: {
       id: "vitC",
@@ -617,6 +627,7 @@ export default async function DailyReportPage({
       min: Number(activeTargetProfile?.vit_c_min_mg ?? 0),
       max: Number(activeTargetProfile?.vit_c_max_mg ?? 0),
       unit: "mg",
+      exceedingIsPositive: true,
     },
     vitB12: {
       id: "vitB12",
@@ -626,6 +637,7 @@ export default async function DailyReportPage({
       min: Number(activeTargetProfile?.vit_b12_min_mcg ?? 0),
       max: Number(activeTargetProfile?.vit_b12_max_mcg ?? 0),
       unit: "mcg",
+      exceedingIsPositive: true,
     },
     vitD: {
       id: "vitD",
@@ -635,6 +647,7 @@ export default async function DailyReportPage({
       min: Number(activeTargetProfile?.vit_d_min_mcg ?? 0),
       max: Number(activeTargetProfile?.vit_d_max_mcg ?? 0),
       unit: "mcg",
+      exceedingIsPositive: true,
     },
     satFat: {
       id: "satFat",
@@ -653,6 +666,7 @@ export default async function DailyReportPage({
       min: Number(activeTargetProfile?.omega3_min_g ?? 0),
       max: Number(activeTargetProfile?.omega3_max_g ?? 0),
       unit: "g",
+      exceedingIsPositive: true,
     },
     cholesterol: {
       id: "cholesterol",

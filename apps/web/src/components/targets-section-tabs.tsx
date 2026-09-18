@@ -1,13 +1,13 @@
 "use client";
 
-import Link from "next/link";
-import { useState } from "react";
+import { useState, useTransition } from "react";
 
 import { DailyReportProgressRings } from "@/components/daily-report-progress-rings";
 import { GuardedLink } from "@/components/unsaved-preview-context";
 import { InfoPopoverButton } from "@/components/info-popover";
+import { RangeSelector } from "@/components/range-selector";
+import { Spinner } from "@/components/spinner";
 import type { HomeOverviewData, HomeRange } from "@/lib/home-overview";
-import { RANGE_VALUES, rangeLabels } from "@/lib/home-overview";
 import { formatExerciseModality, formatMeasurementUnit, formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
 import { getNutrientReference } from "@/lib/nutrient-reference";
 import type { TargetGenerationPayload } from "@/lib/targets";
@@ -161,10 +161,17 @@ function metricRowsFromPayload(payload: TargetGenerationPayload, ids: string[]):
 
 function TabButton({
   active,
+  pending,
   onClick,
   children,
 }: {
   active: boolean;
+  /** True while this specific tab's content is being rendered inside a
+   * startTransition (see TargetsSectionTabs' own selectTab) - shows a
+   * spinner in place of the label so a tap always gets an immediate visual
+   * acknowledgment, the same concern the range selector's own per-link
+   * pending state addresses for the Today/7/30/90 switcher. */
+  pending?: boolean;
   onClick: () => void;
   children: React.ReactNode;
 }) {
@@ -174,12 +181,13 @@ function TabButton({
       role="tab"
       aria-selected={active}
       onClick={onClick}
-      className={`shrink-0 rounded-full border px-3.5 py-1.5 text-sm font-semibold transition-colors ${
+      className={`flex shrink-0 items-center justify-center gap-1.5 rounded-full border px-3.5 py-1.5 text-sm font-semibold transition-colors ${
         active
           ? "border-teal-700 bg-teal-700 text-white dark:border-teal-600 dark:bg-teal-600"
           : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
       }`}
     >
+      {pending ? <Spinner className="h-3.5 w-3.5 animate-spin" /> : null}
       {children}
     </button>
   );
@@ -203,19 +211,7 @@ function OverviewView({ locale, range, overview }: { locale: AppLocale; range: H
           <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
             {range === "today" ? tr(locale, "Today's Progress", "ההתקדמות של היום") : tr(locale, "Your Progress", "ההתקדמות שלך")}
           </p>
-          <div className="flex gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-800 dark:bg-slate-800/60">
-            {RANGE_VALUES.map((value) => (
-              <Link
-                key={value}
-                href={value === "today" ? "/app/targets" : `/app/targets?range=${value}`}
-                className={`rounded-md px-2.5 py-1 text-xs font-medium ${
-                  range === value ? "bg-teal-700 text-white dark:bg-teal-600" : "text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-                }`}
-              >
-                {tr(locale, rangeLabels[value].en, rangeLabels[value].he)}
-              </Link>
-            ))}
-          </div>
+          <RangeSelector locale={locale} range={range} basePath="/app/targets" size="sm" />
         </div>
         <div className="mt-4">
           <DailyReportProgressRings locale={locale} metrics={overview.ringMetrics} />
@@ -225,21 +221,15 @@ function OverviewView({ locale, range, overview }: { locale: AppLocale; range: H
       </div>
 
       <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Weekly Exercise Consistency", "עקביות פעילות שבועית")}</p>
-        {overview.weeklyExerciseTarget > 0 ? (
+        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{overview.exerciseHeading}</p>
+        {overview.exerciseTargetAmount > 0 ? (
           <div className="mt-4">
             <DailyReportProgressRings locale={locale} metrics={[overview.exerciseRingMetric]} />
-            <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-              {tr(
-                locale,
-                `This week: ${overview.weeklyExerciseSessionDays} of ${overview.weeklyExerciseTarget} planned sessions logged. Any day with exercise logged counts as a session.`,
-                `השבוע: נרשמו ${overview.weeklyExerciseSessionDays} מתוך ${overview.weeklyExerciseTarget} אימונים מתוכננים. כל יום שבו נרשמה פעילות נחשב לאימון.`,
-              )}
-            </p>
+            <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">{overview.exerciseCaption}</p>
           </div>
         ) : (
           <p className="mt-3 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600 dark:border-slate-700 dark:text-slate-400">
-            {tr(locale, "No weekly exercise target set in your plan.", "לא הוגדר יעד פעילות שבועי בתכנית שלך.")}
+            {tr(locale, "No exercise target set in your plan.", "לא הוגדר יעד פעילות בתכנית שלך.")}
           </p>
         )}
       </div>
@@ -294,6 +284,13 @@ export function TargetsSectionTabs({
 }) {
   const [activeTab, setActiveTab] = useState<TabId>(overview ? "overview" : "nutrients");
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
+  // startTransition here isn't about slow async work (every tab's content is
+  // already in hand via props/local state) - it gives an immediate, guaranteed
+  // pending signal for the one render frame the switch takes, so a tap always
+  // gets visible feedback instead of leaving the user unsure it registered,
+  // even though the switch itself is normally instant.
+  const [isTabPending, startTabTransition] = useTransition();
+  const [pendingTab, setPendingTab] = useState<TabId | null>(null);
 
   const riskAlert = evaluateEnergyImbalanceRisk({ payload, maintenanceCalories, locale });
   const userTargetsTitle = firstName
@@ -305,8 +302,15 @@ export function TargetsSectionTabs({
 
   const isMoreActive = activeTab === "suggestions" || activeTab === "information";
 
+  function selectTab(id: TabId) {
+    setPendingTab(id);
+    startTabTransition(() => {
+      setActiveTab(id);
+    });
+  }
+
   function selectFromMoreMenu(id: "suggestions" | "information") {
-    setActiveTab(id);
+    selectTab(id);
     setIsMoreMenuOpen(false);
   }
 
@@ -349,19 +353,19 @@ export function TargetsSectionTabs({
       <div className="flex items-center gap-1.5" role="tablist" aria-label={tr(locale, "Target details", "פרטי היעדים")}>
         <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto pb-1">
           {overview ? (
-            <TabButton active={activeTab === "overview"} onClick={() => setActiveTab("overview")}>
+            <TabButton active={activeTab === "overview"} pending={isTabPending && pendingTab === "overview"} onClick={() => selectTab("overview")}>
               {tr(locale, "Overview", "סקירה")}
             </TabButton>
           ) : null}
-          <TabButton active={activeTab === "nutrients"} onClick={() => setActiveTab("nutrients")}>
+          <TabButton active={activeTab === "nutrients"} pending={isTabPending && pendingTab === "nutrients"} onClick={() => selectTab("nutrients")}>
             {tr(locale, "Nutrients", "נוטריאנטים")}
           </TabButton>
-          <TabButton active={activeTab === "exercise"} onClick={() => setActiveTab("exercise")}>
+          <TabButton active={activeTab === "exercise"} pending={isTabPending && pendingTab === "exercise"} onClick={() => selectTab("exercise")}>
             {tr(locale, "Exercise", "פעילות")}
           </TabButton>
         </div>
         <div className="relative shrink-0">
-          <TabButton active={isMoreActive} onClick={() => setIsMoreMenuOpen((previous) => !previous)}>
+          <TabButton active={isMoreActive} pending={isTabPending && (pendingTab === "suggestions" || pendingTab === "information")} onClick={() => setIsMoreMenuOpen((previous) => !previous)}>
             {"•••"}
           </TabButton>
           {isMoreMenuOpen ? (
