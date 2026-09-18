@@ -14,6 +14,7 @@ export const CHART_EXTRA_METRIC_IDS = [
   "vitD",
   "satFat",
   "omega3",
+  "cholesterol",
 ] as const;
 export type DailyReportChartExtraMetric = (typeof CHART_EXTRA_METRIC_IDS)[number];
 

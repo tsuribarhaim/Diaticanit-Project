@@ -20,7 +20,7 @@ function UploadButton({ locale }: { locale: AppLocale }) {
     <button
       type="submit"
       disabled={pending}
-      className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800"
+      className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
     >
       {pending ? tr(locale, "Uploading...", "מעלה קובץ...") : tr(locale, "Upload", "העלאה")}
     </button>
@@ -41,16 +41,16 @@ function FileField({ locale }: { locale: AppLocale }) {
 
   return (
     <div>
-      <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "File", "קובץ")}</span>
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-300 px-3 py-2">
+      <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "File", "קובץ")}</span>
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-300 px-3 py-2 dark:border-slate-700">
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
-          className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+          className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
         >
           {tr(locale, "Choose file", "בחירת קובץ")}
         </button>
-        <span className="truncate text-sm text-slate-600">{fileName ?? tr(locale, "No file chosen", "לא נבחר קובץ")}</span>
+        <span className="truncate text-sm text-slate-600 dark:text-slate-400">{fileName ?? tr(locale, "No file chosen", "לא נבחר קובץ")}</span>
       </div>
       <input
         ref={inputRef}
@@ -71,7 +71,7 @@ export function DocumentUploadForm({ locale }: { locale: AppLocale }) {
   return (
     <form action={formAction} className="space-y-4">
       <label className="block">
-        <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Category", "קטגוריה")}</span>
+        <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Category", "קטגוריה")}</span>
         <input
           type="text"
           name="category"
@@ -89,12 +89,12 @@ export function DocumentUploadForm({ locale }: { locale: AppLocale }) {
       </p>
 
       {state.error ? (
-        <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+        <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-400">
           {state.error}
         </p>
       ) : null}
       {state.success ? (
-        <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+        <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
           {state.success}
         </p>
       ) : null}

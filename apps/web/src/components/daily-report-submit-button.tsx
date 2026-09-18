@@ -35,6 +35,21 @@ function SaveIcon({ className }: { className: string }) {
   );
 }
 
+/** A filled (not outlined) floppy disk, specifically for the "bare-icon"
+ * variant below - drawn solid rather than as a thin stroke since it has no
+ * background chip of its own to set it apart from whatever's behind it on
+ * the page; the white cutouts (folded corner, label area) are what read as
+ * "floppy disk" rather than a plain teal blob. */
+function FilledSaveIcon({ className }: { className: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="currentColor" stroke="#fff" strokeWidth="1.2" strokeLinejoin="round" d="M5 3h10l4 4v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" />
+      <path fill="#fff" d="M8 3h6v4H8z" />
+      <rect fill="#fff" x="8" y="13" width="8" height="6" rx="0.5" />
+    </svg>
+  );
+}
+
 export function SubmitButton({
   locale,
   onClick,
@@ -60,8 +75,14 @@ export function SubmitButton({
    * labeled bar - used for the floating save trigger next to the chat
    * bubble on mobile, where a full-width labeled button would be exactly
    * the "takes a lot of space, not next to what changed" complaint this
-   * was built to fix. Submits the exact same form/action either way. */
-  variant?: "text" | "icon";
+   * was built to fix. "bare-icon" is the same idea taken further - just
+   * the colored floppy-disk glyph itself, no circle/background/border at
+   * all, for the top-corner quick-save trigger on the daily-report page
+   * (see its own render site: shown only while there's something to save,
+   * not merely disabled-but-visible the way "icon" and "text" stay, so
+   * this variant is never actually rendered in a disabled state in
+   * practice). Submits the exact same form/action either way. */
+  variant?: "text" | "icon" | "bare-icon";
   /** Lets a caller disable this independently of the form's own pending
    * state - e.g. the floating save icon should read as inactive until
    * something has actually changed, not just while a submit is in flight. */
@@ -112,11 +133,38 @@ export function SubmitButton({
         title={isBusy ? pendingLabel : idleLabel}
         className={`flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-colors ${
           isDisabled
-            ? "cursor-not-allowed bg-slate-200 text-slate-400 shadow-none"
-            : "bg-teal-700 text-white hover:bg-teal-800"
+            ? "cursor-not-allowed bg-slate-200 text-slate-400 shadow-none dark:bg-slate-800 dark:text-slate-600"
+            : "bg-teal-700 text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
         }`}
       >
         {isBusy ? <Spinner className="h-5 w-5 animate-spin" /> : <SaveIcon className="h-6 w-6" />}
+      </button>
+    );
+  }
+
+  if (variant === "bare-icon") {
+    return (
+      <button
+        type="submit"
+        form={form}
+        disabled={isDisabled}
+        onClick={onClick}
+        aria-label={isBusy ? pendingLabel : idleLabel}
+        title={isBusy ? pendingLabel : idleLabel}
+        className="relative flex h-10 w-10 items-center justify-center text-teal-700 drop-shadow-md transition-transform active:scale-95 disabled:text-slate-400 disabled:drop-shadow-none dark:text-teal-400 dark:disabled:text-slate-600"
+      >
+        {isBusy ? (
+          <Spinner className="h-6 w-6 animate-spin" />
+        ) : (
+          <>
+            <FilledSaveIcon className="h-7 w-7" />
+            {/* Small alert dot, not just the recolored icon alone - picked
+                over a full color swap or background chip so the icon stays
+                the same teal used everywhere else in the app, with just an
+                attention cue layered on top. */}
+            <span aria-hidden="true" className="absolute end-0.5 top-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-amber-500" />
+          </>
+        )}
       </button>
     );
   }
@@ -127,7 +175,7 @@ export function SubmitButton({
       form={form}
       disabled={isDisabled}
       onClick={onClick}
-      className={`inline-flex items-center justify-center rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800 ${fullWidth ? "w-full" : ""}`}
+      className={`inline-flex items-center justify-center rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500 ${fullWidth ? "w-full" : ""}`}
     >
       {isBusy ? pendingLabel : idleLabel}
     </button>

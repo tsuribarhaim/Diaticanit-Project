@@ -576,7 +576,7 @@ function SubmitButton({ locale, canSubmit }: { locale: AppLocale; canSubmit: boo
     <button
       type="submit"
       disabled={pending || !canSubmit}
-      className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-5 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800"
+      className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-5 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
     >
       {pending ? tr(locale, "Saving profile...", "שומר פרופיל...") : tr(locale, "Complete setup", "סיום הגדרה")}
     </button>
@@ -1098,7 +1098,7 @@ export function OnboardingProfileForm({
   const renderFieldError = (key: string) => {
     const message = errors[key];
     if (!message) return null;
-    return <p className="mt-1 text-xs text-rose-700">{message}</p>;
+    return <p className="mt-1 text-xs text-rose-700 dark:text-rose-400">{message}</p>;
   };
 
   const inputErrorClass = (key: string): string => {
@@ -1107,29 +1107,29 @@ export function OnboardingProfileForm({
 
   return (
     <form action={formAction} onSubmit={onSubmit} className="mt-6 space-y-5 pb-20">
-      <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-        <div className="text-sm font-medium text-slate-700">
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/60">
+        <div className="text-sm font-medium text-slate-700 dark:text-slate-300">
           {tr(effectiveLocale, `Step ${step} of 4`, `שלב ${step} מתוך 4`)}
         </div>
         <div className="flex gap-1.5" data-field="preferred_language">
           <button
             type="button"
             onClick={() => updateDraft({ preferred_language: "en", weight_unit: "lbs" })}
-            className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${draft.preferred_language === "en" ? "bg-slate-900 text-white" : "bg-white text-slate-700"}`}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${draft.preferred_language === "en" ? "bg-slate-900 text-white dark:bg-slate-600" : "bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300"}`}
           >
             English
           </button>
           <button
             type="button"
             onClick={() => updateDraft({ preferred_language: "he", weight_unit: "kg" })}
-            className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${draft.preferred_language === "he" ? "bg-slate-900 text-white" : "bg-white text-slate-700"}`}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${draft.preferred_language === "he" ? "bg-slate-900 text-white dark:bg-slate-600" : "bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300"}`}
           >
             עברית
           </button>
         </div>
       </div>
 
-      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
+      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
         <div
           className="h-full rounded-full bg-teal-600 transition-all"
           style={{ width: `${(step / 4) * 100}%` }}
@@ -1206,10 +1206,10 @@ export function OnboardingProfileForm({
 
       {step === 1 ? (
         <section className="space-y-4">
-          <h2 className="text-lg font-semibold text-slate-900">{tr(effectiveLocale, "Identity & Vital Statistics", "זהות ומדדים בסיסיים")}</h2>
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{tr(effectiveLocale, "Identity & Vital Statistics", "זהות ומדדים בסיסיים")}</h2>
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block" data-field="first_name">
-              <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "First name", "שם פרטי")}</span>
+              <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "First name", "שם פרטי")}</span>
               <input
                 type="text"
                 name="first_name"
@@ -1222,7 +1222,7 @@ export function OnboardingProfileForm({
             </label>
 
             <label className="block" data-field="last_name">
-              <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Last name", "שם משפחה")}</span>
+              <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Last name", "שם משפחה")}</span>
               <input
                 type="text"
                 name="last_name"
@@ -1235,7 +1235,7 @@ export function OnboardingProfileForm({
             </label>
 
             <label className="block" data-field="date_of_birth">
-              <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Date of birth", "תאריך לידה")}</span>
+              <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Date of birth", "תאריך לידה")}</span>
               <LocalizedDateInput
                 locale={effectiveLocale}
                 required
@@ -1248,18 +1248,18 @@ export function OnboardingProfileForm({
             </label>
 
             <div className="block" data-field="biological_sex">
-              <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Biological sex", "מין ביולוגי")}</span>
+              <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Biological sex", "מין ביולוגי")}</span>
               <div className={`grid grid-cols-2 overflow-hidden rounded-xl border ${inputErrorClass("biological_sex")}`}>
                 <button
                   type="button"
-                  className={`px-3 py-2 text-sm font-medium ${draft.biological_sex === "male" ? "bg-teal-700 text-white" : "bg-white text-slate-700"}`}
+                  className={`px-3 py-2 text-sm font-medium ${draft.biological_sex === "male" ? "bg-teal-700 text-white" : "bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300"}`}
                   onClick={() => updateDraft({ biological_sex: "male", pregnancy_lactation_status: "none" })}
                 >
                   {tr(effectiveLocale, "Male", "זכר")}
                 </button>
                 <button
                   type="button"
-                  className={`px-3 py-2 text-sm font-medium ${draft.biological_sex === "female" ? "bg-teal-700 text-white" : "bg-white text-slate-700"}`}
+                  className={`px-3 py-2 text-sm font-medium ${draft.biological_sex === "female" ? "bg-teal-700 text-white" : "bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300"}`}
                   onClick={() => updateDraft({ biological_sex: "female" })}
                 >
                   {tr(effectiveLocale, "Female", "נקבה")}
@@ -1270,19 +1270,19 @@ export function OnboardingProfileForm({
 
             <div className="space-y-2" data-field="weight">
               <div className="flex items-center justify-between">
-                <span className="block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Current weight", "משקל נוכחי")}</span>
-                <div className="flex overflow-hidden rounded-lg border border-slate-300 text-xs">
+                <span className="block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Current weight", "משקל נוכחי")}</span>
+                <div className="flex overflow-hidden rounded-lg border border-slate-300 text-xs dark:border-slate-700">
                   <button
                     type="button"
                     onClick={() => updateDraft({ weight_unit: "kg" })}
-                    className={`px-3 py-1.5 ${draft.weight_unit === "kg" ? "bg-slate-900 text-white" : "bg-white text-slate-700"}`}
+                    className={`px-3 py-1.5 ${draft.weight_unit === "kg" ? "bg-slate-900 text-white dark:bg-slate-600" : "bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300"}`}
                   >
                     kg
                   </button>
                   <button
                     type="button"
                     onClick={() => updateDraft({ weight_unit: "lbs" })}
-                    className={`px-3 py-1.5 ${draft.weight_unit === "lbs" ? "bg-slate-900 text-white" : "bg-white text-slate-700"}`}
+                    className={`px-3 py-1.5 ${draft.weight_unit === "lbs" ? "bg-slate-900 text-white dark:bg-slate-600" : "bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300"}`}
                   >
                     lbs
                   </button>
@@ -1301,19 +1301,19 @@ export function OnboardingProfileForm({
 
             <div className="space-y-2" data-field="height">
               <div className="flex items-center justify-between">
-                <span className="block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Height", "גובה")}</span>
-                <div className="flex overflow-hidden rounded-lg border border-slate-300 text-xs">
+                <span className="block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Height", "גובה")}</span>
+                <div className="flex overflow-hidden rounded-lg border border-slate-300 text-xs dark:border-slate-700">
                   <button
                     type="button"
                     onClick={() => updateDraft({ height_unit: "cm" })}
-                    className={`px-3 py-1.5 ${draft.height_unit === "cm" ? "bg-slate-900 text-white" : "bg-white text-slate-700"}`}
+                    className={`px-3 py-1.5 ${draft.height_unit === "cm" ? "bg-slate-900 text-white dark:bg-slate-600" : "bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300"}`}
                   >
                     cm
                   </button>
                   <button
                     type="button"
                     onClick={() => updateDraft({ height_unit: "ft_in" })}
-                    className={`px-3 py-1.5 ${draft.height_unit === "ft_in" ? "bg-slate-900 text-white" : "bg-white text-slate-700"}`}
+                    className={`px-3 py-1.5 ${draft.height_unit === "ft_in" ? "bg-slate-900 text-white dark:bg-slate-600" : "bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300"}`}
                   >
                     ft/in
                   </button>
@@ -1352,7 +1352,7 @@ export function OnboardingProfileForm({
             </div>
           </div>
 
-          <div className="rounded-xl border border-teal-100 bg-teal-50 px-4 py-3 text-sm text-teal-900">
+          <div className="rounded-xl border border-teal-100 bg-teal-50 px-4 py-3 text-sm text-teal-900 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-300">
             <p>
               {tr(effectiveLocale, "Calculated age", "גיל מחושב")}: {ageYears != null ? ageYears : tr(effectiveLocale, "n/a", "לא זמין")}
             </p>
@@ -1360,7 +1360,7 @@ export function OnboardingProfileForm({
               BMI: {bmi != null ? formatNumberForLocale(bmi, effectiveLocale, { maximumFractionDigits: 2 }) : tr(effectiveLocale, "n/a", "לא זמין")}
             </p>
 
-            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3 text-slate-700">
+            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3 text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
               <div className="mb-2 flex items-center justify-between text-xs">
                 <span>{tr(effectiveLocale, "BMI scale", "סקאלת BMI")}</span>
                 <span>
@@ -1368,22 +1368,22 @@ export function OnboardingProfileForm({
                 </span>
               </div>
 
-              <div className="mb-2 grid grid-cols-2 gap-2 text-xs text-slate-600">
+              <div className="mb-2 grid grid-cols-2 gap-2 text-xs text-slate-600 dark:text-slate-400">
                 <p>
-                  {tr(effectiveLocale, "Scale min", "מינימום סקאלה")}: <span className="font-semibold text-slate-900">{BMI_SCALE_MIN}</span>
+                  {tr(effectiveLocale, "Scale min", "מינימום סקאלה")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{BMI_SCALE_MIN}</span>
                 </p>
                 <p className="text-right">
-                  {tr(effectiveLocale, "Scale max", "מקסימום סקאלה")}: <span className="font-semibold text-slate-900">{BMI_SCALE_MAX}</span>
+                  {tr(effectiveLocale, "Scale max", "מקסימום סקאלה")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{BMI_SCALE_MAX}</span>
                 </p>
                 <p>
-                  {tr(effectiveLocale, "Healthy min", "מינימום תקין")}: <span className="font-semibold text-slate-900">{BMI_GOOD_MIN}</span>
+                  {tr(effectiveLocale, "Healthy min", "מינימום תקין")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{BMI_GOOD_MIN}</span>
                 </p>
                 <p className="text-right">
-                  {tr(effectiveLocale, "Healthy max", "מקסימום תקין")}: <span className="font-semibold text-slate-900">{BMI_GOOD_MAX}</span>
+                  {tr(effectiveLocale, "Healthy max", "מקסימום תקין")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{BMI_GOOD_MAX}</span>
                 </p>
               </div>
 
-              <div className="relative h-3 rounded-full bg-slate-200">
+              <div className="relative h-3 rounded-full bg-slate-200 dark:bg-slate-800">
                 <div
                   className="absolute h-full rounded-full bg-emerald-400"
                   style={{
@@ -1393,7 +1393,7 @@ export function OnboardingProfileForm({
                 />
                 {bmi != null && bmiPercent != null ? (
                   <div
-                    className={`absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 bg-white ${
+                    className={`absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 bg-white dark:bg-slate-900 ${
                       bmiState === "good"
                         ? "border-emerald-600"
                         : bmiState === "warning"
@@ -1415,10 +1415,10 @@ export function OnboardingProfileForm({
                 <p
                   className={`mt-2 text-xs font-semibold ${
                     bmiState === "good"
-                      ? "text-emerald-700"
+                      ? "text-emerald-700 dark:text-emerald-400"
                       : bmiState === "warning"
-                        ? "text-amber-700"
-                        : "text-rose-700"
+                        ? "text-amber-700 dark:text-amber-400"
+                        : "text-rose-700 dark:text-rose-400"
                   }`}
                 >
                   {tr(effectiveLocale, "Current BMI", "BMI נוכחי")}: {formatNumberForLocale(bmi, effectiveLocale, { maximumFractionDigits: 2 })}. {" "}
@@ -1429,7 +1429,7 @@ export function OnboardingProfileForm({
                       : tr(effectiveLocale, "BMI is outside the recommended range.", "ה-BMI מחוץ לטווח המומלץ.")}
                 </p>
               ) : (
-                <p className="mt-2 text-xs font-semibold text-slate-600">
+                <p className="mt-2 text-xs font-semibold text-slate-600 dark:text-slate-400">
                   {tr(
                     effectiveLocale,
                     "Enter valid height and weight to place your BMI marker on the scale.",
@@ -1444,10 +1444,10 @@ export function OnboardingProfileForm({
 
       {step === 2 ? (
         <section className="space-y-4">
-          <h2 className="text-lg font-semibold text-slate-900">{tr(effectiveLocale, "Lifestyle & Physical Activity", "אורח חיים ופעילות")}</h2>
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{tr(effectiveLocale, "Lifestyle & Physical Activity", "אורח חיים ופעילות")}</h2>
 
           <div data-field="activity_level">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Daily activity level", "רמת פעילות יומית")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Daily activity level", "רמת פעילות יומית")}</span>
             <select
               name="activity_level"
               value={draft.activity_level}
@@ -1462,7 +1462,7 @@ export function OnboardingProfileForm({
           </div>
 
           <div data-field="exercise_modalities">
-            <span className="mb-2 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Exercise modality", "סוג אימון")}</span>
+            <span className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Exercise modality", "סוג אימון")}</span>
             <div className="flex flex-wrap gap-2">
               {exerciseModalityOptions.map((value) => {
                 const label =
@@ -1482,7 +1482,7 @@ export function OnboardingProfileForm({
                     key={value}
                     type="button"
                     onClick={() => toggleListValue("exercise_modalities", value)}
-                    className={`rounded-full border px-3 py-1.5 text-xs font-medium ${active ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-700"}`}
+                    className={`rounded-full border px-3 py-1.5 text-xs font-medium ${active ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700"}`}
                   >
                     {label}
                   </button>
@@ -1493,10 +1493,10 @@ export function OnboardingProfileForm({
 
             {draft.exercise_modalities.includes("other") ? (
               <div className="mt-3 space-y-3" data-field="exercise_other_activities">
-                <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Other exercise activities", "פעילויות גופניות אחרות")}</span>
+                <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Other exercise activities", "פעילויות גופניות אחרות")}</span>
                 <div className="grid gap-3">
                   {draft.exercise_other_activities.map((activity) => (
-                    <div key={activity.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div key={activity.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/60">
                       <div className="flex items-start gap-2">
                         <input
                           type="text"
@@ -1510,14 +1510,14 @@ export function OnboardingProfileForm({
                           type="button"
                           onClick={() => removeOtherActivity(activity.id)}
                           aria-label={tr(effectiveLocale, "Remove activity", "הסרת פעילות")}
-                          className="shrink-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-500 hover:bg-slate-100"
+                          className="shrink-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800"
                         >
                           ✕
                         </button>
                       </div>
                       <div className="mt-2 grid gap-3 sm:grid-cols-2">
                         <label className="block">
-                          <span className="mb-1 block text-xs font-medium text-slate-700">{tr(effectiveLocale, "Frequency (days/week)", "תדירות (ימים/שבוע)")}</span>
+                          <span className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Frequency (days/week)", "תדירות (ימים/שבוע)")}</span>
                           <input
                             type="number"
                             min={1}
@@ -1528,7 +1528,7 @@ export function OnboardingProfileForm({
                           />
                         </label>
                         <label className="block">
-                          <span className="mb-1 block text-xs font-medium text-slate-700">{tr(effectiveLocale, "Duration (minutes/session)", "משך (דקות לאימון)")}</span>
+                          <span className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Duration (minutes/session)", "משך (דקות לאימון)")}</span>
                           <input
                             type="number"
                             min={1}
@@ -1545,7 +1545,7 @@ export function OnboardingProfileForm({
                 <button
                   type="button"
                   onClick={addOtherActivity}
-                  className="rounded-lg border border-teal-300 px-3 py-1.5 text-xs font-semibold text-teal-700 hover:bg-teal-50"
+                  className="rounded-lg border border-teal-300 px-3 py-1.5 text-xs font-semibold text-teal-700 hover:bg-teal-50 dark:border-teal-800 dark:text-teal-400 dark:hover:bg-teal-950/40"
                 >
                   {tr(effectiveLocale, "+ Add another activity", "+ הוספת פעילות נוספת")}
                 </button>
@@ -1563,7 +1563,7 @@ export function OnboardingProfileForm({
 
           {selectedExerciseModalities.length > 0 ? (
             <div className="space-y-3" data-field="exercise_schedule_by_modality">
-              <p className="text-sm font-medium text-slate-700">
+              <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
                 {tr(
                   effectiveLocale,
                   "Set frequency and duration for each selected exercise type",
@@ -1579,11 +1579,11 @@ export function OnboardingProfileForm({
                   };
 
                   return (
-                    <div key={modality} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                      <p className="text-sm font-semibold text-slate-900">{exerciseModalityLabel(modality, effectiveLocale)}</p>
+                    <div key={modality} className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/60">
+                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{exerciseModalityLabel(modality, effectiveLocale)}</p>
                       <div className="mt-2 grid gap-3 sm:grid-cols-2">
                         <label className="block">
-                          <span className="mb-1 block text-xs font-medium text-slate-700">{tr(effectiveLocale, "Frequency (days/week)", "תדירות (ימים/שבוע)")}</span>
+                          <span className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Frequency (days/week)", "תדירות (ימים/שבוע)")}</span>
                           <input
                             type="number"
                             min={1}
@@ -1604,7 +1604,7 @@ export function OnboardingProfileForm({
                           />
                         </label>
                         <label className="block">
-                          <span className="mb-1 block text-xs font-medium text-slate-700">{tr(effectiveLocale, "Duration (minutes/session)", "משך (דקות לאימון)")}</span>
+                          <span className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Duration (minutes/session)", "משך (דקות לאימון)")}</span>
                           <input
                             type="number"
                             min={1}
@@ -1635,7 +1635,7 @@ export function OnboardingProfileForm({
           ) : null}
 
           <div data-field="nutritional_goal">
-            <span className="mb-2 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Nutritional goal", "מטרה תזונתית")}</span>
+            <span className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300 dark:text-slate-300">{tr(effectiveLocale, "Nutritional goal", "מטרה תזונתית")}</span>
             <div className="grid gap-2 sm:grid-cols-2">
               {nutritionalGoalOptions.map((goal) => {
                 const disabled = isGoalDisabled(goal);
@@ -1646,16 +1646,16 @@ export function OnboardingProfileForm({
                     type="button"
                     disabled={disabled}
                     onClick={() => updateDraft({ nutritional_goal: goal })}
-                    className={`rounded-xl border px-3 py-2 text-left text-xs ${selected ? "border-teal-700 bg-teal-50" : "border-slate-300 bg-white"} ${disabled ? "cursor-not-allowed opacity-50" : "hover:border-teal-400"}`}
+                    className={`rounded-xl border px-3 py-2 text-left text-xs ${selected ? "border-teal-700 bg-teal-50 dark:bg-teal-950/40" : "border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900"} ${disabled ? "cursor-not-allowed opacity-50" : "hover:border-teal-400"}`}
                   >
-                    <p className="font-semibold text-slate-900">{goalLabel(goal, effectiveLocale)}</p>
-                    <p className="mt-1 text-slate-600">{goalEnergyTarget(goal, effectiveLocale)}</p>
-                    <p className="text-slate-600">{goalProteinRange(goal)}</p>
+                    <p className="font-semibold text-slate-900 dark:text-slate-100">{goalLabel(goal, effectiveLocale)}</p>
+                    <p className="mt-1 text-slate-600 dark:text-slate-400">{goalEnergyTarget(goal, effectiveLocale)}</p>
+                    <p className="text-slate-600 dark:text-slate-400">{goalProteinRange(goal)}</p>
                     {showSedentaryHint && goal === "muscle_hypertrophy" ? (
-                      <p className="mt-1 text-amber-700">{tr(effectiveLocale, "Hypertrophy requires structured resistance training.", "היפרטרופיה דורשת אימון התנגדות מובנה.")}</p>
+                      <p className="mt-1 text-amber-700 dark:text-amber-400">{tr(effectiveLocale, "Hypertrophy requires structured resistance training.", "היפרטרופיה דורשת אימון התנגדות מובנה.")}</p>
                     ) : null}
                     {showSedentaryHint && goal === "athletic_performance" ? (
-                      <p className="mt-1 text-amber-700">{tr(effectiveLocale, "Athletic performance targets active training lifestyles.", "ביצועים אתלטיים מיועדים לאורח חיים פעיל.")}</p>
+                      <p className="mt-1 text-amber-700 dark:text-amber-400">{tr(effectiveLocale, "Athletic performance targets active training lifestyles.", "ביצועים אתלטיים מיועדים לאורח חיים פעיל.")}</p>
                     ) : null}
                   </button>
                 );
@@ -1664,7 +1664,7 @@ export function OnboardingProfileForm({
             {renderFieldError("nutritional_goal")}
 
             {isUnderweight ? (
-              <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400">
                 {tr(
                   effectiveLocale,
                   "Weight Loss and Recomposition are disabled because your calculated BMI is under 18.5. We recommend Maintenance or Hypertrophy.",
@@ -1674,7 +1674,7 @@ export function OnboardingProfileForm({
             ) : null}
 
             {isHighBmi && selectedGoal === "muscle_hypertrophy" ? (
-              <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400">
                 {tr(
                   effectiveLocale,
                   "Caloric surplus may not be recommended at your current BMI. Body Recomposition or Weight Loss is typically advised.",
@@ -1688,11 +1688,11 @@ export function OnboardingProfileForm({
 
       {step === 3 ? (
         <section className="space-y-4">
-          <h2 className="text-lg font-semibold text-slate-900">{tr(effectiveLocale, "Medical & Physiological Status", "מצב רפואי ופיזיולוגי")}</h2>
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{tr(effectiveLocale, "Medical & Physiological Status", "מצב רפואי ופיזיולוגי")}</h2>
 
           {draft.biological_sex === "female" ? (
             <div data-field="pregnancy_lactation_status">
-              <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Pregnancy / lactation", "הריון / הנקה")}</span>
+              <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Pregnancy / lactation", "הריון / הנקה")}</span>
               <select
                 name="pregnancy_lactation_status"
                 value={draft.pregnancy_lactation_status}
@@ -1714,10 +1714,10 @@ export function OnboardingProfileForm({
           )}
 
           <div data-field="has_medical_conditions">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "🩺 Medical conditions", "🩺 מצבים רפואיים")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "🩺 Medical conditions", "🩺 מצבים רפואיים")}</span>
             <div className="flex gap-3 text-sm">
-              <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_medical_conditions === "yes" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_medical_conditions" value="yes" checked={draft.has_medical_conditions === "yes"} onChange={() => setYesNo("has_medical_conditions", "yes")} /> {tr(effectiveLocale, "Yes", "כן")}</label>
-              <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_medical_conditions === "no" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_medical_conditions" value="no" checked={draft.has_medical_conditions === "no"} onChange={() => setYesNo("has_medical_conditions", "no")} /> {tr(effectiveLocale, "No", "לא")}</label>
+              <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_medical_conditions === "yes" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_medical_conditions" value="yes" checked={draft.has_medical_conditions === "yes"} onChange={() => setYesNo("has_medical_conditions", "yes")} /> {tr(effectiveLocale, "Yes", "כן")}</label>
+              <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_medical_conditions === "no" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_medical_conditions" value="no" checked={draft.has_medical_conditions === "no"} onChange={() => setYesNo("has_medical_conditions", "no")} /> {tr(effectiveLocale, "No", "לא")}</label>
             </div>
             <div
               className={`overflow-hidden transition-all duration-300 ${draft.has_medical_conditions === "yes" ? "mt-3 max-h-[700px] opacity-100" : "max-h-0 opacity-0"}`}
@@ -1730,7 +1730,7 @@ export function OnboardingProfileForm({
                       key={condition}
                       type="button"
                       onClick={() => toggleMedicalCondition(condition)}
-                      className={`rounded-xl border px-3 py-2 text-left text-xs font-medium ${selected ? "border-teal-700 bg-teal-50 text-teal-900" : "border-slate-300 bg-white text-slate-700"}`}
+                      className={`rounded-xl border px-3 py-2 text-left text-xs font-medium ${selected ? "border-teal-700 bg-teal-50 text-teal-900 dark:bg-teal-950/40 dark:text-teal-300" : "border-slate-300 bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700"}`}
                     >
                       {formatMedicalCondition(condition, effectiveLocale)}
                     </button>
@@ -1738,7 +1738,7 @@ export function OnboardingProfileForm({
                 })}
               </div>
               {draft.medical_conditions.includes("prefer_not_to_disclose") ? (
-                <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400">
                   {tr(
                     effectiveLocale,
                     "Choosing not to disclose will prevent your Health Companion from considering your specific needs when processing your targets and progress.",
@@ -1750,7 +1750,7 @@ export function OnboardingProfileForm({
 
               {draft.medical_conditions.includes("other") ? (
                 <label className="mt-3 block" data-field="medical_conditions_details">
-                  <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Other diagnosed conditions", "מצבים רפואיים נוספים")}</span>
+                  <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Other diagnosed conditions", "מצבים רפואיים נוספים")}</span>
                   <textarea
                     name="medical_conditions_details"
                     value={draft.medical_conditions_details}
@@ -1769,10 +1769,10 @@ export function OnboardingProfileForm({
           </div>
 
           <div data-field="has_regular_medications">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Regular medications", "תרופות קבועות")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Regular medications", "תרופות קבועות")}</span>
             <div className="flex gap-3 text-sm">
-              <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_regular_medications === "yes" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_regular_medications" value="yes" checked={draft.has_regular_medications === "yes"} onChange={() => setYesNo("has_regular_medications", "yes")} /> {tr(effectiveLocale, "Yes", "כן")}</label>
-              <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_regular_medications === "no" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_regular_medications" value="no" checked={draft.has_regular_medications === "no"} onChange={() => setYesNo("has_regular_medications", "no")} /> {tr(effectiveLocale, "No", "לא")}</label>
+              <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_regular_medications === "yes" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_regular_medications" value="yes" checked={draft.has_regular_medications === "yes"} onChange={() => setYesNo("has_regular_medications", "yes")} /> {tr(effectiveLocale, "Yes", "כן")}</label>
+              <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_regular_medications === "no" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_regular_medications" value="no" checked={draft.has_regular_medications === "no"} onChange={() => setYesNo("has_regular_medications", "no")} /> {tr(effectiveLocale, "No", "לא")}</label>
             </div>
             {draft.has_regular_medications === "yes" ? (
               <textarea
@@ -1799,16 +1799,16 @@ export function OnboardingProfileForm({
           </div>
 
           <div data-field="hot_climate_or_heavy_sweating">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Heavy sweating / hot climate exposure", "חשיפה לחום/הזעה מרובה")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Heavy sweating / hot climate exposure", "חשיפה לחום/הזעה מרובה")}</span>
             <div className="flex gap-3 text-sm">
-              <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.hot_climate_or_heavy_sweating === "yes" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="hot_climate_or_heavy_sweating" value="yes" checked={draft.hot_climate_or_heavy_sweating === "yes"} onChange={() => setYesNo("hot_climate_or_heavy_sweating", "yes")} /> {tr(effectiveLocale, "Yes", "כן")}</label>
-              <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.hot_climate_or_heavy_sweating === "no" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="hot_climate_or_heavy_sweating" value="no" checked={draft.hot_climate_or_heavy_sweating === "no"} onChange={() => setYesNo("hot_climate_or_heavy_sweating", "no")} /> {tr(effectiveLocale, "No", "לא")}</label>
+              <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.hot_climate_or_heavy_sweating === "yes" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="hot_climate_or_heavy_sweating" value="yes" checked={draft.hot_climate_or_heavy_sweating === "yes"} onChange={() => setYesNo("hot_climate_or_heavy_sweating", "yes")} /> {tr(effectiveLocale, "Yes", "כן")}</label>
+              <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.hot_climate_or_heavy_sweating === "no" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="hot_climate_or_heavy_sweating" value="no" checked={draft.hot_climate_or_heavy_sweating === "no"} onChange={() => setYesNo("hot_climate_or_heavy_sweating", "no")} /> {tr(effectiveLocale, "No", "לא")}</label>
             </div>
             {renderFieldError("hot_climate_or_heavy_sweating")}
           </div>
 
           <div data-field="habits">
-            <span className="mb-2 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Habits & substance use", "הרגלים ושימוש בחומרים")}</span>
+            <span className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Habits & substance use", "הרגלים ושימוש בחומרים")}</span>
             <div className="flex flex-wrap gap-2">
               {habitOptions.map((value) => {
                 const label =
@@ -1824,7 +1824,7 @@ export function OnboardingProfileForm({
                     key={value}
                     type="button"
                     onClick={() => toggleListValue("habits", value)}
-                    className={`rounded-full border px-3 py-1.5 text-xs font-medium ${selected ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 bg-white text-slate-700"}`}
+                    className={`rounded-full border px-3 py-1.5 text-xs font-medium ${selected ? "border-slate-900 bg-slate-900 text-white dark:bg-slate-600 dark:border-slate-600" : "border-slate-300 bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700"}`}
                   >
                     {label}
                   </button>
@@ -1834,13 +1834,13 @@ export function OnboardingProfileForm({
 
             {draft.habits.includes("alcohol") ? (
               <div className="mt-2" data-field="alcohol_consumption_level">
-                <span className="mb-1 flex items-center gap-1.5 text-sm font-medium text-slate-700">
+                <span className="mb-1 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
                   {tr(effectiveLocale, "Alcohol consumption", "צריכת אלכוהול")}
                   <AlcoholConsumptionInfo locale={effectiveLocale} />
                 </span>
                 <div className="flex gap-3 text-sm">
                   <label
-                    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.alcohol_consumption_level === "low" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}
+                    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.alcohol_consumption_level === "low" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}
                   >
                     <input
                       className="h-4 w-4 accent-teal-700"
@@ -1851,7 +1851,7 @@ export function OnboardingProfileForm({
                     {tr(effectiveLocale, "Low consumption", "צריכה נמוכה")}
                   </label>
                   <label
-                    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.alcohol_consumption_level === "high" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}
+                    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.alcohol_consumption_level === "high" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}
                   >
                     <input
                       className="h-4 w-4 accent-teal-700"
@@ -1868,7 +1868,7 @@ export function OnboardingProfileForm({
 
             {draft.habits.includes("smoking_or_vaping") ? (
               <label className="mt-2 block" data-field="smoking_packs_per_day">
-                <span className="mb-1 block text-sm font-medium text-slate-700">
+                <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
                   {tr(effectiveLocale, "Smoking amount (cigarettes/day)", "כמות עישון (סיגריות ביום)")}
                 </span>
                 <input
@@ -1890,10 +1890,10 @@ export function OnboardingProfileForm({
 
       {step === 4 ? (
         <section className="space-y-4">
-          <h2 className="text-lg font-semibold text-slate-900">{tr(effectiveLocale, "Dietary Profile & Context", "פרופיל תזונתי והקשר")}</h2>
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{tr(effectiveLocale, "Dietary Profile & Context", "פרופיל תזונתי והקשר")}</h2>
 
           <div data-field="dietary_preference">
-            <span className="mb-2 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Dietary preference", "העדפה תזונתית")}</span>
+            <span className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Dietary preference", "העדפה תזונתית")}</span>
             <div className="grid gap-2 sm:grid-cols-2">
               {dietaryPreferenceOptions.map((value) => {
                 const label =
@@ -1911,7 +1911,7 @@ export function OnboardingProfileForm({
                     key={value}
                     type="button"
                     onClick={() => updateDraft({ dietary_preference: value })}
-                    className={`rounded-xl border px-3 py-2 text-sm font-medium ${selected ? "border-teal-700 bg-teal-50 text-teal-900" : "border-slate-300 bg-white text-slate-700"}`}
+                    className={`rounded-xl border px-3 py-2 text-sm font-medium ${selected ? "border-teal-700 bg-teal-50 text-teal-900 dark:bg-teal-950/40 dark:text-teal-300" : "border-slate-300 bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700"}`}
                   >
                     {label}
                   </button>
@@ -1922,7 +1922,7 @@ export function OnboardingProfileForm({
           </div>
 
           <label className="block" data-field="allergies">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Allergies (optional)", "אלרגיות (אופציונלי)")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Allergies (optional)", "אלרגיות (אופציונלי)")}</span>
             <input
               type="text"
               name="allergies"
@@ -1942,7 +1942,7 @@ export function OnboardingProfileForm({
           </label>
 
           <label className="block" data-field="additional_information">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(effectiveLocale, "Additional information", "מידע נוסף")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Additional information", "מידע נוסף")}</span>
             <textarea
               name="additional_information"
               rows={5}
@@ -1963,7 +1963,7 @@ export function OnboardingProfileForm({
             {renderFieldError("additional_information")}
           </label>
 
-          <label className="flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5 text-sm text-sky-900">
+          <label className="flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5 text-sm text-sky-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300">
             <input
               type="checkbox"
               name="accept_ai_extraction"
@@ -1985,24 +1985,24 @@ export function OnboardingProfileForm({
       ) : null}
 
       {state.error && !state.fieldErrors?.length ? (
-        <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+        <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-400">
           {state.error}
         </p>
       ) : null}
 
       {state.error && state.fieldErrors?.length ? (
-        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400">
           {state.error}
         </p>
       ) : null}
 
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 px-6 py-3 backdrop-blur">
+      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 px-6 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95">
         <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-2">
           <button
             type="button"
             disabled={step === 1}
             onClick={() => setStep((step - 1) as StepKey)}
-            className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-300"
           >
             {tr(effectiveLocale, "Back", "חזרה")}
           </button>
@@ -2011,7 +2011,7 @@ export function OnboardingProfileForm({
             <button
               type="button"
               onClick={() => goToStep((step + 1) as StepKey)}
-              className="rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800"
+              className="rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
             >
               {tr(effectiveLocale, "Next", "הבא")}
             </button>

@@ -17,7 +17,7 @@ import { activityLevelOptions } from "@/lib/profile";
 /** Column list for selecting a full `user_target_profiles` row, shared by
  * every query site so `mapTargetProfileRowToPayload` always gets what it needs. */
 export const TARGET_PROFILE_COLUMNS =
-  "id, raw_goal_text, goal_type, target_weight_kg, duration_days, blood_balance_focus, sleep_focus, calories_min, calories_max, protein_min_g, protein_max_g, carbs_min_g, carbs_max_g, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, sodium_min_mg, sodium_max_mg, added_sugar_min_g, added_sugar_max_g, water_min_ml, water_max_ml, potassium_min_mg, potassium_max_mg, magnesium_min_mg, magnesium_max_mg, calcium_min_mg, calcium_max_mg, iron_min_mg, iron_max_mg, zinc_min_mg, zinc_max_mg, vit_c_min_mg, vit_c_max_mg, vit_b12_min_mcg, vit_b12_max_mcg, vit_d_min_mcg, vit_d_max_mcg, sat_fat_min_g, sat_fat_max_g, omega3_min_g, omega3_max_g, exercise_targets, habits_do, habits_dont, user_targets, ai_rationale_explanation, translation_confidence, analysis_source, sys_start_date, profile_snapshot";
+  "id, raw_goal_text, goal_type, target_weight_kg, duration_days, blood_balance_focus, sleep_focus, calories_min, calories_max, protein_min_g, protein_max_g, carbs_min_g, carbs_max_g, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, sodium_min_mg, sodium_max_mg, added_sugar_min_g, added_sugar_max_g, water_min_ml, water_max_ml, potassium_min_mg, potassium_max_mg, magnesium_min_mg, magnesium_max_mg, calcium_min_mg, calcium_max_mg, iron_min_mg, iron_max_mg, zinc_min_mg, zinc_max_mg, vit_c_min_mg, vit_c_max_mg, vit_b12_min_mcg, vit_b12_max_mcg, vit_d_min_mcg, vit_d_max_mcg, sat_fat_min_g, sat_fat_max_g, omega3_min_g, omega3_max_g, cholesterol_min_mg, cholesterol_max_mg, exercise_targets, habits_do, habits_dont, user_targets, ai_rationale_explanation, translation_confidence, analysis_source, sys_start_date, profile_snapshot";
 
 export const targetGoalTypes = ["weight_loss", "weight_gain", "maintain", "general"] as const;
 export type TargetGoalType = (typeof targetGoalTypes)[number];
@@ -68,6 +68,7 @@ const numericRangePairs = [
   ["vitDMinMcg", "vitDMaxMcg"],
   ["satFatMinG", "satFatMaxG"],
   ["omega3MinG", "omega3MaxG"],
+  ["cholesterolMinMg", "cholesterolMaxMg"],
 ] as const;
 
 /**
@@ -119,6 +120,8 @@ export const targetGenerationPayloadSchema = z
     satFatMaxG: z.number().min(0).max(300),
     omega3MinG: z.number().min(0).max(50),
     omega3MaxG: z.number().min(0).max(50),
+    cholesterolMinMg: z.number().min(0).max(3000),
+    cholesterolMaxMg: z.number().min(0).max(3000),
 
     exerciseTargets: z.array(exerciseTargetEntrySchema).max(10),
     habitsDo: z.array(habitEntrySchema).max(10),
@@ -228,6 +231,8 @@ export type TargetGenerationPayload = {
   satFatMaxG: number;
   omega3MinG: number;
   omega3MaxG: number;
+  cholesterolMinMg: number;
+  cholesterolMaxMg: number;
 
   exerciseTargets: ExerciseTargetEntry[];
   habitsDo: HabitEntry[];
@@ -463,6 +468,12 @@ function buildSecondaryRanges(profile: ProfileForTargets, avgCalories: number) {
     satFatMaxG,
     omega3MinG,
     omega3MaxG,
+    // Dietary cholesterol: commonly cited upper guidance is ~300mg/day,
+    // same flat default regardless of sex/age (unlike the ranges above
+    // that vary by profile) - no min beyond 0, since there's no deficiency
+    // concern to guard against here, only an upper bound worth limiting.
+    cholesterolMinMg: 0,
+    cholesterolMaxMg: 300,
   };
 }
 
@@ -900,6 +911,8 @@ type TargetProfileDbRow = {
   sat_fat_max_g: number | string;
   omega3_min_g: number | string;
   omega3_max_g: number | string;
+  cholesterol_min_mg: number | string;
+  cholesterol_max_mg: number | string;
   exercise_targets: unknown;
   habits_do: unknown;
   habits_dont: unknown;
@@ -1017,6 +1030,8 @@ export function mapTargetProfileRowToPayload(row: TargetProfileDbRow): TargetGen
     satFatMaxG: toNum(row.sat_fat_max_g),
     omega3MinG: toNum(row.omega3_min_g),
     omega3MaxG: toNum(row.omega3_max_g),
+    cholesterolMinMg: toNum(row.cholesterol_min_mg),
+    cholesterolMaxMg: toNum(row.cholesterol_max_mg),
 
     exerciseTargets: normalizeExerciseTargetsJson(row.exercise_targets),
     habitsDo: normalizeHabitEntriesJson(row.habits_do),
@@ -1125,6 +1140,15 @@ function otherActivitiesSummary(
 
 /** Compares the target-relevant fields of two profile snapshots and returns
  * only the ones that changed, for the "your profile changed" banner. */
+/** Below this fraction of the snapshot's own weight, a weight change is
+ * treated as noise (day-to-day fluctuation, scale variance) rather than
+ * something that should prompt the user to recalculate their targets - a
+ * 0.3kg wobble on a 90kg person shouldn't trigger the same "your profile
+ * changed" banner a real, sustained weight change would. Applied wherever
+ * this diff drives that banner: the Targets page itself, Daily Report's own
+ * weight-linked staleness check, and the Profile page's quick-edit rows. */
+const WEIGHT_CHANGE_SIGNIFICANCE_RATIO = 0.1;
+
 export function computeProfileDiff(before: ProfileForTargets, after: ProfileForTargets, locale: AppLocale): ProfileDiffRow[] {
   const rows: ProfileDiffRow[] = [];
 
@@ -1134,12 +1158,16 @@ export function computeProfileDiff(before: ProfileForTargets, after: ProfileForT
   }
 
   addIfChanged("Age", "גיל", String(before.age), String(after.age));
-  addIfChanged(
-    "Weight",
-    "משקל",
-    `${formatNumberForLocale(before.weight_kg, locale, { maximumFractionDigits: 1 })} kg`,
-    `${formatNumberForLocale(after.weight_kg, locale, { maximumFractionDigits: 1 })} kg`,
-  );
+
+  const weightChangeRatio = before.weight_kg > 0 ? Math.abs(after.weight_kg - before.weight_kg) / before.weight_kg : Infinity;
+  if (weightChangeRatio >= WEIGHT_CHANGE_SIGNIFICANCE_RATIO) {
+    addIfChanged(
+      "Weight",
+      "משקל",
+      `${formatNumberForLocale(before.weight_kg, locale, { maximumFractionDigits: 1 })} kg`,
+      `${formatNumberForLocale(after.weight_kg, locale, { maximumFractionDigits: 1 })} kg`,
+    );
+  }
   addIfChanged(
     "Activity level",
     "רמת פעילות",

@@ -3,12 +3,12 @@ import type { MetricDiffRow } from "@/lib/targets-diff";
 
 export function TargetsDiffTable({ rows, locale }: { rows: MetricDiffRow[]; locale: AppLocale }) {
   return (
-    <div className="rounded-lg border border-teal-200 bg-teal-50 p-3">
-      <p className="text-xs font-semibold uppercase tracking-wide text-teal-800">{tr(locale, "What changed", "מה השתנה")}</p>
-      <div className="mt-2 overflow-x-auto rounded-md border border-teal-200 bg-white">
+    <div className="rounded-lg border border-teal-200 bg-teal-50 p-3 dark:border-teal-800 dark:bg-teal-950/30">
+      <p className="text-xs font-semibold uppercase tracking-wide text-teal-800 dark:text-teal-300">{tr(locale, "What changed", "מה השתנה")}</p>
+      <div className="mt-2 overflow-x-auto rounded-md border border-teal-200 bg-white dark:border-teal-800 dark:bg-slate-900">
         <table className="w-full min-w-[420px] border-collapse text-sm">
           <thead>
-            <tr className="border-b border-teal-200 bg-teal-100/60 text-xs font-semibold uppercase tracking-wide text-teal-800">
+            <tr className="border-b border-teal-200 bg-teal-100/60 text-xs font-semibold uppercase tracking-wide text-teal-800 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-300">
               <th scope="col" className="px-3 py-2">
                 {tr(locale, "Target item", "פריט יעד")}
               </th>
@@ -22,10 +22,10 @@ export function TargetsDiffTable({ rows, locale }: { rows: MetricDiffRow[]; loca
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.labelEn} className="border-b border-teal-100 last:border-0">
-                <td className="px-3 py-2 font-medium text-slate-900">{tr(locale, row.labelEn, row.labelHe)}</td>
+              <tr key={row.labelEn} className="border-b border-teal-100 last:border-0 dark:border-teal-900">
+                <td className="px-3 py-2 font-medium text-slate-900 dark:text-slate-100">{tr(locale, row.labelEn, row.labelHe)}</td>
                 <td className="px-3 py-2 text-slate-500">{row.before}</td>
-                <td className="px-3 py-2 font-semibold text-teal-800">{row.after}</td>
+                <td className="px-3 py-2 font-semibold text-teal-800 dark:text-teal-300">{row.after}</td>
               </tr>
             ))}
           </tbody>

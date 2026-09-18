@@ -65,6 +65,7 @@ export async function generateTargetsPayload({
   currentTargets,
   supabase,
   userId,
+  onProgress,
 }: {
   goalText: string;
   profile: ProfileForTargets;
@@ -81,6 +82,8 @@ export async function generateTargetsPayload({
    * available, or AI generation isn't in play). */
   supabase?: Awaited<ReturnType<typeof createClient>>;
   userId?: string;
+  /** Forwarded to generateTargetsWithAi - see its own comment. */
+  onProgress?: () => void;
 }): Promise<{
   payload: TargetGenerationPayload;
   source: "ai" | "heuristic";
@@ -118,6 +121,7 @@ export async function generateTargetsPayload({
         locale,
         currentTargets,
         medicalDocumentsContext: medicalDocumentsContext ?? undefined,
+        onProgress,
       });
       source = "ai";
     } catch (error) {
@@ -270,39 +274,27 @@ export async function generateTargetsAction(
   };
 }
 
-export async function lockTargetsAction(
-  _prevState: TargetsActionState,
-  formData: FormData,
-): Promise<TargetsActionState> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/auth/sign-in");
-  }
-
-  const goalText = formData.get("goal_text")?.toString().trim() ?? "";
-  const payloadJson = formData.get("payload_json")?.toString() ?? "";
-  const source = formData.get("source")?.toString() === "ai" ? "ai" : "heuristic";
-
-  if (!payloadJson) {
-    return { error: "Missing generated target data. Please generate targets again." };
-  }
-
-  let parsedPayload: TargetGenerationPayload;
-  try {
-    const rawPayload = JSON.parse(payloadJson);
-    parsedPayload = targetGenerationPayloadSchema.parse(rawPayload);
-  } catch (error) {
-    logServerError("targets.lock", "invalid_payload", {
-      userId: user.id,
-      error: error instanceof Error ? error.message : "Unknown payload validation error",
-    });
-    return { error: "The generated target data was invalid. Please generate targets again." };
-  }
-
+/**
+ * Shared insert/deactivate logic behind both lockTargetsAction (the form-
+ * based flow still used by the no-AI-consent fallback page, TargetsWorkspace)
+ * and autoLockTargetsAction (the AI chat workspace's auto-save, called
+ * directly rather than via a form) - both trust their own caller to have
+ * already validated `payload` against targetGenerationPayloadSchema.
+ */
+async function performTargetsLock({
+  supabase,
+  userId,
+  goalText,
+  source,
+  payload: parsedPayload,
+}: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  userId: string;
+  goalText: string;
+  source: "ai" | "heuristic";
+  payload: TargetGenerationPayload;
+}): Promise<{ error: string } | { success: true }> {
+  const user = { id: userId };
   // Snapshot the target-relevant profile fields as of right now, so a future
   // visit can detect drift (e.g. a newly recorded medical condition) and
   // prompt the user to recalculate.
@@ -376,6 +368,8 @@ export async function lockTargetsAction(
     sat_fat_max_g: parsedPayload.satFatMaxG,
     omega3_min_g: parsedPayload.omega3MinG,
     omega3_max_g: parsedPayload.omega3MaxG,
+    cholesterol_min_mg: parsedPayload.cholesterolMinMg,
+    cholesterol_max_mg: parsedPayload.cholesterolMaxMg,
 
     exercise_targets: parsedPayload.exerciseTargets.map((entry) => ({
       modality: entry.modality,
@@ -421,7 +415,82 @@ export async function lockTargetsAction(
   revalidatePath("/app");
   revalidatePath("/app/targets");
 
+  return { success: true };
+}
+
+export async function lockTargetsAction(
+  _prevState: TargetsActionState,
+  formData: FormData,
+): Promise<TargetsActionState> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/sign-in");
+  }
+
+  const goalText = formData.get("goal_text")?.toString().trim() ?? "";
+  const payloadJson = formData.get("payload_json")?.toString() ?? "";
+  const source = formData.get("source")?.toString() === "ai" ? "ai" : "heuristic";
+
+  if (!payloadJson) {
+    return { error: "Missing generated target data. Please generate targets again." };
+  }
+
+  let parsedPayload: TargetGenerationPayload;
+  try {
+    const rawPayload = JSON.parse(payloadJson);
+    parsedPayload = targetGenerationPayloadSchema.parse(rawPayload);
+  } catch (error) {
+    logServerError("targets.lock", "invalid_payload", {
+      userId: user.id,
+      error: error instanceof Error ? error.message : "Unknown payload validation error",
+    });
+    return { error: "The generated target data was invalid. Please generate targets again." };
+  }
+
+  const result = await performTargetsLock({ supabase, userId: user.id, goalText, source, payload: parsedPayload });
+  if ("error" in result) {
+    return { error: result.error };
+  }
   return { success: "Targets approved and locked in." };
+}
+
+/**
+ * Programmatic counterpart to lockTargetsAction for the AI chat workspace's
+ * auto-save flow (see targets-chat-workspace.tsx's requestTargetsUpdate) -
+ * called directly as a function rather than bound to a <form>, since there's
+ * no user-facing "Lock in" submit step to trigger it anymore: once the AI's
+ * reply comes back with an actual change, this is invoked immediately.
+ * `payload` is trusted pre-validated TargetGenerationPayload (it just came
+ * from generateTargetsPayload/runStream's own "targets" event on this same
+ * request, not from unvalidated form input), so no schema re-parse here.
+ */
+export async function autoLockTargetsAction({
+  goalText,
+  source,
+  payload,
+}: {
+  goalText: string;
+  source: "ai" | "heuristic";
+  payload: TargetGenerationPayload;
+}): Promise<{ error?: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/sign-in");
+  }
+
+  const result = await performTargetsLock({ supabase, userId: user.id, goalText, source, payload });
+  if ("error" in result) {
+    return { error: result.error };
+  }
+  return {};
 }
 
 /**

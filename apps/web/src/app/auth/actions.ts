@@ -73,6 +73,43 @@ function sanitizeNextPath(nextPath: string | null): string {
   return nextPath;
 }
 
+/**
+ * Starts both session-policy clocks fresh (see lib/auth-policy.ts) - called
+ * for every kind of "the user just proved who they are" event: a password
+ * sign-in, an auto-signed-in signup, and a passkey sign-in (see
+ * recordLoginAction below, called client-side right after
+ * supabase.auth.signInWithPasskey() succeeds, since that ceremony happens
+ * entirely in the browser with no server action of its own to hook into
+ * directly). A passkey ceremony is at least as strong a proof of identity
+ * as a password, so it resets the absolute-session clock the same way.
+ */
+async function markSuccessfulLogin(supabase: Awaited<ReturnType<typeof createClient>>, userId: string): Promise<void> {
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from("user_profile")
+    .update({ last_login_at: now, last_active_at: now })
+    .eq("user_id", userId);
+
+  if (error) {
+    logServerError("auth.markSuccessfulLogin", "update_failed", { userId, error: error.message });
+  }
+}
+
+/**
+ * Client-side passkey sign-in (supabase.auth.signInWithPasskey()) has no
+ * form submission of its own to hang this on - the sign-in form calls this
+ * right after that ceremony succeeds, using the session cookies it just
+ * established to identify who to record the login for.
+ */
+export async function recordLoginAction(): Promise<void> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return;
+  await markSuccessfulLogin(supabase, user.id);
+}
+
 export async function signInAction(
   _prevState: AuthActionState,
   formData: FormData,
@@ -114,6 +151,7 @@ export async function signInAction(
       .maybeSingle();
 
     await persistLocalePreference(normalizeLocaleCookieValue(profile?.preferred_language));
+    await markSuccessfulLogin(supabase, userId);
   }
 
   const nextPath = sanitizeNextPath(formData.get("next")?.toString() ?? null);
@@ -150,7 +188,8 @@ export async function signUpAction(
     return { error: error.message };
   }
 
-  if (data.session) {
+  if (data.session && data.user) {
+    await markSuccessfulLogin(supabase, data.user.id);
     redirect("/app");
   }
 

@@ -20,17 +20,17 @@ function isOverLimit(metric: RingMetric): boolean {
 }
 
 function barColorClass(metric: RingMetric): string {
-  if (isOverLimit(metric)) return "bg-rose-600";
-  if (metric.neverOverLimit && metric.max > 0 && metric.total >= metric.max) return "bg-emerald-600";
-  if (metric.min > 0 && metric.total >= metric.min) return "bg-emerald-600";
-  return "bg-teal-600";
+  if (isOverLimit(metric)) return "bg-rose-600 dark:bg-rose-500";
+  if (metric.neverOverLimit && metric.max > 0 && metric.total >= metric.max) return "bg-emerald-600 dark:bg-emerald-500";
+  if (metric.min > 0 && metric.total >= metric.min) return "bg-emerald-600 dark:bg-emerald-500";
+  return "bg-teal-600 dark:bg-teal-500";
 }
 
 function valueColorClass(metric: RingMetric): string {
-  if (isOverLimit(metric)) return "text-rose-700";
-  if (metric.neverOverLimit && metric.max > 0 && metric.total >= metric.max) return "text-emerald-700";
-  if (metric.min > 0 && metric.total >= metric.min) return "text-emerald-700";
-  return "text-slate-900";
+  if (isOverLimit(metric)) return "text-rose-700 dark:text-rose-400";
+  if (metric.neverOverLimit && metric.max > 0 && metric.total >= metric.max) return "text-emerald-700 dark:text-emerald-400";
+  if (metric.min > 0 && metric.total >= metric.min) return "text-emerald-700 dark:text-emerald-400";
+  return "text-slate-900 dark:text-slate-100";
 }
 
 function clampPercent(value: number): number {
@@ -45,7 +45,7 @@ function GoalBarRow({ locale, metric }: { locale: AppLocale; metric: RingMetric 
   return (
     <div>
       <div className="flex items-center gap-2">
-        <span className={`flex-1 text-[13px] font-medium ${isOverLimit(metric) ? "text-rose-700" : "text-slate-800"}`}>
+        <span className={`flex-1 text-[13px] font-medium ${isOverLimit(metric) ? "text-rose-700 dark:text-rose-400" : "text-slate-800 dark:text-slate-200"}`}>
           {tr(locale, metric.labelEn, metric.labelHe)}
         </span>
         <span dir="ltr" className={`text-[13px] font-semibold tabular-nums ${valueColorClass(metric)}`}>
@@ -54,7 +54,7 @@ function GoalBarRow({ locale, metric }: { locale: AppLocale; metric: RingMetric 
           {formatNumberForLocale(metric.max, locale, { maximumFractionDigits: 0 })} {formatMeasurementUnit(metric.unit, locale)}
         </span>
       </div>
-      <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-slate-100">
+      <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
         <div className={`h-full rounded-full ${barColorClass(metric)}`} style={{ width: `${percent}%` }} />
       </div>
       {burnedAmount !== null ? (
@@ -76,7 +76,7 @@ function GoalBarRow({ locale, metric }: { locale: AppLocale; metric: RingMetric 
         // touch - each pair is its own box, immune by construction, the
         // same reasoning the label/value row above already relies on
         // (separate elements, not one intermixed sentence).
-        <div dir="ltr" className="mt-1 flex flex-wrap items-baseline gap-x-1.5 text-[11px] text-slate-500">
+        <div dir="ltr" className="mt-1 flex flex-wrap items-baseline gap-x-1.5 text-[11px] text-slate-500 dark:text-slate-400">
           <span>
             {formatNumberForLocale(metric.grossTotal!, locale, { maximumFractionDigits: 0 })} {tr(locale, "eaten", "נאכל")}
           </span>
@@ -108,12 +108,12 @@ export function DailyReportGoalBars({
   return (
     <div>
       {overLimit.length ? (
-        <div className="mb-4 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0 text-rose-600" aria-hidden="true">
+        <div className="mb-4 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 dark:border-rose-800 dark:bg-rose-950/30">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0 text-rose-600 dark:text-rose-400" aria-hidden="true">
             <path d="M12 3 2 20h20L12 3Z" />
             <path d="M12 10v4M12 17h.01" />
           </svg>
-          <p className="text-sm font-medium text-rose-800">
+          <p className="text-sm font-medium text-rose-800 dark:text-rose-300">
             {tr(
               locale,
               `${overLimit.length} over today's target: `,

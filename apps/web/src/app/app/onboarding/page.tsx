@@ -64,9 +64,9 @@ export default async function OnboardingPage() {
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-10">
-      <section className="rounded-2xl border border-slate-200 bg-white p-6">
-        <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "Onboarding", "אונבורדינג")}</h1>
-        <p className="mt-3 text-sm text-slate-600">
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">{tr(locale, "Onboarding", "אונבורדינג")}</h1>
+        <p className="mt-3 text-sm text-slate-600 dark:text-slate-400">
           {tr(locale, "Complete your required profile before using the app.", "יש להשלים את הפרופיל לפני השימוש במערכת.")}
         </p>
 

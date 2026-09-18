@@ -224,6 +224,122 @@ export async function callAiChatCompletion(params: AiChatCompletionParams): Prom
   return callOpenAiCompatibleChatCompletion(boundedParams);
 }
 
+export type AiChatCompletionProgressParams = AiChatCompletionParams & {
+  /** Called as text actually arrives from the provider (throttled to at
+   * most once per PROGRESS_CALLBACK_MIN_INTERVAL_MS), so a caller can drive
+   * real UI progress - e.g. rotating a "still working" status message -
+   * instead of a fixed timer that fires regardless of whether the request
+   * is making progress. Only meaningful for the anthropic provider (see
+   * callAiChatCompletionWithProgress below); for any other provider this
+   * falls back to the plain non-streaming call and onProgress never fires,
+   * since none of this app's other configured providers are exercised
+   * against a real account in this environment today. */
+  onProgress?: () => void;
+};
+
+const PROGRESS_CALLBACK_MIN_INTERVAL_MS = 1500;
+
+/** Same request/response contract as callAnthropicChatCompletion (full
+ * accumulated text, JSON parsed by the caller) but issued with stream:true
+ * so onProgress can fire as real tokens arrive - used by generateTargetsWithAi
+ * so the ~30-50s full-payload generation call can drive a live "still
+ * working" indicator instead of leaving the UI showing nothing until the
+ * whole response lands. Deliberately NOT built on top of
+ * streamAnthropicAsOpenAiSse/anthropicToOpenAiSseTransform below: those
+ * return a Response for direct pass-through to the browser, whereas this
+ * needs to run entirely server-side and hand back one accumulated string
+ * for the existing JSON-parsing/validation logic downstream to consume
+ * unchanged. */
+async function callAnthropicChatCompletionStreaming({
+  config,
+  messages,
+  signal,
+  onProgress,
+}: AiChatCompletionProgressParams): Promise<string> {
+  const { system, messages: anthropicMessages } = toAnthropicRequestParts(messages);
+
+  const response = await fetch(`${(config.baseUrl || ANTHROPIC_DEFAULT_BASE_URL).replace(/\/+$/, "")}/messages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": config.apiKey,
+      "anthropic-version": ANTHROPIC_API_VERSION,
+    },
+    // No `temperature` - see the note in callAnthropicChatCompletion.
+    body: JSON.stringify({
+      model: config.model,
+      max_tokens: ANTHROPIC_JSON_MAX_TOKENS,
+      // See the note in callAnthropicChatCompletion.
+      thinking: { type: "disabled" },
+      stream: true,
+      system,
+      messages: anthropicMessages,
+    }),
+    signal,
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(summarizeTransportError("anthropic", body, response.status));
+  }
+  if (!response.body) {
+    throw new Error(summarizeTransportError("anthropic", "empty response body", response.status));
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let fullText = "";
+  let lastProgressAt = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) continue;
+      const jsonText = trimmed.slice("data:".length).trim();
+      if (!jsonText) continue;
+
+      try {
+        const event = JSON.parse(jsonText) as {
+          type?: string;
+          delta?: { type?: string; text?: string };
+        };
+        if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && event.delta.text) {
+          fullText += event.delta.text;
+          const now = Date.now();
+          if (onProgress && now - lastProgressAt >= PROGRESS_CALLBACK_MIN_INTERVAL_MS) {
+            lastProgressAt = now;
+            onProgress();
+          }
+        }
+      } catch {
+        // Ignore malformed/partial SSE frames - matches how the non-progress
+        // streaming transform below tolerates these.
+      }
+    }
+  }
+
+  return fullText;
+}
+
+/** Progress-reporting counterpart to callAiChatCompletion - same contract
+ * (bounded by the same default/override timeout, returns the full
+ * accumulated response text) but streams from the provider when possible so
+ * onProgress can fire as real output arrives. */
+export async function callAiChatCompletionWithProgress(params: AiChatCompletionProgressParams): Promise<string> {
+  const boundedParams = { ...params, signal: withDefaultTimeout(params.signal, params.timeoutMs ?? DEFAULT_AI_REQUEST_TIMEOUT_MS) };
+  if (params.config.provider === "anthropic") {
+    return callAnthropicChatCompletionStreaming(boundedParams);
+  }
+  return callOpenAiCompatibleChatCompletion(boundedParams);
+}
+
 /**
  * Streaming entry point for the two conversational chat endpoints. Returns
  * a Response whose body is always an OpenAI-shaped SSE stream

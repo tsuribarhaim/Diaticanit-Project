@@ -104,8 +104,8 @@ export function LocalizedDateInput({
   }
 
   const fieldClass = compact
-    ? "bg-transparent px-0.5 py-1 text-center text-sm outline-none rounded focus:bg-slate-100"
-    : "rounded-lg border border-slate-300 bg-white px-2 py-2 text-center text-sm outline-none ring-teal-600 focus:ring-2";
+    ? "bg-transparent px-0.5 py-1 text-center text-sm outline-none rounded focus:bg-slate-100 dark:focus:bg-slate-800"
+    : "rounded-lg border border-slate-300 bg-white px-2 py-2 text-center text-sm outline-none ring-teal-600 focus:ring-2 dark:border-slate-700 dark:bg-slate-900";
   const dayMonthWidth = compact ? "w-7" : "w-12";
   const yearWidth = compact ? "w-10" : "w-16";
 
@@ -174,7 +174,7 @@ export function LocalizedDateInput({
   // even inside an RTL page.
   const orderedFields = locale === "he" ? [dayField, monthField, yearField] : [monthField, dayField, yearField];
 
-  const slashClass = compact ? "text-xs text-slate-400" : "text-slate-400";
+  const slashClass = compact ? "text-xs text-slate-400 dark:text-slate-600" : "text-slate-400 dark:text-slate-600";
 
   return (
     <div>
@@ -187,7 +187,7 @@ export function LocalizedDateInput({
       </div>
       {name ? <input type="hidden" name={name} value={combined} required={required} /> : null}
       {outOfRange ? (
-        <p className="mt-1 text-xs text-rose-600">
+        <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
           {min && combined < min
             ? tr(locale, "Date is too early.", "התאריך מוקדם מדי.")
             : tr(locale, "Date can't be in the future.", "התאריך לא יכול להיות בעתיד.")}
@@ -251,8 +251,8 @@ export function LocalizedDateTimeInput({
   }
 
   const timeFieldClass = compact
-    ? "w-6 bg-transparent px-0 py-1 text-center text-sm outline-none rounded focus:bg-slate-100"
-    : "w-10 rounded-lg border border-slate-300 bg-white px-2 py-2 text-center text-sm outline-none ring-teal-600 focus:ring-2";
+    ? "w-6 bg-transparent px-0 py-1 text-center text-sm outline-none rounded focus:bg-slate-100 dark:focus:bg-slate-800"
+    : "w-10 rounded-lg border border-slate-300 bg-white px-2 py-2 text-center text-sm outline-none ring-teal-600 focus:ring-2 dark:border-slate-700 dark:bg-slate-900";
 
   const timeGroup = (
     <div className={`flex items-center ${compact ? "gap-0.5" : "gap-1"}`} dir="ltr">
@@ -270,7 +270,7 @@ export function LocalizedDateTimeInput({
         }}
         className={timeFieldClass}
       />
-      <span className={compact ? "text-xs text-slate-400" : "text-slate-400"}>:</span>
+      <span className={compact ? "text-xs text-slate-400 dark:text-slate-600" : "text-slate-400 dark:text-slate-600"}>:</span>
       <input
         type="text"
         inputMode="numeric"
@@ -301,7 +301,7 @@ export function LocalizedDateTimeInput({
     return (
       <div
         dir="ltr"
-        className={`inline-flex w-fit items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2 py-1.5 ${className ?? ""}`}
+        className={`inline-flex w-fit items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-900 ${className ?? ""}`}
       >
         <LocalizedDateInput
           locale={locale}
@@ -313,7 +313,7 @@ export function LocalizedDateTimeInput({
           ariaLabel={ariaLabel}
           compact
         />
-        <span className="text-slate-300">|</span>
+        <span className="text-slate-300 dark:text-slate-700">|</span>
         {timeGroup}
       </div>
     );

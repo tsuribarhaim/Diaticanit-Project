@@ -39,13 +39,18 @@ export type DailyReportActionState = {
   /** Set when the newly reported weight puts BMI outside the healthy
    * range - a plain-language warning plus general recommendations. */
   bmiWarning?: string;
-  /** The id of the report row this save just created (new reports only -
-   * an edit redirects instead, carrying the same id as `highlight` on that
-   * URL, see buildDailyReportRedirectPath) - lets the form scroll to and
-   * briefly highlight that entry in the list below once it re-renders, so
-   * a fresh save is easy to spot instead of blending into whatever else was
-   * already logged that day. */
+  /** The id of the report row this save just touched - a fresh insert for a
+   * new report, or the same row for an edit (the update write also selects
+   * "id" back) - lets the form scroll to and briefly highlight that entry
+   * in the list below once it re-renders, so a save is easy to spot instead
+   * of blending into whatever else was already logged that day. */
   savedReportId?: string;
+  /** True when this save updated an existing report rather than creating a
+   * new one - no longer a server redirect (see saveDailyReportAction's own
+   * comment on why), so the form itself is what exits edit mode - reading
+   * this tells it to do so, via a scroll-preserving client-side URL update
+   * rather than a real navigation. */
+  wasEditing?: boolean;
 };
 
 type DailyReportParseMode = "heuristic" | "ai" | "ai_photo";
@@ -121,6 +126,7 @@ function emptyParseResult(): DailyParseResult {
       vitDMcg: 0,
       satFatG: 0,
       omega3G: 0,
+      cholesterolMg: 0,
       exerciseMinutes: 0,
       estimatedBurnKcal: 0,
     },
@@ -605,6 +611,7 @@ export async function saveDailyReportAction(
     vitDMcg: number;
     satFatG: number;
     omega3G: number;
+    cholesterolMg: number;
   }> = [];
   const defaultExerciseItems: Array<{
     name: string;
@@ -620,7 +627,7 @@ export async function saveDailyReportAction(
     const { data: defaultsRows } = await supabase
       .from("user_default_items")
       .select(
-        "id, name, kind, default_quantity, default_unit, parse_confidence, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, sodium_mg, added_sugar_g, calcium_mg, vit_c_mg, vit_b12_mcg, vit_d_mcg, sat_fat_g, omega3_g, exercise_minutes, estimated_burn_kcal",
+        "id, name, kind, default_quantity, default_unit, parse_confidence, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, sodium_mg, added_sugar_g, calcium_mg, vit_c_mg, vit_b12_mcg, vit_d_mcg, sat_fat_g, omega3_g, cholesterol_mg, exercise_minutes, estimated_burn_kcal",
       )
       .eq("user_id", user.id)
       .in("id", selectedDefaultIds)
@@ -655,6 +662,7 @@ export async function saveDailyReportAction(
           vitDMcg: round(toNumber(item.vit_d_mcg) * scale),
           satFatG: round(toNumber(item.sat_fat_g) * scale),
           omega3G: round(toNumber(item.omega3_g) * scale),
+          cholesterolMg: round(toNumber(item.cholesterol_mg) * scale),
           exerciseMinutes: Math.round(toNumber(item.exercise_minutes) * scale),
           estimatedBurnKcal: round(toNumber(item.estimated_burn_kcal) * scale),
         };
@@ -692,6 +700,7 @@ export async function saveDailyReportAction(
       mergedMetrics.vitDMcg += cachedMetrics.vitDMcg;
       mergedMetrics.satFatG += cachedMetrics.satFatG;
       mergedMetrics.omega3G += cachedMetrics.omega3G;
+      mergedMetrics.cholesterolMg += cachedMetrics.cholesterolMg;
       mergedMetrics.exerciseMinutes += cachedMetrics.exerciseMinutes;
       mergedMetrics.estimatedBurnKcal += cachedMetrics.estimatedBurnKcal;
 
@@ -724,6 +733,7 @@ export async function saveDailyReportAction(
           vitDMcg: cachedMetrics.vitDMcg,
           satFatG: cachedMetrics.satFatG,
           omega3G: cachedMetrics.omega3G,
+          cholesterolMg: cachedMetrics.cholesterolMg,
         });
       }
 
@@ -756,6 +766,7 @@ export async function saveDailyReportAction(
     vitDMcg: round(mergedMetrics.vitDMcg),
     satFatG: round(mergedMetrics.satFatG),
     omega3G: round(mergedMetrics.omega3G),
+    cholesterolMg: round(mergedMetrics.cholesterolMg),
     exerciseMinutes: Math.round(mergedMetrics.exerciseMinutes),
     estimatedBurnKcal: round(mergedMetrics.estimatedBurnKcal),
   };
@@ -853,6 +864,7 @@ export async function saveDailyReportAction(
     vit_d_mcg: mergedMetrics.vitDMcg,
     sat_fat_g: mergedMetrics.satFatG,
     omega3_g: mergedMetrics.omega3G,
+    cholesterol_mg: mergedMetrics.cholesterolMg,
     exercise_minutes: mergedMetrics.exerciseMinutes,
     estimated_burn_kcal: mergedMetrics.estimatedBurnKcal,
     reported_weight_kg: reportedWeightKg,
@@ -1008,30 +1020,29 @@ export async function saveDailyReportAction(
       )
     : "";
 
-  if (isEditing) {
-    // Unlike a fresh "Conclude & Report" (which resets the chat scratchpad
-    // in place - see DailyReportForm), an edit came from the list further
-    // down the page and should return there instead of leaving the form in
-    // a half-finished "still editing" state. This does mean the
-    // targetsStale/bmiWarning banners aren't shown inline here - the
-    // Targets page independently re-checks profile staleness on its own
-    // next load regardless, so nothing is silently lost, just surfaced a
-    // click later.
-    const selectedDateParam = formData.get("selected_date")?.toString() || undefined;
-    redirect(
-      buildDailyReportRedirectPath({
-        notice: tr(locale, "Daily report updated.", "הדיווח היומי עודכן.") + weightNotice,
-        date: selectedDateParam,
-        highlight: editReportId ?? undefined,
-      }),
-    );
-  }
-
+  // An edit used to redirect here (back to the list, off the ?edit= URL) -
+  // that's a real Next.js navigation, which resets scroll to the top of the
+  // page by default with no way to opt out via redirect() itself, and the
+  // notice it carried as a query param stuck around indefinitely instead of
+  // fading on its own. Returning a plain state instead (exactly like the
+  // non-editing path already does) lets the form itself exit edit mode via
+  // router.replace(..., { scroll: false }) and show a brief, self-dismissing
+  // toast - see wasEditing's own comment and DailyReportForm's handling of
+  // state.wasEditing.
   return {
-    success: tr(locale, "Daily report saved.", "הדיווח היומי נשמר.") + weightNotice,
-    targetsStaleChanges,
-    bmiWarning,
+    success: isEditing
+      ? tr(locale, "Daily report updated.", "הדיווח היומי עודכן.") + weightNotice
+      : tr(locale, "Daily report saved.", "הדיווח היומי נשמר.") + weightNotice,
+    // targetsStale/bmiWarning are only meaningful for a fresh save - an
+    // edit's own weight, if changed, is still resynced above and still
+    // updates the profile, but the Targets page independently re-checks
+    // profile staleness on its own next load regardless, so surfacing this
+    // banner specifically here for an edit isn't necessary (matches what
+    // the previous redirect-based behavior already did).
+    targetsStaleChanges: isEditing ? undefined : targetsStaleChanges,
+    bmiWarning: isEditing ? undefined : bmiWarning,
     savedReportId: insertedId ?? undefined,
+    wasEditing: isEditing,
   };
 }
 
@@ -1113,7 +1124,7 @@ export async function addReportToDefaultsAction(formData: FormData): Promise<voi
   const { data: reportRow, error: reportError } = await supabase
     .from("user_daily_reports")
     .select(
-      "id, report_at, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, sodium_mg, added_sugar_g, calcium_mg, vit_c_mg, vit_b12_mcg, vit_d_mcg, sat_fat_g, omega3_g, exercise_minutes, estimated_burn_kcal, parse_mode, parser_version, parse_confidence",
+      "id, report_at, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, sodium_mg, added_sugar_g, calcium_mg, vit_c_mg, vit_b12_mcg, vit_d_mcg, sat_fat_g, omega3_g, cholesterol_mg, exercise_minutes, estimated_burn_kcal, parse_mode, parser_version, parse_confidence",
     )
     .eq("id", reportId)
     .eq("user_id", user.id)
@@ -1179,6 +1190,7 @@ export async function addReportToDefaultsAction(formData: FormData): Promise<voi
       vit_d_mcg: round(toNumber(reportRow.vit_d_mcg)),
       sat_fat_g: round(toNumber(reportRow.sat_fat_g)),
       omega3_g: round(toNumber(reportRow.omega3_g)),
+      cholesterol_mg: round(toNumber(reportRow.cholesterol_mg)),
       exercise_minutes: Math.round(toNumber(reportRow.exercise_minutes)),
       estimated_burn_kcal: round(toNumber(reportRow.estimated_burn_kcal)),
     });
@@ -1207,7 +1219,7 @@ export async function addReportToDefaultsAction(formData: FormData): Promise<voi
 const FOOD_NUMERIC_FIELDS: Array<Exclude<keyof ParsedFoodItem, "name" | "quantity" | "unit">> = [
   "caloriesKcal", "proteinG", "carbsG", "fatG", "fiberG", "waterMl",
   "magnesiumMg", "potassiumMg", "ironMg", "zincMg", "sodiumMg", "addedSugarG",
-  "calciumMg", "vitCMg", "vitB12Mcg", "vitDMcg", "satFatG", "omega3G",
+  "calciumMg", "vitCMg", "vitB12Mcg", "vitDMcg", "satFatG", "omega3G", "cholesterolMg",
 ];
 
 /** Rescales every nutrient field on a single already-logged food item to a
@@ -1583,6 +1595,7 @@ export async function adjustDailyReportItemQuantitiesAction(formData: FormData):
       vit_d_mcg: round(foodTotals.vitDMcg),
       sat_fat_g: round(foodTotals.satFatG),
       omega3_g: round(foodTotals.omega3G),
+      cholesterol_mg: round(foodTotals.cholesterolMg),
       exercise_minutes: exerciseTotals.exerciseMinutes,
       estimated_burn_kcal: nutrientColumnValues.estimated_burn_kcal,
     })

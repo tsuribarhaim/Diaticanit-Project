@@ -25,7 +25,7 @@ function GenerateSubmitButton({ locale, mode }: { locale: AppLocale; mode: "init
       type="submit"
       form={GENERATE_FORM_ID}
       disabled={pending}
-      className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800"
+      className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
     >
       {pending ? pendingLabel : idleLabel}
     </button>
@@ -60,7 +60,9 @@ export function LockSubmitButton({
           : undefined
       }
       className={`inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed ${
-        disabled && !pending ? "bg-slate-300 text-slate-500" : "bg-emerald-700 hover:bg-emerald-800 disabled:opacity-70"
+        disabled && !pending
+          ? "bg-slate-300 text-slate-500 dark:bg-slate-700 dark:text-slate-400"
+          : "bg-emerald-700 hover:bg-emerald-800 disabled:opacity-70 dark:bg-emerald-600 dark:hover:bg-emerald-500"
       }`}
     >
       {pending ? tr(locale, "Locking in...", "נועל...") : tr(locale, "Approve & Lock Daily Targets", "אישור ונעילת היעדים היומיים")}
@@ -140,19 +142,19 @@ export function TargetsWorkspace({
   return (
     <div className="space-y-4">
       {bmiWarning ? (
-        <div className="rounded-xl border border-rose-300 bg-rose-50 p-4">
-          <p className="text-sm font-semibold text-rose-900">
+        <div className="rounded-xl border border-rose-300 bg-rose-50 p-4 dark:border-rose-800 dark:bg-rose-950/30">
+          <p className="text-sm font-semibold text-rose-900 dark:text-rose-400">
             {tr(locale, "Your new weight is outside the healthy BMI range", "המשקל החדש שלך מחוץ לטווח ה-BMI הבריא")}
           </p>
-          <p className="mt-2 text-sm text-rose-800">{bmiWarning}</p>
+          <p className="mt-2 text-sm text-rose-800 dark:text-rose-400">{bmiWarning}</p>
         </div>
       ) : null}
       {profileChanges?.length ? (
-        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4">
-          <p className="text-sm font-semibold text-amber-900">
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/30">
+          <p className="text-sm font-semibold text-amber-900 dark:text-amber-400">
             {tr(locale, "Your profile has changed since these targets were set", "הפרופיל שלך השתנה מאז נקבעו היעדים הללו")}
           </p>
-          <ul className="mt-2 space-y-1 text-sm text-amber-800">
+          <ul className="mt-2 space-y-1 text-sm text-amber-800 dark:text-amber-400">
             {profileChanges.map((row) => (
               <li key={row.labelEn}>
                 <span className="font-medium">{tr(locale, row.labelEn, row.labelHe)}:</span> {row.before} → {row.after}
@@ -164,7 +166,7 @@ export function TargetsWorkspace({
               type="submit"
               form={GENERATE_FORM_ID}
               disabled={isDismissingProfileChange}
-              className="inline-flex items-center justify-center rounded-xl bg-amber-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-800"
+              className="inline-flex items-center justify-center rounded-xl bg-amber-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-800 dark:bg-amber-600 dark:hover:bg-amber-500"
             >
               {tr(locale, "Recalculate now", "לחישוב מחדש")}
             </button>
@@ -172,7 +174,7 @@ export function TargetsWorkspace({
               type="button"
               onClick={handleSkipProfileChange}
               disabled={isDismissingProfileChange}
-              className="inline-flex items-center justify-center rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-800 disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-100"
+              className="inline-flex items-center justify-center rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-800 disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-100 dark:border-amber-800 dark:bg-slate-900 dark:text-amber-400 dark:hover:bg-amber-950/40"
             >
               {isDismissingProfileChange ? tr(locale, "Skipping...", "מדלג...") : tr(locale, "Skip", "דילוג")}
             </button>
@@ -183,10 +185,10 @@ export function TargetsWorkspace({
       {displayedPayload ? (
         <div className="space-y-4">
           {pendingPreview ? (
-            <div className="space-y-3 rounded-xl border border-teal-200 bg-teal-50/40 p-4">
+            <div className="space-y-3 rounded-xl border border-teal-200 bg-teal-50/40 p-4 dark:border-teal-800 dark:bg-teal-950/30">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-sm font-semibold text-teal-900">{tr(locale, "Preview", "תצוגה מקדימה")}</p>
-                <span className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">
+                <p className="text-sm font-semibold text-teal-900 dark:text-teal-300">{tr(locale, "Preview", "תצוגה מקדימה")}</p>
+                <span className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
                   {pendingPreview.source === "ai" ? "AI" : tr(locale, "Heuristic fallback", "גיבוי יוריסטי")}
                 </span>
               </div>
@@ -195,7 +197,7 @@ export function TargetsWorkspace({
                 diffRows.length ? (
                   <TargetsDiffTable rows={diffRows} locale={locale} />
                 ) : (
-                  <p className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+                  <p className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
                     {tr(
                       locale,
                       "This recalculation didn't change anything measurable in your targets — nothing new to lock in.",
@@ -211,7 +213,7 @@ export function TargetsWorkspace({
                 <input type="hidden" name="payload_json" value={JSON.stringify(pendingPreview.payload)} />
 
                 {lockState.error ? (
-                  <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{lockState.error}</p>
+                  <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-400">{lockState.error}</p>
                 ) : null}
 
                 <LockSubmitButton
@@ -252,14 +254,14 @@ export function TargetsWorkspace({
                   )
                 : tr(locale, "Example: reduce my workout days to 2 times a week.", "דוגמה: להפחית את ימי האימון שלי לפעמיים בשבוע.")
             }
-            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
+            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
           />
 
           {generateState.error ? (
-            <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{generateState.error}</p>
+            <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-400">{generateState.error}</p>
           ) : null}
           {generateState.warning ? (
-            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{generateState.warning}</p>
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400">{generateState.warning}</p>
           ) : null}
 
           <GenerateSubmitButton locale={locale} mode={mode} />

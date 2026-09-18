@@ -40,7 +40,7 @@ export function DailyReportDateJumpForm({
         max={todayDateString}
         aria-label={tr(locale, "View date", "תאריך לצפייה")}
         onChange={(event) => event.currentTarget.form?.requestSubmit()}
-        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none ring-teal-600 focus:ring-2"
+        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none ring-teal-600 focus:ring-2 dark:border-slate-700 dark:bg-slate-900"
       />
       {/* No visible submit button - selecting a date above navigates
           immediately via onChange. Kept as a screen-reader-only control
@@ -59,7 +59,7 @@ export function DailyReportDateJumpForm({
       {selectedDate !== todayDateString ? (
         <Link
           href="/app/daily-report"
-          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
+          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
         >
           {tr(locale, "Today", "היום")}
         </Link>

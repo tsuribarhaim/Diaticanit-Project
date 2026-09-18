@@ -58,19 +58,19 @@ export function UnsavedPreviewProvider({ children, locale }: { children: ReactNo
       {children}
       {pendingNavigation ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-          <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl">
-            <div className="flex items-center gap-2 bg-teal-50 px-5 py-4">
+          <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900">
+            <div className="flex items-center gap-2 bg-teal-50 px-5 py-4 dark:bg-teal-950/30">
               <span className="text-lg">📝</span>
-              <h2 className="text-sm font-semibold text-teal-900">{tr(locale, "Notice", "הודעה")}</h2>
+              <h2 className="text-sm font-semibold text-teal-900 dark:text-teal-300">{tr(locale, "Notice", "הודעה")}</h2>
             </div>
             <div className="px-5 py-4">
-              <p className="text-sm text-slate-700">{pendingNavigation.confirmMessage}</p>
+              <p className="text-sm text-slate-700 dark:text-slate-300">{pendingNavigation.confirmMessage}</p>
             </div>
-            <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3">
+            <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3 dark:border-slate-800">
               <button
                 type="button"
                 onClick={() => setPendingNavigation(null)}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
               >
                 {tr(locale, "Stay on this page", "השארות בדף")}
               </button>
@@ -81,7 +81,7 @@ export function UnsavedPreviewProvider({ children, locale }: { children: ReactNo
                   setPendingNavigation(null);
                   router.push(href);
                 }}
-                className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800"
+                className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
               >
                 {tr(locale, "Leave anyway", "עזיבה בכל זאת")}
               </button>

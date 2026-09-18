@@ -17,15 +17,15 @@ export const dynamic = "force-dynamic";
 
 function statusBadgeClasses(status: string): string {
   if (status === "green") {
-    return "bg-emerald-100 text-emerald-800 border-emerald-200";
+    return "bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800";
   }
   if (status === "yellow") {
-    return "bg-amber-100 text-amber-800 border-amber-200";
+    return "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-800";
   }
   if (status === "red") {
-    return "bg-rose-100 text-rose-800 border-rose-200";
+    return "bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950/30 dark:text-rose-400 dark:border-rose-800";
   }
-  return "bg-slate-100 text-slate-700 border-slate-200";
+  return "bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-800";
 }
 
 export default async function DocumentExtractionPage({
@@ -268,27 +268,27 @@ export default async function DocumentExtractionPage({
 
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-6 py-10">
-      <section className="rounded-2xl border border-slate-200 bg-white p-6">
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "Extraction review", "סקירת חילוץ")}</h1>
-            <p className="mt-2 text-sm text-slate-600">{documentRow.file_name}</p>
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">{tr(locale, "Extraction review", "סקירת חילוץ")}</h1>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">{documentRow.file_name}</p>
           </div>
           <Link
             href="/app/profile"
-            className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+            className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             {tr(locale, "Close", "סגירה")}
           </Link>
         </div>
 
-        <div className="mt-4 rounded-lg bg-slate-50 p-4 text-sm text-slate-700">
+        <div className="mt-4 rounded-lg bg-slate-50 p-4 text-sm text-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
           <p>
-            <span className="font-semibold text-slate-900">{tr(locale, "Document status", "סטטוס מסמך")}:</span>{" "}
+            <span className="font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Document status", "סטטוס מסמך")}:</span>{" "}
             {formatExtractionStatus(documentRow.extraction_status, locale)}
           </p>
           {documentRow.extraction_error ? (
-            <p className="mt-2 text-rose-700">
+            <p className="mt-2 text-rose-700 dark:text-rose-400">
               <span className="font-semibold">{tr(locale, "Last error", "שגיאה אחרונה")}:</span>{" "}
               {documentRow.extraction_error}
             </p>
@@ -296,9 +296,9 @@ export default async function DocumentExtractionPage({
         </div>
       </section>
 
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
+      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
         {!reportData ? (
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-slate-600 dark:text-slate-400">
             {tr(
               locale,
               "Extraction didn't produce a report for this document. Check the status above, or try re-uploading the file.",
@@ -307,13 +307,13 @@ export default async function DocumentExtractionPage({
           </p>
         ) : (
           <>
-            <div className="grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
+            <div className="grid gap-3 text-sm text-slate-700 sm:grid-cols-2 dark:text-slate-300">
               <p>
-                <span className="font-semibold text-slate-900">{tr(locale, "Report status", "סטטוס דוח")}:</span>{" "}
+                <span className="font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Report status", "סטטוס דוח")}:</span>{" "}
                 {formatExtractionStatus(reportData.status, locale)}
               </p>
               <p>
-                <span className="font-semibold text-slate-900">{tr(locale, "Confidence", "רמת ביטחון")}:</span>{" "}
+                <span className="font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Confidence", "רמת ביטחון")}:</span>{" "}
                 {reportData.extraction_confidence ?? tr(locale, "n/a", "לא זמין")}
               </p>
             </div>
@@ -328,16 +328,16 @@ export default async function DocumentExtractionPage({
                 <input type="hidden" name="document_id" value={id} />
                 <button
                   type="submit"
-                  className="rounded-lg border border-indigo-300 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-50"
+                  className="rounded-lg border border-indigo-300 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
                 >
                   {tr(locale, "Generate demo extraction", "יצירת חילוץ הדגמה")}
                 </button>
               </form>
             ) : null}
 
-            <div className="mt-5 overflow-x-auto rounded-xl border border-slate-200">
+            <div className="mt-5 overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
               <table className="min-w-full text-left text-sm">
-                <thead className="bg-slate-100 text-slate-700">
+                <thead className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
                   <tr>
                     <th className="px-3 py-2">{tr(locale, "Category", "קטגוריה")}</th>
                     <th className="px-3 py-2">{tr(locale, "Component", "רכיב")}</th>
@@ -352,7 +352,7 @@ export default async function DocumentExtractionPage({
                       const componentId = String(component.id);
 
                       return (
-                        <tr key={componentId} className="border-t border-slate-200 align-top">
+                        <tr key={componentId} className="border-t border-slate-200 align-top dark:border-slate-800">
                           <td className="px-3 py-2">{String(component.category ?? "")}</td>
                           <td className="px-3 py-2">{String(component.component_name ?? "")}</td>
                           <td className="px-3 py-2">
@@ -377,7 +377,7 @@ export default async function DocumentExtractionPage({
                     })
                   ) : (
                     <tr>
-                      <td className="px-3 py-3 text-slate-600" colSpan={5}>
+                      <td className="px-3 py-3 text-slate-600 dark:text-slate-400" colSpan={5}>
                         {tr(locale, "No extracted components found for this report yet.", "עדיין לא נמצאו רכיבי חילוץ עבור דוח זה.")}
                       </td>
                     </tr>
@@ -386,8 +386,8 @@ export default async function DocumentExtractionPage({
               </table>
             </div>
 
-            <div className="mt-4 rounded-lg bg-slate-50 p-4 text-sm text-slate-700">
-              <p className="font-semibold text-slate-900">{tr(locale, "Summary bullets", "נקודות סיכום")}</p>
+            <div className="mt-4 rounded-lg bg-slate-50 p-4 text-sm text-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
+              <p className="font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Summary bullets", "נקודות סיכום")}</p>
               {reportData.summary_bullets?.length ? (
                 <ul className="mt-2 list-disc pl-5">
                   {(reportData.summary_bullets as string[]).map((bullet: string) => (

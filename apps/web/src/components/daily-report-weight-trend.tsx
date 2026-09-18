@@ -18,7 +18,7 @@ const CHART_HEIGHT = 80;
 export function DailyReportWeightTrend({ locale, points }: { locale: AppLocale; points: WeightPoint[] }) {
   if (points.length < 2) {
     return (
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-slate-500 dark:text-slate-400">
         {tr(
           locale,
           "Log your weight at least twice (via the daily report form) to see a trend line here.",
@@ -62,24 +62,24 @@ export function DailyReportWeightTrend({ locale, points }: { locale: AppLocale; 
         <svg
           viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
           preserveAspectRatio="none"
-          className="absolute inset-0 h-full w-full text-teal-600"
+          className="absolute inset-0 h-full w-full text-teal-600 dark:text-teal-400"
         >
           {/* Recessive reference lines so the eye has a scale to read the
               line's shape against - the actual numbers ride on the peak and
               trough labels below, rather than a separate axis, to avoid
               showing the same value twice. */}
-          <line x1="0" y1="0" x2={CHART_WIDTH} y2="0" stroke="currentColor" strokeWidth="1" className="text-slate-200" />
-          <line x1="0" y1={CHART_HEIGHT / 2} x2={CHART_WIDTH} y2={CHART_HEIGHT / 2} stroke="currentColor" strokeWidth="1" className="text-slate-200" />
-          <line x1="0" y1={CHART_HEIGHT} x2={CHART_WIDTH} y2={CHART_HEIGHT} stroke="currentColor" strokeWidth="1" className="text-slate-200" />
+          <line x1="0" y1="0" x2={CHART_WIDTH} y2="0" stroke="currentColor" strokeWidth="1" className="text-slate-200 dark:text-slate-800" />
+          <line x1="0" y1={CHART_HEIGHT / 2} x2={CHART_WIDTH} y2={CHART_HEIGHT / 2} stroke="currentColor" strokeWidth="1" className="text-slate-200 dark:text-slate-800" />
+          <line x1="0" y1={CHART_HEIGHT} x2={CHART_WIDTH} y2={CHART_HEIGHT} stroke="currentColor" strokeWidth="1" className="text-slate-200 dark:text-slate-800" />
           <polyline points={coords} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
 
         <div className="pointer-events-none absolute inset-0">
           {markers.map((marker) => (
             <div key={marker.key} className="absolute" style={{ left: `${marker.xPercent}%`, top: `${marker.yPercent}%` }}>
-              <span className="absolute h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-teal-600 ring-2 ring-white" />
+              <span className="absolute h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-teal-600 ring-2 ring-white dark:bg-teal-400 dark:ring-slate-900" />
               <span
-                className={`absolute -translate-x-1/2 whitespace-nowrap text-[10px] font-semibold text-slate-700 ${
+                className={`absolute -translate-x-1/2 whitespace-nowrap text-[10px] font-semibold text-slate-700 dark:text-slate-300 ${
                   marker.labelBelow ? "top-1.5" : "bottom-1.5"
                 }`}
               >
@@ -89,12 +89,12 @@ export function DailyReportWeightTrend({ locale, points }: { locale: AppLocale; 
           ))}
         </div>
       </div>
-      <div className="mt-1 flex items-center justify-between gap-2 text-xs text-slate-600">
+      <div className="mt-1 flex items-center justify-between gap-2 text-xs text-slate-600 dark:text-slate-400">
         <span>
           {formatDateForLocale(first.date, locale)}:{" "}
           {formatNumberForLocale(first.weightKg, locale, { maximumFractionDigits: 1 })} {formatMeasurementUnit("kg", locale)}
         </span>
-        <span className={`font-semibold ${delta <= 0 ? "text-emerald-700" : "text-amber-700"}`}>
+        <span className={`font-semibold ${delta <= 0 ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"}`}>
           {delta > 0 ? "+" : ""}
           {formatNumberForLocale(delta, locale, { maximumFractionDigits: 1 })} {formatMeasurementUnit("kg", locale)}
         </span>

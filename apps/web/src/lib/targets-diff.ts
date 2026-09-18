@@ -28,6 +28,7 @@ const NUTRIENT_DIFF_FIELDS: Array<{
   { labelEn: "Vitamin D", labelHe: "ויטמין D", minKey: "vitDMinMcg", maxKey: "vitDMaxMcg", unit: "mcg" },
   { labelEn: "Saturated Fat", labelHe: "שומן רווי", minKey: "satFatMinG", maxKey: "satFatMaxG", unit: "g" },
   { labelEn: "Omega-3", labelHe: "אומגה 3", minKey: "omega3MinG", maxKey: "omega3MaxG", unit: "g" },
+  { labelEn: "Cholesterol", labelHe: "כולסטרול", minKey: "cholesterolMinMg", maxKey: "cholesterolMaxMg", unit: "mg" },
 ];
 
 function exerciseSummary(payload: TargetGenerationPayload): string {
