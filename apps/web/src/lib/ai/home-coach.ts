@@ -1,11 +1,19 @@
 import { z } from "zod";
 
 import type { AiExtractionConfig } from "@/lib/ai/env";
+import { ASSISTANT_PERSONA_INSTRUCTIONS } from "@/lib/ai/persona";
 import { callAiChatCompletion } from "@/lib/ai/provider-client";
 
 export type HomeCoachInputs = {
   locale: "en" | "he";
   range: "today" | "7" | "30" | "90";
+  /** For the shared ADDRESSING THE USER persona rule (see
+   * ASSISTANT_PERSONA_INSTRUCTIONS) - without this the narrative had no
+   * gender to go on and always defaulted to a feminine Hebrew voice
+   * regardless of the actual user, same issue already solved for the
+   * Daily Report/Targets chats via resolveUserGenderForAddressing. */
+  userGender: "male" | "female" | null;
+  userFirstName?: string | null;
   caloriesAvg: number;
   caloriesMin: number;
   caloriesMax: number;
@@ -14,7 +22,16 @@ export type HomeCoachInputs = {
   proteinMaxG: number;
   /** null for the "today" range, where a same-day consistency percent isn't meaningful. */
   reportingConsistencyPercent: number | null;
+  /** Range-relative, not always weekly despite the field name (kept as-is
+   * rather than renamed, matching the same "meaning follows range" pattern
+   * caloriesAvg/proteinAvg already use): for range "today", exercise
+   * MINUTES logged today; for every other range, a count of distinct DAYS
+   * with any exercise logged within that same range. See
+   * buildUserPrompt's own range-aware wording below. */
   exerciseSessionDays: number;
+  /** The target exerciseSessionDays is compared against - today's planned
+   * daily-equivalent minutes, or the plan's weekly session target scaled
+   * to the selected range's length. */
   exerciseWeeklyTarget: number;
   goalType: string;
   /** Signed kg change over the period (negative = lost); null when there's
@@ -61,16 +78,33 @@ function buildSystemPrompt(locale: "en" | "he"): string {
     "Keep it warm, specific, and brief: 2-4 sentences, no headers, no bullet points, no markdown.",
     `Write the narrative entirely in ${languageName}. Do not mix languages within the response.`,
     'Return strict JSON only with this shape: {"narrative":"string"}',
+    // Shared with the Daily Report/Targets chats (see persona.ts's own
+    // comment) - the ADDRESSING THE USER rule reads user_first_name/
+    // user_gender from the user prompt's own profile lines below.
+    ...ASSISTANT_PERSONA_INSTRUCTIONS,
   ].join("\n");
 }
 
 function buildUserPrompt(inputs: HomeCoachInputs): string {
   const rangeLabel = inputs.range === "today" ? "today" : `the last ${inputs.range} days`;
+  // "Exercise this week" was previously hardcoded regardless of the
+  // selected period - now matches whatever period the rest of this prompt
+  // (and the page's own progress rings) actually describes, and switches
+  // representation for "today" the same way exerciseRingMetric does (see
+  // home-overview.ts): a single day is described in minutes, not a
+  // session count that would usually round its own target down to a
+  // misleading 0.
+  const exerciseLine =
+    inputs.range === "today"
+      ? `Exercise today: ${Math.round(inputs.exerciseSessionDays)} minutes logged${inputs.exerciseWeeklyTarget > 0 ? ` (roughly ${inputs.exerciseWeeklyTarget} minutes/day planned)` : ""}.`
+      : `Exercise in ${rangeLabel}: ${inputs.exerciseSessionDays} of ${inputs.exerciseWeeklyTarget || "no set"} planned sessions logged.`;
   const lines = [
+    `user_first_name: ${inputs.userFirstName?.trim() || "unknown"}`,
+    `user_gender: ${inputs.userGender ?? "unknown"}`,
     `Period: ${rangeLabel}.`,
     `Calories: averaging ${Math.round(inputs.caloriesAvg)} kcal/day against a target range of ${inputs.caloriesMin}-${inputs.caloriesMax} kcal.`,
     `Protein: averaging ${Math.round(inputs.proteinAvg)} g/day against a target range of ${inputs.proteinMinG}-${inputs.proteinMaxG} g.`,
-    `Exercise this week: ${inputs.exerciseSessionDays} of ${inputs.exerciseWeeklyTarget || "no set"} planned weekly sessions logged.`,
+    exerciseLine,
     `Goal type: ${inputs.goalType}.`,
   ];
 

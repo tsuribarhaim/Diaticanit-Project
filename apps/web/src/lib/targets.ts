@@ -47,6 +47,13 @@ const userTargetEntrySchema = z.object({
   unit: z.string().trim().min(1).max(30).optional(),
   targetMin: z.number().min(0).max(100000).optional(),
   targetMax: z.number().min(0).max(100000).optional(),
+  // Whether logging MORE than targetMax is a good thing for this specific
+  // goal (steps, sleep duration, hydration - exceeding it is an
+  // achievement) vs a real ceiling to stay under. AI-determined once, at
+  // generation time (see lib/ai/targets.ts's own prompt rule) - defaults to
+  // true (the common case: most custom targets are "reach or exceed this
+  // number" asks) for legacy entries saved before this field existed.
+  higherIsBetter: z.boolean().optional(),
 });
 
 const numericRangePairs = [
@@ -181,6 +188,10 @@ export type UserTargetEntry = {
   unit?: string;
   targetMin?: number;
   targetMax?: number;
+  /** True when exceeding targetMax is a good outcome (steps, sleep,
+   * hydration - the more common case) rather than a ceiling to stay under.
+   * See userTargetEntrySchema's own comment. */
+  higherIsBetter?: boolean;
 };
 
 /**
@@ -968,6 +979,11 @@ export function normalizeUserTargetsJson(value: unknown): UserTargetEntry[] {
       const unit = typeof record.unit === "string" && record.unit.trim() ? record.unit.trim() : undefined;
       const targetMin = typeof record.target_min === "number" ? record.target_min : undefined;
       const targetMax = typeof record.target_max === "number" ? record.target_max : undefined;
+      // Legacy entries (saved before this field existed) default to true -
+      // the common case for a custom target is "reach or exceed this
+      // number", so this errs toward not flagging an achievement as a
+      // problem rather than the reverse.
+      const higherIsBetter = typeof record.higher_is_better === "boolean" ? record.higher_is_better : true;
       return {
         label: typeof record.label === "string" ? record.label : "",
         value: typeof record.value === "string" ? record.value : "",
@@ -976,7 +992,7 @@ export function normalizeUserTargetsJson(value: unknown): UserTargetEntry[] {
         // only expose the group when every field needed to log against it
         // is actually present.
         ...(id && unit && targetMin !== undefined && targetMax !== undefined
-          ? { id, unit, targetMin, targetMax }
+          ? { id, unit, targetMin, targetMax, higherIsBetter }
           : {}),
       };
     })

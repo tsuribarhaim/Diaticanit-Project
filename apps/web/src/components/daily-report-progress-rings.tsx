@@ -23,29 +23,66 @@ export type RingMetric = {
    * session count against its target) rather than a ceiling to stay under
    * (nutrients) - exceeding max still reads as goal met/exceeded (emerald),
    * never as an over-target warning, and the metric is left out of the
-   * red "Over today's target" list below.
+   * red "Over today's target" list below. Used specifically for metrics
+   * whose max IS the highest achievable value (a count of days that can't
+   * itself go past the target), so there's no real "exceeded" state to
+   * distinguish from "met" - contrast with exceedingIsPositive below.
    */
   neverOverLimit?: boolean;
+  /**
+   * For metrics that CAN genuinely be exceeded and where doing so is still
+   * a good thing (steps, sleep duration, hydration, most vitamins/
+   * minerals/protein/fiber/carbs/fats - as opposed to sodium, added sugar,
+   * saturated fat, cholesterol, and calories, where exceeding the computed
+   * ceiling is worth a heads-up) - shown as a distinct "ahead of target"
+   * blue rather than either the in-range green or the over-target red, and
+   * left out of the red "Over today's target" list below.
+   */
+  exceedingIsPositive?: boolean;
 };
+
+type RingStatus = "under" | "met" | "exceededPositive" | "exceededNegative";
+
+function ringStatus(total: number, min: number, max: number, neverOverLimit?: boolean, exceedingIsPositive?: boolean): RingStatus {
+  if (max > 0 && total > max) {
+    if (neverOverLimit) return "met";
+    return exceedingIsPositive ? "exceededPositive" : "exceededNegative";
+  }
+  if (neverOverLimit && max > 0 && total >= max) return "met";
+  if (min > 0 && total >= min) return "met";
+  return "under";
+}
 
 /**
  * Progress percent is measured against the range's max (the "ceiling"),
  * consistent with how a value over max is always flagged as over-target
  * regardless of which nutrient it is - unless the metric opts out via
- * neverOverLimit.
+ * neverOverLimit or exceedingIsPositive.
  */
-function ringColorClass(total: number, min: number, max: number, neverOverLimit?: boolean): string {
-  if (!neverOverLimit && max > 0 && total > max) return "text-rose-500 dark:text-rose-400";
-  if (neverOverLimit && max > 0 && total >= max) return "text-emerald-500 dark:text-emerald-400";
-  if (min > 0 && total >= min) return "text-emerald-500 dark:text-emerald-400";
-  return "text-teal-500 dark:text-teal-400";
+function ringColorClass(total: number, min: number, max: number, neverOverLimit?: boolean, exceedingIsPositive?: boolean): string {
+  switch (ringStatus(total, min, max, neverOverLimit, exceedingIsPositive)) {
+    case "exceededNegative":
+      return "text-rose-500 dark:text-rose-400";
+    case "exceededPositive":
+      return "text-blue-500 dark:text-blue-400";
+    case "met":
+      return "text-emerald-500 dark:text-emerald-400";
+    default:
+      return "text-teal-500 dark:text-teal-400";
+  }
 }
 
-function textColorClass(total: number, min: number, max: number, neverOverLimit?: boolean): string {
-  if (!neverOverLimit && max > 0 && total > max) return "text-rose-700 dark:text-rose-400";
-  if (neverOverLimit && max > 0 && total >= max) return "text-emerald-700 dark:text-emerald-400";
-  if (min > 0 && total >= min) return "text-emerald-700 dark:text-emerald-400";
-  return "text-teal-700 dark:text-teal-400";
+function textColorClass(total: number, min: number, max: number, neverOverLimit?: boolean, exceedingIsPositive?: boolean): string {
+  switch (ringStatus(total, min, max, neverOverLimit, exceedingIsPositive)) {
+    case "exceededNegative":
+      return "text-rose-700 dark:text-rose-400";
+    case "exceededPositive":
+      return "text-blue-700 dark:text-blue-400";
+    case "met":
+      return "text-emerald-700 dark:text-emerald-400";
+    default:
+      return "text-teal-700 dark:text-teal-400";
+  }
 }
 
 function clampPercent(value: number): number {
@@ -101,7 +138,9 @@ function Ring({ percent, colorClass, grossPercent }: { percent: number; colorCla
  * target ceiling.
  */
 export function DailyReportProgressRings({ locale, metrics }: { locale: AppLocale; metrics: RingMetric[] }) {
-  const overLimit = metrics.filter((metric) => !metric.neverOverLimit && metric.max > 0 && metric.total > metric.max);
+  const overLimit = metrics.filter(
+    (metric) => !metric.neverOverLimit && !metric.exceedingIsPositive && metric.max > 0 && metric.total > metric.max,
+  );
 
   return (
     <div>
@@ -110,8 +149,8 @@ export function DailyReportProgressRings({ locale, metrics }: { locale: AppLocal
           const percent = metric.max > 0 ? (metric.total / metric.max) * 100 : 0;
           const grossPercent =
             metric.grossTotal !== undefined && metric.max > 0 ? (metric.grossTotal / metric.max) * 100 : undefined;
-          const ringColor = ringColorClass(metric.total, metric.min, metric.max, metric.neverOverLimit);
-          const labelColor = textColorClass(metric.total, metric.min, metric.max, metric.neverOverLimit);
+          const ringColor = ringColorClass(metric.total, metric.min, metric.max, metric.neverOverLimit, metric.exceedingIsPositive);
+          const labelColor = textColorClass(metric.total, metric.min, metric.max, metric.neverOverLimit, metric.exceedingIsPositive);
           const burnedAmount =
             metric.grossTotal !== undefined && metric.grossTotal !== metric.total
               ? metric.grossTotal - metric.total
@@ -139,11 +178,27 @@ export function DailyReportProgressRings({ locale, metrics }: { locale: AppLocal
                 {formatMeasurementUnit(metric.unit, locale)}
               </p>
               {burnedAmount !== null ? (
-                <p dir="ltr" className="text-center text-[10px] text-slate-400 dark:text-slate-500">
-                  {formatNumberForLocale(metric.grossTotal!, locale, { maximumFractionDigits: 0 })}{" "}
-                  {tr(locale, "gained", "התקבלו")} − {formatNumberForLocale(burnedAmount, locale, { maximumFractionDigits: 0 })}{" "}
-                  {tr(locale, "burned", "נשרפו")}
-                </p>
+                // Separate flex items, not one dir="ltr" text run mixing
+                // Hebrew words with numbers - a single run reorders under
+                // the browser's own bidi algorithm regardless of dir
+                // (reported as "burnt and consumed numbers are presented
+                // wrong"/swapped), the same bug already found and fixed
+                // this same way in daily-report-goal-bars.tsx's own
+                // eaten/burned/net line. Flex item position is decided by
+                // DOM order, which bidi text reordering cannot touch.
+                <div dir="ltr" className="mt-0.5 flex flex-wrap items-baseline justify-center gap-x-1 text-[10px] text-slate-400 dark:text-slate-500">
+                  <span>
+                    {formatNumberForLocale(metric.grossTotal!, locale, { maximumFractionDigits: 0 })} {tr(locale, "eaten", "נאכל")}
+                  </span>
+                  <span aria-hidden="true">−</span>
+                  <span>
+                    {formatNumberForLocale(burnedAmount, locale, { maximumFractionDigits: 0 })} {tr(locale, "burned", "נשרף")}
+                  </span>
+                  <span aria-hidden="true">=</span>
+                  <span>
+                    {formatNumberForLocale(metric.total, locale, { maximumFractionDigits: 0 })} {tr(locale, "net", "נטו")}
+                  </span>
+                </div>
               ) : null}
             </div>
           );

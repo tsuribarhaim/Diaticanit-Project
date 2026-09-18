@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { prepareMedicalContextForTargets } from "@/app/app/documents/actions";
 import { generateTargetsWithAi, NoActionableChangeError } from "@/lib/ai/targets";
 import { getAiExtractionConfig } from "@/lib/ai/env";
+import { getRecentCustomTargetLogs } from "@/lib/daily-report";
 import { normalizeLocale, tr } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import {
@@ -114,6 +115,20 @@ export async function generateTargetsPayload({
             })
           : null;
 
+      const loggableCustomTargetIds = (currentTargets?.userTargets ?? [])
+        .map((entry) => entry.id)
+        .filter((id): id is string => Boolean(id));
+      const recentCustomTargetLogs =
+        supabase && userId && loggableCustomTargetIds.length > 0
+          ? await getRecentCustomTargetLogs({ supabase, userId, ids: loggableCustomTargetIds }).catch((error) => {
+              logServerError("targets.generate", "recent_custom_target_logs_failed", {
+                userId,
+                error: error instanceof Error ? error.message : "Unknown error",
+              });
+              return undefined;
+            })
+          : undefined;
+
       payload = await generateTargetsWithAi({
         config: aiConfig,
         goalText,
@@ -121,6 +136,7 @@ export async function generateTargetsPayload({
         locale,
         currentTargets,
         medicalDocumentsContext: medicalDocumentsContext ?? undefined,
+        recentCustomTargetLogs,
         onProgress,
       });
       source = "ai";
@@ -392,7 +408,13 @@ async function performTargetsLock({
       label: entry.label,
       value: entry.value,
       ...(entry.id && entry.unit && entry.targetMin !== undefined && entry.targetMax !== undefined
-        ? { id: entry.id, unit: entry.unit, target_min: entry.targetMin, target_max: entry.targetMax }
+        ? {
+            id: entry.id,
+            unit: entry.unit,
+            target_min: entry.targetMin,
+            target_max: entry.targetMax,
+            higher_is_better: entry.higherIsBetter ?? true,
+          }
         : {}),
     })),
 

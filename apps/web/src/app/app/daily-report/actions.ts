@@ -19,13 +19,13 @@ import {
   type DailyReportChartExtraMetric,
   type DailyReportChartPreferences,
 } from "@/lib/daily-report-chart-preferences";
-import { parseDailyReportPhotoWithAi, parseDailyReportWithAi } from "@/lib/ai/daily-report";
+import { parseDailyReportPhotoWithAi, parseDailyReportWithAi, reconcileCustomTargetValueUnits } from "@/lib/ai/daily-report";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { buildBmiWarningMessage } from "@/lib/bmi";
 import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
-import { computeProfileDiff, parseProfileSnapshot, type ProfileDiffRow, type ProfileForTargets } from "@/lib/targets";
+import { computeProfileDiff, normalizeUserTargetsJson, parseProfileSnapshot, type ProfileDiffRow, type ProfileForTargets } from "@/lib/targets";
 
 export type DailyReportActionState = {
   error?: string;
@@ -518,10 +518,58 @@ export async function saveDailyReportAction(
 
   const { data: activeTargetProfile } = await supabase
     .from("user_target_profiles")
-    .select("id, profile_snapshot")
+    .select("id, profile_snapshot, user_targets")
     .eq("user_id", user.id)
     .eq("is_active", true)
     .maybeSingle();
+
+  // Reconciles each submitted custom-target value against its target's own
+  // unit before anything gets written - see reconcileCustomTargetValueUnits'
+  // own comment. Only ever touches an AI call when a value actually looks
+  // implausible for its unit; a normal save (or a value that already
+  // matches) costs nothing extra here.
+  let reconciledCustomTargetValues: Record<string, number> = customTargetValues;
+  const customTargetValueOriginals: Record<string, { value: number; unit: string }> = {};
+
+  if (hasCustomTargetValue) {
+    const loggableTargets = normalizeUserTargetsJson(activeTargetProfile?.user_targets).filter(
+      (target) => target.id && target.unit && target.targetMin !== undefined && target.targetMax !== undefined && target.id in customTargetValues,
+    );
+
+    if (loggableTargets.length > 0) {
+      const aiConfig = getAiExtractionConfig();
+      if (aiConfig) {
+        const reconciliations = await reconcileCustomTargetValueUnits({
+          config: aiConfig,
+          locale,
+          entries: loggableTargets.map((target) => ({
+            id: target.id!,
+            label: target.label,
+            unit: target.unit!,
+            targetMin: target.targetMin!,
+            targetMax: target.targetMax!,
+            typedValue: customTargetValues[target.id!],
+          })),
+        }).catch((error) => {
+          logServerError("dailyReport.save", "custom_target_unit_reconcile_failed", {
+            userId: user.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return null;
+        });
+
+        if (reconciliations) {
+          reconciledCustomTargetValues = { ...customTargetValues };
+          for (const [id, reconciliation] of Object.entries(reconciliations)) {
+            reconciledCustomTargetValues[id] = reconciliation.canonicalValue;
+            if (reconciliation.original) {
+              customTargetValueOriginals[id] = reconciliation.original;
+            }
+          }
+        }
+      }
+    }
+  }
 
   let parsedResult: DailyParseResult;
   let modeUsedForReport: DailyReportParseMode;
@@ -869,7 +917,8 @@ export async function saveDailyReportAction(
     estimated_burn_kcal: mergedMetrics.estimatedBurnKcal,
     reported_weight_kg: reportedWeightKg,
     selected_defaults: selectedDefaultsSnapshot,
-    custom_target_values: customTargetValues,
+    custom_target_values: reconciledCustomTargetValues,
+    custom_target_value_originals: customTargetValueOriginals,
     // DB check constraint only allows 'heuristic' | 'ai'; parser_version carries the "-photo-" marker.
     parse_mode: modeUsedForReport === "ai_photo" ? "ai" : modeUsedForReport,
     parser_version: parserVersionUsed,
@@ -1331,7 +1380,7 @@ export async function adjustDailyReportItemQuantitiesAction(formData: FormData):
   const { data: reportRow, error: reportError } = await supabase
     .from("user_daily_reports")
     .select(
-      "id, parsed_items, parsed_exercises, reported_weight_kg, custom_target_values, nutrient_overrides, calories_kcal, protein_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, estimated_burn_kcal",
+      "id, parsed_items, parsed_exercises, reported_weight_kg, custom_target_values, custom_target_value_originals, nutrient_overrides, calories_kcal, protein_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, estimated_burn_kcal",
     )
     .eq("id", reportId)
     .eq("user_id", user.id)
@@ -1419,13 +1468,27 @@ export async function adjustDailyReportItemQuantitiesAction(formData: FormData):
     && !Array.isArray(reportRow.custom_target_values)
       ? (reportRow.custom_target_values as Record<string, number>)
       : {};
+  const currentCustomTargetValueOriginals =
+    reportRow.custom_target_value_originals
+    && typeof reportRow.custom_target_value_originals === "object"
+    && !Array.isArray(reportRow.custom_target_value_originals)
+      ? (reportRow.custom_target_value_originals as Record<string, { value: number; unit: string }>)
+      : {};
   const nextCustomTargetValues: Record<string, number> = { ...currentCustomTargetValues };
+  const nextCustomTargetValueOriginals: Record<string, { value: number; unit: string }> = { ...currentCustomTargetValueOriginals };
+  // Collected first, reconciled against each target's own unit in one
+  // batched AI call below (see reconcileCustomTargetValueUnits' own
+  // comment), rather than applied field-by-field - same reasoning as
+  // saveDailyReportAction's own version of this step.
+  const pendingCustomTargetChanges: Record<string, number> = {};
+
   for (const [targetId, currentValue] of Object.entries(currentCustomTargetValues)) {
     const raw = formData.get(`custom_target_value__${targetId}`);
     if (raw == null) continue;
     const trimmed = raw.toString().trim();
     if (trimmed === "") {
       delete nextCustomTargetValues[targetId];
+      delete nextCustomTargetValueOriginals[targetId];
       changed = true;
       continue;
     }
@@ -1433,8 +1496,52 @@ export async function adjustDailyReportItemQuantitiesAction(formData: FormData):
     if (!Number.isFinite(parsed)) continue;
     const rounded = round(parsed, 2);
     if (Math.abs(rounded - Number(currentValue)) > 1e-9) {
-      nextCustomTargetValues[targetId] = rounded;
+      pendingCustomTargetChanges[targetId] = rounded;
       changed = true;
+    }
+  }
+
+  if (Object.keys(pendingCustomTargetChanges).length > 0) {
+    const { data: activeTargetProfileForUnits } = await supabase
+      .from("user_target_profiles")
+      .select("user_targets")
+      .eq("user_id", user.id)
+      .eq("is_active", true)
+      .maybeSingle();
+    const loggableTargetsById = new Map(
+      normalizeUserTargetsJson(activeTargetProfileForUnits?.user_targets)
+        .filter((target) => target.id && target.unit && target.targetMin !== undefined && target.targetMax !== undefined)
+        .map((target) => [target.id!, target]),
+    );
+
+    const entriesToCheck = Object.entries(pendingCustomTargetChanges)
+      .map(([targetId, typedValue]) => {
+        const target = loggableTargetsById.get(targetId);
+        return target
+          ? { id: targetId, label: target.label, unit: target.unit!, targetMin: target.targetMin!, targetMax: target.targetMax!, typedValue }
+          : null;
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+
+    const aiConfig = entriesToCheck.length > 0 ? getAiExtractionConfig() : null;
+    const reconciliations = aiConfig
+      ? await reconcileCustomTargetValueUnits({ config: aiConfig, locale, entries: entriesToCheck }).catch((error) => {
+          logServerError("dailyReport.adjustQuantities", "custom_target_unit_reconcile_failed", {
+            userId: user.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return null;
+        })
+      : null;
+
+    for (const [targetId, typedValue] of Object.entries(pendingCustomTargetChanges)) {
+      const reconciliation = reconciliations?.[targetId];
+      nextCustomTargetValues[targetId] = reconciliation?.canonicalValue ?? typedValue;
+      if (reconciliation?.original) {
+        nextCustomTargetValueOriginals[targetId] = reconciliation.original;
+      } else {
+        delete nextCustomTargetValueOriginals[targetId];
+      }
     }
   }
 
@@ -1576,6 +1683,7 @@ export async function adjustDailyReportItemQuantitiesAction(formData: FormData):
       parsed_exercises: nextExerciseItems,
       reported_weight_kg: nextReportedWeightKg,
       custom_target_values: nextCustomTargetValues,
+      custom_target_value_originals: nextCustomTargetValueOriginals,
       nutrient_overrides: nextOverrides,
       calories_kcal: nutrientColumnValues.calories_kcal,
       protein_g: nutrientColumnValues.protein_g,

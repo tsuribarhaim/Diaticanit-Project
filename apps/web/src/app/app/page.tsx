@@ -1,10 +1,11 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { DailyReportProgressRings } from "@/components/daily-report-progress-rings";
 import { PasskeyEnrollPrompt } from "@/components/passkey-enroll-prompt";
+import { RangeSelector } from "@/components/range-selector";
 import { getAiExtractionConfig } from "@/lib/ai/env";
-import { getHomeOverviewData, parseRangeParam, rangeLabels, RANGE_VALUES } from "@/lib/home-overview";
+import { resolveUserGenderForAddressing } from "@/lib/ai/persona";
+import { getHomeOverviewData, parseRangeParam } from "@/lib/home-overview";
 import { normalizeLocale, tr } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 
@@ -37,7 +38,7 @@ export default async function AppHomePage({
 
   const { data: profile } = await supabase
     .from("user_profile")
-    .select("preferred_language, passkey_offer_dismissed")
+    .select("preferred_language, passkey_offer_dismissed, first_name, gender, biological_sex")
     .eq("user_id", user.id)
     .maybeSingle();
 
@@ -46,6 +47,7 @@ export default async function AppHomePage({
   }
 
   const locale = normalizeLocale(profile.preferred_language);
+  const userGender = resolveUserGenderForAddressing(profile.gender, profile.biological_sex);
 
   const { data: activeTargetProfile } = await supabase
     .from("user_target_profiles")
@@ -62,6 +64,8 @@ export default async function AppHomePage({
     range,
     activeTargetProfile,
     aiConfig,
+    userGender,
+    userFirstName: profile.first_name,
   });
 
   return (
@@ -72,19 +76,7 @@ export default async function AppHomePage({
           <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
             {range === "today" ? tr(locale, "Today's Progress", "ההתקדמות של היום") : tr(locale, "Your Progress", "ההתקדמות שלך")}
           </h2>
-          <div className="flex gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-800 dark:bg-slate-800/60">
-            {RANGE_VALUES.map((value) => (
-              <Link
-                key={value}
-                href={value === "today" ? "/app" : `/app?range=${value}`}
-                className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-                  range === value ? "bg-teal-700 text-white dark:bg-teal-600" : "text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-                }`}
-              >
-                {tr(locale, rangeLabels[value].en, rangeLabels[value].he)}
-              </Link>
-            ))}
-          </div>
+          <RangeSelector locale={locale} range={range} basePath="/app" />
         </div>
 
         {activeTargetProfile ? (
@@ -106,28 +98,16 @@ export default async function AppHomePage({
 
       {activeTargetProfile ? (
         <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-            {tr(locale, "Weekly Exercise Consistency", "עקביות פעילות שבועית")}
-          </h2>
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{overview.exerciseHeading}</h2>
 
-          {overview.weeklyExerciseTarget > 0 ? (
+          {overview.exerciseTargetAmount > 0 ? (
             <div className="mt-4">
               <DailyReportProgressRings locale={locale} metrics={[overview.exerciseRingMetric]} />
-              <p className="mt-3 text-xs text-slate-500">
-                {tr(
-                  locale,
-                  `This week: ${overview.weeklyExerciseSessionDays} of ${overview.weeklyExerciseTarget} planned sessions logged. Any day with exercise logged counts as a session.`,
-                  `השבוע: נרשמו ${overview.weeklyExerciseSessionDays} מתוך ${overview.weeklyExerciseTarget} אימונים מתוכננים. כל יום שבו נרשמה פעילות נחשב לאימון.`,
-                )}
-              </p>
+              <p className="mt-3 text-xs text-slate-500">{overview.exerciseCaption}</p>
             </div>
           ) : (
             <p className="mt-3 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600 dark:border-slate-700 dark:text-slate-400">
-              {tr(
-                locale,
-                "No weekly exercise target set in your plan.",
-                "לא הוגדר יעד פעילות שבועי בתכנית שלך.",
-              )}
+              {tr(locale, "No exercise target set in your plan.", "לא הוגדר יעד פעילות בתכנית שלך.")}
             </p>
           )}
         </section>

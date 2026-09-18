@@ -987,7 +987,12 @@ export function TargetsChatWorkspace({
                   type="button"
                   onClick={() => setIsOpen(true)}
                   aria-label={tr(locale, "Open chat", "פתיחת הצ'אט")}
-                  className="fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom)+0.75rem)] end-4 z-50 flex h-16 w-16 items-center justify-center rounded-full bg-teal-700 text-white shadow-lg hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+                  // Same fixed physical-right position as the Daily Report
+                  // chat's own bubble (see that file's comment for the full
+                  // reasoning) - not a flat `end-4` - so the two bubbles sit
+                  // at the identical screen point across pages instead of
+                  // each picking its own corner offset.
+                  className="fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom)+0.75rem)] right-[calc(12.5vw_-_2rem)] z-50 flex h-16 w-16 items-center justify-center rounded-full bg-teal-700 text-white shadow-lg hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
                 >
                   <ChatBubbleBadgeIcon className="h-7 w-7" />
                 </button>

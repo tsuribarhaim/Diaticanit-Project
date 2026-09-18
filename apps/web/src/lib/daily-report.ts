@@ -340,17 +340,29 @@ export async function getTodaysLoggedItems({
   return { foodItems, exerciseItems, weighIns };
 }
 
-/** Sums each custom target's logged value (by id) across every report in
- * the given range. Kept separate from DailyReportMetrics (a closed, fixed-
- * field type covering only the ~20 built-in nutrients) rather than bolting
- * a dynamic key onto it, so none of that type's many existing call sites
- * need to change - this is purely additive.
+/** Each custom target's value (by id) for the given range - the latest
+ * value logged per day, averaged across days that logged anything for it.
+ * Kept separate from DailyReportMetrics (a closed, fixed-field type
+ * covering only the ~20 built-in nutrients) rather than bolting a dynamic
+ * key onto it, so none of that type's many existing call sites need to
+ * change.
  *
- * v1 aggregation is sum-per-day, same as every other metric here (protein,
- * water, etc.). Known simplification: a target that's naturally point-in-
- * time (e.g. sleep hours) rather than cumulative could double-count if
- * logged in more than one report the same day - refining per-metric
- * aggregation semantics is a natural follow-up, not solved here. */
+ * NOT summed across reports, unlike the built-in nutrient metrics: a custom
+ * target (e.g. "Daily steps") is logged as a running STATUS, not an
+ * incremental add - the Daily Report form pre-fills each new entry with
+ * whatever's already logged that day (see todaysCustomTargetValues in
+ * daily-report/page.tsx's own "most-recent-report-wins" comment), so a user
+ * who saves three reports in one day (breakfast, lunch, dinner - routine,
+ * not an edge case) had the SAME value counted three times when this used
+ * to sum every row's value (e.g. logging "3000" once showed as "9000" on
+ * the Targets Overview ring after two more same-day saves). Fixed to take
+ * the latest value per day (the same precedence the form's own prefill
+ * already uses), then average across days that logged anything for a
+ * multi-day range - consistent with how every other metric here (calories,
+ * protein, ...) is averaged across logged days via
+ * getLoggedDaysAverageDailyReportTotals, rather than summed across the
+ * whole range. For a single-day range (e.g. "today") this naturally reduces
+ * to just that day's latest value. */
 export async function getCustomTargetValueTotals({
   supabase,
   userId,
@@ -364,24 +376,101 @@ export async function getCustomTargetValueTotals({
 }): Promise<Record<string, number>> {
   const { data: rows } = await supabase
     .from("user_daily_reports")
-    .select("custom_target_values")
+    .select("report_at, custom_target_values")
     .eq("user_id", userId)
     .gte("report_at", rangeStartIso)
-    .lt("report_at", rangeEndIso);
+    .lt("report_at", rangeEndIso)
+    .order("report_at", { ascending: true });
 
-  const totals: Record<string, number> = {};
+  // Latest value per (day, target id) - iterating oldest-to-newest and
+  // overwriting on each match means the last (most recent) row seen for a
+  // given day is whatever ends up stored for it.
+  const perDayLatest = new Map<string, Record<string, number>>();
   for (const row of rows ?? []) {
     const values = row.custom_target_values;
-    if (!values || typeof values !== "object") continue;
+    if (!values || typeof values !== "object" || Array.isArray(values)) continue;
+    const dayKey = String(row.report_at).slice(0, 10);
+    const dayValues = perDayLatest.get(dayKey) ?? {};
     for (const [id, value] of Object.entries(values as Record<string, unknown>)) {
       const numeric = Number(value);
       if (Number.isFinite(numeric)) {
-        totals[id] = (totals[id] ?? 0) + numeric;
+        dayValues[id] = numeric;
       }
     }
+    perDayLatest.set(dayKey, dayValues);
   }
-  return totals;
+
+  const sums: Record<string, number> = {};
+  const dayCounts: Record<string, number> = {};
+  for (const dayValues of perDayLatest.values()) {
+    for (const [id, value] of Object.entries(dayValues)) {
+      sums[id] = (sums[id] ?? 0) + value;
+      dayCounts[id] = (dayCounts[id] ?? 0) + 1;
+    }
+  }
+
+  const averages: Record<string, number> = {};
+  for (const id of Object.keys(sums)) {
+    averages[id] = sums[id] / dayCounts[id];
+  }
+  return averages;
 }
+
+/** Recent raw values the user has actually logged (most recent last) for
+ * each of the given custom-target ids, over the last `lookbackDays` days -
+ * used by generateTargetsWithAi's adjustment path to notice when a target's
+ * stored unit doesn't match what's really being tracked (see that
+ * function's own "UNIT RECONCILIATION" prompt rule), e.g. a "40 minutes"
+ * walking target against logged values in the thousands - clearly a step
+ * count logged under the wrong unit. Capped at 10 values per id, both to
+ * keep the AI prompt small and because a handful of recent entries is
+ * plenty to judge what unit the numbers represent. */
+export async function getRecentCustomTargetLogs({
+  supabase,
+  userId,
+  ids,
+  lookbackDays = 14,
+}: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  userId: string;
+  ids: string[];
+  lookbackDays?: number;
+}): Promise<Record<string, number[]>> {
+  if (ids.length === 0) return {};
+
+  const rangeStartIso = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
+  const { data: rows } = await supabase
+    .from("user_daily_reports")
+    .select("report_at, custom_target_values")
+    .eq("user_id", userId)
+    .gte("report_at", rangeStartIso)
+    .order("report_at", { ascending: true });
+
+  const idSet = new Set(ids);
+  const result: Record<string, number[]> = {};
+  for (const row of rows ?? []) {
+    const values = row.custom_target_values;
+    if (!values || typeof values !== "object" || Array.isArray(values)) continue;
+    for (const [id, value] of Object.entries(values as Record<string, unknown>)) {
+      if (!idSet.has(id)) continue;
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) continue;
+      const existing = result[id] ?? [];
+      existing.push(numeric);
+      result[id] = existing.slice(-10);
+    }
+  }
+  return result;
+}
+
+// Note: custom_target_value_originals (migration 040) intentionally has no
+// reader here - the Targets/Home rings always display a custom target in
+// its own canonical unit (see home-overview.ts's own comment on why a
+// display-time "most recently logged unit" conversion was reverted), so
+// there's currently no consumer for the per-log original value/unit beyond
+// reconcileCustomTargetValueUnits writing it as an audit trail. Add a
+// reader here if a future feature (e.g. showing "you typed 3,000 steps"
+// verbatim somewhere) needs one.
 
 const METRIC_KEYS = Object.keys(EMPTY_METRICS) as Array<keyof DailyReportMetrics>;
 
@@ -474,23 +563,26 @@ export async function getLoggedDaysAverageDailyReportTotals({
 
 /**
  * "Any day counts as a session" - a day with exercise logged counts once
- * toward weekly consistency regardless of how many separate exercise
- * entries or minutes were logged that day. Always the trailing 7 days
- * (rolling, including today), independent of whatever range the calorie/
- * protein rings are currently showing.
+ * toward exercise consistency regardless of how many separate exercise
+ * entries or minutes were logged that day, within the given range. Takes
+ * explicit bounds (unlike the earlier "always trailing 7 days" version this
+ * replaced) so it can be scoped to whatever range the Targets/Home
+ * Overview's own duration selector currently shows - the calorie/protein
+ * rings, the reporting-consistency ring, and this exercise ring should all
+ * agree on the same period instead of exercise silently staying fixed at a
+ * week regardless of what's selected.
  */
-export async function getWeeklyExerciseSessionDayCount({
+export async function getExerciseSessionDayCount({
   supabase,
   userId,
+  rangeStartIso,
+  rangeEndIso,
 }: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   userId: string;
+  rangeStartIso: string;
+  rangeEndIso: string;
 }): Promise<number> {
-  const now = new Date();
-  const todayStartMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  const rangeStartIso = new Date(todayStartMs - 6 * 24 * 60 * 60 * 1000).toISOString();
-  const rangeEndIso = new Date(todayStartMs + 24 * 60 * 60 * 1000).toISOString();
-
   const { data: rows } = await supabase
     .from("user_daily_reports")
     .select("report_at")
