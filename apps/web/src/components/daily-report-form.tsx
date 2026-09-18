@@ -10,6 +10,7 @@ import {
 } from "@/app/app/daily-report/actions";
 import { DailyReportChatPanel, type DailyReportDefaultItem } from "@/components/daily-report-chat-panel";
 import { DailyReportDefaultsPicker, type SelectedSavedListItem } from "@/components/daily-report-defaults-picker";
+import { DailyReportSuccessToast } from "@/components/daily-report-success-toast";
 import { SubmitButton } from "@/components/daily-report-submit-button";
 import { TargetsStaleModal } from "@/components/targets-stale-modal";
 import { useUnsavedPreview } from "@/components/unsaved-preview-context";
@@ -19,15 +20,19 @@ const initialState: DailyReportActionState = {};
 
 /**
  * True only once the client has actually mounted - used below to gate the
- * Weight/Sleep portal's document.getElementById lookup. Prefer this over a
- * one-shot inline `typeof document !== "undefined"` check: that check can
- * run correctly in theory, but nothing then forces a second render if the
- * very first pass somehow missed the target (React 19's hydration timing
- * isn't something to gamble a silently-missing form section on) -
- * useSyncExternalStore's whole job is guaranteeing a real, correctly-timed
- * re-render once the client value differs from the server one, which is
- * exactly the "definitely mounted, DOM is definitely real now" signal
- * needed here. subscribe is a no-op since nothing ever un-mounts this true.
+ * targetsStaleChanges/pendingRangeConfirm portal's createPortal(...,
+ * document.body) call, which would otherwise crash during SSR (document
+ * doesn't exist there). Prefer this over a one-shot inline `typeof document
+ * !== "undefined"` check: that check can run correctly in theory, but
+ * nothing then forces a second render if the very first pass somehow
+ * missed it - useSyncExternalStore's whole job is guaranteeing a real,
+ * correctly-timed re-render once the client value differs from the server
+ * one. subscribe is a no-op since nothing ever un-mounts this true.
+ * (The Weight/Sleep portal used to be gated by this too, but a plain
+ * isMounted check only guarantees ONE re-render once mounted - it doesn't
+ * guarantee the portal's actual target DOM node exists by then, which is
+ * exactly what let that portal go silently missing; see
+ * quickMetricsTarget's own comment for the real fix.)
  */
 function subscribeMounted() {
   return () => {};
@@ -40,6 +45,12 @@ function getServerMountedSnapshot() {
 }
 
 const REPORT_MAX_LENGTH = 2000;
+/** How long the post-save toast (see DailyReportSuccessToast) stays up
+ * before auto-dismissing - also how long an edit-save's exit from edit
+ * mode is deliberately delayed, so the page doesn't navigate (and
+ * potentially remount this whole form, clearing the toast's own timer)
+ * while the toast is still meant to be showing. */
+const SAVE_TOAST_DURATION_MS = 2000;
 
 function getLocalDateTimeValue(date: Date): string {
   const copy = new Date(date);
@@ -283,6 +294,46 @@ export function DailyReportForm({
   // definitely mounted - see subscribeMounted's comment above.
   const isMounted = useSyncExternalStore(subscribeMounted, getMountedSnapshot, getServerMountedSnapshot);
 
+  // The Weight/Sleep portal's target node - looked up in an effect
+  // (below), not read via a synchronous document.getElementById call
+  // during render like it used to be. That direct-during-render read is
+  // what caused a real, confirmed bug: "the weight and sleep fields
+  // disappeared," which only came back after a full page refresh.
+  // <div id="daily-report-quick-metrics"> (in page.tsx) renders
+  // unconditionally in the same tree as this form, so on an ordinary
+  // hydration the two are never actually racing - the server-rendered
+  // HTML already contains that div before React even starts, so the very
+  // first client read always finds it. But render-phase code only ever
+  // sees the DOM as of the END of the PREVIOUS commit - it runs entirely
+  // before this render's own commit lands. Any time this whole subtree
+  // gets a fresh client-only render together with that div - e.g. React
+  // silently recovering from a hydration mismatch elsewhere on the page
+  // by discarding the server HTML and re-rendering from scratch on the
+  // client - both this component and the target div are being created in
+  // the SAME upcoming commit, and a same-render sibling genuinely isn't
+  // in the DOM yet at the moment this line would have run. The portal
+  // then silently renders nothing, and nothing here ever rechecks it
+  // again afterward, so the fields stay gone until some unrelated
+  // re-render happens to land after the div exists - or, more reliably,
+  // until a refresh forces a clean hydration again. Looking it up in an
+  // effect instead - which always runs AFTER its own commit - guarantees
+  // the div (part of that very same commit) already exists in the DOM by
+  // the time this runs, regardless of which render pass created it.
+  const [quickMetricsTarget, setQuickMetricsTarget] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    // setState wrapped in a callback (not called directly in the effect
+    // body) - same idiom used elsewhere in this codebase (see
+    // DailyReportPageNotice) to satisfy the react-hooks/set-state-in-effect
+    // rule. A 0ms timeout doesn't reintroduce the race this is fixing: the
+    // effect itself already only runs after this render's own commit has
+    // landed, so the target div is already in the DOM by the time this
+    // fires either way.
+    const timeoutId = setTimeout(() => {
+      setQuickMetricsTarget(document.getElementById("daily-report-quick-metrics"));
+    }, 0);
+    return () => clearTimeout(timeoutId);
+  }, []);
+
   const formRef = useRef<HTMLFormElement>(null);
   // Set right before programmatically re-submitting after the user confirms
   // an out-of-range custom target value (see handleFormSubmit) - lets that
@@ -354,6 +405,16 @@ export function DailyReportForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The post-save toast (see DailyReportSuccessToast) - null hides it.
+  // pendingEditExit carries what's needed to leave edit mode once the
+  // toast's own timer elapses (see the effect below); null for a
+  // non-editing save, which never needs to navigate anywhere. State, not a
+  // ref - it's written during the render-time state adjustment just below,
+  // which is a lint error for a ref (react-hooks/refs) since refs are only
+  // ever meant to be written from an effect or event handler.
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [pendingEditExit, setPendingEditExit] = useState<{ date?: string; highlightId?: string } | null>(null);
+
   /** "Conclude & Report" both saves and starts a fresh conversation - the
    * chat is a scratchpad for composing one report, not a running log, so
    * once it's been translated and added to the list there's nothing left
@@ -361,25 +422,62 @@ export function DailyReportForm({
    * resetting state in response to a value change) rather than in an
    * effect, and keyed on the `state` object itself (not state.success'
    * text) since useActionState returns a new object on every action call
-   * even when two consecutive successes produce the exact same message. */
+   * even when two consecutive successes produce the exact same message.
+   * An edit-save used to redirect (a real navigation, off ?edit=) instead
+   * of reaching this block at all - it returns a plain state now (see
+   * saveDailyReportAction's own comment on why), so this branches: a fresh
+   * save still resets the scratchpad in place immediately, but an edit
+   * leaves the form/URL alone here and only queues the exit for the effect
+   * below, timed to the toast rather than firing right away. */
   const [prevState, setPrevState] = useState(state);
   if (state !== prevState) {
     setPrevState(state);
     if (state.success) {
-      setReportText("");
-      setReportAtValue(buildReportAtValueForSelectedDate(selectedDateParam));
-      setChatResetKey((key) => key + 1);
-      setFallbackSelectedSavedListItems([]);
-      // weightValue/customTargetValues themselves are intentionally NOT
-      // reset above (see weightValue's own comment) - only the baselines
-      // they're compared against advance, so this save no longer reads as
-      // an unsaved edit going forward. customTargetValues staying put is
-      // also what keeps e.g. today's just-saved Sleep duration visibly
-      // shown in its field instead of going blank right after saving.
-      setWeightBaseline(weightValue);
-      setCustomTargetsBaseline(customTargetValues);
+      setToastMessage(state.success);
+      if (state.wasEditing) {
+        setPendingEditExit({ date: selectedDateParam, highlightId: state.savedReportId });
+      } else {
+        setPendingEditExit(null);
+        setReportText("");
+        setReportAtValue(buildReportAtValueForSelectedDate(selectedDateParam));
+        setChatResetKey((key) => key + 1);
+        setFallbackSelectedSavedListItems([]);
+        // weightValue/customTargetValues themselves are intentionally NOT
+        // reset above (see weightValue's own comment) - only the baselines
+        // they're compared against advance, so this save no longer reads as
+        // an unsaved edit going forward. customTargetValues staying put is
+        // also what keeps e.g. today's just-saved Sleep duration visibly
+        // shown in its field instead of going blank right after saving.
+        setWeightBaseline(weightValue);
+        setCustomTargetsBaseline(customTargetValues);
+      }
     }
   }
+
+  // Auto-dismisses the toast, and - for an edit-save - performs the
+  // delayed exit from edit mode queued above: router.replace with
+  // { scroll: false } instead of the old server redirect() (which resets
+  // scroll to the top of the page by default, with no way to opt out -
+  // reported as "the save banner scrolls me to the top of the page").
+  // Delaying this until the toast's own duration has elapsed (rather than
+  // firing immediately) is what keeps the page from moving at all for
+  // those first two seconds - editingReport becoming null once this does
+  // fire changes this form's own key in page.tsx and remounts it, which
+  // would otherwise cut the toast short by clearing this very timer.
+  useEffect(() => {
+    if (!toastMessage) return;
+    const timeoutId = setTimeout(() => {
+      setToastMessage(null);
+      if (pendingEditExit) {
+        const params = new URLSearchParams();
+        if (pendingEditExit.date) params.set("date", pendingEditExit.date);
+        if (pendingEditExit.highlightId) params.set("highlight", pendingEditExit.highlightId);
+        const query = params.toString();
+        router.replace(`/app/daily-report${query ? `?${query}` : ""}`, { scroll: false });
+      }
+    }, SAVE_TOAST_DURATION_MS);
+    return () => clearTimeout(timeoutId);
+  }, [toastMessage, pendingEditExit, router]);
 
   function handleTranscriptChange(text: string) {
     setReportText(text.slice(0, REPORT_MAX_LENGTH));
@@ -396,6 +494,7 @@ export function DailyReportForm({
     // this exact form via the standard HTML `form="daily-report-form"`
     // attribute instead of relying on DOM ancestry.
     <form id="daily-report-form" ref={formRef} action={formAction} onSubmit={handleFormSubmit} className="mt-4 space-y-3">
+      <DailyReportSuccessToast locale={locale} message={toastMessage} />
       {/* Portaled to document.body (gated on isMounted - same pattern as
           the Weight/Sleep portal above) rather than rendered in place: this
           whole form sits inside a `hidden` (below `sm`) wrapper section on
@@ -427,9 +526,9 @@ export function DailyReportForm({
                 // z-[60]: same reasoning as TargetsStaleModal - above the
                 // floating chat bubble/save icon (both z-50).
                 <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/40 p-4">
-                  <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl">
+                  <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900">
                     <div className="px-5 py-4">
-                      <p className="text-sm text-slate-700">
+                      <p className="text-sm text-slate-700 dark:text-slate-300">
                         {tr(
                           locale,
                           `Are you sure you want to report ${pendingRangeConfirm.value} hours for "${pendingRangeConfirm.target.label}"?`,
@@ -437,11 +536,11 @@ export function DailyReportForm({
                         )}
                       </p>
                     </div>
-                    <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3">
+                    <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3 dark:border-slate-800">
                       <button
                         type="button"
                         onClick={() => setPendingRangeConfirm(null)}
-                        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
                       >
                         {tr(locale, "Ignore", "התעלם")}
                       </button>
@@ -452,7 +551,7 @@ export function DailyReportForm({
                           bypassRangeConfirmRef.current = true;
                           formRef.current?.requestSubmit();
                         }}
-                        className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800"
+                        className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
                       >
                         {tr(locale, "Save", "שמירה")}
                       </button>
@@ -523,15 +622,16 @@ export function DailyReportForm({
           technique DailyReportChatPanel uses for its own mobile sheet, and
           for the same reason: these are still real fields submitted with
           this exact form, so `form="daily-report-form"` reconnects them
-          regardless of where in the DOM they actually render. The target
-          div always exists (the page renders it unconditionally), so unlike
-          the chat panel's viewport-dependent portal, this one has nothing
-          to wait on. */}
-      {isMounted && document.getElementById("daily-report-quick-metrics")
+          regardless of where in the DOM they actually render. quickMetricsTarget
+          (see its own comment above) is looked up in an effect rather than
+          read straight from document.getElementById here, so this can't
+          silently render nothing during the rare client-only remount where
+          that direct read used to race the target div's own commit. */}
+      {quickMetricsTarget
         ? createPortal(
             <>
               <label className="block min-w-[110px] flex-1">
-                <span className="mb-1 block text-xs font-medium text-slate-600">{tr(locale, "Weight (kg)", "משקל (ק\"ג)")}</span>
+                <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">{tr(locale, "Weight (kg)", "משקל (ק\"ג)")}</span>
                 <input
                   type="number"
                   name="reported_weight_kg"
@@ -572,12 +672,12 @@ export function DailyReportForm({
                       ? tr(locale, `Current: ${initialWeightValue}`, `נוכחי: ${initialWeightValue}`)
                       : tr(locale, "e.g. 63.8", "לדוגמה: 63.8")
                   }
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 dark:border-slate-700 dark:bg-slate-900"
                 />
               </label>
               {customTargets.map((target) => (
                 <label key={target.id} className="block min-w-[110px] flex-1">
-                  <span className="mb-1 block text-xs font-medium text-slate-600">
+                  <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">
                     {target.label} ({formatMeasurementUnit(target.unit, locale)})
                   </span>
                   <input
@@ -591,12 +691,12 @@ export function DailyReportForm({
                     onChange={(event) =>
                       setCustomTargetValues((prev) => ({ ...prev, [target.id]: event.target.value }))
                     }
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 dark:border-slate-700 dark:bg-slate-900"
                   />
                 </label>
               ))}
             </>,
-            document.getElementById("daily-report-quick-metrics")!,
+            quickMetricsTarget,
           )
         : null}
 
@@ -609,10 +709,10 @@ export function DailyReportForm({
               title when opened; the char count is desktop-only since it's
               only really useful while watching the thread build up inline. */}
           <div className="mb-1 hidden items-center justify-between gap-2 sm:flex">
-            <span className="text-sm font-medium text-slate-700">
+            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
               {tr(locale, "Chat about your day", "צ'אט על היום שלך")}
             </span>
-            <span className="text-xs text-slate-500">
+            <span className="text-xs text-slate-500 dark:text-slate-400">
               {reportCharsLeft} {tr(locale, "characters left", "תווים נותרו")}
             </span>
           </div>
@@ -639,7 +739,7 @@ export function DailyReportForm({
       ) : (
         <div className="block">
           <div className="mb-1 flex items-center justify-between gap-2">
-            <label htmlFor="daily-report-text" className="block text-sm font-medium text-slate-700">
+            <label htmlFor="daily-report-text" className="block text-sm font-medium text-slate-700 dark:text-slate-300">
               {tr(locale, "Daily report (free text, optional)", "דיווח יומי (טקסט חופשי, אופציונלי)")}
             </label>
             <DailyReportDefaultsPicker
@@ -649,7 +749,7 @@ export function DailyReportForm({
             />
           </div>
           {fallbackSelectedSavedListItems.length ? (
-            <p className="mb-1 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-xs text-teal-800">
+            <p className="mb-1 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-xs text-teal-800 dark:border-teal-800 dark:bg-teal-950/30 dark:text-teal-300">
               {tr(locale, "From your saved list", "מהרשימה השמורה")}:{" "}
               {fallbackSelectedSavedListItems
                 .map((item) => `${item.name} (${item.quantity} ${formatDefaultUnit(item.unit, locale)})`)
@@ -668,38 +768,38 @@ export function DailyReportForm({
               "Optional. Example: I ate 1 apple and 2 boiled eggs, drank 1 cup of water, and did 45 minutes of full body strength exercise.",
               "אופציונלי. לדוגמה: אכלתי תפוח אחד ושתי ביצים קשות, שתיתי כוס מים וביצעתי 45 דקות אימון כוח.",
             )}
-            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2"
+            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 dark:border-slate-700"
           />
           <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-xs">
-            <span className="text-slate-500">
+            <span className="text-slate-500 dark:text-slate-400">
               {tr(
                 locale,
                 "AI mode (chat and photos) is currently unavailable in this environment - you can still save using free text or your saved list.",
                 "מצב AI (צ'אט ותמונות) אינו זמין כרגע בסביבה זו - עדיין ניתן לשמור באמצעות טקסט חופשי או הרשימה השמורה.",
               )}
             </span>
-            <span className={reportCharsLeft < 150 ? "font-medium text-amber-700" : "text-slate-500"}>
+            <span className={reportCharsLeft < 150 ? "font-medium text-amber-700 dark:text-amber-400" : "text-slate-500 dark:text-slate-400"}>
               {reportCharsLeft} {tr(locale, "characters left", "תווים נותרו")}
             </span>
           </div>
           <input type="hidden" name="parse_mode" value="heuristic" />
 
           {state.error ? (
-            <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+            <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-400">
               {state.error}
             </p>
           ) : null}
           {state.success ? (
-            <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+            <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-400">
               {state.success}
             </p>
           ) : null}
           {state.bmiWarning ? (
-            <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2">
-              <p className="text-sm font-semibold text-rose-900">
+            <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 dark:border-rose-800 dark:bg-rose-950/30">
+              <p className="text-sm font-semibold text-rose-900 dark:text-rose-300">
                 {tr(locale, "Your weight is outside the healthy BMI range", "המשקל שלך מחוץ לטווח ה-BMI הבריא")}
               </p>
-              <p className="mt-1 text-sm text-rose-800">{state.bmiWarning}</p>
+              <p className="mt-1 text-sm text-rose-800 dark:text-rose-400">{state.bmiWarning}</p>
             </div>
           ) : null}
 

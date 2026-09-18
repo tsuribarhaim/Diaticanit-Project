@@ -1,67 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal, flushSync, useFormStatus } from "react-dom";
 
 import { deleteDailyReportAction } from "@/app/app/daily-report/actions";
 import { DailyReportDefaultsPicker, type DailyReportDefaultItem, type SelectedSavedListItem } from "@/components/daily-report-defaults-picker";
 import { SubmitButton } from "@/components/daily-report-submit-button";
-import { directionForLocale, formatDefaultUnit, tr, trGendered, type AppLocale } from "@/lib/locale";
+import { directionForLocale, formatDefaultItemName, formatDefaultUnit, tr, trGendered, type AppLocale } from "@/lib/locale";
+import { useIsDesktopViewport, useVisualViewportHeight } from "@/lib/use-viewport";
 
 export type { DailyReportDefaultItem };
-
-/**
- * The `sm` breakpoint (640px), read live off matchMedia - the canonical way
- * to subscribe to a browser API that can change on its own (window resize,
- * device rotation) is useSyncExternalStore, not useEffect+setState (which
- * both trips the react-hooks/set-state-in-effect lint rule and, more
- * importantly, doesn't have a built-in answer for what to render during SSR/
- * first hydration). getServerSnapshot deliberately returns true ("assume
- * desktop") rather than a "not yet known" placeholder: the desktop render
- * path is a plain inline div, safe to produce with no client-only APIs, so
- * SSR and the first client paint can safely agree on it - the real value
- * (and the mobile portal path, which does need `document`) only takes over
- * once this resolves on the client, which is also the earliest point
- * `document` is guaranteed to exist anyway.
- */
-function subscribeToViewport(callback: () => void) {
-  const mql = window.matchMedia("(min-width: 640px)");
-  mql.addEventListener("change", callback);
-  return () => mql.removeEventListener("change", callback);
-}
-function getViewportSnapshot(): boolean {
-  return window.matchMedia("(min-width: 640px)").matches;
-}
-function getServerViewportSnapshot(): boolean {
-  return true;
-}
-
-/**
- * The actual visible height in CSS pixels, per window.visualViewport - the
- * one API iOS Safari itself provides specifically to answer "how much
- * screen can the user currently see", built to solve exactly this class of
- * problem. Used instead of svh/dvh for the mobile chat sheet's height:
- * three rounds of CSS-viewport-unit adjustments (82dvh, then 78dvh, then
- * 70svh with extra safe-area padding) all still left the composer/Send
- * button below the visible area on a real device, meaning this browser's
- * dvh/svh weren't tracking the actual visible viewport the way the spec
- * describes here. Measuring the real value directly removes the guesswork
- * (and the unit) entirely - falls back to a fixed 70svh via CSS only for
- * the instant before this first measurement lands, or on a browser too old
- * to have visualViewport at all.
- */
-function subscribeToVisualViewport(callback: () => void) {
-  const vv = window.visualViewport;
-  if (!vv) return () => {};
-  vv.addEventListener("resize", callback);
-  return () => vv.removeEventListener("resize", callback);
-}
-function getVisualViewportHeight(): number | null {
-  return window.visualViewport?.height ?? null;
-}
-function getServerVisualViewportHeight(): number | null {
-  return null;
-}
 
 type ChatMessage = { role: "user" | "assistant"; content: string; imagePreviewUrl?: string };
 type SseEvent =
@@ -147,6 +95,27 @@ function NewChatIcon({ className }: { className: string }) {
   );
 }
 
+/** A plain horizontal line - the universal "minimize window" glyph, chosen
+ * specifically to NOT be an "X": testers kept tapping the old X-shaped
+ * close icon expecting it to clear the chat, when it only ever hid the
+ * sheet (the exact same behavior this button still has - see setIsOpen's
+ * own call site). */
+function MinimizeIcon({ className }: { className: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+      <path d="M5 12h14" />
+    </svg>
+  );
+}
+
+function ChatBubbleBadgeIcon({ className }: { className: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+    </svg>
+  );
+}
+
 /**
  * Edit mode's Save button becomes this instead of SubmitButton once the AI
  * has confirmed (via the delete_intent marker) that the user wants the
@@ -180,7 +149,9 @@ function DeleteEntrySubmitButton({
         aria-label={isBusy ? pendingLabel : label}
         title={isBusy ? pendingLabel : label}
         className={`flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-colors ${
-          pending ? "cursor-not-allowed bg-slate-200 text-slate-400 shadow-none" : "bg-rose-700 text-white hover:bg-rose-800"
+          pending
+            ? "cursor-not-allowed bg-slate-200 text-slate-400 shadow-none dark:bg-slate-800 dark:text-slate-600"
+            : "bg-rose-700 text-white hover:bg-rose-800 dark:bg-rose-600 dark:hover:bg-rose-500"
         }`}
       >
         {isBusy ? <Spinner className="h-5 w-5 animate-spin" /> : <TrashIcon className="h-6 w-6" />}
@@ -194,7 +165,7 @@ function DeleteEntrySubmitButton({
       form="daily-report-form"
       formAction={deleteDailyReportAction}
       disabled={pending}
-      className="inline-flex w-full items-center justify-center rounded-xl bg-rose-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-rose-800"
+      className="inline-flex w-full items-center justify-center rounded-xl bg-rose-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-rose-800 dark:bg-rose-600 dark:hover:bg-rose-500"
     >
       {isBusy ? pendingLabel : label}
     </button>
@@ -382,6 +353,13 @@ export function DailyReportChatPanel({
   // never fire during SSR/hydration, no separate "is this mounted yet" gate
   // needed the way isDesktopViewport's portal requires one.
   const [pendingClearConfirm, setPendingClearConfirm] = useState(false);
+  // Which of the two clear-triggering buttons opened the confirm dialog -
+  // "New chat" (stays open, see handleNewChatClick) or the discard-and-
+  // close title-bar icon (also minimizes once confirmed, see
+  // handleDiscardAndCloseClick) - so confirmClearChat knows whether to
+  // close the sheet afterward, and the dialog can show the right wording
+  // for which one the user actually asked for.
+  const [closeAfterClear, setCloseAfterClear] = useState(false);
   // Tracks "a save was just triggered" independently of useFormStatus's own
   // pending flag - see the effect below for why. Purely a visual signal
   // (spinner + disabled) for the save buttons; it never gates what actually
@@ -394,17 +372,21 @@ export function DailyReportChatPanel({
   // portaled copy's form fields would otherwise double up with the desktop
   // copy's on desktop - same `name` attributes, both actually mounted,
   // both submitting).
-  const isDesktopViewport = useSyncExternalStore(subscribeToViewport, getViewportSnapshot, getServerViewportSnapshot);
-  // See getVisualViewportHeight's own comment - drives the mobile sheet's
+  const isDesktopViewport = useIsDesktopViewport();
+  // See useVisualViewportHeight's own comment - drives the mobile sheet's
   // actual pixel height below instead of a CSS viewport-unit guess.
-  const visualViewportHeight = useSyncExternalStore(
-    subscribeToVisualViewport,
-    getVisualViewportHeight,
-    getServerVisualViewportHeight,
-  );
+  const visualViewportHeight = useVisualViewportHeight();
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const threadRef = useRef<HTMLDivElement | null>(null);
   const hasDoneInitialScrollRef = useRef(false);
+  // Standard "sticky autoscroll" chat pattern (WhatsApp/ChatGPT etc.) - true
+  // whenever the thread is scrolled at/near its own bottom, kept in a ref
+  // (not state) since it's updated from a scroll listener that can fire very
+  // often and must never itself trigger a re-render. Read by the
+  // messages-changed effect below to decide whether streamed tokens should
+  // keep pulling the view down, or leave it alone because the user
+  // deliberately scrolled up to read earlier messages.
+  const isPinnedToBottomRef = useRef(true);
   const abortRef = useRef<AbortController | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const photoGalleryInputRef = useRef<HTMLInputElement | null>(null);
@@ -541,19 +523,28 @@ export function DailyReportChatPanel({
   }, [isStreaming]);
 
   /**
+   * Keeps the thread pinned to its own bottom while isPinnedToBottomRef is
+   * true - i.e. while streamed tokens are arriving, the view keeps
+   * following them down exactly like any other AI chat, right up until the
+   * user manually scrolls up to read something earlier (see the onScroll
+   * handler on threadRef below, which is what actually flips that ref).
    * Runs on every token while streaming (messages gets a new array on each
-   * one - see the SSE loop below), so it used to unconditionally re-run
-   * scrollIntoView({behavior:"smooth"}) dozens of times per reply: each call
-   * interrupts the previous still-animating scroll and starts a new one,
-   * which is the actual source of the jumpiness, not just the refocus above.
-   * Two fixes: only auto-scroll when the thread was already scrolled at (or
-   * very near) its own bottom - so reading back through earlier messages
-   * isn't fought by every incoming token - and use an instant jump instead
-   * of an animated one, since a token-by-token smooth-scroll never finishes
-   * settling before the next token retriggers it anyway. The first message
-   * load (e.g. re-opening a report being edited, with its full prior
-   * transcript) always jumps to the bottom once, regardless of scroll
-   * position, since there's nothing to "stay near" yet.
+   * one - see the SSE loop below); it used to re-check "is the thread near
+   * its bottom" from scroll geometry on every single run, but that read is
+   * only accurate relative to wherever the container's scrollTop was left
+   * after the LAST scroll - a single update that grows the content by more
+   * than that stale-geometry threshold (a multi-line chunk, not just one
+   * token) reads as "not near bottom" even though the user never scrolled
+   * away, silently stopping autoscroll for the rest of that reply -
+   * confirmed as the cause of "new text gets hidden as the conversation
+   * continues." Tracking pinned/not-pinned explicitly via user scroll intent
+   * (not re-derived from geometry every render) is the standard fix. Sets
+   * scrollTop directly rather than messagesEndRef.scrollIntoView(), which
+   * scrolls whatever it decides is the nearest scrollable ancestor - direct
+   * and unambiguous. The first message load (e.g. re-opening a report being
+   * edited, with its full prior transcript) always jumps to the bottom
+   * once, regardless of pinned state, since there's nothing to "stay near"
+   * yet.
    */
   useEffect(() => {
     const container = threadRef.current;
@@ -561,15 +552,27 @@ export function DailyReportChatPanel({
 
     if (!hasDoneInitialScrollRef.current) {
       hasDoneInitialScrollRef.current = true;
-      messagesEndRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+      container.scrollTop = container.scrollHeight;
       return;
     }
 
-    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-    if (distanceFromBottom < 100) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+    if (isPinnedToBottomRef.current) {
+      container.scrollTop = container.scrollHeight;
     }
   }, [messages, selectedSavedListItems]);
+
+  /** Updates isPinnedToBottomRef from real scroll position - a generous
+   * threshold (not 0px) since the user landing back within a few dozen
+   * pixels of the bottom (a small deliberate nudge, or momentum settling)
+   * should resume following, not require pixel-perfect precision. Cheap on
+   * purpose (a ref write, no setState) since scroll fires far more often
+   * than this component should ever re-render. */
+  function handleThreadScroll() {
+    const container = threadRef.current;
+    if (!container) return;
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    isPinnedToBottomRef.current = distanceFromBottom < 80;
+  }
 
   useEffect(() => {
     const transcript = messages.map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`).join("\n");
@@ -592,6 +595,10 @@ export function DailyReportChatPanel({
     // comment above), so it stops being shown until the *next* save actually
     // produces new feedback of its own.
     setShowFeedback(false);
+    // Actively sending is a clear signal the user wants to be at the
+    // bottom again - re-pins even if they'd scrolled up to read earlier
+    // messages, same as any other chat app snapping back down on send.
+    isPinnedToBottomRef.current = true;
     const historyForRequest = messages;
     const userContent = trimmed || tr(locale, "(attached a photo)", "(תמונה מצורפת)");
     setMessages((previous) => [
@@ -764,9 +771,25 @@ export function DailyReportChatPanel({
 
   function handleNewChatClick() {
     if (hasChatContent) {
+      setCloseAfterClear(false);
       setPendingClearConfirm(true);
     } else {
-      confirmClearChat();
+      confirmClearChat(false);
+    }
+  }
+
+  /** The missing fourth option, alongside Save, New chat (clears, stays
+   * open), and Minimize (closes, keeps everything) - "forget about it and
+   * close", reported as absent once those other three existed. Shares the
+   * exact same confirm dialog and clear logic as New chat - the only
+   * difference is closeAfterClear, which tells confirmClearChat to also
+   * minimize once it's done. */
+  function handleDiscardAndCloseClick() {
+    if (hasChatContent) {
+      setCloseAfterClear(true);
+      setPendingClearConfirm(true);
+    } else {
+      confirmClearChat(true);
     }
   }
 
@@ -776,8 +799,15 @@ export function DailyReportChatPanel({
    * chatting - reported as "New chat closes the chat box instead of
    * clearing it"). messages resetting is enough on its own to clear
    * report_text too - see the onTranscriptChange effect above, which fires
-   * on every messages change including down to empty. */
-  function confirmClearChat() {
+   * on every messages change including down to empty. closeAfterClear
+   * additionally minimizes the sheet once cleared, for the
+   * discard-and-close case - defaults to whatever closeAfterClear was last
+   * set to (by whichever button opened the confirm dialog), but takes an
+   * explicit override too, for the two "nothing to lose, skip the dialog"
+   * shortcuts in handleNewChatClick/handleDiscardAndCloseClick above,
+   * which call this directly before any state update from setCloseAfterClear
+   * would actually be visible yet. */
+  function confirmClearChat(shouldCloseAfter: boolean = closeAfterClear) {
     setPendingClearConfirm(false);
     abortRef.current?.abort();
     setIsStreaming(false);
@@ -791,6 +821,10 @@ export function DailyReportChatPanel({
     setRetryAction(null);
     hasSentOnceRef.current = false;
     hasDoneInitialScrollRef.current = false;
+    isPinnedToBottomRef.current = true;
+    if (shouldCloseAfter) {
+      setIsOpen(false);
+    }
   }
 
   async function handlePhotoSelected(file: File | null) {
@@ -888,46 +922,76 @@ export function DailyReportChatPanel({
   // without it a portaled control would silently stop submitting anything.
   const chatBodyContent = (
     <>
-      <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 sm:hidden">
-          <div>
-            <p className="text-sm font-semibold text-slate-900">{tr(locale, "Chat about your day", "צ'אט על היום שלך")}</p>
-            <p className="text-xs text-slate-500">
-              {/* Singular, gender-correct Hebrew imperative (רשום/רשמי) -
-                  the original used the plural form ("רשמו"), inconsistent
-                  with the app's one-user addressing and the persona rules
-                  elsewhere (see lib/ai/persona.ts). */}
-              {trGendered(
-                locale,
-                userGender,
-                "Log meals, activity, and weight in one conversation",
-                "רשום ארוחות, פעילות ומשקל בשיחה אחת",
-                "רשמי ארוחות, פעילות ומשקל בשיחה אחת",
-              )}
-            </p>
-          </div>
+      {/* Redesigned as a compact "title bar" - one window's worth of chrome
+          (icon, title, and the two controls that act on the window itself)
+          instead of a title/subtitle row plus a separately-floating
+          open/close circle competing for the same corner (see the mobile
+          floating-buttons portal further down, which no longer renders
+          that circle at all while open - minimizing now only happens from
+          here or by tapping the backdrop). Subtitle text dropped - it only
+          ever showed once anyway, and the extra row was part of what read
+          as bulky. */}
+      <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-2.5 dark:border-slate-800 sm:hidden">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-teal-700 text-white dark:bg-teal-600">
+            <ChatBubbleBadgeIcon className="h-3.5 w-3.5" />
+          </span>
+          <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Chat about your day", "צ'אט על היום שלך")}</p>
+        </div>
+        {/* gap-3.5: same "keep two adjacent icons comfortably apart"
+            reasoning already applied to the entry-row quick actions -
+            minimizing sits right next to a destructive-ish action (New
+            chat clears, after confirming), so a mis-tap here is worth
+            avoiding the same way. */}
+        <div className="flex shrink-0 items-center gap-3.5">
           <button
             type="button"
             onClick={handleNewChatClick}
             aria-label={tr(locale, "Start a new chat", "התחלת צ'אט חדש")}
             title={tr(locale, "Start a new chat", "התחלת צ'אט חדש")}
-            className="flex shrink-0 items-center gap-1 rounded-full border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+            className="flex h-8 w-8 items-center justify-center rounded-full text-teal-700 hover:bg-teal-50 dark:text-teal-400 dark:hover:bg-teal-950/40"
           >
-            <NewChatIcon className="h-3.5 w-3.5" />
-            {tr(locale, "New chat", "צ'אט חדש")}
+            <NewChatIcon className="h-4 w-4" />
+          </button>
+          {/* The missing fourth option, alongside Save, New chat (clears,
+              stays open), and Minimize (closes, keeps everything) -
+              "forget about it and close". Grouped next to New chat (both
+              are "clear the conversation" variants, just with a different
+              outcome afterward) rather than next to Minimize, keeping the
+              one safe, non-destructive control at the outer edge on its
+              own. */}
+          <button
+            type="button"
+            onClick={handleDiscardAndCloseClick}
+            aria-label={tr(locale, "Discard and close", "התעלמות וסגירה")}
+            title={tr(locale, "Discard and close", "התעלמות וסגירה")}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/40"
+          >
+            <TrashIcon className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsOpen(false)}
+            aria-label={tr(locale, "Minimize chat", "מזעור הצ'אט")}
+            title={tr(locale, "Minimize chat", "מזעור הצ'אט")}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+          >
+            <MinimizeIcon className="h-4 w-4" />
           </button>
         </div>
+      </div>
 
         {/* Desktop only - the mobile header above already carries this
             button, but desktop's own "Chat about your day" title lives in
             DailyReportForm (outside this shared JSX), so this thin bar is
             the only place left for it there. */}
-        <div className="hidden items-center justify-end border-b border-slate-200 px-3 py-1.5 sm:flex">
+        <div className="hidden items-center justify-end border-b border-slate-200 px-3 py-1.5 dark:border-slate-800 sm:flex">
           <button
             type="button"
             onClick={handleNewChatClick}
             aria-label={tr(locale, "Start a new chat", "התחלת צ'אט חדש")}
             title={tr(locale, "Start a new chat", "התחלת צ'אט חדש")}
-            className="flex items-center gap-1 rounded-full border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+            className="flex items-center gap-1 rounded-full border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
           >
             <NewChatIcon className="h-3.5 w-3.5" />
             {tr(locale, "New chat", "צ'אט חדש")}
@@ -944,12 +1008,12 @@ export function DailyReportChatPanel({
             reading as "the reply covers the compose area and nothing
             scrolls". The classic flexbox-scroll-area fix. */}
         <div className={`flex min-h-0 flex-1 flex-col sm:flex-none ${hasThreadContent ? "sm:h-[380px]" : ""}`}>
-          <div ref={threadRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+          <div ref={threadRef} onScroll={handleThreadScroll} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
           {messages.map((message, index) => (
             <div key={index} className={`flex flex-col ${message.role === "user" ? "items-end" : "items-start"}`}>
               <div
                 className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
-                  message.role === "user" ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-800"
+                  message.role === "user" ? "bg-teal-700 text-white dark:bg-teal-600" : "bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200"
                 }`}
               >
                 {message.imagePreviewUrl ? (
@@ -962,13 +1026,30 @@ export function DailyReportChatPanel({
           ))}
           {selectedSavedListItems.length ? (
             <div className="flex flex-col items-end">
-              <div className="max-w-[85%] rounded-2xl border-2 border-dashed border-teal-300 bg-teal-50 px-3 py-2 text-sm text-teal-900">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-teal-700">
+              <div className="max-w-[85%] space-y-2 rounded-2xl border-2 border-dashed border-teal-300 bg-teal-50 px-3 py-2 text-sm text-teal-900 dark:border-teal-700 dark:bg-teal-950/30 dark:text-teal-200">
+                <p className="text-xs font-semibold uppercase tracking-wide text-teal-700 dark:text-teal-400">
                   {tr(locale, "From your saved list", "מהרשימה השמורה")}
                 </p>
-                {selectedSavedListItems
-                  .map((item) => `${item.name} (${item.quantity} ${formatDefaultUnit(item.unit, locale)})`)
-                  .join(", ")}
+                {selectedSavedListItems.map((item, index) => (
+                  <div key={index}>
+                    <p>
+                      {item.name} ({item.quantity} {formatDefaultUnit(item.unit, locale)})
+                    </p>
+                    {/* Only what the user actually saved under this item -
+                        no nutrient extraction/recalculation here, just an
+                        echo of its stored ingredient breakdown (same
+                        format the saved-list picker itself already shows
+                        while browsing), so a bundled item like "My
+                        Breakfast" doesn't reduce to just its name. */}
+                    {item.ingredients && item.ingredients.length > 1 ? (
+                      <p className="mt-0.5 text-xs text-teal-800/70 dark:text-teal-300/70">
+                        {item.ingredients
+                          .map((ingredient) => `${ingredient.quantity} ${formatDefaultUnit(ingredient.unit, locale)} ${formatDefaultItemName(ingredient.name, locale)}`)
+                          .join(", ")}
+                      </p>
+                    ) : null}
+                  </div>
+                ))}
               </div>
             </div>
           ) : null}
@@ -977,17 +1058,17 @@ export function DailyReportChatPanel({
       </div>
 
       {photoError ? (
-        <div className="border-t border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{photoError}</div>
+        <div className="border-t border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-400">{photoError}</div>
       ) : null}
 
       {streamError ? (
-        <div className="flex items-center justify-between gap-2 border-t border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+        <div className="flex items-center justify-between gap-2 border-t border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-400">
           <span>{streamError}</span>
           {retryAction ? (
             <button
               type="button"
               onClick={() => retryAction()}
-              className="shrink-0 rounded-lg border border-rose-300 bg-white px-2 py-1 font-semibold text-rose-700 hover:bg-rose-100"
+              className="shrink-0 rounded-lg border border-rose-300 bg-white px-2 py-1 font-semibold text-rose-700 hover:bg-rose-100 dark:border-rose-700 dark:bg-slate-900 dark:text-rose-400 dark:hover:bg-rose-950/50"
             >
               {tr(locale, "Retry", "ניסיון חוזר")}
             </button>
@@ -996,7 +1077,7 @@ export function DailyReportChatPanel({
       ) : null}
 
       {photoPreviewUrl ? (
-        <div className="flex items-center justify-between gap-2 border-t border-teal-200 bg-teal-50 px-3 py-2 text-xs text-teal-800">
+        <div className="flex items-center justify-between gap-2 border-t border-teal-200 bg-teal-50 px-3 py-2 text-xs text-teal-800 dark:border-teal-800 dark:bg-teal-950/30 dark:text-teal-300">
           <span>
             {tr(
               locale,
@@ -1007,26 +1088,30 @@ export function DailyReportChatPanel({
           <button
             type="button"
             onClick={clearAttachedPhoto}
-            className="shrink-0 rounded-full border border-teal-300 bg-white px-2 py-1 font-semibold text-teal-700 hover:bg-teal-100"
+            className="shrink-0 rounded-full border border-teal-300 bg-white px-2 py-1 font-semibold text-teal-700 hover:bg-teal-100 dark:border-teal-700 dark:bg-slate-900 dark:text-teal-400 dark:hover:bg-teal-950/50"
           >
             {tr(locale, "Remove", "הסרה")}
           </button>
         </div>
       ) : null}
 
-      <div className="border-t border-slate-200 p-3 empty:hidden">
+      <div className="border-t border-slate-200 p-3 empty:hidden dark:border-slate-800">
         {showFeedback && saveError ? (
-          <p className="mb-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{saveError}</p>
+          <p className="mb-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-400">{saveError}</p>
         ) : null}
-        {showFeedback && saveSuccess ? (
-          <p className="mb-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{saveSuccess}</p>
-        ) : null}
+        {/* saveSuccess itself isn't rendered here - DailyReportForm now
+            shows it as a brief centered toast (see DailyReportSuccessToast)
+            instead of a banner that stuck around inline until the user's
+            next action. saveSuccess is still passed into this component and
+            still feeds feedbackKey below, which is what actually clears the
+            save spinner once a save resolves - only the old inline
+            <p> banner was removed. */}
         {showFeedback && bmiWarning ? (
-          <div className="mb-2 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2">
-            <p className="text-sm font-semibold text-rose-900">
+          <div className="mb-2 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 dark:border-rose-800 dark:bg-rose-950/30">
+            <p className="text-sm font-semibold text-rose-900 dark:text-rose-300">
               {tr(locale, "Your weight is outside the healthy BMI range", "המשקל שלך מחוץ לטווח ה-BMI הבריא")}
             </p>
-            <p className="mt-1 text-sm text-rose-800">{bmiWarning}</p>
+            <p className="mt-1 text-sm text-rose-800 dark:text-rose-400">{bmiWarning}</p>
           </div>
         ) : null}
       </div>
@@ -1039,9 +1124,9 @@ export function DailyReportChatPanel({
           sits flush against the actual viewport edge on mobile, same as the
           old pinned dock did, so this still needs to clear the home
           indicator on notched phones. */}
-      <div className="border-t border-slate-200 bg-white sm:border-t-0 sm:bg-transparent">
+      <div className="border-t border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 sm:border-t-0 sm:bg-transparent">
         <div className="space-y-2 px-3 pb-[calc(env(safe-area-inset-bottom)+10px)] pt-2 sm:space-y-0 sm:p-0">
-          <div className="flex items-center gap-1.5 overflow-x-auto sm:border-t sm:border-slate-200 sm:px-3 sm:pt-3">
+          <div className="flex items-center gap-1.5 overflow-x-auto sm:border-t sm:border-slate-200 dark:sm:border-slate-800 sm:px-3 sm:pt-3">
             <DailyReportDefaultsPicker
               locale={locale}
               defaultItems={defaultItems}
@@ -1077,7 +1162,7 @@ export function DailyReportChatPanel({
               next to the composer it's actually describing) - shown only
               before the first message, same as before. */}
           {messages.length === 0 ? (
-            <p className="px-0 text-xs text-slate-500 sm:px-3">
+            <p className="px-0 text-xs text-slate-500 dark:text-slate-400 sm:px-3">
               {/* Singular, gender-correct Hebrew (את/אתה + matching verb
                   forms) - see buildInitialMessages' own comment on why the
                   original plural/formal conjugations were wrong here.
@@ -1106,7 +1191,7 @@ export function DailyReportChatPanel({
                 htmlFor="daily-report-chat-photo-input"
                 aria-label={tr(locale, "Take a photo of your plate", "צילום תמונה של הצלחת")}
                 title={tr(locale, "Take a photo of your plate", "צילום תמונה של הצלחת")}
-                className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border border-teal-300 text-teal-700 hover:bg-teal-50 focus-within:outline-none focus-within:ring-2 focus-within:ring-teal-600"
+                className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border border-teal-300 text-teal-700 hover:bg-teal-50 focus-within:outline-none focus-within:ring-2 focus-within:ring-teal-600 dark:border-teal-700 dark:text-teal-400 dark:hover:bg-teal-950/40"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
                   <path d="M9 3h6l1.5 3H20a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h3.5L9 3Z" />
@@ -1116,7 +1201,7 @@ export function DailyReportChatPanel({
               <label
                 aria-label={tr(locale, "Choose an existing photo or file", "בחירת תמונה או קובץ קיים")}
                 title={tr(locale, "Choose an existing photo or file", "בחירת תמונה או קובץ קיים")}
-                className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border border-teal-300 text-teal-700 hover:bg-teal-50 focus-within:outline-none focus-within:ring-2 focus-within:ring-teal-600"
+                className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border border-teal-300 text-teal-700 hover:bg-teal-50 focus-within:outline-none focus-within:ring-2 focus-within:ring-teal-600 dark:border-teal-700 dark:text-teal-400 dark:hover:bg-teal-950/40"
                 onClick={() => photoGalleryInputRef.current?.click()}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
@@ -1130,7 +1215,7 @@ export function DailyReportChatPanel({
                 disabled
                 aria-disabled="true"
                 title={tr(locale, "Voice input (coming soon)", "קלט קולי (בקרוב)")}
-                className="flex h-9 w-9 shrink-0 cursor-not-allowed items-center justify-center rounded-full border border-slate-200 text-slate-300"
+                className="flex h-9 w-9 shrink-0 cursor-not-allowed items-center justify-center rounded-full border border-slate-200 text-slate-300 dark:border-slate-800 dark:text-slate-600"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
                   <rect x="9" y="3" width="6" height="11" rx="3" />
@@ -1151,26 +1236,58 @@ export function DailyReportChatPanel({
                 // see the subtitle above for why the original plural form
                 // ("כתבו") was wrong here too.
                 placeholder={trGendered(locale, userGender, "Type a message...", "כתוב הודעה...", "כתבי הודעה...")}
-                className="flex-1 resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 disabled:opacity-70"
+                className="flex-1 resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 disabled:opacity-70 dark:border-slate-700"
               />
               <button
                 type="button"
                 disabled={isStreaming || !inputValue.trim()}
                 onClick={() => void sendMessage(inputValue)}
                 onMouseDown={(event) => event.preventDefault()}
-                className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800"
+                className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
               >
                 {isStreaming ? <Spinner className="h-4 w-4 animate-spin" /> : tr(locale, "Send", "שליחה")}
               </button>
             </div>
           </div>
 
-          {/* Desktop only (sm: and up) - mobile now has the single floating
-              save icon above instead, so this full-width button inside the
-              sheet would just be a second, differently-styled way to do the
-              exact same submit. Desktop never had that duplication problem
-              (there's no sheet there, no separate floating icon to collide
-              with), so it keeps its original always-visible button. */}
+          {/* Mobile only - narrower than the old fullWidth treatment on
+              purpose: fullWidth spans the same edge-to-edge px-3 the icon
+              row above sits in, which is WIDER than the textarea itself
+              (the textarea shares its row with Send, so it's really
+              "sheet width minus Send's width"). A fullWidth Save button
+              directly underneath therefore extended past the textarea's
+              own right edge into the same horizontal territory Send
+              occupies one row up - reported as "can confuse and
+              mis-press" between Save and Send. The invisible span mirrors
+              Send's own classes/label exactly (not a guessed pixel width,
+              which would drift with locale - "Send" vs "שליחה" aren't the
+              same width) - being present but invisible (not `hidden`,
+              which would remove it from layout) reserves precisely the
+              space Send takes above, so the real button beside it lands
+              at exactly the textarea's own width for any locale. */}
+          <div className="flex items-end gap-2 px-3 pb-3 sm:hidden">
+            <div className="flex-1">
+              {isEditing && pendingDeleteOnSave ? (
+                <DeleteEntrySubmitButton locale={locale} variant="text" />
+              ) : (
+                <SubmitButton
+                  locale={locale}
+                  onClick={handleQuickSave}
+                  isEditing={isEditing}
+                  fullWidth
+                  busy={isSaving}
+                  form="daily-report-form"
+                />
+              )}
+            </div>
+            <span aria-hidden="true" className="invisible inline-flex shrink-0 items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold">
+              {tr(locale, "Send", "שליחה")}
+            </span>
+          </div>
+
+          {/* Desktop only - icons/textarea/Send all share a single row
+              there (no wrapping), so Save spanning the same px-3 the whole
+              row sits in doesn't create the mobile-only mismatch above. */}
           <div className="hidden sm:block sm:px-3 sm:pb-3">
             {isEditing && pendingDeleteOnSave ? (
               <DeleteEntrySubmitButton locale={locale} variant="text" />
@@ -1214,7 +1331,7 @@ export function DailyReportChatPanel({
           in its normal place in the tree - never portaled, so its layout
           inside the daily-report page's card is unaffected by any of this. */}
       {isDesktopViewport ? (
-        <div className="flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">{chatBodyContent}</div>
+        <div className="flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">{chatBodyContent}</div>
       ) : null}
 
       {/* Mobile: the floating trigger + bubble + backdrop + sheet, portaled
@@ -1248,33 +1365,42 @@ export function DailyReportChatPanel({
             // they're deliberately pinned with physical left-4/right-4
             // classes, not logical ones (see their own comment).
             <div dir={directionForLocale(locale)}>
-              {/* Opposite corners on purpose - having Save right next to the
-                  chat open/close toggle (they used to sit side by side at
-                  bottom-right) made it too easy to hit Save by mistake while
-                  reaching for the toggle. left-4/right-4 are physical (not
-                  logical/RTL-mirrored) in Tailwind's defaults, so these stay
-                  in their literal screen corners regardless of locale with
-                  no dir override needed - same reasoning as everywhere else
-                  in this file that pins something to a physical corner. Both
-                  keep the same bottom offset (above AppBottomNav) they had
-                  before, so SHEET_BUTTON_CLEARANCE_PX's reserved gap (full
-                  page width) still clears both without needing its own
-                  adjustment. */}
-              <div className="fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom)+0.75rem)] left-4 z-50 transform-gpu">
-                {isEditing && pendingDeleteOnSave ? (
-                  <DeleteEntrySubmitButton locale={locale} variant="icon" />
-                ) : (
-                  <SubmitButton
-                    locale={locale}
-                    onClick={handleQuickSave}
-                    isEditing={isEditing}
-                    variant="icon"
-                    disabled={!canSave}
-                    busy={isSaving}
-                    form="daily-report-form"
-                  />
-                )}
-              </div>
+              {/* Moved from a floating bottom-left circle to a bare icon in
+                  the top corner - reported as "floating and bulky." end-4
+                  (a logical inset, not right-4/left-4) mirrors naturally
+                  with locale via the dir set on this whole portaled tree
+                  above, matching how the user described wanting this one
+                  positioned (unlike the physically-pinned corners
+                  elsewhere in this file, which are deliberately NOT
+                  locale-mirrored - see their own comments).
+                  Nudged down from the bare top edge (was 0.75rem) to read
+                  as sitting near the "today's summary" card's own top
+                  corner instead of floating in the empty strip above it.
+                  Only rendered while closed (once the sheet is open, Save
+                  lives inside it instead - see chatBodyContent's own
+                  full-width SubmitButton) AND only while there's actually
+                  something to save: canSave already reflects LIVE dirty
+                  state (weight/report text compared against their saved
+                  baselines, not a one-way "was this ever touched" flag),
+                  so undoing a change - e.g. typing a weight then deleting
+                  it back to empty - correctly makes this disappear again,
+                  not just gray out. */}
+              {!isOpen && (canSave || (isEditing && pendingDeleteOnSave)) ? (
+                <div className="fixed top-[calc(2rem+env(safe-area-inset-top))] end-4 z-50 transform-gpu">
+                  {isEditing && pendingDeleteOnSave ? (
+                    <DeleteEntrySubmitButton locale={locale} variant="icon" />
+                  ) : (
+                    <SubmitButton
+                      locale={locale}
+                      onClick={handleQuickSave}
+                      isEditing={isEditing}
+                      variant="bare-icon"
+                      busy={isSaving}
+                      form="daily-report-form"
+                    />
+                  )}
+                </div>
+              ) : null}
 
               {/* Fixed at the screen's actual physical bottom-right
                   regardless of RTL - a chat bubble's corner doesn't mirror
@@ -1311,20 +1437,25 @@ export function DailyReportChatPanel({
                   elsewhere in this file never hit this: a bare "+" can't be
                   absorbed as a number's sign the way "-" can, so it stays
                   unambiguous even without surrounding whitespace. */}
-              <button
-                type="button"
-                onClick={() => setIsOpen((open) => !open)}
-                aria-expanded={isOpen}
-                aria-label={isOpen ? tr(locale, "Close chat", "סגירת הצ'אט") : tr(locale, "Open chat", "פתיחת הצ'אט")}
-                className="fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom)+0.75rem)] right-[calc(12.5vw_-_2rem)] z-50 flex h-16 w-16 transform-gpu items-center justify-center rounded-full bg-teal-700 text-white shadow-lg hover:bg-teal-800"
-              >
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={isOpen ? "hidden" : "block"} aria-hidden="true">
-                  <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
-                </svg>
-                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" className={isOpen ? "block" : "hidden"} aria-hidden="true">
-                  <path d="M18 6 6 18M6 6l12 12" />
-                </svg>
-              </button>
+              {/* Only rendered while closed now - minimizing moved into the
+                  sheet's own title bar (see chatBodyContent's header) once
+                  it's open, so there's no longer a second, floating way to
+                  do the same thing sitting on top of the sheet. This is
+                  purely the "open" trigger now, hence the simpler onClick
+                  (no more toggling both ways from one button) and the
+                  single bubble icon (no X to swap in). */}
+              {!isOpen ? (
+                <button
+                  type="button"
+                  onClick={() => setIsOpen(true)}
+                  aria-label={tr(locale, "Open chat", "פתיחת הצ'אט")}
+                  className="fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom)+0.75rem)] right-[calc(12.5vw_-_2rem)] z-50 flex h-16 w-16 transform-gpu items-center justify-center rounded-full bg-teal-700 text-white shadow-lg hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+                >
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+                  </svg>
+                </button>
+              ) : null}
 
               {isOpen ? (
                 <div
@@ -1357,7 +1488,7 @@ export function DailyReportChatPanel({
                 }
                 className={`${isOpen ? "flex" : "hidden"} fixed inset-x-0 z-40 ${
                   sheetHeightPx === null ? "bottom-[calc(9rem+env(safe-area-inset-bottom))] h-[70svh]" : ""
-                } transform-gpu flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl`}
+                } transform-gpu flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl dark:bg-slate-900`}
               >
                 {chatBodyContent}
               </div>
@@ -1379,30 +1510,38 @@ export function DailyReportChatPanel({
             // dir set explicitly - see the sheet portal's own comment above
             // on why a portal to document.body can't rely on inheriting it.
             <div dir={directionForLocale(locale)} className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/40 p-4">
-              <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl">
+              <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900">
                 <div className="px-5 py-4">
-                  <p className="text-sm text-slate-700">
-                    {tr(
-                      locale,
-                      "Start a new chat? This clears the current conversation - anything not yet saved will be lost.",
-                      "להתחיל צ'אט חדש? פעולה זו מנקה את השיחה הנוכחית - כל מה שלא נשמר עדיין יאבד.",
-                    )}
+                  <p className="text-sm text-slate-700 dark:text-slate-300">
+                    {closeAfterClear
+                      ? tr(
+                          locale,
+                          "Discard this conversation and close the chat? Anything not yet saved will be lost.",
+                          "להתעלם מהשיחה הזו ולסגור את הצ'אט? כל מה שלא נשמר עדיין יאבד.",
+                        )
+                      : tr(
+                          locale,
+                          "Start a new chat? This clears the current conversation - anything not yet saved will be lost.",
+                          "להתחיל צ'אט חדש? פעולה זו מנקה את השיחה הנוכחית - כל מה שלא נשמר עדיין יאבד.",
+                        )}
                   </p>
                 </div>
-                <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3">
+                <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3 dark:border-slate-800">
                   <button
                     type="button"
                     onClick={() => setPendingClearConfirm(false)}
-                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
                   >
                     {tr(locale, "Cancel", "ביטול")}
                   </button>
                   <button
                     type="button"
-                    onClick={confirmClearChat}
-                    className="rounded-lg bg-rose-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-rose-800"
+                    onClick={() => confirmClearChat()}
+                    className="rounded-lg bg-rose-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-rose-800 dark:bg-rose-600 dark:hover:bg-rose-500"
                   >
-                    {tr(locale, "Start new chat", "התחלת צ'אט חדש")}
+                    {closeAfterClear
+                      ? tr(locale, "Discard and close", "התעלמות וסגירה")
+                      : tr(locale, "Start new chat", "התחלת צ'אט חדש")}
                   </button>
                 </div>
               </div>

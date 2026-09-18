@@ -1,16 +1,17 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { createPortal } from "react-dom";
 
-import { dismissProfileChangeAction, lockTargetsAction, type TargetsActionState } from "@/app/app/targets/actions";
-import { LockSubmitButton } from "@/components/targets-workspace";
+import { autoLockTargetsAction, dismissProfileChangeAction } from "@/app/app/targets/actions";
 import { TargetsSectionTabs, type TargetsHistoryInfo } from "@/components/targets-section-tabs";
-import { TargetsDiffTable } from "@/components/targets-diff-table";
 import { useUnsavedPreview } from "@/components/unsaved-preview-context";
-import { tr, trGendered, type AppLocale } from "@/lib/locale";
+import type { HomeOverviewData, HomeRange } from "@/lib/home-overview";
+import { directionForLocale, tr, trGendered, type AppLocale } from "@/lib/locale";
 import { computeTargetsDiff } from "@/lib/targets-diff";
 import type { ProfileDiffRow, TargetGenerationPayload } from "@/lib/targets";
+import { useIsDesktopViewport, useVisualViewportHeight } from "@/lib/use-viewport";
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
 type SseEvent =
@@ -24,16 +25,73 @@ type SseEvent =
 type Decision = {
   messageIndex: number;
   actionable: boolean;
-  status: "pending" | "updated" | "ignored";
+  /** "applying" hides the pending decision banner the instant the user
+   * clicks "Update Targets" - without it, the banner (and its still-live
+   * buttons) stayed visible for the whole 30-50s generation call. Reverts
+   * back to "pending" if the request didn't end in a save (a failure of any
+   * kind), so the banner reappears and the user can try again. */
+  status: "pending" | "applying" | "updated" | "ignored";
 };
 
 const STREAM_INACTIVITY_TIMEOUT_MS = 20000;
+
+/** Rotated through, one per "status" event, while an update_targets request
+ * is in flight (see requestTargetsUpdate's onStatus handler) - the route now
+ * emits these as real generation progress arrives rather than on a fixed
+ * timer (see route.ts), so the rotation itself tracks genuine progress
+ * through the call instead of just reassuring the user nothing has frozen. */
+const GENERATING_TARGETS_STATUS_MESSAGES: Array<{ en: string; he: string }> = [
+  { en: "Reviewing your goals and profile...", he: "בוחן את המטרות והפרופיל שלך..." },
+  { en: "Balancing your nutrition ranges...", he: "מאזן את טווחי התזונה שלך..." },
+  { en: "Shaping your exercise plan...", he: "מעצב את תוכנית האימונים שלך..." },
+  { en: "Finalizing your updated targets...", he: "משלים את היעדים המעודכנים שלך..." },
+];
 
 function Spinner({ className }: { className: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+    </svg>
+  );
+}
+
+function ChatBubbleBadgeIcon({ className }: { className: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+    </svg>
+  );
+}
+
+function NewChatIcon({ className }: { className: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+      <path d="M21 3v6h-6" />
+    </svg>
+  );
+}
+
+/** A plain horizontal line - the universal "minimize window" glyph, not an
+ * "X" - matches the same reasoning already applied to the Daily Report
+ * chat's own title bar (see that file's own comment): an "X" reads as
+ * delete/close to most people, which is exactly wrong for a control that
+ * only ever hides the sheet without losing anything. */
+function MinimizeIcon({ className }: { className: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+      <path d="M5 12h14" />
+    </svg>
+  );
+}
+
+function TrashIcon({ className }: { className: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 6h18" />
+      <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6h14Z" />
+      <path d="M10 11v6M14 11v6" />
     </svg>
   );
 }
@@ -55,7 +113,7 @@ function ChatSendButton({ locale, disabled }: { locale: AppLocale; disabled: boo
         if (disabled) event.preventDefault();
       }}
       onMouseDown={(event) => event.preventDefault()}
-      className={`inline-flex items-center justify-center rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-800 ${disabled ? "cursor-not-allowed opacity-70" : ""}`}
+      className={`inline-flex items-center justify-center rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500 ${disabled ? "cursor-not-allowed opacity-70" : ""}`}
     >
       {tr(locale, "Send", "שליחה")}
     </button>
@@ -71,6 +129,8 @@ export function TargetsChatWorkspace({
   firstName,
   userGender,
   history,
+  overview,
+  range,
 }: {
   locale: AppLocale;
   maintenanceCalories: number;
@@ -87,56 +147,74 @@ export function TargetsChatWorkspace({
    * back to the male form, same convention used everywhere else. */
   userGender?: "male" | "female" | null;
   history?: TargetsHistoryInfo | null;
+  /** The Overview tab's data (rings, exercise consistency, AI coach) -
+   * fetched server-side via lib/home-overview.ts and passed straight
+   * through to TargetsSectionTabs, same as the Home page's own use of it. */
+  overview: HomeOverviewData;
+  range: HomeRange;
 }) {
   const router = useRouter();
   // Seeded (not fetched) so the BMI concern is visible in the conversation
   // itself the moment the page renders - not only once the user asks about
   // it or clicks "Recalculate now" and the AI's own update_targets pass
   // happens to mention it. This is the same deterministic bmiWarning text
-  // as the red banner above; the AI is not involved in producing it.
-  const [messages, setMessages] = useState<ChatMessage[]>(() =>
-    bmiWarning
+  // as the red banner above; the AI is not involved in producing it. Also
+  // reused by confirmClearChat below (a "New chat" always returns to this
+  // same starting point, not a blank slate that would drop the BMI notice).
+  function buildInitialMessages(): ChatMessage[] {
+    return bmiWarning
       ? [
           {
             role: "assistant",
             content: `${tr(locale, "Before you ask - I noticed something important:", "לפני שתשאלו - שמתי לב למשהו חשוב:")}\n\n${bmiWarning}`,
           },
         ]
-      : [],
-  );
+      : [];
+  }
+
+  const [messages, setMessages] = useState<ChatMessage[]>(buildInitialMessages);
   const [inputValue, setInputValue] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
-  const [isInputFocused, setIsInputFocused] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [retryAction, setRetryAction] = useState<(() => void) | null>(null);
   const [isGeneratingTargets, setIsGeneratingTargets] = useState(false);
+  const [isSavingTargets, setIsSavingTargets] = useState(false);
+  const [generatingStatusIndex, setGeneratingStatusIndex] = useState(0);
   const [decision, setDecision] = useState<Decision | null>(null);
-  const [pendingPreview, setPendingPreview] = useState<{ source: "ai" | "heuristic"; payload: TargetGenerationPayload } | null>(null);
   const [isDismissingProfileChange, setIsDismissingProfileChange] = useState(false);
-  const [lockState, lockFormAction] = useActionState(lockTargetsAction, {} as TargetsActionState);
   const { setHasUnsavedPreview } = useUnsavedPreview();
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const previewPanelRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    if (lockState.success) {
-      router.refresh();
-    }
-  }, [lockState.success, router]);
+  // "Minimized to an icon + expandable box" - the same floating-bubble/
+  // portal-sheet pattern as the Daily Report chat (see that file's own
+  // comments for the full reasoning), reused here via lib/use-viewport.ts
+  // instead of a second copy of the same detection code.
+  const [isOpen, setIsOpen] = useState(false);
+  const [pendingClearConfirm, setPendingClearConfirm] = useState(false);
+  const [closeAfterClear, setCloseAfterClear] = useState(false);
+  const isDesktopViewport = useIsDesktopViewport();
+  const visualViewportHeight = useVisualViewportHeight();
+  const threadRef = useRef<HTMLDivElement | null>(null);
+  // "Pinned to bottom unless the user scrolled up" auto-scroll, the same
+  // fix already built for the Daily Report chat this session (see that
+  // file's own handleThreadScroll) - a ref, not state, since it's written
+  // from a high-frequency scroll listener and must never itself cause a
+  // re-render.
+  const isPinnedToBottomRef = useRef(true);
+  const hasDoneInitialScrollRef = useRef(false);
 
   useEffect(() => {
-    // Guards navigation away not just once a structured preview exists, but
-    // from the moment any conversation has happened - losing a chat you
-    // typed (and the AI's reply) silently on an accidental tab switch is
-    // exactly the same "unsaved work" problem as losing a generated
-    // preview, just earlier in the flow. Checks for a *user* message
-    // specifically (not just any message) - the seeded BMI-warning bubble
-    // above is shown automatically on mount and isn't something the user
-    // typed or would lose, so it shouldn't trip this guard by itself.
+    // Guards navigation away from the moment any conversation has happened -
+    // losing a chat you typed (and the AI's reply) silently on an accidental
+    // tab switch is real lost work, even though a generated target change is
+    // no longer something that can be lost this way (it's auto-saved the
+    // moment it comes back - see requestTargetsUpdate). Checks for a *user*
+    // message specifically (not just any message) - the seeded BMI-warning
+    // bubble above is shown automatically on mount and isn't something the
+    // user typed or would lose, so it shouldn't trip this guard by itself.
     const hasUserMessage = messages.some((message) => message.role === "user");
-    setHasUnsavedPreview((Boolean(pendingPreview) || hasUserMessage) && !lockState.success);
-  }, [pendingPreview, messages, lockState.success, setHasUnsavedPreview]);
+    setHasUnsavedPreview(hasUserMessage);
+  }, [messages, setHasUnsavedPreview]);
 
   useEffect(() => {
     return () => {
@@ -146,9 +224,31 @@ export function TargetsChatWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  function handleThreadScroll() {
+    const container = threadRef.current;
+    if (!container) return;
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    isPinnedToBottomRef.current = distanceFromBottom < 80;
+  }
+
+  // Jumps straight to bottom on the very first load (tracked separately so
+  // a long seeded BMI-warning message doesn't need an animated scroll), and
+  // on every later change - a message, the generating-targets spinner
+  // appearing, or its text swapping to the "saving" phase all belong to the
+  // same "new thing arrived" case - only if the user hasn't scrolled away to
+  // read something earlier.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages]);
+    const container = threadRef.current;
+    if (!container) return;
+    if (!hasDoneInitialScrollRef.current) {
+      container.scrollTop = container.scrollHeight;
+      hasDoneInitialScrollRef.current = true;
+      return;
+    }
+    if (isPinnedToBottomRef.current) {
+      container.scrollTop = container.scrollHeight;
+    }
+  }, [messages, isGeneratingTargets, isSavingTargets]);
 
   async function runStream(
     requestBody: Record<string, unknown>,
@@ -269,6 +369,7 @@ export function TargetsChatWorkspace({
     const trimmed = text.trim();
     if (!trimmed || isStreaming) return;
 
+    isPinnedToBottomRef.current = true;
     setStreamError(null);
     setRetryAction(null);
     setDecision(null);
@@ -309,14 +410,6 @@ export function TargetsChatWorkspace({
       }
     } else if (assistantText) {
       setDecision({ messageIndex: assistantIndex, actionable, status: "pending" });
-      // On mobile the current-targets panel is hidden while the chat input
-      // is focused (see the isInputFocused ternary below) to save screen
-      // space, and nothing un-focuses the input just from sending a message
-      // - only the update_targets flow forced it back open. A reply here
-      // deserves the same treatment: the user just asked something about
-      // their targets, so show them again instead of leaving the panel
-      // hidden until they notice they have to tap away from the keyboard.
-      setIsInputFocused(false);
     }
 
     setIsStreaming(false);
@@ -326,34 +419,79 @@ export function TargetsChatWorkspace({
    * asks for - shared by the persistent decision area and the profile-
    * staleness "Recalculate now" trigger, neither of which manage decision
    * bookkeeping themselves. */
-  async function requestTargetsUpdate(
-    history: ChatMessage[],
-  ): Promise<{ ok: boolean; semanticErrorMessage: string | null; payload: TargetGenerationPayload | null }> {
-    if (isStreaming || history.length === 0) return { ok: false, semanticErrorMessage: null, payload: null };
+  /** Attempts to save one already-generated payload, sharing this same
+   * retryable path whether it's called right after a fresh generation or
+   * from the "Retry" banner after a prior save attempt failed - retrying
+   * only re-runs the save, never the expensive AI generation call itself.
+   * Returns whether the save succeeded. */
+  async function attemptSaveTargets(pending: { payload: TargetGenerationPayload; source: "ai" | "heuristic"; goalText: string }): Promise<boolean> {
+    setStreamError(null);
+    setRetryAction(null);
+    setIsGeneratingTargets(true);
+    setIsSavingTargets(true);
+
+    const lockResult = await autoLockTargetsAction({ goalText: pending.goalText, source: pending.source, payload: pending.payload });
+
+    setIsSavingTargets(false);
+
+    if (lockResult.error) {
+      setIsGeneratingTargets(false);
+      setStreamError(lockResult.error);
+      setRetryAction(() => () => {
+        void attemptSaveTargets(pending);
+      });
+      return false;
+    }
+
+    // Success - the parent page (targets/page.tsx) re-fetches with the
+    // newly-locked active target profile, which remounts this whole
+    // component (it's keyed by that profile's id) back to its fresh default
+    // state - Overview tab, chat closed. Closing here too just avoids a
+    // brief flash of the open sheet while that refresh lands.
+    setIsOpen(false);
+    router.refresh();
+    return true;
+  }
+
+  type UpdateOutcome =
+    | { kind: "saved" }
+    | { kind: "nothing_to_save" }
+    | { kind: "save_failed" }
+    | { kind: "generation_failed"; semanticErrorMessage: string | null };
+
+  /** Runs the AI generation call and, once a payload comes back, saves it
+   * immediately - there is no separate review/lock step anymore. When the
+   * result doesn't actually change anything measurable (compared via the
+   * same diff used to build the old preview table), nothing is saved, since
+   * locking an identical duplicate target profile row would be pointless. */
+  async function requestTargetsUpdate(history: ChatMessage[]): Promise<UpdateOutcome> {
+    if (isStreaming || history.length === 0) return { kind: "generation_failed", semanticErrorMessage: null };
 
     setStreamError(null);
     setRetryAction(null);
     setIsStreaming(true);
     setIsGeneratingTargets(true);
+    setIsSavingTargets(false);
+    setGeneratingStatusIndex(0);
 
-    let receivedTargets = false;
     let receivedPayload: TargetGenerationPayload | null = null;
+    let receivedSource: "ai" | "heuristic" = "heuristic";
     let semanticErrorMessage: string | null = null;
 
     const result = await runStream(
       { action: "update_targets", chatHistory: history },
       {
+        onStatus: () => {
+          // Each event is either genuine generation progress or the
+          // route's own safety-net heartbeat (see route.ts) - either way,
+          // advancing here keeps the message moving roughly in step with
+          // how far the call has actually gotten, rather than looping a
+          // single static line for the whole 30-50s wait.
+          setGeneratingStatusIndex((previous) => (previous + 1) % GENERATING_TARGETS_STATUS_MESSAGES.length);
+        },
         onTargets: (payload, source, warning) => {
-          receivedTargets = true;
           receivedPayload = payload;
-          setPendingPreview({ source, payload });
-          // On mobile, the panel showing the updated preview and the lock
-          // button is hidden while the chat input is focused (to save
-          // screen space) and only reappears once the input blurs - which
-          // doesn't reliably happen on its own once a virtual keyboard is
-          // involved. Force it visible whenever a fresh preview lands, so
-          // the user can actually see and act on what they just asked for.
-          setIsInputFocused(false);
+          receivedSource = source;
           if (warning) setStreamError(warning);
         },
         onErrorEvent: (message) => {
@@ -363,27 +501,61 @@ export function TargetsChatWorkspace({
       },
     );
 
-    setIsGeneratingTargets(false);
     setIsStreaming(false);
 
-    return {
-      ok: result.ok && receivedTargets,
-      semanticErrorMessage: semanticErrorMessage ?? result.errorMessage ?? null,
-      payload: receivedPayload,
-    };
+    if (!receivedPayload) {
+      setIsGeneratingTargets(false);
+      return { kind: "generation_failed", semanticErrorMessage: semanticErrorMessage ?? result.errorMessage ?? null };
+    }
+
+    const diffRows = computeTargetsDiff(currentPayload, receivedPayload, locale);
+    if (diffRows.length === 0) {
+      setIsGeneratingTargets(false);
+      isPinnedToBottomRef.current = true;
+      setMessages((previous) => [
+        ...previous,
+        {
+          role: "assistant",
+          content: tr(
+            locale,
+            "This didn't change anything measurable in your targets, so there's nothing new to save.",
+            "זה לא שינה דבר מדיד ביעדים שלך, ולכן אין מה לשמור.",
+          ),
+        },
+      ]);
+      return { kind: "nothing_to_save" };
+    }
+
+    const goalTextForLock = history.filter((message) => message.role === "user").at(-1)?.content ?? "";
+    const saved = await attemptSaveTargets({ payload: receivedPayload, source: receivedSource, goalText: goalTextForLock });
+    return saved ? { kind: "saved" } : { kind: "save_failed" };
   }
 
   async function handleUpdateTargetsDecision() {
     if (!decision || decision.status !== "pending" || !decision.actionable) return;
+    // Hides the decision banner (and its buttons) the instant the request
+    // starts, instead of leaving it up and clickable for the whole
+    // generation call - the isGeneratingTargets spinner takes over as the
+    // "something is happening" indicator from here.
+    setDecision((previous) => (previous ? { ...previous, status: "applying" } : previous));
     const history = messages;
     const outcome = await requestTargetsUpdate(history);
-    if (outcome.ok) {
+    if (outcome.kind === "saved") return; // Component is about to remount.
+    if (outcome.kind === "nothing_to_save") {
       setDecision((previous) => (previous ? { ...previous, status: "updated" } : previous));
-    } else if (!outcome.semanticErrorMessage) {
+      return;
+    }
+    // Any other outcome (a failed generation, or a failed save) didn't end
+    // in a save - bring the banner back so the user can try again, matching
+    // this outcome's original "leave the pending decision as-is" behavior.
+    setDecision((previous) => (previous ? { ...previous, status: "pending" } : previous));
+    if (outcome.kind === "generation_failed" && !outcome.semanticErrorMessage) {
       // A genuine connection/timeout failure (not a server-explained
       // rejection) - offer to retry the exact same request.
       setRetryAction(() => () => handleUpdateTargetsDecision());
     }
+    // "save_failed": attemptSaveTargets already surfaced its own error and
+    // a retry that re-attempts just the save, not the whole generation.
   }
 
   /** The decision banner only appears when the AI itself marks a reply
@@ -396,13 +568,8 @@ export function TargetsChatWorkspace({
    * nowhere. */
   async function handleManualUpdateRequest() {
     if (isStreaming || messages.length === 0) return;
-    // This updates the Preview panel on the left, not the chat itself - on
-    // a tall page that panel can be scrolled out of view, which is exactly
-    // why clicking this looked like it "did nothing." Bring it into view
-    // right away so the spinner (and then the result) is visible.
-    previewPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     const outcome = await requestTargetsUpdate(messages);
-    if (!outcome.ok && !outcome.semanticErrorMessage) {
+    if (outcome.kind === "generation_failed" && !outcome.semanticErrorMessage) {
       setRetryAction(() => () => handleManualUpdateRequest());
     }
   }
@@ -425,63 +592,53 @@ export function TargetsChatWorkspace({
     setMessages(updatedHistory);
     setDecision(null);
     const outcome = await requestTargetsUpdate(updatedHistory);
-    if (outcome.ok) {
-      // A real change was found - explain what happened and prompt the user
-      // to review and lock it in, then clear the now-addressed banner so it
-      // doesn't keep asking; the pending preview and its diff/lock button
-      // (rendered from pendingPreview) are what carries the "please lock"
-      // step forward from here.
-      const explanation = outcome.payload?.aiRationaleExplanation?.trim();
-      setMessages((previous) => [
-        ...previous,
-        {
-          role: "assistant",
-          // Singular, gender-correct Hebrew (כשתהיה/כשתהיי מוכן/ה) - see
-          // lib/ai/persona.ts for the same addressing convention used
-          // elsewhere in this app.
-          content: explanation
-            ? trGendered(
-                locale,
-                userGender,
-                `Your targets have been updated based on this profile change. ${explanation} Please review the differences below and lock them in when you're ready.`,
-                `היעדים שלך עודכנו בעקבות שינוי הפרופיל. ${explanation} נא לסקור את ההבדלים למטה ולנעול אותם כשתהיה מוכן.`,
-                `היעדים שלך עודכנו בעקבות שינוי הפרופיל. ${explanation} נא לסקור את ההבדלים למטה ולנעול אותם כשתהיי מוכנה.`,
-              )
-            : trGendered(
-                locale,
-                userGender,
-                "Your targets have been updated based on this profile change. Please review the differences below and lock them in when you're ready.",
-                "היעדים שלך עודכנו בעקבות שינוי הפרופיל. נא לסקור את ההבדלים למטה ולנעול אותם כשתהיה מוכן.",
-                "היעדים שלך עודכנו בעקבות שינוי הפרופיל. נא לסקור את ההבדלים למטה ולנעול אותם כשתהיי מוכנה.",
-              ),
-        },
-      ]);
-      await handleSkipProfileChange();
-    } else if (outcome.semanticErrorMessage) {
-      // The AI reviewed the profile change against the current targets and
-      // concluded no numeric/text adjustment is warranted. Unlike the "ok"
-      // branch above, this does NOT dismiss the profile-change banner - a
-      // "no change needed" conclusion from a single AI pass isn't reliable
-      // enough to treat as final (a genuinely significant change, e.g. a
-      // newly added medical condition, has been seen going through as a
-      // false negative here), so the banner stays up and "Recalculate now"
-      // stays available to try again, rather than silently losing the
-      // pending change with no easy way back to it.
-      setStreamError(null);
+    if (outcome.kind === "saved") return; // Component is about to remount, with a fresh profile snapshot - the banner is already gone.
+    if (outcome.kind === "nothing_to_save") {
+      // The AI reviewed the change and found nothing that needed adjusting -
+      // re-baseline the stored snapshot so this same drift doesn't keep
+      // prompting, without touching the locked targets themselves.
       setMessages((previous) => [
         ...previous,
         {
           role: "assistant",
           content: tr(
             locale,
-            "I reviewed this profile change against your current targets - no adjustment is needed, they're still accurate as-is. If that doesn't sound right, you can try \"Recalculate now\" again or describe the concern here.",
-            "בדקתי את שינוי הפרופיל הזה מול היעדים הנוכחיים שלך - אין צורך בעדכון, הם עדיין מדויקים כפי שהם. אם זה לא נשמע נכון, אפשר לנסות שוב \"לחישוב מחדש\" או לתאר כאן את החשש.",
+            "I reviewed this profile change against your current targets - no adjustment is needed, they're still accurate as-is.",
+            "בדקתי את שינוי הפרופיל הזה מול היעדים הנוכחיים שלך - אין צורך בעדכון, הם עדיין מדויקים כפי שהם.",
           ),
         },
       ]);
-    } else {
-      setRetryAction(() => () => handleRecalculateFromProfileChange());
+      await handleSkipProfileChange();
+      return;
     }
+    if (outcome.kind === "generation_failed") {
+      if (outcome.semanticErrorMessage) {
+        // The AI reviewed the profile change against the current targets and
+        // concluded no numeric/text adjustment is warranted. Unlike above,
+        // this does NOT dismiss the profile-change banner - a "no change
+        // needed" conclusion from a single AI pass isn't reliable enough to
+        // treat as final (a genuinely significant change, e.g. a newly added
+        // medical condition, has been seen going through as a false negative
+        // here), so the banner stays up and "Recalculate now" stays
+        // available to try again, rather than silently losing the pending
+        // change with no easy way back to it.
+        setMessages((previous) => [
+          ...previous,
+          {
+            role: "assistant",
+            content: tr(
+              locale,
+              "I reviewed this profile change against your current targets - no adjustment is needed, they're still accurate as-is. If that doesn't sound right, you can try \"Recalculate now\" again or describe the concern here.",
+              "בדקתי את שינוי הפרופיל הזה מול היעדים הנוכחיים שלך - אין צורך בעדכון, הם עדיין מדויקים כפי שהם. אם זה לא נשמע נכון, אפשר לנסות שוב \"לחישוב מחדש\" או לתאר כאן את החשש.",
+            ),
+          },
+        ]);
+      } else {
+        setRetryAction(() => () => handleRecalculateFromProfileChange());
+      }
+    }
+    // "save_failed": attemptSaveTargets already surfaced its own error and
+    // a save-only retry.
   }
 
   async function handleSkipProfileChange() {
@@ -496,26 +653,281 @@ export function TargetsChatWorkspace({
     router.refresh();
   }
 
-  const displayedPayload = pendingPreview?.payload ?? currentPayload;
-  const diffRows = pendingPreview ? computeTargetsDiff(currentPayload, pendingPreview.payload, locale) : [];
-  const isNoChanges = Boolean(pendingPreview) && diffRows.length === 0;
+  // Whether "New chat" has anything to actually lose - a fresh, never-
+  // typed-in panel just clears silently instead of prompting over nothing.
+  const hasChatContent = messages.some((message) => message.role === "user") || inputValue.trim().length > 0;
+
+  function handleNewChatClick() {
+    if (hasChatContent) {
+      setCloseAfterClear(false);
+      setPendingClearConfirm(true);
+    } else {
+      confirmClearChat(false);
+    }
+  }
+
+  /** "Forget about it and close" - shares the exact same confirm dialog and
+   * clear logic as New chat (see confirmClearChat below); the only
+   * difference is closeAfterClear, which tells it to also minimize once
+   * it's done. Mirrors the same control the Daily Report chat has. */
+  function handleDiscardAndCloseClick() {
+    if (hasChatContent) {
+      setCloseAfterClear(true);
+      setPendingClearConfirm(true);
+    } else {
+      confirmClearChat(true);
+    }
+  }
+
+  /** Resets every piece of this panel's own state back to a fresh start -
+   * in place, not via a remount (a remount would also reset `isOpen`,
+   * silently closing the mobile sheet right when the user asked to keep
+   * chatting). closeAfterClear additionally minimizes the sheet once
+   * cleared, for the discard-and-close case - defaults to whatever
+   * closeAfterClear was last set to (by whichever button opened the
+   * confirm dialog), but takes an explicit override too, for the two
+   * "nothing to lose, skip the dialog" shortcuts above, which call this
+   * directly before any state update from setCloseAfterClear would
+   * actually be visible yet. */
+  function confirmClearChat(shouldCloseAfter: boolean = closeAfterClear) {
+    setPendingClearConfirm(false);
+    abortRef.current?.abort();
+    setIsStreaming(false);
+    setMessages(buildInitialMessages());
+    setInputValue("");
+    setStreamError(null);
+    setRetryAction(null);
+    setDecision(null);
+    hasDoneInitialScrollRef.current = false;
+    isPinnedToBottomRef.current = true;
+    if (shouldCloseAfter) {
+      setIsOpen(false);
+    }
+  }
+
+  const hasThreadContent = messages.length > 0 || isStreaming;
+
+  // Reserved gap between the open sheet's bottom edge and the true viewport
+  // bottom - unlike the Daily Report chat, there's no floating action
+  // button competing for that corner here once the sheet is open (Lock In
+  // lives inside the thread itself, not as a separate floating control), so
+  // this only needs to clear the safe-area inset, not a whole button row.
+  const sheetHeightPx = visualViewportHeight !== null ? Math.round(visualViewportHeight * 0.82) : null;
+  const sheetTopPx =
+    visualViewportHeight !== null && sheetHeightPx !== null ? Math.round(visualViewportHeight - sheetHeightPx) : null;
+
+  // Shared between the desktop inline card and the mobile portaled sheet -
+  // same header/thread/composer JSX either way, the sm: classes sprinkled
+  // through it already resolve correctly in both render modes since
+  // whichever mode is active only ever renders at a viewport where those
+  // classes would resolve the same way CSS breakpoints already made them
+  // resolve.
+  const chatBodyContent = (
+    <>
+      <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-2.5 dark:border-slate-800 sm:hidden">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-teal-700 text-white dark:bg-teal-600">
+            <ChatBubbleBadgeIcon className="h-3.5 w-3.5" />
+          </span>
+          <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Chat about your targets", "צ'אט על היעדים שלך")}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-3.5">
+          <button
+            type="button"
+            onClick={handleNewChatClick}
+            aria-label={tr(locale, "Start a new chat", "התחלת צ'אט חדש")}
+            title={tr(locale, "Start a new chat", "התחלת צ'אט חדש")}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-teal-700 hover:bg-teal-50 dark:text-teal-400 dark:hover:bg-teal-950/40"
+          >
+            <NewChatIcon className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={handleDiscardAndCloseClick}
+            aria-label={tr(locale, "Discard and close", "התעלמות וסגירה")}
+            title={tr(locale, "Discard and close", "התעלמות וסגירה")}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/40"
+          >
+            <TrashIcon className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsOpen(false)}
+            aria-label={tr(locale, "Minimize chat", "מזעור הצ'אט")}
+            title={tr(locale, "Minimize chat", "מזעור הצ'אט")}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+          >
+            <MinimizeIcon className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      <div className="hidden items-center justify-end border-b border-slate-200 px-3 py-1.5 dark:border-slate-800 sm:flex">
+        <button
+          type="button"
+          onClick={handleNewChatClick}
+          aria-label={tr(locale, "Start a new chat", "התחלת צ'אט חדש")}
+          title={tr(locale, "Start a new chat", "התחלת צ'אט חדש")}
+          className="flex items-center gap-1 rounded-full border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+        >
+          <NewChatIcon className="h-3.5 w-3.5" />
+          {tr(locale, "New chat", "צ'אט חדש")}
+        </button>
+      </div>
+
+      <div className={`flex min-h-0 flex-1 flex-col sm:flex-none ${hasThreadContent ? "sm:h-[420px]" : ""}`}>
+        <div ref={threadRef} onScroll={handleThreadScroll} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+          {messages.length === 0 ? (
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              {/* Singular, gender-correct Hebrew - see lib/ai/persona.ts
+                  for the same addressing convention used elsewhere. */}
+              {trGendered(
+                locale,
+                userGender,
+                "Ask a question or describe a change, e.g. \"reduce my workout days to 2 times a week\". Chatting won't change anything by itself - you'll always get to choose.",
+                "שאל שאלה או תאר שינוי, לדוגמה \"להפחית את ימי האימון שלי לפעמיים בשבוע\". שיחה בלבד לא תשנה דבר - תמיד תוכל לבחור בעצמך.",
+                "שאלי שאלה או תארי שינוי, לדוגמה \"להפחית את ימי האימון שלי לפעמיים בשבוע\". שיחה בלבד לא תשנה דבר - תמיד תוכלי לבחור בעצמך.",
+              )}
+            </p>
+          ) : null}
+          {messages.map((message, index) => (
+            <div key={index} className={`flex flex-col ${message.role === "user" ? "items-end" : "items-start"}`}>
+              <div
+                className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm ${
+                  message.role === "user" ? "bg-teal-700 text-white dark:bg-teal-600" : "bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200"
+                }`}
+              >
+                {message.content || (isStreaming && index === messages.length - 1 ? "…" : "")}
+              </div>
+            </div>
+          ))}
+          {isGeneratingTargets ? (
+            <div className="flex justify-start">
+              <div className="flex items-center gap-2 rounded-2xl bg-slate-100 px-3 py-2 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                <Spinner className="h-3.5 w-3.5 animate-spin" />
+                {isSavingTargets
+                  ? tr(locale, "Saving your targets...", "שומר את היעדים שלך...")
+                  : tr(
+                      locale,
+                      GENERATING_TARGETS_STATUS_MESSAGES[generatingStatusIndex].en,
+                      GENERATING_TARGETS_STATUS_MESSAGES[generatingStatusIndex].he,
+                    )}
+              </div>
+            </div>
+          ) : null}
+
+          {decision && decision.status === "pending" && decision.actionable ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-teal-200 bg-teal-50 p-3 dark:border-teal-800 dark:bg-teal-950/30">
+              <p className="text-sm text-teal-900 dark:text-teal-300">
+                {tr(locale, "Apply the change from your last message?", "להחיל את השינוי מההודעה האחרונה שלך?")}
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleUpdateTargetsDecision}
+                  disabled={isStreaming}
+                  className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-70 dark:bg-teal-600 dark:hover:bg-teal-500"
+                >
+                  {tr(locale, "Update Targets", "עדכון היעדים")}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleIgnoreDecision}
+                  disabled={isStreaming}
+                  className="rounded-lg border border-teal-300 bg-white px-3 py-1.5 text-sm font-semibold text-teal-700 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-teal-800 dark:bg-slate-900 dark:text-teal-400 dark:hover:bg-teal-950/40"
+                >
+                  {tr(locale, "Ignore", "התעלמות")}
+                </button>
+              </div>
+            </div>
+          ) : decision && decision.status === "updated" ? (
+            <p className="text-xs text-slate-400 dark:text-slate-500">{tr(locale, "Targets updated from your last request.", "היעדים עודכנו בהתאם לבקשתך האחרונה.")}</p>
+          ) : decision && decision.status === "ignored" ? (
+            <p className="text-xs text-slate-400 dark:text-slate-500">{tr(locale, "Suggestion ignored.", "ההצעה נדחתה.")}</p>
+          ) : null}
+
+          {messages.length > 0 && !(decision?.status === "pending" && decision.actionable) ? (
+            <div className="flex flex-col items-start gap-1.5">
+              <button
+                type="button"
+                onClick={handleManualUpdateRequest}
+                disabled={isStreaming}
+                className="rounded-lg border border-teal-300 bg-teal-50 px-3 py-1.5 text-sm font-semibold text-teal-800 hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-70 dark:border-teal-800 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-950/50"
+              >
+                {trGendered(locale, userGender, "Try updating targets from this conversation", "נסה לעדכן את היעדים לפי השיחה", "נסי לעדכן את היעדים לפי השיחה")}
+              </button>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {tr(
+                  locale,
+                  "This re-checks your whole conversation above - if it actually changes anything, it's saved automatically and you'll be taken back to Overview.",
+                  "פעולה זו בודקת מחדש את כל השיחה למעלה - אם יש שינוי בפועל, הוא יישמר אוטומטית ותועברו חזרה למסך הסקירה הכללית.",
+                )}
+              </p>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      {streamError ? (
+        <div className="flex items-center justify-between gap-2 border-t border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-400">
+          <span>{streamError}</span>
+          {retryAction ? (
+            <button
+              type="button"
+              onClick={() => retryAction()}
+              className="shrink-0 rounded-lg border border-rose-300 bg-white px-2 py-1 font-semibold text-rose-700 hover:bg-rose-100 dark:border-rose-800 dark:bg-slate-900 dark:text-rose-400 dark:hover:bg-rose-950/40"
+            >
+              {tr(locale, "Retry", "ניסיון חוזר")}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      <form
+        className="flex items-end gap-2 border-t border-slate-200 p-3 dark:border-slate-800"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void sendMessage(inputValue);
+        }}
+      >
+        <textarea
+          value={inputValue}
+          onChange={(event) => setInputValue(event.target.value)}
+          rows={2}
+          maxLength={500}
+          // readOnly, not disabled: disabling an element that currently
+          // has focus (which this does, right after the user clicks Send
+          // with the mouse - ChatSendButton's onMouseDown keeps focus on
+          // this textarea rather than moving it to the button) forces
+          // the browser to blur it, and with nothing else to take focus,
+          // the browser resets scroll to the top of the page - happening
+          // on every single message. readOnly blocks editing during the
+          // request without touching focus, so scroll position stays put.
+          readOnly={isStreaming}
+          placeholder={trGendered(locale, userGender, "Type a message...", "כתוב הודעה...", "כתבי הודעה...")}
+          className="flex-1 resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 disabled:opacity-70 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+        />
+        <ChatSendButton locale={locale} disabled={isStreaming || !inputValue.trim()} />
+      </form>
+    </>
+  );
 
   return (
     <div className="space-y-4">
       {bmiWarning ? (
-        <div className="rounded-xl border border-rose-300 bg-rose-50 p-4">
-          <p className="text-sm font-semibold text-rose-900">
+        <div className="rounded-xl border border-rose-300 bg-rose-50 p-4 dark:border-rose-800 dark:bg-rose-950/30">
+          <p className="text-sm font-semibold text-rose-900 dark:text-rose-400">
             {tr(locale, "Your new weight is outside the healthy BMI range", "המשקל החדש שלך מחוץ לטווח ה-BMI הבריא")}
           </p>
-          <p className="mt-2 text-sm text-rose-800">{bmiWarning}</p>
+          <p className="mt-2 text-sm text-rose-800 dark:text-rose-400">{bmiWarning}</p>
         </div>
       ) : null}
       {profileChanges?.length ? (
-        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4">
-          <p className="text-sm font-semibold text-amber-900">
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/30">
+          <p className="text-sm font-semibold text-amber-900 dark:text-amber-400">
             {tr(locale, "Your profile has changed since these targets were set", "הפרופיל שלך השתנה מאז נקבעו היעדים הללו")}
           </p>
-          <ul className="mt-2 space-y-1 text-sm text-amber-800">
+          <ul className="mt-2 space-y-1 text-sm text-amber-800 dark:text-amber-400">
             {profileChanges.map((row) => (
               <li key={row.labelEn}>
                 <span className="font-medium">{tr(locale, row.labelEn, row.labelHe)}:</span> {row.before} → {row.after}
@@ -527,7 +939,7 @@ export function TargetsChatWorkspace({
               type="button"
               onClick={handleRecalculateFromProfileChange}
               disabled={isStreaming || isDismissingProfileChange}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-800"
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-800 dark:bg-amber-600 dark:hover:bg-amber-500"
             >
               {isGeneratingTargets ? <Spinner className="h-4 w-4 animate-spin" /> : null}
               {isGeneratingTargets
@@ -538,7 +950,7 @@ export function TargetsChatWorkspace({
               type="button"
               onClick={handleSkipProfileChange}
               disabled={isStreaming || isDismissingProfileChange}
-              className="inline-flex items-center justify-center rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-800 disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-100"
+              className="inline-flex items-center justify-center rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-800 disabled:cursor-not-allowed disabled:opacity-70 hover:bg-amber-100 dark:border-amber-800 dark:bg-slate-900 dark:text-amber-400 dark:hover:bg-amber-950/40"
             >
               {isDismissingProfileChange ? tr(locale, "Skipping...", "מדלג...") : tr(locale, "Skip", "דילוג")}
             </button>
@@ -546,210 +958,100 @@ export function TargetsChatWorkspace({
         </div>
       ) : null}
 
-      <div ref={previewPanelRef} className={isInputFocused ? "hidden space-y-4 md:block" : "space-y-4"}>
-        {isGeneratingTargets ? (
-          <div className="flex items-center gap-2 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800">
-            <Spinner className="h-4 w-4 shrink-0 animate-spin text-teal-700" />
-            <span>{tr(locale, "Updating your targets based on the conversation...", "מעדכן את היעדים שלך בהתאם לשיחה...")}</span>
-          </div>
-        ) : null}
+      <TargetsSectionTabs
+        payload={currentPayload}
+        locale={locale}
+        maintenanceCalories={maintenanceCalories}
+        firstName={firstName}
+        history={history}
+        overview={overview}
+        range={range}
+      />
 
-        {pendingPreview ? (
-          <div className="space-y-3 rounded-xl border border-teal-200 bg-teal-50/40 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-teal-900">{tr(locale, "Preview", "תצוגה מקדימה")}</p>
-              <span className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">
-                {pendingPreview.source === "ai" ? "AI" : tr(locale, "Heuristic fallback", "גיבוי יוריסטי")}
-              </span>
-            </div>
-
-            {diffRows.length ? (
-              <TargetsDiffTable rows={diffRows} locale={locale} />
-            ) : (
-              <p className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
-                {tr(
-                  locale,
-                  "This recalculation didn't change anything measurable in your targets — nothing new to lock in.",
-                  "החישוב מחדש לא שינה דבר מדיד ביעדים שלך — אין מה לנעול מחדש.",
-                )}
-              </p>
-            )}
-
-            <form action={lockFormAction} className="space-y-2">
-              <input type="hidden" name="goal_text" value={messages.filter((m) => m.role === "user").at(-1)?.content ?? ""} />
-              <input type="hidden" name="source" value={pendingPreview.source} />
-              <input type="hidden" name="payload_json" value={JSON.stringify(pendingPreview.payload)} />
-
-              {lockState.error ? (
-                <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{lockState.error}</p>
-              ) : null}
-
-              <LockSubmitButton
-                locale={locale}
-                disabled={isNoChanges || isGeneratingTargets}
-                disabledReason={isGeneratingTargets ? "generating" : undefined}
-              />
-            </form>
-          </div>
-        ) : null}
-
-        <TargetsSectionTabs
-          payload={displayedPayload}
-          locale={locale}
-          maintenanceCalories={maintenanceCalories}
-          firstName={firstName}
-          history={history}
-        />
-      </div>
-
-      {isInputFocused ? (
-        <div className="sticky top-0 z-10 -mx-1 mb-1 flex items-center justify-between rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-xs font-medium text-slate-700 shadow-sm backdrop-blur md:hidden">
-          <span>{tr(locale, "Calories", "קלוריות")}: {displayedPayload.caloriesMin}–{displayedPayload.caloriesMax} kcal</span>
-          {isGeneratingTargets ? (
-            <span className="flex items-center gap-1 rounded-full border border-teal-300 bg-teal-50 px-2 py-0.5 text-teal-700">
-              <Spinner className="h-3 w-3 animate-spin" />
-              {tr(locale, "Updating...", "מעדכן...")}
-            </span>
-          ) : pendingPreview ? (
-            <span className="rounded-full border border-teal-300 bg-teal-50 px-2 py-0.5 text-teal-700">{tr(locale, "Preview ready", "תצוגה מקדימה מוכנה")}</span>
-          ) : null}
-        </div>
+      {/* Desktop: an always-visible inline card, same as the Daily Report
+          chat's own desktop treatment. */}
+      {isDesktopViewport ? (
+        <div className="flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">{chatBodyContent}</div>
       ) : null}
 
-      <div className="flex flex-col">
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{tr(locale, "Chat", "צ'אט")}</h3>
-        <div className="mt-2 flex h-[420px] flex-col rounded-xl border border-slate-200 bg-white">
-          <div className="flex-1 space-y-3 overflow-y-auto p-3">
-            {messages.length === 0 ? (
-              <p className="text-sm text-slate-500">
-                {/* Singular, gender-correct Hebrew - see lib/ai/persona.ts
-                    for the same addressing convention used elsewhere. */}
-                {trGendered(
-                  locale,
-                  userGender,
-                  "Ask a question or describe a change, e.g. \"reduce my workout days to 2 times a week\". Chatting won't change anything by itself - you'll always get to choose.",
-                  "שאל שאלה או תאר שינוי, לדוגמה \"להפחית את ימי האימון שלי לפעמיים בשבוע\". שיחה בלבד לא תשנה דבר - תמיד תוכל לבחור בעצמך.",
-                  "שאלי שאלה או תארי שינוי, לדוגמה \"להפחית את ימי האימון שלי לפעמיים בשבוע\". שיחה בלבד לא תשנה דבר - תמיד תוכלי לבחור בעצמך.",
-                )}
-              </p>
-            ) : null}
-            {messages.map((message, index) => (
-              <div key={index} className={`flex flex-col ${message.role === "user" ? "items-end" : "items-start"}`}>
-                <div
-                  className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm ${
-                    message.role === "user" ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-800"
-                  }`}
-                >
-                  {message.content || (isStreaming && index === messages.length - 1 ? "…" : "")}
-                </div>
-              </div>
-            ))}
-            {isGeneratingTargets ? (
-              <div className="flex justify-start">
-                <div className="flex items-center gap-2 rounded-2xl bg-slate-100 px-3 py-2 text-xs text-slate-600">
-                  <Spinner className="h-3.5 w-3.5 animate-spin" />
-                  {tr(locale, "Updating your targets...", "מעדכן את היעדים שלך...")}
-                </div>
-              </div>
-            ) : null}
-            <div ref={messagesEndRef} />
-          </div>
-
-          {streamError ? (
-            <div className="flex items-center justify-between gap-2 border-t border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-              <span>{streamError}</span>
-              {retryAction ? (
+      {/* Mobile: the floating trigger + backdrop + sheet, portaled straight
+          to document.body - same reasoning as the Daily Report chat's own
+          mobile portal (see that file's comment): position:fixed inside a
+          deeply nested tree can silently break on real devices, and
+          portaling sidesteps the ancestry question entirely. */}
+      {!isDesktopViewport
+        ? createPortal(
+            <div dir={directionForLocale(locale)}>
+              {!isOpen ? (
                 <button
                   type="button"
-                  onClick={() => retryAction()}
-                  className="shrink-0 rounded-lg border border-rose-300 bg-white px-2 py-1 font-semibold text-rose-700 hover:bg-rose-100"
+                  onClick={() => setIsOpen(true)}
+                  aria-label={tr(locale, "Open chat", "פתיחת הצ'אט")}
+                  className="fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom)+0.75rem)] end-4 z-50 flex h-16 w-16 items-center justify-center rounded-full bg-teal-700 text-white shadow-lg hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
                 >
-                  {tr(locale, "Retry", "ניסיון חוזר")}
+                  <ChatBubbleBadgeIcon className="h-7 w-7" />
                 </button>
               ) : null}
-            </div>
-          ) : null}
 
-          <form
-            className="flex items-end gap-2 border-t border-slate-200 p-3"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void sendMessage(inputValue);
-            }}
-          >
-            <textarea
-              value={inputValue}
-              onChange={(event) => setInputValue(event.target.value)}
-              onFocus={() => setIsInputFocused(true)}
-              onBlur={() => setIsInputFocused(false)}
-              rows={2}
-              maxLength={500}
-              // readOnly, not disabled: disabling an element that currently
-              // has focus (which this does, right after the user clicks Send
-              // with the mouse - ChatSendButton's onMouseDown keeps focus on
-              // this textarea rather than moving it to the button) forces
-              // the browser to blur it, and with nothing else to take focus,
-              // the browser resets scroll to the top of the page - happening
-              // on every single message. readOnly blocks editing during the
-              // request without touching focus, so scroll position stays put.
-              readOnly={isStreaming}
-              placeholder={trGendered(locale, userGender, "Type a message...", "כתוב הודעה...", "כתבי הודעה...")}
-              className="flex-1 resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 disabled:opacity-70"
-            />
-            <ChatSendButton locale={locale} disabled={isStreaming || !inputValue.trim()} />
-          </form>
-        </div>
+              {isOpen ? (
+                <div role="presentation" onClick={() => setIsOpen(false)} className="fixed inset-0 z-40 bg-slate-900/40" />
+              ) : null}
 
-        {decision && decision.status === "pending" && decision.actionable ? (
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-teal-200 bg-teal-50 p-3">
-            <p className="text-sm text-teal-900">
-              {tr(locale, "Apply the change from your last message?", "להחיל את השינוי מההודעה האחרונה שלך?")}
-            </p>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={handleUpdateTargetsDecision}
-                disabled={isStreaming}
-                className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-70"
+              <div
+                style={sheetTopPx !== null && sheetHeightPx !== null ? { top: `${sheetTopPx}px`, height: `${sheetHeightPx}px` } : undefined}
+                className={`${isOpen ? "flex" : "hidden"} fixed inset-x-0 z-40 ${
+                  sheetHeightPx === null ? "bottom-[calc(9rem+env(safe-area-inset-bottom))] h-[70svh]" : ""
+                } flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl dark:bg-slate-900`}
               >
-                {tr(locale, "Update Targets", "עדכון היעדים")}
-              </button>
-              <button
-                type="button"
-                onClick={handleIgnoreDecision}
-                disabled={isStreaming}
-                className="rounded-lg border border-teal-300 bg-white px-3 py-1.5 text-sm font-semibold text-teal-700 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                {tr(locale, "Ignore", "התעלמות")}
-              </button>
-            </div>
-          </div>
-        ) : decision && decision.status === "updated" ? (
-          <p className="mt-3 text-xs text-slate-400">{tr(locale, "Targets updated from your last request.", "היעדים עודכנו בהתאם לבקשתך האחרונה.")}</p>
-        ) : decision && decision.status === "ignored" ? (
-          <p className="mt-3 text-xs text-slate-400">{tr(locale, "Suggestion ignored.", "ההצעה נדחתה.")}</p>
-        ) : null}
+                {chatBodyContent}
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
 
-        {messages.length > 0 && !pendingPreview && !(decision?.status === "pending" && decision.actionable) ? (
-          <div className="mt-3 flex flex-col items-start gap-1.5">
-            <button
-              type="button"
-              onClick={handleManualUpdateRequest}
-              disabled={isStreaming}
-              className="rounded-lg border border-teal-300 bg-teal-50 px-3 py-1.5 text-sm font-semibold text-teal-800 hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              {trGendered(locale, userGender, "Try updating targets from this conversation", "נסה לעדכן את היעדים לפי השיחה", "נסי לעדכן את היעדים לפי השיחה")}
-            </button>
-            <p className="text-xs text-slate-500">
-              {tr(
-                locale,
-                "This re-checks your whole conversation above and shows any resulting change in the Preview panel here - it won't apply anything until you review and lock it in.",
-                "פעולה זו בודקת מחדש את כל השיחה למעלה ומציגה כל שינוי שנובע ממנה בחלונית \"תצוגה מקדימה\" כאן - שום דבר לא ייושם עד שתסקרו ותנעלו אותו.",
-              )}
-            </p>
-          </div>
-        ) : null}
-      </div>
+      {pendingClearConfirm
+        ? createPortal(
+            <div dir={directionForLocale(locale)} className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/40 p-4">
+              <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900">
+                <div className="px-5 py-4">
+                  <p className="text-sm text-slate-700 dark:text-slate-300">
+                    {closeAfterClear
+                      ? tr(
+                          locale,
+                          "Discard this conversation and close the chat? Anything not yet saved will be lost.",
+                          "להתעלם מהשיחה הזו ולסגור את הצ'אט? כל מה שלא נשמר עדיין יאבד.",
+                        )
+                      : tr(
+                          locale,
+                          "Start a new chat? This clears the current conversation - anything not yet saved will be lost.",
+                          "להתחיל צ'אט חדש? פעולה זו מנקה את השיחה הנוכחית - כל מה שלא נשמר עדיין יאבד.",
+                        )}
+                  </p>
+                </div>
+                <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3 dark:border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setPendingClearConfirm(false)}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                  >
+                    {tr(locale, "Cancel", "ביטול")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => confirmClearChat()}
+                    className="rounded-lg bg-rose-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-rose-800 dark:bg-rose-600 dark:hover:bg-rose-500"
+                  >
+                    {closeAfterClear
+                      ? tr(locale, "Discard and close", "התעלמות וסגירה")
+                      : tr(locale, "Start new chat", "התחלת צ'אט חדש")}
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

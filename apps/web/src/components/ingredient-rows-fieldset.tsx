@@ -104,21 +104,21 @@ export function IngredientRowsFieldset({
           <div
             key={index}
             data-ingredient-row
-            className="grid items-end gap-2 rounded-lg border border-slate-200 bg-white p-2 sm:grid-cols-[2fr_1fr_1fr_1fr_auto]"
+            className="grid items-end gap-2 rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-800 dark:bg-slate-900 sm:grid-cols-[2fr_1fr_1fr_1fr_auto]"
           >
             <label className="space-y-1">
-              <span className="text-xs font-medium text-slate-700">{tr(locale, "Ingredient name", "שם המרכיב")}</span>
+              <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Ingredient name", "שם המרכיב")}</span>
               <input
                 name="ingredient_name"
                 defaultValue={row.name}
                 required
                 placeholder={tr(locale, "e.g. eggs", "לדוגמה: ביצים")}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-xs font-medium text-slate-700">{tr(locale, "Type", "סוג")}</span>
-              <select name="ingredient_kind" defaultValue={row.kind} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+              <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Type", "סוג")}</span>
+              <select name="ingredient_kind" defaultValue={row.kind} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700">
                 {KIND_OPTIONS.map((kind) => (
                   <option key={kind} value={kind}>
                     {formatDefaultItemKind(kind, locale)}
@@ -127,18 +127,18 @@ export function IngredientRowsFieldset({
               </select>
             </label>
             <label className="space-y-1">
-              <span className="text-xs font-medium text-slate-700">{tr(locale, "Quantity", "כמות")}</span>
+              <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Quantity", "כמות")}</span>
               <input
                 name="ingredient_quantity"
                 type="number"
                 step="1"
                 defaultValue={row.quantity}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700"
               />
             </label>
             <label className="space-y-1">
-              <span className="text-xs font-medium text-slate-700">{tr(locale, "Unit", "יחידה")}</span>
-              <select name="ingredient_unit" defaultValue={row.unit} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+              <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Unit", "יחידה")}</span>
+              <select name="ingredient_unit" defaultValue={row.unit} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700">
                 {UNIT_OPTIONS.map((unit) => (
                   <option key={unit.value} value={unit.value}>
                     {formatDefaultUnit(unit.labelKey, locale)}
@@ -149,7 +149,7 @@ export function IngredientRowsFieldset({
             <button
               type="button"
               data-remove-ingredient
-              className="hidden rounded-lg border border-rose-300 px-2 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50"
+              className="hidden rounded-lg border border-rose-300 px-2 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-700 dark:text-rose-400 dark:hover:bg-rose-950/40"
             >
               {tr(locale, "Remove", "הסרה")}
             </button>
@@ -159,7 +159,7 @@ export function IngredientRowsFieldset({
       <button
         type="button"
         ref={addButtonRef}
-        className="mt-2 rounded-lg border border-teal-300 px-3 py-1.5 text-xs font-semibold text-teal-700 hover:bg-teal-50"
+        className="mt-2 rounded-lg border border-teal-300 px-3 py-1.5 text-xs font-semibold text-teal-700 hover:bg-teal-50 dark:border-teal-700 dark:text-teal-400 dark:hover:bg-teal-950/40"
       >
         {"+ "}
         {tr(locale, "Add ingredient", "הוספת מרכיב")}

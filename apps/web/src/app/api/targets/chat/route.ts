@@ -176,22 +176,32 @@ export async function POST(request: NextRequest) {
           const conversationText = buildConversationText(chatHistory);
           const goalText = `Based on the following conversation with the user, update their daily targets accordingly:\n\n${conversationText}`;
 
-          safeEnqueue(controller, { type: "status", status: "generating_targets" });
+          let lastStatusEmitAt = Date.now();
+          const emitGeneratingStatus = () => {
+            safeEnqueue(controller, { type: "status", status: "generating_targets" });
+            lastStatusEmitAt = Date.now();
+          };
+          emitGeneratingStatus();
 
           let targetsPayload;
           let source: "ai" | "heuristic" = "heuristic";
           let warning: string | undefined;
 
           // The structured-JSON generation this calls can legitimately take
-          // well past the client's inactivity timeout (large schema, a
-          // non-streaming call to a large model) - without something
-          // arriving in the meantime, the client gives up and aborts before
-          // the real result is ready. A periodic heartbeat resets that timer
-          // (any received chunk does, per targets-chat-workspace.tsx) so a
-          // slow-but-successful call still reaches the client.
+          // well past the client's inactivity timeout (large schema), so it
+          // must never go quiet for 20s+ - but now that generateTargetsPayload
+          // streams from the provider and reports real progress via
+          // onProgress below, most of these events are genuine progress
+          // rather than a fixed timer. This interval is only a SAFETY NET
+          // for the gap before the first token arrives (or for a non-
+          // Anthropic provider, where onProgress never fires) - it emits
+          // only when nothing real has been sent recently, so it never
+          // fights with real progress events.
           const heartbeat = setInterval(() => {
-            safeEnqueue(controller, { type: "status", status: "generating_targets" });
-          }, 8000);
+            if (Date.now() - lastStatusEmitAt >= 8000) {
+              emitGeneratingStatus();
+            }
+          }, 2000);
 
           try {
             const result = await generateTargetsPayload({
@@ -203,6 +213,7 @@ export async function POST(request: NextRequest) {
               currentTargets,
               supabase,
               userId: user.id,
+              onProgress: emitGeneratingStatus,
             });
 
             if (result.safetyRejectionMessage || result.notActionableMessage) {

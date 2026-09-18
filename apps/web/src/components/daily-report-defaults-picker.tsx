@@ -19,13 +19,21 @@ export type DailyReportDefaultItem = {
   is_active: boolean;
 };
 
-export type SelectedSavedListItem = { name: string; quantity: number; unit: string };
+export type SelectedSavedListItem = {
+  name: string;
+  quantity: number;
+  unit: string;
+  /** Carried straight from the matching DailyReportDefaultItem - lets the
+   * caller echo what's actually inside a bundled item (e.g. "My Breakfast")
+   * rather than just its name, without re-deriving anything. */
+  ingredients?: Array<{ name: string; kind: string; quantity: number; unit: string }> | null;
+};
 
 function kindBadgeClass(kind: DailyReportDefaultItem["kind"]): string {
-  if (kind === "hydration") return "border-sky-200 bg-sky-50 text-sky-700";
-  if (kind === "exercise") return "border-violet-200 bg-violet-50 text-violet-700";
-  if (kind === "custom") return "border-slate-300 bg-slate-100 text-slate-700";
-  return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (kind === "hydration") return "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-800 dark:bg-sky-950/30 dark:text-sky-400";
+  if (kind === "exercise") return "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-800 dark:bg-violet-950/30 dark:text-violet-400";
+  if (kind === "custom") return "border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300";
+  return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-400";
 }
 
 /**
@@ -119,7 +127,9 @@ export function DailyReportDefaultsPicker({
       const labelEl = checkbox.closest<HTMLElement>("label");
       labelEl?.classList.toggle("ring-2", checkbox.checked);
       labelEl?.classList.toggle("ring-teal-100", checkbox.checked);
+      labelEl?.classList.toggle("dark:ring-teal-900", checkbox.checked);
       labelEl?.classList.toggle("border-teal-300", checkbox.checked);
+      labelEl?.classList.toggle("dark:border-teal-700", checkbox.checked);
       const row = checkbox.closest<HTMLElement>("[data-default-name]");
       const quantityInput = row?.querySelector<HTMLInputElement>('input[type="number"]');
       if (quantityInput) quantityInput.disabled = !checkbox.checked;
@@ -128,7 +138,12 @@ export function DailyReportDefaultsPicker({
         const match = defaultItems.find((item) => item.id === checkbox.value);
         if (match) {
           const quantity = quantityInput ? Number(quantityInput.value) || match.default_quantity : match.default_quantity;
-          selected.push({ name: formatDefaultItemName(match.name, locale), quantity, unit: match.default_unit });
+          selected.push({
+            name: formatDefaultItemName(match.name, locale),
+            quantity,
+            unit: match.default_unit,
+            ingredients: match.ingredients,
+          });
         }
       }
     });
@@ -147,7 +162,9 @@ export function DailyReportDefaultsPicker({
     checkbox.checked = !checkbox.checked;
     checkbox.dispatchEvent(new Event("change", { bubbles: true }));
     chipEl.classList.toggle("border-teal-700", checkbox.checked);
+    chipEl.classList.toggle("dark:border-teal-600", checkbox.checked);
     chipEl.classList.toggle("bg-teal-700", checkbox.checked);
+    chipEl.classList.toggle("dark:bg-teal-600", checkbox.checked);
     chipEl.classList.toggle("text-white", checkbox.checked);
   }, []);
 
@@ -254,21 +271,21 @@ export function DailyReportDefaultsPicker({
   const pickerBody = (
     <>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
+        <span className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
           <span ref={selectedCountRef}>0</span> {tr(locale, "selected", "נבחרו")}
         </span>
         <div className="flex items-center gap-2">
           <button
             type="button"
             ref={selectAllButtonRef}
-            className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+            className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             {tr(locale, "Select all", "בחירת הכל")}
           </button>
           <button
             type="button"
             ref={clearButtonRef}
-            className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+            className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             {tr(locale, "Clear", "ניקוי")}
           </button>
@@ -281,24 +298,24 @@ export function DailyReportDefaultsPicker({
           type="text"
           defaultValue=""
           placeholder={tr(locale, "Search your saved list...", "חיפוש ברשימה השמורה שלך...")}
-          className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2"
+          className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 dark:border-slate-700 dark:bg-slate-900"
         />
       ) : null}
 
       <div ref={gridRef} className={`mt-2 space-y-2 overflow-y-auto ${portalPopover ? "max-h-[50vh]" : "max-h-64"}`}>
         {defaultItems.map((item) => (
           <div key={item.id} data-default-name={formatDefaultItemName(item.name, locale).toLowerCase()}>
-            <label className="block rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm transition">
+            <label className="block rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm transition dark:border-slate-800 dark:bg-slate-900">
               <div className="flex items-center justify-between gap-2">
                 <span className="flex items-start gap-2">
                   <input type="checkbox" name="selected_default_ids" form={formId} value={item.id} defaultChecked={false} className="mt-0.5" />
                   <span>
-                    <span className="block font-medium text-slate-800">{formatDefaultItemName(item.name, locale)}</span>
-                    <span className="mt-0.5 block text-xs text-slate-500">
+                    <span className="block font-medium text-slate-800 dark:text-slate-200">{formatDefaultItemName(item.name, locale)}</span>
+                    <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">
                       {tr(locale, "Usual amount", "כמות רגילה")}: {item.default_quantity} {formatDefaultUnit(item.default_unit, locale)}
                     </span>
                     {item.ingredients && item.ingredients.length > 1 ? (
-                      <span className="mt-0.5 block text-xs text-slate-400">
+                      <span className="mt-0.5 block text-xs text-slate-400 dark:text-slate-500">
                         {item.ingredients
                           .map((ingredient) => `${ingredient.quantity} ${formatDefaultUnit(ingredient.unit, locale)} ${formatDefaultItemName(ingredient.name, locale)}`)
                           .join(", ")}
@@ -311,7 +328,7 @@ export function DailyReportDefaultsPicker({
                 </span>
               </div>
               <div className="mt-2 flex items-center gap-2">
-                <span className="text-xs text-slate-600">{tr(locale, "Quantity", "כמות")}</span>
+                <span className="text-xs text-slate-600 dark:text-slate-400">{tr(locale, "Quantity", "כמות")}</span>
                 <input
                   name={`quantity_default_${item.id}`}
                   form={formId}
@@ -320,7 +337,7 @@ export function DailyReportDefaultsPicker({
                   min="0"
                   defaultValue={item.default_quantity}
                   disabled
-                  className="w-24 rounded-md border border-slate-300 px-2 py-1 text-xs disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                  className="w-24 rounded-md border border-slate-300 px-2 py-1 text-xs disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:disabled:bg-slate-800 dark:disabled:text-slate-600"
                 />
               </div>
             </label>
@@ -331,7 +348,7 @@ export function DailyReportDefaultsPicker({
       <button
         type="button"
         ref={closeButtonRef}
-        className="mt-3 w-full rounded-lg bg-teal-700 px-3 py-2 text-sm font-semibold text-white hover:bg-teal-800"
+        className="mt-3 w-full rounded-lg bg-teal-700 px-3 py-2 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
       >
         {tr(locale, "Close", "סגירה")}
       </button>
@@ -347,7 +364,7 @@ export function DailyReportDefaultsPicker({
               key={item.id}
               type="button"
               onClick={(event) => toggleQuickItem(item.id, event.currentTarget)}
-              className="shrink-0 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              className="shrink-0 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
             >
               {formatDefaultItemName(item.name, locale)}
             </button>
@@ -358,7 +375,7 @@ export function DailyReportDefaultsPicker({
         <summary
           aria-label={tr(locale, "Add from your saved list", "הוספה מהרשימה השמורה")}
           title={tr(locale, "Add from your saved list", "הוספה מהרשימה השמורה")}
-          className="flex h-9 w-9 list-none items-center justify-center rounded-full border border-teal-300 text-teal-700 hover:bg-teal-50 [&::-webkit-details-marker]:hidden"
+          className="flex h-9 w-9 list-none items-center justify-center rounded-full border border-teal-300 text-teal-700 hover:bg-teal-50 dark:border-teal-700 dark:text-teal-400 dark:hover:bg-teal-950/40 [&::-webkit-details-marker]:hidden"
         >
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
             <line x1="8" y1="6" x2="21" y2="6" />
@@ -374,7 +391,7 @@ export function DailyReportDefaultsPicker({
           ? null
           : (
             <div
-              className={`absolute z-10 w-[min(22rem,85vw)] rounded-xl border border-slate-200 bg-white p-3 shadow-lg ${
+              className={`absolute z-10 w-[min(22rem,85vw)] rounded-xl border border-slate-200 bg-white p-3 shadow-lg dark:border-slate-800 dark:bg-slate-900 ${
                 dropDirection === "up" ? "bottom-full mb-2" : "top-full mt-2"
               }`}
             >
@@ -410,7 +427,7 @@ export function DailyReportDefaultsPicker({
             <div dir={directionForLocale(locale)}>
               {isOpen ? <div role="presentation" onClick={closeDetails} className="fixed inset-0 z-[60] bg-slate-900/40" /> : null}
               <div
-                className={`fixed inset-x-3 bottom-[calc(8rem+env(safe-area-inset-bottom))] z-[60] max-h-[70vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl ${
+                className={`fixed inset-x-3 bottom-[calc(8rem+env(safe-area-inset-bottom))] z-[60] max-h-[70vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl dark:border-slate-800 dark:bg-slate-900 ${
                   isOpen ? "" : "hidden"
                 }`}
               >

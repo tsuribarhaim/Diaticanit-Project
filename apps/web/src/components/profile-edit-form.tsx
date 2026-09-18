@@ -379,7 +379,7 @@ function SaveButton({ locale, canSubmit }: { locale: AppLocale; canSubmit: boole
     <button
       type="submit"
       disabled={pending || !canSubmit}
-      className="inline-flex w-full items-center justify-center rounded-xl bg-teal-700 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800"
+      className="inline-flex w-full items-center justify-center rounded-xl bg-teal-700 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
     >
       {pending ? tr(locale, "Saving changes...", "שומר שינויים...") : tr(locale, "Save changes", "שמירת שינויים")}
     </button>
@@ -817,7 +817,7 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
   const renderFieldError = (key: string) => {
     const message = errors[key];
     if (!message) return null;
-    return <p className="mt-1 text-xs text-rose-700">{message}</p>;
+    return <p className="mt-1 text-xs text-rose-700 dark:text-rose-400">{message}</p>;
   };
 
   const inputErrorClass = (key: string): string => {
@@ -857,21 +857,21 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
       <input type="hidden" name="alcohol_consumption_level" value={draft.alcohol_consumption_level} />
       <input type="hidden" name="smoking_packs_per_day" value={cigarettesPerDayToPacksString(draft.smoking_packs_per_day)} />
 
-      <section className="rounded-xl border border-slate-200 p-4">
-        <h2 className="text-base font-semibold text-slate-900">{tr(locale, "Step 1 - Identity & Vital Statistics", "שלב 1 - זהות ומדדים")}</h2>
+      <section className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
+        <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Step 1 - Identity & Vital Statistics", "שלב 1 - זהות ומדדים")}</h2>
         <div className="mt-3 grid gap-4 sm:grid-cols-2">
           <label className="block" data-field="first_name">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "First name", "שם פרטי")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "First name", "שם פרטי")}</span>
             <input type="text" name="first_name" required value={draft.first_name} onChange={(event) => updateDraft({ first_name: event.target.value })} className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("first_name")}`} />
             {renderFieldError("first_name")}
           </label>
           <label className="block" data-field="last_name">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Last name", "שם משפחה")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Last name", "שם משפחה")}</span>
             <input type="text" name="last_name" required value={draft.last_name} onChange={(event) => updateDraft({ last_name: event.target.value })} className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("last_name")}`} />
             {renderFieldError("last_name")}
           </label>
           <label className="block" data-field="date_of_birth">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Date of birth", "תאריך לידה")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Date of birth", "תאריך לידה")}</span>
             <LocalizedDateInput
               locale={locale}
               name="date_of_birth"
@@ -884,55 +884,55 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
             {renderFieldError("date_of_birth")}
           </label>
           <div className="block" data-field="biological_sex">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Biological sex", "מין ביולוגי")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Biological sex", "מין ביולוגי")}</span>
             <div className={`grid grid-cols-2 overflow-hidden rounded-xl border ${inputErrorClass("biological_sex")}`}>
-              <button type="button" onClick={() => updateDraft({ biological_sex: "male", pregnancy_lactation_status: "none" })} className={`px-3 py-2 text-sm ${draft.biological_sex === "male" ? "bg-teal-700 text-white" : "bg-white text-slate-700"}`}>{tr(locale, "Male", "זכר")}</button>
-              <button type="button" onClick={() => updateDraft({ biological_sex: "female" })} className={`px-3 py-2 text-sm ${draft.biological_sex === "female" ? "bg-teal-700 text-white" : "bg-white text-slate-700"}`}>{tr(locale, "Female", "נקבה")}</button>
+              <button type="button" onClick={() => updateDraft({ biological_sex: "male", pregnancy_lactation_status: "none" })} className={`px-3 py-2 text-sm ${draft.biological_sex === "male" ? "bg-teal-700 text-white" : "bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300"}`}>{tr(locale, "Male", "זכר")}</button>
+              <button type="button" onClick={() => updateDraft({ biological_sex: "female" })} className={`px-3 py-2 text-sm ${draft.biological_sex === "female" ? "bg-teal-700 text-white" : "bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300"}`}>{tr(locale, "Female", "נקבה")}</button>
             </div>
             {renderFieldError("biological_sex")}
           </div>
           <label className="block" data-field="height_cm">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Height (cm)", "גובה (ס\"מ)")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Height (cm)", "גובה (ס\"מ)")}</span>
             <input type="number" name="height_cm" required min={80} max={250} step="0.1" value={draft.height_cm} onChange={(event) => updateDraft({ height_cm: event.target.value })} className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("height_cm")}`} />
             {renderFieldError("height_cm")}
           </label>
           <label className="block" data-field="weight_kg">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Weight (kg)", "משקל (ק\"ג)")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Weight (kg)", "משקל (ק\"ג)")}</span>
             <input type="number" name="weight_kg" required min={20} max={400} step="0.1" value={draft.weight_kg} onChange={(event) => updateDraft({ weight_kg: event.target.value })} className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("weight_kg")}`} />
             {renderFieldError("weight_kg")}
           </label>
         </div>
-        <div className="mt-3 rounded-xl border border-teal-100 bg-teal-50 px-3 py-2 text-sm text-teal-900">
+        <div className="mt-3 rounded-xl border border-teal-100 bg-teal-50 px-3 py-2 text-sm text-teal-900 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-300">
           <p>{tr(locale, "Calculated age", "גיל מחושב")}: {age ?? tr(locale, "n/a", "לא זמין")}</p>
           <p>BMI: {bmi != null ? formatNumberForLocale(bmi, locale, { maximumFractionDigits: 2 }) : tr(locale, "n/a", "לא זמין")}</p>
         </div>
       </section>
 
-      <section className="rounded-xl border border-slate-200 p-4">
-        <h2 className="text-base font-semibold text-slate-900">{tr(locale, "Step 2 - Lifestyle & Activity", "שלב 2 - אורח חיים ופעילות")}</h2>
+      <section className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
+        <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Step 2 - Lifestyle & Activity", "שלב 2 - אורח חיים ופעילות")}</h2>
         <div className="mt-3 space-y-4">
           <label className="block" data-field="activity_level">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Activity level", "רמת פעילות")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Activity level", "רמת פעילות")}</span>
             <select name="activity_level" value={draft.activity_level} onChange={(event) => updateDraft({ activity_level: event.target.value as (typeof activityLevelOptions)[number] })} className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("activity_level")}`}>
               {activityLevelOptions.map((option) => <option key={option} value={option}>{formatActivityLevel(option, locale)}</option>)}
             </select>
             {renderFieldError("activity_level")}
           </label>
           <div data-field="exercise_modalities">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Exercise modality", "סוג אימון")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Exercise modality", "סוג אימון")}</span>
             <div className="flex flex-wrap gap-2">
               {exerciseModalityOptions.map((value) => {
                 const label = value === "resistance_hypertrophy" ? tr(locale, "Resistance / Hypertrophy", "התנגדות / היפרטרופיה") : value === "endurance_cardio" ? tr(locale, "Endurance / Cardio", "סבולת / אירובי") : value === "martial_arts" ? tr(locale, "Martial Arts", "אומנויות לחימה") : value === "none" ? tr(locale, "None", "ללא") : tr(locale, "Other", "אחר");
                 const selected = draft.exercise_modalities.includes(value);
-                return <button key={value} type="button" onClick={() => toggleListValue("exercise_modalities", value)} className={`rounded-full border px-3 py-1.5 text-xs ${selected ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-700"}`}>{label}</button>;
+                return <button key={value} type="button" onClick={() => toggleListValue("exercise_modalities", value)} className={`rounded-full border px-3 py-1.5 text-xs ${selected ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700"}`}>{label}</button>;
               })}
             </div>
             {draft.exercise_modalities.includes("other") ? (
               <div className="mt-3 space-y-3" data-field="exercise_other_activities">
-                <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Other exercise activities", "פעילויות גופניות אחרות")}</span>
+                <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Other exercise activities", "פעילויות גופניות אחרות")}</span>
                 <div className="grid gap-3">
                   {draft.exercise_other_activities.map((activity) => (
-                    <div key={activity.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div key={activity.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/60">
                       <div className="flex items-start gap-2">
                         <input
                           type="text"
@@ -946,14 +946,14 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
                           type="button"
                           onClick={() => removeOtherActivity(activity.id)}
                           aria-label={tr(locale, "Remove activity", "הסרת פעילות")}
-                          className="shrink-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-500 hover:bg-slate-100"
+                          className="shrink-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800"
                         >
                           ✕
                         </button>
                       </div>
                       <div className="mt-2 grid gap-3 sm:grid-cols-2">
                         <label className="block">
-                          <span className="mb-1 block text-xs font-medium text-slate-700">{tr(locale, "Frequency (days/week)", "תדירות (ימים/שבוע)")}</span>
+                          <span className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Frequency (days/week)", "תדירות (ימים/שבוע)")}</span>
                           <input
                             type="number"
                             min={1}
@@ -964,7 +964,7 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
                           />
                         </label>
                         <label className="block">
-                          <span className="mb-1 block text-xs font-medium text-slate-700">{tr(locale, "Duration (minutes/session)", "משך (דקות לאימון)")}</span>
+                          <span className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Duration (minutes/session)", "משך (דקות לאימון)")}</span>
                           <input
                             type="number"
                             min={1}
@@ -981,7 +981,7 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
                 <button
                   type="button"
                   onClick={addOtherActivity}
-                  className="rounded-lg border border-teal-300 px-3 py-1.5 text-xs font-semibold text-teal-700 hover:bg-teal-50"
+                  className="rounded-lg border border-teal-300 px-3 py-1.5 text-xs font-semibold text-teal-700 hover:bg-teal-50 dark:border-teal-800 dark:text-teal-400 dark:hover:bg-teal-950/40"
                 >
                   {tr(locale, "+ Add another activity", "+ הוספת פעילות נוספת")}
                 </button>
@@ -1000,7 +1000,7 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
           </div>
           {selectedExerciseModalities.length > 0 ? (
             <div className="space-y-3" data-field="exercise_schedule_by_modality">
-              <p className="text-sm font-medium text-slate-700">
+              <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
                 {tr(
                   locale,
                   "Set frequency and duration for each selected exercise type",
@@ -1015,11 +1015,11 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
                   };
 
                   return (
-                    <div key={modality} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                      <p className="text-sm font-semibold text-slate-900">{exerciseModalityLabel(modality, locale)}</p>
+                    <div key={modality} className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/60">
+                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{exerciseModalityLabel(modality, locale)}</p>
                       <div className="mt-2 grid gap-3 sm:grid-cols-2">
                         <label className="block">
-                          <span className="mb-1 block text-xs font-medium text-slate-700">{tr(locale, "Frequency (days/week)", "תדירות (ימים/שבוע)")}</span>
+                          <span className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Frequency (days/week)", "תדירות (ימים/שבוע)")}</span>
                           <input
                             type="number"
                             min={1}
@@ -1040,7 +1040,7 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
                           />
                         </label>
                         <label className="block">
-                          <span className="mb-1 block text-xs font-medium text-slate-700">{tr(locale, "Duration (minutes/session)", "משך (דקות לאימון)")}</span>
+                          <span className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Duration (minutes/session)", "משך (דקות לאימון)")}</span>
                           <input
                             type="number"
                             min={1}
@@ -1069,12 +1069,12 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
             </div>
           ) : null}
           <div data-field="nutritional_goal">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Nutritional goal", "מטרה תזונתית")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Nutritional goal", "מטרה תזונתית")}</span>
             <div className="grid gap-2 sm:grid-cols-2">
               {nutritionalGoalOptions.map((goal) => {
                 const label = goal === "maintenance" ? tr(locale, "Maintenance", "שימור") : goal === "weight_loss" ? tr(locale, "Weight Loss", "ירידה במשקל") : goal === "muscle_hypertrophy" ? tr(locale, "Muscle Hypertrophy", "היפרטרופיה") : goal === "body_recomposition" ? tr(locale, "Body Recomposition", "הרכב גוף") : tr(locale, "Athletic Performance", "ביצועים אתלטיים");
                 const selected = draft.nutritional_goal === goal;
-                return <button key={goal} type="button" onClick={() => updateDraft({ nutritional_goal: goal })} className={`rounded-xl border px-3 py-2 text-sm ${selected ? "border-teal-700 bg-teal-50 text-teal-900" : "border-slate-300 bg-white text-slate-700"}`}>{label}</button>;
+                return <button key={goal} type="button" onClick={() => updateDraft({ nutritional_goal: goal })} className={`rounded-xl border px-3 py-2 text-sm ${selected ? "border-teal-700 bg-teal-50 text-teal-900 dark:bg-teal-950/40 dark:text-teal-300" : "border-slate-300 bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700"}`}>{label}</button>;
               })}
             </div>
             {renderFieldError("nutritional_goal")}
@@ -1082,12 +1082,12 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
         </div>
       </section>
 
-      <section className="rounded-xl border border-slate-200 p-4">
-        <h2 className="text-base font-semibold text-slate-900">{tr(locale, "Step 3 - Medical & Physiology", "שלב 3 - רפואי ופיזיולוגי")}</h2>
+      <section className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
+        <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Step 3 - Medical & Physiology", "שלב 3 - רפואי ופיזיולוגי")}</h2>
         <div className="mt-3 space-y-4">
           {draft.biological_sex === "female" ? (
             <label className="block" data-field="pregnancy_lactation_status">
-              <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Pregnancy / lactation", "הריון / הנקה")}</span>
+              <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Pregnancy / lactation", "הריון / הנקה")}</span>
               <select name="pregnancy_lactation_status" value={draft.pregnancy_lactation_status} onChange={(event) => updateDraft({ pregnancy_lactation_status: event.target.value as "none" | "pregnant" | "lactating" })} className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("pregnancy_lactation_status")}`}>
                 <option value="none">{tr(locale, "No", "לא")}</option>
                 <option value="pregnant">{tr(locale, "Pregnant", "בהריון")}</option>
@@ -1098,8 +1098,8 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
           ) : <input type="hidden" name="pregnancy_lactation_status" value="none" />}
 
           <div>
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "🩺 Medical conditions", "🩺 מצבים רפואיים")}</span>
-            <div className="flex gap-3 text-sm" data-field="has_medical_conditions"><label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_medical_conditions === "yes" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_medical_conditions" value="yes" checked={draft.has_medical_conditions === "yes"} onChange={() => setYesNo("has_medical_conditions", "yes")} /> {tr(locale, "Yes", "כן")}</label><label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_medical_conditions === "no" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_medical_conditions" value="no" checked={draft.has_medical_conditions === "no"} onChange={() => setYesNo("has_medical_conditions", "no")} /> {tr(locale, "No", "לא")}</label></div>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "🩺 Medical conditions", "🩺 מצבים רפואיים")}</span>
+            <div className="flex gap-3 text-sm" data-field="has_medical_conditions"><label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_medical_conditions === "yes" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_medical_conditions" value="yes" checked={draft.has_medical_conditions === "yes"} onChange={() => setYesNo("has_medical_conditions", "yes")} /> {tr(locale, "Yes", "כן")}</label><label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_medical_conditions === "no" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_medical_conditions" value="no" checked={draft.has_medical_conditions === "no"} onChange={() => setYesNo("has_medical_conditions", "no")} /> {tr(locale, "No", "לא")}</label></div>
             {renderFieldError("has_medical_conditions")}
             <div
               className={`overflow-hidden transition-all duration-300 ${draft.has_medical_conditions === "yes" ? "mt-3 max-h-[700px] opacity-100" : "max-h-0 opacity-0"}`}
@@ -1112,7 +1112,7 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
                       key={condition}
                       type="button"
                       onClick={() => toggleMedicalCondition(condition)}
-                      className={`rounded-xl border px-3 py-2 text-left text-xs font-medium ${selected ? "border-teal-700 bg-teal-50 text-teal-900" : "border-slate-300 bg-white text-slate-700"}`}
+                      className={`rounded-xl border px-3 py-2 text-left text-xs font-medium ${selected ? "border-teal-700 bg-teal-50 text-teal-900 dark:bg-teal-950/40 dark:text-teal-300" : "border-slate-300 bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700"}`}
                     >
                       {formatMedicalCondition(condition, locale)}
                     </button>
@@ -1120,7 +1120,7 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
                 })}
               </div>
               {draft.medical_conditions.includes("prefer_not_to_disclose") ? (
-                <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400">
                   {tr(
                     locale,
                     "Choosing not to disclose will prevent your Health Companion from considering your specific needs when processing your targets and progress.",
@@ -1132,7 +1132,7 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
 
               {draft.medical_conditions.includes("other") ? (
                 <label className="mt-3 block" data-field="medical_conditions_details">
-                  <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Other diagnosed conditions", "מצבים רפואיים נוספים")}</span>
+                  <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Other diagnosed conditions", "מצבים רפואיים נוספים")}</span>
                   <textarea
                     name="medical_conditions_details"
                     value={draft.medical_conditions_details}
@@ -1150,8 +1150,8 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
           </div>
 
           <div data-field="has_regular_medications">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Regular medications", "תרופות קבועות")}</span>
-            <div className="flex gap-3 text-sm"><label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_regular_medications === "yes" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_regular_medications" value="yes" checked={draft.has_regular_medications === "yes"} onChange={() => setYesNo("has_regular_medications", "yes")} /> {tr(locale, "Yes", "כן")}</label><label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_regular_medications === "no" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_regular_medications" value="no" checked={draft.has_regular_medications === "no"} onChange={() => setYesNo("has_regular_medications", "no")} /> {tr(locale, "No", "לא")}</label></div>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Regular medications", "תרופות קבועות")}</span>
+            <div className="flex gap-3 text-sm"><label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_regular_medications === "yes" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_regular_medications" value="yes" checked={draft.has_regular_medications === "yes"} onChange={() => setYesNo("has_regular_medications", "yes")} /> {tr(locale, "Yes", "כן")}</label><label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_regular_medications === "no" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_regular_medications" value="no" checked={draft.has_regular_medications === "no"} onChange={() => setYesNo("has_regular_medications", "no")} /> {tr(locale, "No", "לא")}</label></div>
             {renderFieldError("has_regular_medications")}
             {draft.has_regular_medications === "yes" ? (
               <div data-field="regular_medications_details">
@@ -1169,29 +1169,29 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
           </div>
 
           <div data-field="hot_climate_or_heavy_sweating">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Heavy sweating / hot climate", "הזעה מרובה / אקלים חם")}</span>
-            <div className="flex gap-3 text-sm"><label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.hot_climate_or_heavy_sweating === "yes" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="hot_climate_or_heavy_sweating" value="yes" checked={draft.hot_climate_or_heavy_sweating === "yes"} onChange={() => setYesNo("hot_climate_or_heavy_sweating", "yes")} /> {tr(locale, "Yes", "כן")}</label><label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.hot_climate_or_heavy_sweating === "no" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="hot_climate_or_heavy_sweating" value="no" checked={draft.hot_climate_or_heavy_sweating === "no"} onChange={() => setYesNo("hot_climate_or_heavy_sweating", "no")} /> {tr(locale, "No", "לא")}</label></div>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Heavy sweating / hot climate", "הזעה מרובה / אקלים חם")}</span>
+            <div className="flex gap-3 text-sm"><label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.hot_climate_or_heavy_sweating === "yes" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="hot_climate_or_heavy_sweating" value="yes" checked={draft.hot_climate_or_heavy_sweating === "yes"} onChange={() => setYesNo("hot_climate_or_heavy_sweating", "yes")} /> {tr(locale, "Yes", "כן")}</label><label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.hot_climate_or_heavy_sweating === "no" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="hot_climate_or_heavy_sweating" value="no" checked={draft.hot_climate_or_heavy_sweating === "no"} onChange={() => setYesNo("hot_climate_or_heavy_sweating", "no")} /> {tr(locale, "No", "לא")}</label></div>
             {renderFieldError("hot_climate_or_heavy_sweating")}
           </div>
 
           <div data-field="habits">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Habits", "הרגלים")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Habits", "הרגלים")}</span>
             <div className="flex flex-wrap gap-2">
               {habitOptions.map((value) => {
                 const label = value === "smoking_or_vaping" ? tr(locale, "Smoking", "עישון") : value === "alcohol" ? tr(locale, "Regular Alcohol", "אלכוהול קבוע") : tr(locale, "None", "ללא");
                 const selected = draft.habits.includes(value);
-                return <button key={value} type="button" onClick={() => toggleListValue("habits", value)} className={`rounded-full border px-3 py-1.5 text-xs ${selected ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 bg-white text-slate-700"}`}>{label}</button>;
+                return <button key={value} type="button" onClick={() => toggleListValue("habits", value)} className={`rounded-full border px-3 py-1.5 text-xs ${selected ? "border-slate-900 bg-slate-900 text-white dark:bg-slate-600 dark:border-slate-600" : "border-slate-300 bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700"}`}>{label}</button>;
               })}
             </div>
             {draft.habits.includes("alcohol") ? (
               <div className="mt-2" data-field="alcohol_consumption_level">
-                <span className="mb-1 flex items-center gap-1.5 text-sm font-medium text-slate-700">
+                <span className="mb-1 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
                   {tr(locale, "Alcohol consumption", "צריכת אלכוהול")}
                   <AlcoholConsumptionInfo locale={locale} />
                 </span>
                 <div className="flex gap-3 text-sm">
                   <label
-                    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.alcohol_consumption_level === "low" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}
+                    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.alcohol_consumption_level === "low" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}
                   >
                     <input
                       className="h-4 w-4 accent-teal-700"
@@ -1202,7 +1202,7 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
                     {tr(locale, "Low consumption", "צריכה נמוכה")}
                   </label>
                   <label
-                    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.alcohol_consumption_level === "high" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800"}`}
+                    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.alcohol_consumption_level === "high" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}
                   >
                     <input
                       className="h-4 w-4 accent-teal-700"
@@ -1218,7 +1218,7 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
             ) : null}
             {draft.habits.includes("smoking_or_vaping") ? (
               <label className="mt-2 block" data-field="smoking_packs_per_day">
-                <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Smoking amount (cigarettes/day)", "כמות עישון (סיגריות ביום)")}</span>
+                <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Smoking amount (cigarettes/day)", "כמות עישון (סיגריות ביום)")}</span>
                 <input type="number" min={0} step="1" value={draft.smoking_packs_per_day} onChange={(event) => updateDraft({ smoking_packs_per_day: event.target.value })} className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("smoking_packs_per_day")}`} />
                 {renderFieldError("smoking_packs_per_day")}
               </label>
@@ -1229,25 +1229,25 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
         </div>
       </section>
 
-      <section className="rounded-xl border border-slate-200 p-4">
-        <h2 className="text-base font-semibold text-slate-900">{tr(locale, "Step 4 - Dietary Profile & Context", "שלב 4 - פרופיל תזונתי")}</h2>
+      <section className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
+        <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Step 4 - Dietary Profile & Context", "שלב 4 - פרופיל תזונתי")}</h2>
         <div className="mt-3 space-y-4">
           <input type="hidden" name="preferred_language" value={draft.preferred_language} />
 
           <div data-field="dietary_preference">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Dietary preference", "העדפה תזונתית")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Dietary preference", "העדפה תזונתית")}</span>
             <div className="grid gap-2 sm:grid-cols-2">
               {dietaryPreferenceOptions.map((value) => {
                 const label = value === "standard" ? tr(locale, "Standard Diet", "תזונה רגילה") : value === "vegetarian" ? tr(locale, "Vegetarian", "צמחוני") : value === "vegan" ? tr(locale, "Vegan", "טבעוני") : tr(locale, "Low-Carb / Keto", "דל פחמימה / קטו");
                 const selected = draft.dietary_preference === value;
-                return <button key={value} type="button" onClick={() => updateDraft({ dietary_preference: value })} className={`rounded-xl border px-3 py-2 text-sm ${selected ? "border-teal-700 bg-teal-50 text-teal-900" : "border-slate-300 bg-white text-slate-700"}`}>{label}</button>;
+                return <button key={value} type="button" onClick={() => updateDraft({ dietary_preference: value })} className={`rounded-xl border px-3 py-2 text-sm ${selected ? "border-teal-700 bg-teal-50 text-teal-900 dark:bg-teal-950/40 dark:text-teal-300" : "border-slate-300 bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700"}`}>{label}</button>;
               })}
             </div>
             {renderFieldError("dietary_preference")}
           </div>
 
           <label className="block" data-field="allergies">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Allergies (comma separated)", "אלרגיות (מופרדות בפסיקים)")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Allergies (comma separated)", "אלרגיות (מופרדות בפסיקים)")}</span>
             <input type="text" name="allergies" value={draft.allergies} onChange={(event) => updateDraft({ allergies: event.target.value })} className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("allergies")}`} />
             <p className="mt-1 text-xs text-slate-500">{tr(locale, "Use real allergy names. Typos are okay, random text is not.", "יש להזין שמות אלרגיה אמיתיים. שגיאות כתיב נסבלות, טקסט אקראי לא.")}</p>
             {allergyError ? <p className="mt-1 text-xs text-rose-700">{allergyError}</p> : null}
@@ -1255,28 +1255,28 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
           </label>
 
           <label className="block" data-field="additional_information">
-            <span className="mb-1 block text-sm font-medium text-slate-700">{tr(locale, "Additional information", "מידע נוסף")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Additional information", "מידע נוסף")}</span>
             <textarea name="additional_information" rows={4} maxLength={1000} value={draft.additional_information} onChange={(event) => updateDraft({ additional_information: event.target.value })} className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("additional_information")}`} />
             <p className="mt-1 text-right text-xs text-slate-500">{draft.additional_information.length} / 1000</p>
             {renderFieldError("additional_information")}
           </label>
 
-          <label className="flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5 text-sm text-sky-900" data-field="accept_ai_extraction">
+          <label className="flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5 text-sm text-sky-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300" data-field="accept_ai_extraction">
             <input type="checkbox" name="accept_ai_extraction" value="yes" checked={draft.accept_ai_extraction} onChange={(event) => updateDraft({ accept_ai_extraction: event.target.checked })} className="mt-0.5" />
             <span>{tr(locale, "I agree to the transfer and storage of my health data with the AI provider for analysis purposes", "אני מסכים/ה לשליחת נתוני הבריאות והתזונה לספק ה-AI ולשמירתם לצורך ניתוח ושיפור השירות.")}</span>
           </label>
-          {consentError ? <p className="mt-1 text-xs text-rose-700">{consentError}</p> : null}
+          {consentError ? <p className="mt-1 text-xs text-rose-700 dark:text-rose-400">{consentError}</p> : null}
           {renderFieldError("accept_ai_extraction")}
         </div>
       </section>
 
       {state.error ? (
-        <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+        <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-400">
           {state.error}
         </p>
       ) : null}
       {clientError ? (
-        <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+        <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-400">
           {clientError}
         </p>
       ) : null}
@@ -1284,7 +1284,7 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
         <SaveButton locale={locale} canSubmit={draft.accept_ai_extraction} />
         <Link
           href="/app/profile"
-          className="inline-flex w-full items-center justify-center rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+          className="inline-flex w-full items-center justify-center rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
         >
           {tr(locale, "Disregard", "התעלמות")}
         </Link>

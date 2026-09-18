@@ -5,6 +5,7 @@ import { AppNav } from "@/components/app-nav";
 import { UnsavedPreviewProvider } from "@/components/unsaved-preview-context";
 import { directionForLocale, normalizeLocale } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
+import { normalizeTheme } from "@/lib/theme";
 
 export default async function ProtectedAppLayout({
   children,
@@ -27,14 +28,19 @@ export default async function ProtectedAppLayout({
   // daily-report/page.tsx) - just resolved here instead of surfaced as a
   // user-facing error, since nothing about layout.tsx has an error banner
   // to show it in.
-  let profileRow: { preferred_language: string | null; first_name: string | null; avatar_color?: string | null } | null = null;
+  let profileRow: {
+    preferred_language: string | null;
+    first_name: string | null;
+    avatar_color?: string | null;
+    theme_preference?: string | null;
+  } | null = null;
   if (user) {
     const fullSelect = await supabase
       .from("user_profile")
-      .select("preferred_language, first_name, avatar_color")
+      .select("preferred_language, first_name, avatar_color, theme_preference")
       .eq("user_id", user.id)
       .maybeSingle();
-    if (fullSelect.error?.message.includes("avatar_color")) {
+    if (fullSelect.error?.message.includes("avatar_color") || fullSelect.error?.message.includes("theme_preference")) {
       profileRow = (
         await supabase
           .from("user_profile")
@@ -48,9 +54,17 @@ export default async function ProtectedAppLayout({
   }
 
   const locale = normalizeLocale(profileRow?.preferred_language);
+  const theme = normalizeTheme(profileRow?.theme_preference);
 
   return (
-    <div lang={locale} dir={directionForLocale(locale)}>
+    // data-theme drives every dark: utility class within /app/* (see
+    // globals.css's own comment on the custom variant) - the same wrapper
+    // that already carries lang/dir for locale, so a user's theme choice
+    // applies everywhere inside the authenticated app the same way their
+    // language choice already does, and stops at the same boundary (the
+    // sign-in page, the marketing page, and this file's own root-layout
+    // chrome stay on the light palette, matching locale/RTL precedent).
+    <div lang={locale} dir={directionForLocale(locale)} data-theme={theme} className="min-h-screen bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <UnsavedPreviewProvider locale={locale}>
         {user ? <AppNav locale={locale} avatarColor={profileRow?.avatar_color} name={profileRow?.first_name ?? null} /> : null}
         {/* Reserves space for AppBottomNav's fixed height below `sm`, where

@@ -7,6 +7,7 @@ import type { TargetsHistoryInfo } from "@/components/targets-section-tabs";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { resolveUserGenderForAddressing } from "@/lib/ai/persona";
 import { buildBmiWarningMessage } from "@/lib/bmi";
+import { getHomeOverviewData, parseRangeParam } from "@/lib/home-overview";
 import { formatDateTimeForLocale, normalizeLocale, tr } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 import {
@@ -21,7 +22,14 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export default async function TargetsPage() {
+export default async function TargetsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ range?: string }>;
+}) {
+  const resolvedSearchParams = await searchParams;
+  const range = parseRangeParam(resolvedSearchParams.range);
+
   const supabase = await createClient();
   const {
     data: { user },
@@ -138,6 +146,22 @@ export default async function TargetsPage() {
     initialWarning = source === "heuristic" ? heuristicReason ?? undefined : undefined;
   }
 
+  // Only fetched for the AI-chat-enabled experience's own Overview view
+  // (see lib/home-overview.ts's own comment) - the no-AI-consent fallback
+  // page (TargetsWorkspace) doesn't get an Overview tab at all right now,
+  // per this redesign's own scope (AI-enabled experience first).
+  const overview =
+    activeTargetProfile && hasAiChatAvailable
+      ? await getHomeOverviewData({
+          supabase,
+          userId: user.id,
+          locale,
+          range,
+          activeTargetProfile,
+          aiConfig,
+        })
+      : null;
+
   const targetsHistory: TargetsHistoryInfo | undefined = activeTargetProfile
     ? {
         rawGoalText: activeTargetProfile.raw_goal_text,
@@ -148,11 +172,10 @@ export default async function TargetsPage() {
 
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 py-10">
-      <section className="rounded-2xl border border-slate-200 bg-white p-6">
-        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-          <h1 className="text-2xl font-bold text-slate-900">{tr(locale, "Daily Targets", "יעדים יומיים")}</h1>
-          <p className="text-sm text-slate-600">
-            -{" "}
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">{tr(locale, "Daily Targets", "יעדים יומיים")}</h1>
+          <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
             {tr(
               locale,
               "Your personalized daily nutrition, exercise, and habit targets.",
@@ -163,7 +186,7 @@ export default async function TargetsPage() {
 
         {!activeTargetProfile ? (
           <>
-            <p className="mt-4 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600">
+            <p className="mt-4 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600 dark:border-slate-700 dark:text-slate-400">
               {tr(
                 locale,
                 "Here's a recommended baseline based on your profile. Optionally describe a specific goal below and regenerate to refine it, then approve to lock it in.",
@@ -184,7 +207,7 @@ export default async function TargetsPage() {
         ) : (
           <div className="mt-5 space-y-4">
             {missingProfileSnapshot ? (
-              <p className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
+              <p className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800 dark:border-sky-800 dark:bg-sky-950/30 dark:text-sky-400">
                 {tr(
                   locale,
                   "These targets were locked before profile-change detection was added, so we can't yet tell if your profile has changed since then. Request any adjustment below to refresh this check going forward.",
@@ -204,6 +227,12 @@ export default async function TargetsPage() {
                 firstName={profileRow.first_name ?? null}
                 userGender={userGender}
                 history={targetsHistory}
+                // Non-null by construction: overview is only ever null when
+                // `activeTargetProfile && hasAiChatAvailable` is false (see
+                // its own computation above), the exact same condition that
+                // gates this branch.
+                overview={overview!}
+                range={range}
               />
             ) : (
               <TargetsWorkspace
@@ -221,7 +250,7 @@ export default async function TargetsPage() {
           </div>
         )}
 
-        <p className="mt-6 border-t border-slate-100 pt-4 text-xs text-slate-500">
+        <p className="mt-6 border-t border-slate-100 pt-4 text-xs text-slate-500 dark:border-slate-800">
           {tr(
             locale,
             "Informational support only. Check with a qualified healthcare professional for medical decisions.",

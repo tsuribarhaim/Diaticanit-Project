@@ -1,15 +1,20 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
+import { DailyReportProgressRings } from "@/components/daily-report-progress-rings";
 import { GuardedLink } from "@/components/unsaved-preview-context";
+import { InfoPopoverButton } from "@/components/info-popover";
+import type { HomeOverviewData, HomeRange } from "@/lib/home-overview";
+import { RANGE_VALUES, rangeLabels } from "@/lib/home-overview";
 import { formatExerciseModality, formatMeasurementUnit, formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
 import { getNutrientReference } from "@/lib/nutrient-reference";
 import type { TargetGenerationPayload } from "@/lib/targets";
 
 type MetricRow = { id: string; min: number; max: number };
 
-type TabId = "history" | "explained" | "primary" | "exercise" | "suggestions";
+type TabId = "overview" | "nutrients" | "exercise" | "suggestions" | "information";
 
 export type TargetsHistoryInfo = {
   rawGoalText: string;
@@ -18,9 +23,9 @@ export type TargetsHistoryInfo = {
 };
 
 function alertBadgeClasses(type: "good" | "warning" | "risk"): string {
-  if (type === "good") return "border-emerald-200 bg-emerald-50 text-emerald-800";
-  if (type === "warning") return "border-amber-200 bg-amber-50 text-amber-800";
-  return "border-rose-200 bg-rose-50 text-rose-800";
+  if (type === "good") return "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-400";
+  if (type === "warning") return "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400";
+  return "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-400";
 }
 
 /**
@@ -91,29 +96,24 @@ function MetricRowView({ row, locale }: { row: MetricRow; locale: AppLocale }) {
   const fullRangeText = `${formatNumberForLocale(row.min, locale, { maximumFractionDigits: 1 })}–${formatNumberForLocale(row.max, locale, { maximumFractionDigits: 1 })} ${unitLabel}`;
 
   return (
-    <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3">
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
       <div>
-        <p className="text-xs uppercase tracking-wide text-slate-500">{reference.nameLabel[locale]}</p>
-        <p className="mt-1 text-lg font-semibold text-slate-900">{singleTargetValue(row, locale)}</p>
+        <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">{reference.nameLabel[locale]}</p>
+        <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">{singleTargetValue(row, locale)}</p>
       </div>
-      <div className="group relative">
-        <span
-          tabIndex={0}
-          role="button"
-          aria-label={tr(locale, "More information", "מידע נוסף")}
-          className="flex h-7 w-7 cursor-help items-center justify-center rounded-full border border-slate-300 text-xs font-bold text-slate-600 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
-        >
-          ?
-        </span>
-        <div className="invisible absolute end-0 z-10 mt-2 w-64 rounded-xl border border-amber-300 bg-amber-50 p-3 text-start text-xs text-amber-900 opacity-0 shadow-lg transition-opacity duration-150 group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
-          <p className="font-semibold text-amber-900">{tr(locale, "Full daily range", "טווח יומי מלא")}</p>
-          <p className="mt-1">{fullRangeText}</p>
-          <p className="mt-2 font-semibold text-amber-900">{tr(locale, "Role", "תפקיד")}</p>
-          <p className="mt-1">{reference.roleDescription[locale]}</p>
-          <p className="mt-2 font-semibold text-amber-900">{tr(locale, "Food examples", "דוגמאות מזון")}</p>
-          <p className="mt-1">{reference.foodExamples[locale]}</p>
-        </div>
-      </div>
+      <InfoPopoverButton
+        ariaLabel={tr(locale, "More information", "מידע נוסף")}
+        title={reference.nameLabel[locale]}
+        triggerClassName="flex h-7 w-7 cursor-help items-center justify-center rounded-full border border-slate-300 text-xs font-bold text-slate-600 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+        panelWidthClassName="sm:w-64"
+      >
+        <p className="font-semibold text-amber-900 dark:text-amber-400">{tr(locale, "Full daily range", "טווח יומי מלא")}</p>
+        <p className="mt-1">{fullRangeText}</p>
+        <p className="mt-2 font-semibold text-amber-900 dark:text-amber-400">{tr(locale, "Role", "תפקיד")}</p>
+        <p className="mt-1">{reference.roleDescription[locale]}</p>
+        <p className="mt-2 font-semibold text-amber-900 dark:text-amber-400">{tr(locale, "Food examples", "דוגמאות מזון")}</p>
+        <p className="mt-1">{reference.foodExamples[locale]}</p>
+      </InfoPopoverButton>
     </div>
   );
 }
@@ -130,6 +130,7 @@ const secondaryMetricIds = [
   "vit_d",
   "sat_fat",
   "omega3",
+  "cholesterol",
 ];
 
 function metricRowsFromPayload(payload: TargetGenerationPayload, ids: string[]): MetricRow[] {
@@ -152,6 +153,7 @@ function metricRowsFromPayload(payload: TargetGenerationPayload, ids: string[]):
     vit_d: { id: "vit_d", min: payload.vitDMinMcg, max: payload.vitDMaxMcg },
     sat_fat: { id: "sat_fat", min: payload.satFatMinG, max: payload.satFatMaxG },
     omega3: { id: "omega3", min: payload.omega3MinG, max: payload.omega3MaxG },
+    cholesterol: { id: "cholesterol", min: payload.cholesterolMinMg, max: payload.cholesterolMaxMg },
   };
 
   return ids.map((id) => byId[id]);
@@ -172,8 +174,10 @@ function TabButton({
       role="tab"
       aria-selected={active}
       onClick={onClick}
-      className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition-colors ${
-        active ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+      className={`shrink-0 rounded-full border px-3.5 py-1.5 text-sm font-semibold transition-colors ${
+        active
+          ? "border-teal-700 bg-teal-700 text-white dark:border-teal-600 dark:bg-teal-600"
+          : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
       }`}
     >
       {children}
@@ -182,13 +186,88 @@ function TabButton({
 }
 
 /**
- * Section-tabs presentation for a targets payload: a single row of toggle
- * buttons and one shared detail panel below them (internal scroll, fixed
- * max height) so opening a section never pushes the chat panel further and
- * further down the page. Clicking the active tab again closes the panel,
- * leaving just the tab row. Warnings (profile discrepancy) and the risk
- * badge stay outside the tab system since they're safety-relevant and
- * shouldn't require a click to notice.
+ * The Overview view - the exact same Progress rings/duration selector,
+ * Weekly Exercise Consistency, and AI Coach narrative the Home page shows,
+ * reusing lib/home-overview.ts's shared data-fetching so both pages render
+ * from the same computation (see that file's own comment). The duration
+ * selector is a plain Link to `?range=...` (a full page reload), the same
+ * mechanism Home already uses - simpler and far cheaper than fetching all
+ * four ranges' worth of data (including a real AI Coach call) on every
+ * single page load just to allow a client-side toggle.
+ */
+function OverviewView({ locale, range, overview }: { locale: AppLocale; range: HomeRange; overview: HomeOverviewData }) {
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+            {range === "today" ? tr(locale, "Today's Progress", "ההתקדמות של היום") : tr(locale, "Your Progress", "ההתקדמות שלך")}
+          </p>
+          <div className="flex gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-800 dark:bg-slate-800/60">
+            {RANGE_VALUES.map((value) => (
+              <Link
+                key={value}
+                href={value === "today" ? "/app/targets" : `/app/targets?range=${value}`}
+                className={`rounded-md px-2.5 py-1 text-xs font-medium ${
+                  range === value ? "bg-teal-700 text-white dark:bg-teal-600" : "text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+                }`}
+              >
+                {tr(locale, rangeLabels[value].en, rangeLabels[value].he)}
+              </Link>
+            ))}
+          </div>
+        </div>
+        <div className="mt-4">
+          <DailyReportProgressRings locale={locale} metrics={overview.ringMetrics} />
+          {overview.loggedDaysCaption ? <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">{overview.loggedDaysCaption}</p> : null}
+          {overview.confidenceCaption ? <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{overview.confidenceCaption}</p> : null}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Weekly Exercise Consistency", "עקביות פעילות שבועית")}</p>
+        {overview.weeklyExerciseTarget > 0 ? (
+          <div className="mt-4">
+            <DailyReportProgressRings locale={locale} metrics={[overview.exerciseRingMetric]} />
+            <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+              {tr(
+                locale,
+                `This week: ${overview.weeklyExerciseSessionDays} of ${overview.weeklyExerciseTarget} planned sessions logged. Any day with exercise logged counts as a session.`,
+                `השבוע: נרשמו ${overview.weeklyExerciseSessionDays} מתוך ${overview.weeklyExerciseTarget} אימונים מתוכננים. כל יום שבו נרשמה פעילות נחשב לאימון.`,
+              )}
+            </p>
+          </div>
+        ) : (
+          <p className="mt-3 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600 dark:border-slate-700 dark:text-slate-400">
+            {tr(locale, "No weekly exercise target set in your plan.", "לא הוגדר יעד פעילות שבועי בתכנית שלך.")}
+          </p>
+        )}
+      </div>
+
+      <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "✨ AI Coach", "✨ מאמן AI")}</p>
+        {overview.coachNarrative ? (
+          <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-slate-700 dark:text-slate-300">{overview.coachNarrative}</p>
+        ) : (
+          <p className="mt-3 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600 dark:border-slate-700 dark:text-slate-400">
+            {!overview.aiCoachConfigured
+              ? tr(locale, "AI Coach is not available in this environment.", "מאמן ה-AI אינו זמין בסביבה זו.")
+              : tr(locale, "The AI Coach couldn't generate a summary right now. Try again later.", "מאמן ה-AI לא הצליח ליצור סיכום כרגע. נסו שוב מאוחר יותר.")}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Overview/Nutrients/Exercise nav pills plus a "…" menu for Suggestions and
+ * Information (Targets History + Targets Explained, combined into one
+ * view) - keeps the always-visible pill row to three plus the menu trigger,
+ * short enough to never need its own horizontal scrollbar on a phone.
+ * Overview is the default landing view. Warnings (profile discrepancy) and
+ * the risk badge stay outside the tab system, above the nav, since they're
+ * safety-relevant and shouldn't require a click to notice.
  */
 export function TargetsSectionTabs({
   payload,
@@ -196,14 +275,25 @@ export function TargetsSectionTabs({
   maintenanceCalories,
   firstName,
   history,
+  overview,
+  range,
 }: {
   payload: TargetGenerationPayload;
   locale: AppLocale;
   maintenanceCalories: number;
   firstName?: string | null;
   history?: TargetsHistoryInfo | null;
+  /** Only provided by the AI-chat-enabled experience (TargetsChatWorkspace)
+   * - the no-AI-consent fallback page (TargetsWorkspace) doesn't fetch this
+   * data at all, so the Overview pill/view simply isn't offered there and
+   * this defaults straight to Nutrients instead. Not a permanent gap - see
+   * this app's own decision to redesign the AI-enabled experience first and
+   * revisit the fallback page separately. */
+  overview?: HomeOverviewData;
+  range?: HomeRange;
 }) {
-  const [activeTab, setActiveTab] = useState<TabId | null>(null);
+  const [activeTab, setActiveTab] = useState<TabId>(overview ? "overview" : "nutrients");
+  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
 
   const riskAlert = evaluateEnergyImbalanceRisk({ payload, maintenanceCalories, locale });
   const userTargetsTitle = firstName
@@ -213,24 +303,17 @@ export function TargetsSectionTabs({
     ? tr(locale, `Additional Suggestions for ${firstName}`, `הצעות נוספות עבור ${firstName}`)
     : tr(locale, "Additional Suggestions", "הצעות נוספות");
 
-  const tabs: { id: TabId; label: string }[] = [
-    ...(history ? [{ id: "history" as const, label: tr(locale, "Targets History", "היסטוריית יעדים") }] : []),
-    ...(payload.aiRationaleExplanation
-      ? [{ id: "explained" as const, label: tr(locale, "Targets Explained", "הסבר על היעדים") }]
-      : []),
-    { id: "primary" as const, label: tr(locale, "Primary Targets", "יעדים עיקריים") },
-    { id: "exercise" as const, label: tr(locale, "Exercise Plan", "תכנית פעילות") },
-    { id: "suggestions" as const, label: tr(locale, "Suggestions", "הצעות") },
-  ];
+  const isMoreActive = activeTab === "suggestions" || activeTab === "information";
 
-  function toggleTab(id: TabId) {
-    setActiveTab((previous) => (previous === id ? null : id));
+  function selectFromMoreMenu(id: "suggestions" | "information") {
+    setActiveTab(id);
+    setIsMoreMenuOpen(false);
   }
 
   return (
     <div className="space-y-4">
       {payload.profileDiscrepancyMessage ? (
-        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
           <p className="font-semibold">{tr(locale, "Discrepancy noticed", "אי-התאמה שזוהתה")}</p>
           <p className="mt-1">{payload.profileDiscrepancyMessage}</p>
           <GuardedLink
@@ -240,176 +323,233 @@ export function TargetsSectionTabs({
               "You have an unsaved conversation or generated target plan on the Targets page that hasn't been locked in yet. Leave this page anyway?",
               "יש לך שיחה או תכנית יעדים שנוצרה בדף היעדים שטרם ננעלה. לעזוב את הדף בכל זאת?",
             )}
-            className="mt-2 inline-block font-semibold text-amber-900 underline hover:text-amber-700"
+            className="mt-2 inline-block font-semibold text-amber-900 underline hover:text-amber-700 dark:text-amber-300 dark:hover:text-amber-400"
           >
             {tr(locale, "Update your profile", "עדכון הפרופיל שלך")}
           </GuardedLink>
         </div>
       ) : null}
 
-      <div
-        className={`inline-flex max-w-full items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium ${alertBadgeClasses(riskAlert.type)}`}
-      >
-        <span aria-hidden="true">{riskAlert.type === "risk" ? "⚠" : "✓"}</span>
-        <span>{riskAlert.text}</span>
+      <div className="flex justify-center">
+        <div
+          className={`inline-flex max-w-full items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium ${alertBadgeClasses(riskAlert.type)}`}
+        >
+          <span aria-hidden="true">{riskAlert.type === "risk" ? "⚠" : "✓"}</span>
+          <span>{riskAlert.text}</span>
+        </div>
+      </div>
+
+      {/* The scrollable tab strip and the "more" button+dropdown are
+          siblings, not parent/child - a dropdown positioned `absolute`
+          inside an `overflow-x-auto` ancestor gets clipped by it (per the
+          CSS overflow spec, setting only overflow-x to a non-visible value
+          forces the other axis to compute as `auto` too, not `visible`),
+          which is why it wasn't appearing at all. Keeping the menu outside
+          that scrolling element avoids the clip entirely. */}
+      <div className="flex items-center gap-1.5" role="tablist" aria-label={tr(locale, "Target details", "פרטי היעדים")}>
+        <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto pb-1">
+          {overview ? (
+            <TabButton active={activeTab === "overview"} onClick={() => setActiveTab("overview")}>
+              {tr(locale, "Overview", "סקירה")}
+            </TabButton>
+          ) : null}
+          <TabButton active={activeTab === "nutrients"} onClick={() => setActiveTab("nutrients")}>
+            {tr(locale, "Nutrients", "נוטריאנטים")}
+          </TabButton>
+          <TabButton active={activeTab === "exercise"} onClick={() => setActiveTab("exercise")}>
+            {tr(locale, "Exercise", "פעילות")}
+          </TabButton>
+        </div>
+        <div className="relative shrink-0">
+          <TabButton active={isMoreActive} onClick={() => setIsMoreMenuOpen((previous) => !previous)}>
+            {"•••"}
+          </TabButton>
+          {isMoreMenuOpen ? (
+            <>
+              <div role="presentation" onClick={() => setIsMoreMenuOpen(false)} className="fixed inset-0 z-30" />
+              <div className="absolute end-0 top-full z-40 mt-2 w-48 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg dark:border-slate-800 dark:bg-slate-900">
+                <button
+                  type="button"
+                  onClick={() => selectFromMoreMenu("suggestions")}
+                  className="w-full rounded-lg px-3 py-2 text-start text-sm font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  {tr(locale, "Suggestions", "הצעות")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectFromMoreMenu("information")}
+                  className="w-full rounded-lg px-3 py-2 text-start text-sm font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  {tr(locale, "Information", "מידע")}
+                </button>
+              </div>
+            </>
+          ) : null}
+        </div>
       </div>
 
       <div>
-        <div className="flex flex-wrap gap-2" role="tablist" aria-label={tr(locale, "Target details", "פרטי היעדים")}>
-          {tabs.map((tab) => (
-            <TabButton key={tab.id} active={activeTab === tab.id} onClick={() => toggleTab(tab.id)}>
-              {tab.label}
-            </TabButton>
-          ))}
-        </div>
+        {activeTab === "overview" && overview && range ? <OverviewView locale={locale} range={range} overview={overview} /> : null}
 
-        {activeTab ? (
-          <div className="mt-3 max-h-[420px] overflow-y-auto rounded-xl border border-slate-200 bg-white p-4">
-            {activeTab === "history" && history ? (
-              <div className="text-sm text-slate-700">
-                <p>
-                  <span className="font-semibold text-slate-900">{tr(locale, "Original request", "בקשה מקורית")}:</span>{" "}
-                  <span className="italic text-slate-600">{history.rawGoalText}</span>
-                </p>
-                <p className="mt-1">
-                  <span className="font-semibold text-slate-900">{tr(locale, "Locked at", "ננעל בתאריך")}:</span>{" "}
-                  {history.lockedAtLabel}
-                </p>
-                <p className="mt-1">
-                  <span className="font-semibold text-slate-900">{tr(locale, "Analysis source", "מקור ניתוח")}:</span>{" "}
-                  {history.analysisSource === "ai" ? "AI" : tr(locale, "Heuristic", "יוריסטי")}
-                </p>
+        {activeTab === "nutrients" ? (
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              {metricRowsFromPayload(payload, primaryMetricIds).map((row) => (
+                <MetricRowView key={row.id} row={row} locale={locale} />
+              ))}
+            </div>
+
+            <details className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/60">
+              <summary className="cursor-pointer text-xs font-semibold text-teal-700 dark:text-teal-400">
+                {tr(locale, "View Full Micronutrients Breakdown", "הצגת פירוט מלא של מיקרו-נוטריאנטים")}
+              </summary>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                {metricRowsFromPayload(payload, secondaryMetricIds).map((row) => (
+                  <MetricRowView key={row.id} row={row} locale={locale} />
+                ))}
               </div>
-            ) : null}
+            </details>
 
-            {activeTab === "explained" ? <p className="text-sm text-slate-700">{payload.aiRationaleExplanation}</p> : null}
-
-            {activeTab === "primary" ? (
-              <div className="space-y-4">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {metricRowsFromPayload(payload, primaryMetricIds).map((row) => (
-                    <MetricRowView key={row.id} row={row} locale={locale} />
-                  ))}
-                </div>
-
-                <details className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <summary className="cursor-pointer text-xs font-semibold text-teal-700">
-                    {tr(locale, "View Full Micronutrients Breakdown", "הצגת פירוט מלא של מיקרו-נוטריאנטים")}
-                  </summary>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                    {metricRowsFromPayload(payload, secondaryMetricIds).map((row) => (
-                      <MetricRowView key={row.id} row={row} locale={locale} />
-                    ))}
-                  </div>
-                </details>
-
-                {payload.userTargets.length ? (
-                  <div>
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">{userTargetsTitle}</h3>
-                    <div className="mt-2 grid gap-3 sm:grid-cols-2">
-                      {payload.userTargets.map((entry, index) => {
-                        const isTracked =
-                          Boolean(entry.unit) && entry.targetMin !== undefined && entry.targetMax !== undefined;
-                        const rangeText = isTracked
-                          ? entry.targetMin === entry.targetMax
-                            ? `${formatNumberForLocale(entry.targetMin!, locale, { maximumFractionDigits: 1 })} ${entry.unit}`
-                            : `${formatNumberForLocale(entry.targetMin!, locale, { maximumFractionDigits: 1 })}–${formatNumberForLocale(entry.targetMax!, locale, { maximumFractionDigits: 1 })} ${entry.unit}`
-                          : entry.value;
-
-                        return (
-                          <div
-                            key={`${entry.id ?? entry.label}-${index}`}
-                            className="flex items-center justify-between gap-3 rounded-xl border border-teal-200 bg-teal-50 p-3"
-                          >
-                            <div>
-                              <p className="text-sm font-medium text-teal-900">{entry.label}</p>
-                              {isTracked ? (
-                                <p className="mt-0.5 text-xs text-teal-700">
-                                  {tr(locale, "Tracked in your Daily Report", "נעקב בדיווח היומי שלך")}
-                                </p>
-                              ) : null}
-                            </div>
-                            <p className="text-sm font-semibold text-teal-900">{rangeText}</p>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            {activeTab === "exercise" ? (
-              payload.exerciseTargets.length ? (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {payload.exerciseTargets.map((entry, index) => (
-                    <div key={`${entry.modality}-${index}`} className="rounded-xl border border-slate-200 bg-white p-4">
-                      <p className="font-semibold text-slate-900">{formatExerciseModality(entry.modality, locale)}</p>
-                      <p className="mt-1 text-sm text-slate-700">
-                        {tr(locale, "Frequency", "תדירות")}: {entry.frequencyPerWeek} {tr(locale, "times/week", "פעמים בשבוע")}
-                      </p>
-                      <p className="text-sm text-slate-700">
-                        {tr(locale, "Duration", "משך")}: {entry.durationMinutesPerSession} {formatMeasurementUnit("minutes", locale)}
-                      </p>
-                      {entry.aiAdjustmentNote ? <p className="mt-2 text-xs text-slate-600">{entry.aiAdjustmentNote}</p> : null}
-                      {entry.searchKeywords.length ? (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {entry.searchKeywords.map((keywords) => (
-                            <a
-                              key={keywords}
-                              href={`https://www.youtube.com/results?search_query=${encodeURIComponent(keywords)}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-medium text-sky-700 hover:bg-sky-100"
-                            >
-                              {"🔍 "}
-                              {tr(locale, "Search", "חיפוש")}: {keywords}
-                            </a>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-slate-600">{tr(locale, "No exercise plan entries yet.", "עדיין אין פריטי תכנית פעילות.")}</p>
-              )
-            ) : null}
-
-            {activeTab === "suggestions" ? (
+            {payload.userTargets.length ? (
               <div>
-                <h3 className="text-sm font-semibold text-slate-900">{additionalSuggestionsTitle}</h3>
-                <div className="mt-3 grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <h4 className="text-sm font-semibold uppercase tracking-wide text-emerald-700">{tr(locale, "Do", "לעשות")}</h4>
-                    <div className="mt-3 space-y-3">
-                      {payload.habitsDo.map((habit) => (
-                        <div key={habit.id} className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-                          <p className="text-sm font-medium text-emerald-900">{habit.habitInstruction}</p>
-                          <details className="mt-1">
-                            <summary className="cursor-pointer text-xs font-semibold text-emerald-700">{tr(locale, "Why?", "למה?")}</summary>
-                            <p className="mt-1 text-xs text-emerald-800">{habit.rationale}</p>
-                          </details>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{userTargetsTitle}</h3>
+                <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                  {payload.userTargets.map((entry, index) => {
+                    const isTracked =
+                      Boolean(entry.unit) && entry.targetMin !== undefined && entry.targetMax !== undefined;
+                    const rangeText = isTracked
+                      ? entry.targetMin === entry.targetMax
+                        ? `${formatNumberForLocale(entry.targetMin!, locale, { maximumFractionDigits: 1 })} ${entry.unit}`
+                        : `${formatNumberForLocale(entry.targetMin!, locale, { maximumFractionDigits: 1 })}–${formatNumberForLocale(entry.targetMax!, locale, { maximumFractionDigits: 1 })} ${entry.unit}`
+                      : entry.value;
+
+                    return (
+                      <div
+                        key={`${entry.id ?? entry.label}-${index}`}
+                        className="flex items-center justify-between gap-3 rounded-xl border border-teal-200 bg-teal-50 p-3 dark:border-teal-800 dark:bg-teal-950/30"
+                      >
+                        <div>
+                          <p className="text-sm font-medium text-teal-900 dark:text-teal-300">{entry.label}</p>
+                          {isTracked ? (
+                            <p className="mt-0.5 text-xs text-teal-700 dark:text-teal-400">
+                              {tr(locale, "Tracked in your Daily Report", "נעקב בדיווח היומי שלך")}
+                            </p>
+                          ) : null}
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-semibold uppercase tracking-wide text-rose-700">{tr(locale, "Don't do", "להימנע")}</h4>
-                    <div className="mt-3 space-y-3">
-                      {payload.habitsDont.map((habit) => (
-                        <div key={habit.id} className="rounded-xl border border-rose-200 bg-rose-50 p-3">
-                          <p className="text-sm font-medium text-rose-900">{habit.habitInstruction}</p>
-                          <details className="mt-1">
-                            <summary className="cursor-pointer text-xs font-semibold text-rose-700">{tr(locale, "Why?", "למה?")}</summary>
-                            <p className="mt-1 text-xs text-rose-800">{habit.rationale}</p>
-                          </details>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                        <p className="text-sm font-semibold text-teal-900 dark:text-teal-300">{rangeText}</p>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {activeTab === "exercise" ? (
+          payload.exerciseTargets.length ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {payload.exerciseTargets.map((entry, index) => (
+                <div key={`${entry.modality}-${index}`} className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+                  <p className="font-semibold text-slate-900 dark:text-slate-100">{formatExerciseModality(entry.modality, locale)}</p>
+                  <p className="mt-1 text-sm text-slate-700 dark:text-slate-300">
+                    {tr(locale, "Frequency", "תדירות")}: {entry.frequencyPerWeek} {tr(locale, "times/week", "פעמים בשבוע")}
+                  </p>
+                  <p className="text-sm text-slate-700 dark:text-slate-300">
+                    {tr(locale, "Duration", "משך")}: {entry.durationMinutesPerSession} {formatMeasurementUnit("minutes", locale)}
+                  </p>
+                  {entry.aiAdjustmentNote ? <p className="mt-2 text-xs text-slate-600 dark:text-slate-400">{entry.aiAdjustmentNote}</p> : null}
+                  {entry.searchKeywords.length ? (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {entry.searchKeywords.map((keywords) => (
+                        <a
+                          key={keywords}
+                          href={`https://www.youtube.com/results?search_query=${encodeURIComponent(keywords)}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-medium text-sky-700 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/30 dark:text-sky-400 dark:hover:bg-sky-950/50"
+                        >
+                          {"🔍 "}
+                          {tr(locale, "Search", "חיפוש")}: {keywords}
+                        </a>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-600 dark:text-slate-400">{tr(locale, "No exercise plan entries yet.", "עדיין אין פריטי תכנית פעילות.")}</p>
+          )
+        ) : null}
+
+        {activeTab === "suggestions" ? (
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">{additionalSuggestionsTitle}</h3>
+            <div className="mt-3 grid gap-4 sm:grid-cols-2">
+              <div>
+                <h4 className="text-sm font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">{tr(locale, "Do", "לעשות")}</h4>
+                <div className="mt-3 space-y-3">
+                  {payload.habitsDo.map((habit) => (
+                    <div key={habit.id} className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-800 dark:bg-emerald-950/30">
+                      <p className="text-sm font-medium text-emerald-900 dark:text-emerald-300">{habit.habitInstruction}</p>
+                      <details className="mt-1">
+                        <summary className="cursor-pointer text-xs font-semibold text-emerald-700 dark:text-emerald-400">{tr(locale, "Why?", "למה?")}</summary>
+                        <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-400">{habit.rationale}</p>
+                      </details>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <h4 className="text-sm font-semibold uppercase tracking-wide text-rose-700 dark:text-rose-400">{tr(locale, "Don't do", "להימנע")}</h4>
+                <div className="mt-3 space-y-3">
+                  {payload.habitsDont.map((habit) => (
+                    <div key={habit.id} className="rounded-xl border border-rose-200 bg-rose-50 p-3 dark:border-rose-800 dark:bg-rose-950/30">
+                      <p className="text-sm font-medium text-rose-900 dark:text-rose-300">{habit.habitInstruction}</p>
+                      <details className="mt-1">
+                        <summary className="cursor-pointer text-xs font-semibold text-rose-700 dark:text-rose-400">{tr(locale, "Why?", "למה?")}</summary>
+                        <p className="mt-1 text-xs text-rose-800 dark:text-rose-400">{habit.rationale}</p>
+                      </details>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {activeTab === "information" ? (
+          <div className="space-y-4">
+            {history ? (
+              <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{tr(locale, "Targets History", "היסטוריית יעדים")}</h3>
+                <div className="mt-2 text-sm text-slate-700 dark:text-slate-300">
+                  <p>
+                    <span className="font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Original request", "בקשה מקורית")}:</span>{" "}
+                    <span className="italic text-slate-600 dark:text-slate-400">{history.rawGoalText}</span>
+                  </p>
+                  <p className="mt-1">
+                    <span className="font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Locked at", "ננעל בתאריך")}:</span>{" "}
+                    {history.lockedAtLabel}
+                  </p>
+                  <p className="mt-1">
+                    <span className="font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Analysis source", "מקור ניתוח")}:</span>{" "}
+                    {history.analysisSource === "ai" ? "AI" : tr(locale, "Heuristic", "יוריסטי")}
+                  </p>
+                </div>
+              </div>
+            ) : null}
+
+            {payload.aiRationaleExplanation ? (
+              <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{tr(locale, "Targets Explained", "הסבר על היעדים")}</h3>
+                <p className="mt-2 text-sm text-slate-700 dark:text-slate-300">{payload.aiRationaleExplanation}</p>
+              </div>
+            ) : null}
+
+            {!history && !payload.aiRationaleExplanation ? (
+              <p className="text-sm text-slate-600 dark:text-slate-400">{tr(locale, "Nothing here yet.", "אין כאן עדיין דבר.")}</p>
             ) : null}
           </div>
         ) : null}

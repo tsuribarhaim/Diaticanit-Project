@@ -672,7 +672,7 @@ export function validateFreeTextDetails(value: string, minLength = 3): FreeTextV
 
 const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
 
-const exerciseScheduleByModalitySchema = z.preprocess(
+export const exerciseScheduleByModalitySchema = z.preprocess(
   (value) => {
     if (value == null) {
       return {};
@@ -710,7 +710,7 @@ const exerciseScheduleByModalitySchema = z.preprocess(
   ).default({}),
 );
 
-const exerciseOtherActivitiesSchema = z.preprocess(
+export const exerciseOtherActivitiesSchema = z.preprocess(
   (value) => {
     if (value == null) {
       return [];

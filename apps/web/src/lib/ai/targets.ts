@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import type { AiExtractionConfig } from "@/lib/ai/env";
-import { callAiChatCompletion } from "@/lib/ai/provider-client";
+import { callAiChatCompletionWithProgress } from "@/lib/ai/provider-client";
 import { BMI_GOOD_MAX, BMI_GOOD_MIN, classifyBmi, computeBmi } from "@/lib/bmi";
 import type { AppLocale } from "@/lib/locale";
 import { exerciseModalityOptions } from "@/lib/profile";
@@ -118,6 +118,8 @@ const aiTargetsSchema = z.object({
   sat_fat_max_g: numberFromUnknown,
   omega3_min_g: numberFromUnknown,
   omega3_max_g: numberFromUnknown,
+  cholesterol_min_mg: numberFromUnknown,
+  cholesterol_max_mg: numberFromUnknown,
 
   exercise_targets: z.array(aiExerciseTargetSchema).max(6).optional().default([]),
   habits_do: z.array(aiHabitEntrySchema).max(6).optional().default([]),
@@ -224,6 +226,7 @@ function mapAiTargetsResponse(raw: z.infer<typeof aiTargetsSchema>): TargetGener
   const vitD = clampRange(raw.vit_d_min_mcg, raw.vit_d_max_mcg, 0, 100);
   const satFat = clampRange(raw.sat_fat_min_g, raw.sat_fat_max_g, 0, 100);
   const omega3 = clampRange(raw.omega3_min_g, raw.omega3_max_g, 0, 10);
+  const cholesterol = clampRange(raw.cholesterol_min_mg, raw.cholesterol_max_mg, 0, 1000, 0);
 
   return {
     goalType: raw.goal_type as TargetGoalType,
@@ -269,6 +272,8 @@ function mapAiTargetsResponse(raw: z.infer<typeof aiTargetsSchema>): TargetGener
     satFatMaxG: satFat.max,
     omega3MinG: omega3.min,
     omega3MaxG: omega3.max,
+    cholesterolMinMg: cholesterol.min,
+    cholesterolMaxMg: cholesterol.max,
 
     exerciseTargets: toExerciseTargets(raw.exercise_targets),
     habitsDo: toHabitEntries(raw.habits_do),
@@ -325,6 +330,7 @@ export async function generateTargetsWithAi({
   locale,
   currentTargets,
   medicalDocumentsContext,
+  onProgress,
 }: {
   config: AiExtractionConfig;
   goalText: string;
@@ -340,6 +346,11 @@ export async function generateTargetsWithAi({
    * results), when any are available - see buildMedicalDocumentsContextRules
    * for how the model is instructed to weigh these. */
   medicalDocumentsContext?: string;
+  /** Forwarded to callAiChatCompletionWithProgress - lets a caller (the
+   * targets chat route) drive a live "still working" status instead of a
+   * fixed timer, since this call routinely takes 30s+ (see the timeoutMs
+   * comment below). */
+  onProgress?: () => void;
 }): Promise<TargetGenerationPayload> {
   if (config.provider === "github") {
     throw new Error(
@@ -389,7 +400,7 @@ export async function generateTargetsWithAi({
           '"fiber_min_g":number,"fiber_max_g":number,"sodium_min_mg":number,"sodium_max_mg":number,"added_sugar_min_g":number,"added_sugar_max_g":number,"water_min_ml":number,"water_max_ml":number,',
           '"potassium_min_mg":number,"potassium_max_mg":number,"magnesium_min_mg":number,"magnesium_max_mg":number,"calcium_min_mg":number,"calcium_max_mg":number,"iron_min_mg":number,"iron_max_mg":number,',
           '"zinc_min_mg":number,"zinc_max_mg":number,"vit_c_min_mg":number,"vit_c_max_mg":number,"vit_b12_min_mcg":number,"vit_b12_max_mcg":number,"vit_d_min_mcg":number,"vit_d_max_mcg":number,',
-          '"sat_fat_min_g":number,"sat_fat_max_g":number,"omega3_min_g":number,"omega3_max_g":number,',
+          '"sat_fat_min_g":number,"sat_fat_max_g":number,"omega3_min_g":number,"omega3_max_g":number,"cholesterol_min_mg":number,"cholesterol_max_mg":number,',
           `"exercise_targets":[{"modality":"${AI_EXERCISE_MODALITY_TOKENS.join("|")}","frequency_per_week":number,"duration_minutes_per_session":number,"ai_adjustment_note":"string","search_keywords":["string"]}],`,
           '"habits_do":[{"id":"string","habit_instruction":"string","rationale":"string"}],',
           '"habits_dont":[{"id":"string","habit_instruction":"string","rationale":"string"}],',
@@ -427,11 +438,12 @@ export async function generateTargetsWithAi({
       },
     ];
 
-  const contentText = await callAiChatCompletion({
+  const contentText = await callAiChatCompletionWithProgress({
     config,
     messages,
     temperature: 0.2,
     jsonMode: true,
+    onProgress,
     // This full-schema structured JSON generation (calories, every
     // macro/micro range, exercise targets, habits, user targets) routinely
     // runs close to or past provider-client's default 45s timeout even with

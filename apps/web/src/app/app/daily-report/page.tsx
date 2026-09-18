@@ -8,7 +8,9 @@ import {
 } from "@/app/app/daily-report/actions";
 import { DailyReportDateJumpForm } from "@/components/daily-report-date-jump-form";
 import { DailyReportEditPencilIcon, DailyReportEntryEditForm } from "@/components/daily-report-entry-edit-form";
+import { DailyReportEntryQuickActions } from "@/components/daily-report-entry-quick-actions";
 import { DailyReportForm } from "@/components/daily-report-form";
+import { DailyReportPageNotice } from "@/components/daily-report-page-notice";
 import { DailyReportGoalBars, type RingMetric } from "@/components/daily-report-goal-bars";
 import { DailyReportWeightTrend, type WeightPoint } from "@/components/daily-report-weight-trend";
 import {
@@ -176,6 +178,7 @@ const extraMetricLabels: Record<DailyReportChartExtraMetric, { en: string; he: s
   vitD: { en: "Vitamin D", he: "ויטמין D" },
   satFat: { en: "Saturated Fat", he: "שומן רווי" },
   omega3: { en: "Omega-3", he: "אומגה 3" },
+  cholesterol: { en: "Cholesterol", he: "כולסטרול" },
 };
 
 function getUtcDateStringToday(): string {
@@ -304,7 +307,7 @@ export default async function DailyReportPage({
     supabase
       .from("user_target_profiles")
       .select(
-        "id, protein_min_g, protein_max_g, carbs_min_g, carbs_max_g, water_min_ml, water_max_ml, calories_min, calories_max, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, magnesium_min_mg, magnesium_max_mg, potassium_min_mg, potassium_max_mg, iron_min_mg, iron_max_mg, zinc_min_mg, zinc_max_mg, sodium_min_mg, sodium_max_mg, added_sugar_min_g, added_sugar_max_g, calcium_min_mg, calcium_max_mg, vit_c_min_mg, vit_c_max_mg, vit_b12_min_mcg, vit_b12_max_mcg, vit_d_min_mcg, vit_d_max_mcg, sat_fat_min_g, sat_fat_max_g, omega3_min_g, omega3_max_g, user_targets",
+        "id, protein_min_g, protein_max_g, carbs_min_g, carbs_max_g, water_min_ml, water_max_ml, calories_min, calories_max, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, magnesium_min_mg, magnesium_max_mg, potassium_min_mg, potassium_max_mg, iron_min_mg, iron_max_mg, zinc_min_mg, zinc_max_mg, sodium_min_mg, sodium_max_mg, added_sugar_min_g, added_sugar_max_g, calcium_min_mg, calcium_max_mg, vit_c_min_mg, vit_c_max_mg, vit_b12_min_mcg, vit_b12_max_mcg, vit_d_min_mcg, vit_d_max_mcg, sat_fat_min_g, sat_fat_max_g, omega3_min_g, omega3_max_g, cholesterol_min_mg, cholesterol_max_mg, user_targets",
       )
       .eq("user_id", user.id)
       .eq("is_active", true)
@@ -651,6 +654,15 @@ export default async function DailyReportPage({
       max: Number(activeTargetProfile?.omega3_max_g ?? 0),
       unit: "g",
     },
+    cholesterol: {
+      id: "cholesterol",
+      labelEn: "Cholesterol",
+      labelHe: "כולסטרול",
+      total: todaysTotals.cholesterolMg,
+      min: Number(activeTargetProfile?.cholesterol_min_mg ?? 0),
+      max: Number(activeTargetProfile?.cholesterol_max_mg ?? 0),
+      unit: "mg",
+    },
   };
 
   // Built in canonical order (not the order the user happened to check
@@ -757,35 +769,32 @@ export default async function DailyReportPage({
     // reservation this replaced - a single floating circle needs far less
     // clearance than a full chip row + textarea + send + save dock did.
     <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-6 pt-10 pb-[calc(8rem+env(safe-area-inset-bottom))] sm:pb-10">
-      {/* Page opens on "Today's summary" (below) instead of the compose
-          form - the form moved to the bottom of the page (see the section
-          right before </main>). Save/delete/edit-quantity feedback used to
-          live inside that form's own card; lifted to a plain page-level
-          banner here so it's still the first thing visible after any of
-          those actions, regardless of where the form itself now sits. */}
-      {resolvedSearchParams.error ? (
-        <p className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          {resolvedSearchParams.error}
-        </p>
-      ) : null}
-      {resolvedSearchParams.notice ? (
-        <p className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          {resolvedSearchParams.notice}
-        </p>
-      ) : null}
+      {/* A centered, self-dismissing toast (see DailyReportPageNotice) for
+          whatever several actions on this page (add to saved list, adjust
+          item quantities, chart preferences, etc.) still redirect back
+          with as ?notice=/?error= - shown regardless of scroll position,
+          not a banner competing for a spot in the page's own layout, so it
+          doesn't matter that the form/list those actions actually touch
+          can sit anywhere on the page. */}
+      <DailyReportPageNotice
+        locale={locale}
+        notice={resolvedSearchParams.notice}
+        error={resolvedSearchParams.error}
+        clearedHref={resolvedSearchParams.date ? `/app/daily-report?date=${resolvedSearchParams.date}` : "/app/daily-report"}
+      />
       {editingReport ? (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-300">
           <span>{tr(locale, "Editing a previously saved entry - saving will update it in place.", "עריכת רשומה שנשמרה בעבר - השמירה תעדכן אותה במקום.")}</span>
           <Link
             href={resolvedSearchParams.date ? `/app/daily-report?date=${resolvedSearchParams.date}` : "/app/daily-report"}
-            className="rounded-lg border border-teal-300 bg-white px-2.5 py-1 text-xs font-semibold text-teal-700 hover:bg-teal-100"
+            className="rounded-lg border border-teal-300 bg-white px-2.5 py-1 text-xs font-semibold text-teal-700 hover:bg-teal-100 dark:border-teal-700 dark:bg-slate-900 dark:text-teal-400 dark:hover:bg-teal-900/40"
           >
             {tr(locale, "Cancel edit", "ביטול עריכה")}
           </Link>
         </div>
       ) : null}
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-6">
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
         <div className="flex flex-col items-center gap-3">
           {/* dir="ltr" locked here (not just on numeric spans, as usual) so
               the two arrows stay tied to their own DOM position instead of
@@ -803,20 +812,20 @@ export default async function DailyReportPage({
             <Link
               href={`/app/daily-report?date=${previousDateString}`}
               aria-label={tr(locale, "Previous day", "יום קודם")}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-300 text-slate-600 hover:bg-slate-50"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-300 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M15 6l-6 6 6 6" />
               </svg>
             </Link>
             <div className="text-center">
-              <h2 className="text-lg font-semibold text-slate-900">{tr(locale, "Today's summary", "סיכום היום שלי")}</h2>
-              <p className="text-sm text-slate-500">{formatDateForLocale(`${selectedDate}T00:00:00.000Z`, locale)}</p>
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Today's summary", "סיכום היום שלי")}</h2>
+              <p className="text-sm text-slate-500 dark:text-slate-400">{formatDateForLocale(`${selectedDate}T00:00:00.000Z`, locale)}</p>
             </div>
             {isNextDayDisabled ? (
               <span
                 aria-hidden="true"
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-300"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-300 dark:border-slate-800 dark:text-slate-600"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M9 6l6 6-6 6" />
@@ -826,7 +835,7 @@ export default async function DailyReportPage({
               <Link
                 href={`/app/daily-report?date=${nextDateString}`}
                 aria-label={tr(locale, "Next day", "יום הבא")}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-300 text-slate-600 hover:bg-slate-50"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-300 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M9 6l6 6-6 6" />
@@ -836,7 +845,7 @@ export default async function DailyReportPage({
           </div>
 
           <details className="w-full text-center">
-            <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 rounded-full border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
+            <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 rounded-full border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 [&::-webkit-details-marker]:hidden">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <rect x="3" y="4" width="18" height="18" rx="2" />
                 <path d="M16 2v4M8 2v4M3 10h18" />
@@ -849,13 +858,13 @@ export default async function DailyReportPage({
 
         {weeklyExerciseTargetDays > 0 ? (
           <div className="mt-3 flex justify-center">
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-teal-700" aria-hidden="true">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-300">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-teal-700 dark:text-teal-400" aria-hidden="true">
                 {entryIconPaths("exercise")}
               </svg>
               {tr(locale, "Exercise this week", "פעילות השבוע")}
               {": "}
-              <span dir="ltr" className={weeklyExerciseLoggedDays >= weeklyExerciseTargetDays ? "text-emerald-700" : "text-slate-900"}>
+              <span dir="ltr" className={weeklyExerciseLoggedDays >= weeklyExerciseTargetDays ? "text-emerald-700 dark:text-emerald-400" : "text-slate-900 dark:text-slate-100"}>
                 {weeklyExerciseLoggedDays}/{weeklyExerciseTargetDays}
               </span>
             </span>
@@ -876,7 +885,7 @@ export default async function DailyReportPage({
                 <DailyReportGoalBars locale={locale} coreMetrics={coreDisplayMetrics} extraMetrics={extraDisplayMetrics} />
               </div>
             ) : (
-              <p className="mt-4 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600">
+              <p className="mt-4 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600 dark:border-slate-700 dark:text-slate-400">
                 {tr(
                   locale,
                   "No charts selected. Choose what to show under \"Customize charts\" below.",
@@ -896,8 +905,8 @@ export default async function DailyReportPage({
                 already is - the per-entry copy further down still exists
                 alongside it, not instead of it. */}
             {chartPreferences.showWeightTrend && weightHistory.length > 0 ? (
-              <details open className="mt-4 rounded-xl border border-slate-200 bg-white p-3">
-                <summary className="cursor-pointer text-xs font-semibold text-slate-800">
+              <details open className="mt-4 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+                <summary className="cursor-pointer text-xs font-semibold text-slate-800 dark:text-slate-200">
                   {tr(locale, "Weight trend (last 30 days)", "מגמת משקל (30 הימים האחרונים)")}
                 </summary>
                 <div className="mt-2">
@@ -906,18 +915,18 @@ export default async function DailyReportPage({
               </details>
             ) : null}
 
-            <details className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
-              <summary className="cursor-pointer text-sm font-semibold text-teal-700">
+            <details className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/60">
+              <summary className="cursor-pointer text-sm font-semibold text-teal-700 dark:text-teal-400">
                 {tr(locale, "Customize charts", "התאמת התרשימים")}
               </summary>
               <form action={updateDailyReportChartPreferencesAction} className="mt-3 space-y-4">
                 <div>
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                     {tr(locale, "Primary metrics", "מדדים עיקריים")}
                   </p>
                   <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                     {CHART_CORE_METRIC_IDS.map((metricId) => (
-                      <label key={metricId} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                      <label key={metricId} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
                         <input
                           type="checkbox"
                           name="core_metric"
@@ -931,12 +940,12 @@ export default async function DailyReportPage({
                   </div>
                 </div>
                 <div>
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                     {tr(locale, "Additional metrics", "מדדים נוספים")}
                   </p>
                   <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                     {CHART_EXTRA_METRIC_IDS.map((metricId) => (
-                      <label key={metricId} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                      <label key={metricId} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
                         <input
                           type="checkbox"
                           name="extra_metric"
@@ -947,7 +956,7 @@ export default async function DailyReportPage({
                         {tr(locale, extraMetricLabels[metricId].en, extraMetricLabels[metricId].he)}
                       </label>
                     ))}
-                    <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                    <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
                       <input
                         type="checkbox"
                         name="show_weight_trend"
@@ -960,7 +969,7 @@ export default async function DailyReportPage({
                 </div>
                 <button
                   type="submit"
-                  className="rounded-lg bg-teal-700 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-800"
+                  className="rounded-lg bg-teal-700 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
                 >
                   {tr(locale, "Save chart preferences", "שמירת העדפות תרשימים")}
                 </button>
@@ -968,7 +977,7 @@ export default async function DailyReportPage({
             </details>
           </>
         ) : (
-          <p className="mt-3 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600">
+          <p className="mt-3 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600 dark:border-slate-700 dark:text-slate-400">
             {tr(
               locale,
               "Lock in your daily targets first to see today's progress here.",
@@ -978,13 +987,13 @@ export default async function DailyReportPage({
         )}
       </section>
 
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
-        <h2 className="text-lg font-semibold text-slate-900">
+      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+        <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
           {tr(locale, "Your Reports as of", "הדיווחים שלך ליום")} {formatDateForLocale(`${selectedDate}T00:00:00.000Z`, locale)}
         </h2>
 
         {!reports?.length ? (
-          <p className="mt-3 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600">
+          <p className="mt-3 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600 dark:border-slate-700 dark:text-slate-400">
             {tr(locale, "No reports for this date.", "אין דיווחים לתאריך זה.")}
           </p>
         ) : (
@@ -1102,21 +1111,6 @@ export default async function DailyReportPage({
                     ]
                   : [];
 
-              // "target" covers a report that only carries a custom target
-              // value (e.g. sleep duration) with no food, exercise, or
-              // weight - previously this fell through to "weight" by
-              // default even though there was no weight at all, and the row
-              // showed a misleading scale icon with "No food or exercise
-              // items recorded" instead of the sleep value it actually held.
-              const entryKind: "meal" | "exercise" | "weight" | "target" = hasFood
-                ? "meal"
-                : hasExercise
-                  ? "exercise"
-                  : hasWeight
-                    ? "weight"
-                    : reportCustomTargetRows.length > 0
-                      ? "target"
-                      : "weight";
               const formatTargetValue = (value: number, unit: string) =>
                 `${formatNumberForLocale(value, locale, { maximumFractionDigits: Number.isInteger(value) ? 0 : 1 })} ${formatMeasurementUnit(unit, locale)}`;
               // An exercise-only entry (no food) has nothing meaningful in
@@ -1205,70 +1199,91 @@ export default async function DailyReportPage({
                   <details
                     id={`daily-report-entry-${report.id}`}
                     open={isBeingEdited}
-                    className={`rounded-xl border transition-colors duration-700 ${isBeingEdited ? "border-teal-400 bg-teal-50/40 ring-1 ring-teal-300" : "border-slate-200 bg-slate-50"}`}
+                    className={`rounded-xl border transition-colors duration-700 ${isBeingEdited ? "border-teal-400 bg-teal-50/40 ring-1 ring-teal-300 dark:border-teal-700 dark:bg-teal-950/30 dark:ring-teal-700" : "border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/60"}`}
                   >
-                    <summary className="flex cursor-pointer list-none items-center gap-3 p-4 [&::-webkit-details-marker]:hidden">
-                      <span className="min-w-0 flex-1">
-                        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                          <span dir="ltr" className="text-sm font-semibold text-slate-900">
+                    <summary className="cursor-pointer list-none p-4 [&::-webkit-details-marker]:hidden">
+                      {/* Top row is dedicated to the time and the trailing
+                          controls (value pill, quick actions, chevron) -
+                          previously these sat beside the summary text in one
+                          flex row, which both squeezed the text into a
+                          narrow column (wrapping after only a few
+                          characters) and left the icons vertically centered
+                          against the whole, often multi-line, block once
+                          the text wrapped - reported as icons floating off
+                          to the side, disconnected from the row they
+                          belonged to. The summary text now gets its own
+                          full-width row below instead. */}
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                          <span dir="ltr" className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                             {formatTimeForLocale(report.report_at, locale)}
                           </span>
                           {isBeingEdited ? (
-                            <span className="rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-semibold text-teal-800">
+                            <span className="rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-semibold text-teal-800 dark:bg-teal-900/50 dark:text-teal-300">
                               {tr(locale, "Editing", "בעריכה")}
                             </span>
                           ) : null}
                         </span>
-                        {/* No truncate here (deliberately, on purpose) - a
-                            single-line ellipsis silently hid later items
-                            once the joined summary ran past one line's
-                            width, e.g. "Pear (1 unit) · Soda (1 glass)"
-                            collapsing to just "Pear (1 unit) ..." with no
-                            indication anything followed. Reported as "I
-                            added soda from my saved list but don't see it
-                            in the log" - it WAS saved (and did count toward
-                            the day's totals), just invisible at a glance.
-                            Wrapping instead of clipping means the collapsed
-                            row can grow to two or more lines when an entry
-                            holds several items, which is the honest
-                            trade-off for never silently hiding one. */}
-                        <span className="mt-0.5 block text-xs text-slate-600">
-                          {displaySummary}
+                        <span className="flex shrink-0 items-center gap-2">
+                          {valuePill ? (
+                            <span className="flex shrink-0 items-center gap-1 rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                              <span dir="ltr" className="tabular-nums">{valuePill.number}</span>
+                              <span>{valuePill.unit}</span>
+                            </span>
+                          ) : null}
+                          {/* Replaces the old entry-kind icon (redundant
+                              next to the item text itself) with two
+                              quick-action icons - delete and a shortcut to
+                              the inline edit form - at the row's trailing
+                              edge, right next to the chevron. Every handler
+                              in DailyReportEntryQuickActions calls
+                              stopPropagation, since it's visually inside
+                              this <summary> (the whole row's click-to-expand
+                              toggle) even though it isn't logically part of
+                              it - without that, tapping either icon would
+                              also fire the native <details> toggle
+                              underneath it. */}
+                          <DailyReportEntryQuickActions
+                            locale={locale}
+                            userGender={userGender}
+                            reportId={report.id}
+                            hasInlineEdit={editableFoodItems.length > 0 || editableExerciseItems.length > 0 || hasWeight || reportCustomTargetRows.length > 0}
+                          />
+                          <span className="flex shrink-0 items-center gap-1 text-slate-400 dark:text-slate-500">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M9 6l6 6-6 6" />
+                            </svg>
+                          </span>
                         </span>
-                      </span>
-                      {valuePill ? (
-                        <span className="flex shrink-0 items-center gap-1 rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
-                          <span dir="ltr" className="tabular-nums">{valuePill.number}</span>
-                          <span>{valuePill.unit}</span>
-                        </span>
-                      ) : null}
-                      {/* Two earlier placements both put the entry-kind icon at the
-                          row's OTHER edge from the chevron (first a standalone h-9 w-9
-                          slot, then inline before the time) - in RTL that content block
-                          sits flush against the row's edge regardless, so either way it
-                          mirrored the chevron across the row and read as two separate
-                          tap targets. Grouping both icons together at the same edge
-                          (trailing, right next to the chevron) removes that symmetry -
-                          there's only one icon-bearing corner now. */}
-                      <span className="flex shrink-0 items-center gap-1 text-slate-400">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                          {entryIconPaths(entryKind)}
-                        </svg>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                          <path d="M9 6l6 6-6 6" />
-                        </svg>
+                      </div>
+                      {/* No truncate here (deliberately, on purpose) - a
+                          single-line ellipsis silently hid later items once
+                          the joined summary ran past one line's width, e.g.
+                          "Pear (1 unit) · Soda (1 glass)" collapsing to just
+                          "Pear (1 unit) ..." with no indication anything
+                          followed. Reported as "I added soda from my saved
+                          list but don't see it in the log" - it WAS saved
+                          (and did count toward the day's totals), just
+                          invisible at a glance. Wrapping instead of clipping
+                          means the collapsed row can grow to two or more
+                          lines when an entry holds several items, which is
+                          the honest trade-off for never silently hiding
+                          one - now across the row's full width instead of a
+                          narrow column squeezed beside the trailing icons. */}
+                      <span className="mt-1.5 block text-xs text-slate-600 dark:text-slate-400">
+                        {displaySummary}
                       </span>
                     </summary>
 
-                    <div className="space-y-3 border-t border-dashed border-slate-300 px-4 pb-4 pt-3">
+                    <div className="space-y-3 border-t border-dashed border-slate-300 px-4 pb-4 pt-3 dark:border-slate-700">
                       {fullConversation ? (
                         <details>
-                          <summary className="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-700">
+                          <summary className="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-300">
                             {tr(locale, "View full conversation", "הצגת השיחה המלאה")}
                           </summary>
                           <p
                             dir={locale === "he" ? "rtl" : "ltr"}
-                            className="mt-2 whitespace-pre-line rounded-lg bg-white px-3 py-2 text-xs text-slate-600"
+                            className="mt-2 whitespace-pre-line rounded-lg bg-white px-3 py-2 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-400"
                           >
                             {buildDisplayConversation(fullConversation, locale, userDisplayName)}
                           </p>
@@ -1276,8 +1291,8 @@ export default async function DailyReportPage({
                       ) : null}
 
                       {hasWeight && chartPreferences.showWeightTrend ? (
-                        <div className="rounded-lg border border-slate-200 bg-white p-3">
-                          <p className="text-xs font-semibold text-slate-800">
+                        <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-800">
+                          <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">
                             {tr(locale, "Weight trend (last 30 days)", "מגמת משקל (30 הימים האחרונים)")}
                           </p>
                           <div className="mt-2">
@@ -1294,23 +1309,23 @@ export default async function DailyReportPage({
                           Weight-only and target-only reports below get just
                           their own relevant value(s) instead. */}
                       {hasFood || hasExercise ? (
-                        <div className="grid gap-2 text-xs text-slate-700 sm:grid-cols-2 lg:grid-cols-4">
-                          <p>{tr(locale, "Reported weight", "משקל מדווח")}: <span className="font-semibold text-slate-900">{report.reported_weight_kg === null ? tr(locale, "n/a", "לא זמין") : formatNumber(report.reported_weight_kg, locale, 2)}</span>{report.reported_weight_kg === null ? "" : ` ${formatMeasurementUnit("kg", locale)}`}</p>
-                          <p>{tr(locale, "Calories", "קלוריות")}: <span className="font-semibold text-slate-900">{formatNumber(report.calories_kcal, locale, 0)}</span> {tr(locale, "kcal", 'קק"ל')}</p>
-                          <p>{tr(locale, "Protein", "חלבון")}: <span className="font-semibold text-slate-900">{formatNumber(report.protein_g, locale, 1)}</span> {formatMeasurementUnit("g", locale)}</p>
-                          <p>{tr(locale, "Water", "מים")}: <span className="font-semibold text-slate-900">{formatNumber(report.water_ml, locale, 0)}</span> {formatMeasurementUnit("ml", locale)}</p>
-                          <p>{tr(locale, "Exercise", "פעילות")}: <span className="font-semibold text-slate-900">{formatNumber(report.exercise_minutes, locale, 0)}</span> {formatMeasurementUnit("min", locale)}</p>
+                        <div className="grid gap-2 text-xs text-slate-700 dark:text-slate-300 sm:grid-cols-2 lg:grid-cols-4">
+                          <p>{tr(locale, "Reported weight", "משקל מדווח")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{report.reported_weight_kg === null ? tr(locale, "n/a", "לא זמין") : formatNumber(report.reported_weight_kg, locale, 2)}</span>{report.reported_weight_kg === null ? "" : ` ${formatMeasurementUnit("kg", locale)}`}</p>
+                          <p>{tr(locale, "Calories", "קלוריות")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatNumber(report.calories_kcal, locale, 0)}</span> {tr(locale, "kcal", 'קק"ל')}</p>
+                          <p>{tr(locale, "Protein", "חלבון")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatNumber(report.protein_g, locale, 1)}</span> {formatMeasurementUnit("g", locale)}</p>
+                          <p>{tr(locale, "Water", "מים")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatNumber(report.water_ml, locale, 0)}</span> {formatMeasurementUnit("ml", locale)}</p>
+                          <p>{tr(locale, "Exercise", "פעילות")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatNumber(report.exercise_minutes, locale, 0)}</span> {formatMeasurementUnit("min", locale)}</p>
                           {hasExercise ? (
-                            <p>{tr(locale, "Calories burned", "קלוריות שנשרפו")}: <span className="font-semibold text-slate-900">{formatNumber(report.estimated_burn_kcal, locale, 0)}</span> {tr(locale, "kcal", 'קק"ל')}</p>
+                            <p>{tr(locale, "Calories burned", "קלוריות שנשרפו")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatNumber(report.estimated_burn_kcal, locale, 0)}</span> {tr(locale, "kcal", 'קק"ל')}</p>
                           ) : null}
-                          <p>{tr(locale, "Magnesium", "מגנזיום")}: <span className="font-semibold text-slate-900">{formatNumber(report.magnesium_mg, locale, 1)}</span> {formatMeasurementUnit("mg", locale)}</p>
-                          <p>{tr(locale, "Potassium", "אשלגן")}: <span className="font-semibold text-slate-900">{formatNumber(report.potassium_mg, locale, 1)}</span> {formatMeasurementUnit("mg", locale)}</p>
-                          <p>{tr(locale, "Iron", "ברזל")}: <span className="font-semibold text-slate-900">{formatNumber(report.iron_mg, locale, 2)}</span> {formatMeasurementUnit("mg", locale)}</p>
-                          <p>{tr(locale, "Zinc", "אבץ")}: <span className="font-semibold text-slate-900">{formatNumber(report.zinc_mg, locale, 2)}</span> {formatMeasurementUnit("mg", locale)}</p>
+                          <p>{tr(locale, "Magnesium", "מגנזיום")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatNumber(report.magnesium_mg, locale, 1)}</span> {formatMeasurementUnit("mg", locale)}</p>
+                          <p>{tr(locale, "Potassium", "אשלגן")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatNumber(report.potassium_mg, locale, 1)}</span> {formatMeasurementUnit("mg", locale)}</p>
+                          <p>{tr(locale, "Iron", "ברזל")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatNumber(report.iron_mg, locale, 2)}</span> {formatMeasurementUnit("mg", locale)}</p>
+                          <p>{tr(locale, "Zinc", "אבץ")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatNumber(report.zinc_mg, locale, 2)}</span> {formatMeasurementUnit("mg", locale)}</p>
                         </div>
                       ) : hasWeight ? (
-                        <p className="text-xs text-slate-700">
-                          {tr(locale, "Reported weight", "משקל מדווח")}: <span className="font-semibold text-slate-900">{formatNumber(report.reported_weight_kg, locale, 2)}</span> {formatMeasurementUnit("kg", locale)}
+                        <p className="text-xs text-slate-700 dark:text-slate-300">
+                          {tr(locale, "Reported weight", "משקל מדווח")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatNumber(report.reported_weight_kg, locale, 2)}</span> {formatMeasurementUnit("kg", locale)}
                         </p>
                       ) : null}
 
@@ -1323,9 +1338,9 @@ export default async function DailyReportPage({
                       {reportCustomTargetRows.length > 0 ? (
                         <div className="space-y-1.5">
                           {reportCustomTargetRows.map(({ target, value }) => (
-                            <p key={target.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
+                            <p key={target.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-300">
                               <span>{target.label}</span>
-                              <span dir="ltr" className="font-semibold text-slate-900">{formatTargetValue(value, target.unit)}</span>
+                              <span dir="ltr" className="font-semibold text-slate-900 dark:text-slate-100">{formatTargetValue(value, target.unit)}</span>
                             </p>
                           ))}
                         </div>
@@ -1341,8 +1356,8 @@ export default async function DailyReportPage({
                           the list, rose for the destructive action). */}
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                         {editableFoodItems.length > 0 || editableExerciseItems.length > 0 || hasWeight || reportCustomTargetRows.length > 0 ? (
-                          <details>
-                            <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-medium text-teal-700 hover:text-teal-800 [&::-webkit-details-marker]:hidden">
+                          <details data-inline-edit-details>
+                            <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-medium text-teal-700 hover:text-teal-800 dark:text-teal-400 dark:hover:text-teal-300 [&::-webkit-details-marker]:hidden">
                               <DailyReportEditPencilIcon className="h-3.5 w-3.5" />
                               {tr(locale, "Edit", "עריכה")}
                             </summary>
@@ -1385,7 +1400,7 @@ export default async function DailyReportPage({
                           <Link
                             href={editHref}
                             prefetch={false}
-                            className="text-xs font-medium text-teal-700 hover:text-teal-800"
+                            className="text-xs font-medium text-teal-700 hover:text-teal-800 dark:text-teal-400 dark:hover:text-teal-300"
                           >
                             {tr(locale, "Edit in chat", "עריכה בצ'אט")}
                           </Link>
@@ -1399,21 +1414,21 @@ export default async function DailyReportPage({
                             in doesn't mean anything as a reusable item). */}
                         {hasFood || hasExercise ? (
                           <details>
-                            <summary className="cursor-pointer text-xs font-medium text-cyan-700 hover:text-cyan-800">
+                            <summary className="cursor-pointer text-xs font-medium text-cyan-700 hover:text-cyan-800 dark:text-cyan-400 dark:hover:text-cyan-300">
                               {tr(locale, "Add to Saved List", "הוספה לרשימה השמורה")}
                             </summary>
-                            <form action={addReportToDefaultsAction} className="mt-2 flex w-full flex-wrap items-center gap-2 rounded-lg border border-cyan-200 bg-cyan-50/40 px-2 py-2">
+                            <form action={addReportToDefaultsAction} className="mt-2 flex w-full flex-wrap items-center gap-2 rounded-lg border border-cyan-200 bg-cyan-50/40 px-2 py-2 dark:border-cyan-800 dark:bg-cyan-950/30">
                               <input type="hidden" name="report_id" value={report.id} />
                               <input
                                 type="text"
                                 name="default_name"
                                 maxLength={80}
                                 placeholder={tr(locale, "e.g. My morning eggs breakfast", "לדוגמה: ארוחת בוקר ביצים שלי")}
-                                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700"
+                                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
                               />
                               <button
                                 type="submit"
-                                className="rounded-lg border border-cyan-300 px-3 py-2 text-xs font-semibold text-cyan-700 hover:bg-cyan-50"
+                                className="rounded-lg border border-cyan-300 px-3 py-2 text-xs font-semibold text-cyan-700 hover:bg-cyan-50 dark:border-cyan-700 dark:text-cyan-400 dark:hover:bg-cyan-900/30"
                               >
                                 {tr(locale, "Save to Saved List", "שמירה לרשימה השמורה")}
                               </button>
@@ -1425,7 +1440,7 @@ export default async function DailyReportPage({
                           <input type="hidden" name="report_id" value={report.id} />
                           <button
                             type="submit"
-                            className="text-xs font-medium text-rose-700 hover:text-rose-800"
+                            className="text-xs font-medium text-rose-700 hover:text-rose-800 dark:text-rose-400 dark:hover:text-rose-300"
                           >
                             {tr(locale, "Delete entry", "מחיקת רשומה")}
                           </button>
@@ -1449,7 +1464,7 @@ export default async function DailyReportPage({
           own to show in this spot on mobile. Desktop keeps this as a real
           card - it doesn't have a floating bubble, so its inline chat panel
           still needs a home. */}
-      <section className="hidden sm:mt-6 sm:block sm:rounded-2xl sm:border sm:border-slate-200 sm:bg-white sm:p-6">
+      <section className="hidden sm:mt-6 sm:block sm:rounded-2xl sm:border sm:border-slate-200 sm:bg-white sm:p-6 sm:dark:border-slate-800 sm:dark:bg-slate-900">
         <DailyReportForm
           // Includes selectedDate so navigating to a different day remounts
           // the form fresh from that day's own server-provided state

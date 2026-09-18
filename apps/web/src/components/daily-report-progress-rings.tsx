@@ -35,17 +35,17 @@ export type RingMetric = {
  * neverOverLimit.
  */
 function ringColorClass(total: number, min: number, max: number, neverOverLimit?: boolean): string {
-  if (!neverOverLimit && max > 0 && total > max) return "text-rose-500";
-  if (neverOverLimit && max > 0 && total >= max) return "text-emerald-500";
-  if (min > 0 && total >= min) return "text-emerald-500";
-  return "text-teal-500";
+  if (!neverOverLimit && max > 0 && total > max) return "text-rose-500 dark:text-rose-400";
+  if (neverOverLimit && max > 0 && total >= max) return "text-emerald-500 dark:text-emerald-400";
+  if (min > 0 && total >= min) return "text-emerald-500 dark:text-emerald-400";
+  return "text-teal-500 dark:text-teal-400";
 }
 
 function textColorClass(total: number, min: number, max: number, neverOverLimit?: boolean): string {
-  if (!neverOverLimit && max > 0 && total > max) return "text-rose-700";
-  if (neverOverLimit && max > 0 && total >= max) return "text-emerald-700";
-  if (min > 0 && total >= min) return "text-emerald-700";
-  return "text-teal-700";
+  if (!neverOverLimit && max > 0 && total > max) return "text-rose-700 dark:text-rose-400";
+  if (neverOverLimit && max > 0 && total >= max) return "text-emerald-700 dark:text-emerald-400";
+  if (min > 0 && total >= min) return "text-emerald-700 dark:text-emerald-400";
+  return "text-teal-700 dark:text-teal-400";
 }
 
 function clampPercent(value: number): number {
@@ -63,7 +63,7 @@ function Ring({ percent, colorClass, grossPercent }: { percent: number; colorCla
 
   return (
     <svg viewBox="0 0 100 100" className="h-24 w-24 -rotate-90">
-      <circle cx="50" cy="50" r={radius} fill="none" strokeWidth="10" stroke="currentColor" className="text-slate-200" />
+      <circle cx="50" cy="50" r={radius} fill="none" strokeWidth="10" stroke="currentColor" className="text-slate-200 dark:text-slate-800" />
       {hasBurnBack ? (
         <circle
           cx="50"
@@ -118,28 +118,28 @@ export function DailyReportProgressRings({ locale, metrics }: { locale: AppLocal
               : null;
 
           return (
-            <div key={metric.id} className="flex flex-col items-center rounded-xl border border-slate-200 bg-white p-3">
+            <div key={metric.id} className="flex flex-col items-center rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
               <div className="relative flex h-24 w-24 items-center justify-center">
                 <Ring percent={percent} colorClass={ringColor} grossPercent={grossPercent} />
                 <div className="absolute inset-0 flex items-center justify-center">
                   <span className={`text-sm font-bold ${labelColor}`}>{Math.max(0, Math.round(percent))}%</span>
                 </div>
               </div>
-              <p className="mt-2 text-xs font-semibold text-slate-800">{tr(locale, metric.labelEn, metric.labelHe)}</p>
+              <p className="mt-2 text-xs font-semibold text-slate-800 dark:text-slate-200">{tr(locale, metric.labelEn, metric.labelHe)}</p>
               {/* A bare numeric ratio like "188 / 2,200" is two LTR number
                   runs joined by a neutral "/" - inside an RTL page, the
                   Unicode bidi algorithm can visually swap which number
                   appears first even though the source order here is already
                   correct (total, then max). Locking direction is the same
                   fix already used for the BMI scale elsewhere on Profile. */}
-              <p dir="ltr" className="text-center text-[11px] text-slate-500">
+              <p dir="ltr" className="text-center text-[11px] text-slate-500 dark:text-slate-400">
                 {formatNumberForLocale(metric.total, locale, { maximumFractionDigits: 0 })}
                 {" / "}
                 {formatNumberForLocale(metric.max, locale, { maximumFractionDigits: 0 })}{" "}
                 {formatMeasurementUnit(metric.unit, locale)}
               </p>
               {burnedAmount !== null ? (
-                <p dir="ltr" className="text-center text-[10px] text-slate-400">
+                <p dir="ltr" className="text-center text-[10px] text-slate-400 dark:text-slate-500">
                   {formatNumberForLocale(metric.grossTotal!, locale, { maximumFractionDigits: 0 })}{" "}
                   {tr(locale, "gained", "התקבלו")} − {formatNumberForLocale(burnedAmount, locale, { maximumFractionDigits: 0 })}{" "}
                   {tr(locale, "burned", "נשרפו")}
@@ -151,9 +151,9 @@ export function DailyReportProgressRings({ locale, metrics }: { locale: AppLocal
       </div>
 
       {overLimit.length ? (
-        <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3">
-          <p className="text-sm font-semibold text-rose-800">{tr(locale, "Over today's target", "מעל היעד להיום")}</p>
-          <ul className="mt-1 space-y-1 text-xs text-rose-700">
+        <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 dark:border-rose-800 dark:bg-rose-950/30">
+          <p className="text-sm font-semibold text-rose-800 dark:text-rose-300">{tr(locale, "Over today's target", "מעל היעד להיום")}</p>
+          <ul className="mt-1 space-y-1 text-xs text-rose-700 dark:text-rose-400">
             {overLimit.map((metric) => (
               <li key={metric.id}>
                 {tr(locale, metric.labelEn, metric.labelHe)}:{" "}

@@ -53,6 +53,8 @@ export type DailyReportChatTargets = {
   sat_fat_max_g: number | null;
   omega3_min_g: number | null;
   omega3_max_g: number | null;
+  cholesterol_min_mg: number | null;
+  cholesterol_max_mg: number | null;
 } | null;
 
 function buildProfileSummary(profile: DailyReportChatProfile): string {
@@ -86,6 +88,7 @@ function buildTargetsSummary(targets: DailyReportChatTargets): string {
     `vitamin D: ${targets.vit_d_min_mcg ?? 0}-${targets.vit_d_max_mcg ?? 0} mcg`,
     `saturated fat: ${targets.sat_fat_min_g ?? 0}-${targets.sat_fat_max_g ?? 0} g`,
     `omega-3: ${targets.omega3_min_g ?? 0}-${targets.omega3_max_g ?? 0} g`,
+    `cholesterol: ${targets.cholesterol_min_mg ?? 0}-${targets.cholesterol_max_mg ?? 0} mg`,
   ].join("\n");
 }
 
@@ -105,6 +108,7 @@ function buildTodaysTotalsSummary(totals: DailyReportMetrics): string {
     `vitamin D so far: ${totals.vitDMcg} mcg`,
     `saturated fat so far: ${totals.satFatG} g`,
     `omega-3 so far: ${totals.omega3G} g`,
+    `cholesterol so far: ${totals.cholesterolMg} mg`,
     `exercise so far: ${totals.exerciseMinutes} minutes, ~${totals.estimatedBurnKcal} kcal burned`,
   ].join("\n");
 }
@@ -125,7 +129,7 @@ function buildTodaysLoggedItemsSummary(items: TodaysLoggedItems): string {
 
   for (const item of items.foodItems) {
     lines.push(
-      `- ${item.name} (${item.quantity} ${item.unit}): ${item.caloriesKcal} kcal, protein ${item.proteinG}g, carbs ${item.carbsG}g, fat ${item.fatG}g, fiber ${item.fiberG}g, added sugar ${item.addedSugarG}g, sodium ${item.sodiumMg}mg, water ${item.waterMl}ml, sat fat ${item.satFatG}g, magnesium ${item.magnesiumMg}mg, potassium ${item.potassiumMg}mg, calcium ${item.calciumMg}mg, iron ${item.ironMg}mg, zinc ${item.zincMg}mg, vit C ${item.vitCMg}mg, vit B12 ${item.vitB12Mcg}mcg, vit D ${item.vitDMcg}mcg, omega-3 ${item.omega3G}g`,
+      `- ${item.name} (${item.quantity} ${item.unit}): ${item.caloriesKcal} kcal, protein ${item.proteinG}g, carbs ${item.carbsG}g, fat ${item.fatG}g, fiber ${item.fiberG}g, added sugar ${item.addedSugarG}g, sodium ${item.sodiumMg}mg, water ${item.waterMl}ml, sat fat ${item.satFatG}g, magnesium ${item.magnesiumMg}mg, potassium ${item.potassiumMg}mg, calcium ${item.calciumMg}mg, iron ${item.ironMg}mg, zinc ${item.zincMg}mg, vit C ${item.vitCMg}mg, vit B12 ${item.vitB12Mcg}mcg, vit D ${item.vitDMcg}mcg, omega-3 ${item.omega3G}g, cholesterol ${item.cholesterolMg}mg`,
     );
   }
 
@@ -220,6 +224,7 @@ export async function openDailyReportChatReplyStream({
           ...ASSISTANT_PERSONA_INSTRUCTIONS,
           "CONTEXT: every message includes user_profile_summary (dietary preference, allergies, medical conditions, pregnancy/lactation status, first name, gender - see ADDRESSING THE USER above), daily_targets_summary (this user's target ranges), todays_logged_totals_summary (their aggregate totals so far, computed by the app), and todays_logged_items (the individual food/exercise/weigh-in entries behind those totals, each with its own nutrient breakdown). Always use this context instead of asking the user to repeat it - e.g. if they ask what to eat for lunch, compute their remaining needs yourself from daily_targets_summary minus todays_logged_totals_summary and suggest something concrete that fits, taking dietary_preference and allergies/medical_conditions into account. If they ask WHY a total is high/low or where it came from, look through todays_logged_items yourself and name the specific item(s) responsible (e.g. \"most of your added sugar today came from the chocolate cake slice you logged\") - never ask them to describe what they ate again when todays_logged_items already answers it.",
           "SCOPE: in scope is (a) logging what the user ate/drank/exercised/weighed, (b) nutrition information questions - the nutrient breakdown of any specific food, or comparing two or more foods/products against each other - answer these directly and fully with real numbers every single time, even when the food is hypothetical, not something the user has eaten, and not something they're currently planning to eat. This is the user gathering information to help them decide what to eat - never require them to frame it as 'today's food' or something they already logged before answering; refusing or deflecting a plain nutrition-info or comparison question is wrong, and (c) planning/suggestion questions about nutrition, meals, hydration, or exercise for the rest of today, grounded in the context above. If the user asks about something unrelated to nutrition/exercise/health (e.g. a career goal, general chit-chat, changing their targets), warmly redirect them to describe something they ate/drank/did, or ask a nutrition/exercise planning question instead.",
+          "NUTRIENT-EXCEEDED ALERTS: if the item(s) described in THIS message push a nutrient over its daily target, you may note that plainly in this same reply (factually, per the TONE rule above - never scold or moralize about it) - but only in the reply for the report that actually caused it. Do NOT repeat that same alert again on a later, unrelated turn (e.g. the user then logs a glass of water) just because the total is still over - they already saw it once, and the goal bars on the page itself keep showing the current status at a glance regardless. Only mention it again if a LATER report pushes that same nutrient even further over target than it already was.",
           "NUTRITION INFO & COMPARISON FORMAT: for a (b)-type reply above, the normal 1-3-sentence limit at the end of these rules doesn't apply - give one short line per food/nutrient so the numbers are easy to scan (still plain text, no markdown/JSON/bullets). E.g. two foods being compared each get their own line with their calories and the specific nutrients asked about.",
           "SPARKLING WATER: plain carbonated/sparkling water (soda water, seltzer, club soda, or Hebrew \"סודה\"/\"מי סודה\") is 0 calories and 0 sugar - it counts entirely as water intake, exactly like still water. Do not treat it as a sugary soft drink by default; only estimate calories/sugar for it when the user explicitly says it's sweetened, flavored, or names a specific sugary-drink brand (e.g. cola, Sprite).",
           "WEIGHT: if the user mentions their current weight (a number, e.g. \"I'm down to 55kg\"), this genuinely is tracked - never say weight isn't something you can log or track here, that's false. Acknowledge it warmly and specifically (e.g. congratulate a loss, or just note it plainly) and tell them it will be saved as today's weight once they save this report - do not ask them to repeat it elsewhere or imply they need a different feature for it.",

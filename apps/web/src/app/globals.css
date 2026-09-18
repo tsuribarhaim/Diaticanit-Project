@@ -1,5 +1,19 @@
 @import "tailwindcss";
 
+/*
+ * Explicit, user-chosen light/dark theme (see the Theme row on Settings) -
+ * not the OS's prefers-color-scheme, which used to drive this file's colors
+ * automatically. Scoped to [data-theme="dark"] set on ProtectedAppLayout's
+ * own wrapper div (see its own comment), the same element that already
+ * carries lang/dir for locale - everything outside /app/* (sign-in, the
+ * marketing page, this file's own `body`/footer in the root layout) stays
+ * on the light palette below, matching how locale/RTL are already scoped.
+ * `&:where(...)` is Tailwind v4's documented pattern for an attribute-driven
+ * dark variant: the first branch matches the element carrying the attribute
+ * itself, the second matches every descendant.
+ */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
@@ -12,19 +26,19 @@
   --font-mono: "Cascadia Mono", "Consolas", "Courier New", monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
 
+/*
+ * A sane default for every plain form control, so individual inputs across
+ * the app don't each need their own dark: color/background-color pair just
+ * to stay legible - a component can still override these (e.g. a themed
+ * button styled as an <input>) the normal Tailwind-class way, since a class
+ * on the element itself always wins over this element-selector default.
+ */
 input,
 textarea,
 select {
@@ -35,5 +49,15 @@ select {
 input::placeholder,
 textarea::placeholder {
   color: #64748b;
+  opacity: 1;
+}
+
+:where([data-theme="dark"] input, [data-theme="dark"] textarea, [data-theme="dark"] select) {
+  color: #f1f5f9;
+  background-color: #1e293b;
+}
+
+:where([data-theme="dark"] input::placeholder, [data-theme="dark"] textarea::placeholder) {
+  color: #94a3b8;
   opacity: 1;
 }

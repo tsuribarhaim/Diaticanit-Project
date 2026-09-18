@@ -266,6 +266,20 @@ export const nutrientReference: NutrientReferenceEntry[] = [
       he: "סלמון, סרדינים, אגוזי מלך, זרעי פשתן, זרעי צ'יה.",
     },
   },
+  {
+    id: "cholesterol",
+    layer: "secondary",
+    unit: "mg",
+    nameLabel: { en: "Cholesterol", he: "כולסטרול" },
+    roleDescription: {
+      en: "Dietary cholesterol from food - keeping this low supports cardiovascular health.",
+      he: "כולסטרול תזונתי הנצרך מהמזון - שמירה על כמות נמוכה תומכת בבריאות הלב וכלי הדם.",
+    },
+    foodExamples: {
+      en: "Egg yolks, shrimp, organ meats, full-fat dairy.",
+      he: "חלמון ביצה, שרימפס, קרביים, מוצרי חלב שמנים.",
+    },
+  },
 ];
 
 export function getNutrientReference(id: string): NutrientReferenceEntry | undefined {

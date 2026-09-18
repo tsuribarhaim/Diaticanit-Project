@@ -99,6 +99,7 @@ export type ParsedFoodItem = {
   vitDMcg: number;
   satFatG: number;
   omega3G: number;
+  cholesterolMg: number;
 };
 
 export type ParsedExerciseItem = {
@@ -126,6 +127,7 @@ export type DailyReportMetrics = {
   vitDMcg: number;
   satFatG: number;
   omega3G: number;
+  cholesterolMg: number;
   exerciseMinutes: number;
   estimatedBurnKcal: number;
 };
@@ -149,6 +151,7 @@ const EMPTY_METRICS: DailyReportMetrics = {
   vitDMcg: 0,
   satFatG: 0,
   omega3G: 0,
+  cholesterolMg: 0,
   exerciseMinutes: 0,
   estimatedBurnKcal: 0,
 };
@@ -203,7 +206,7 @@ export async function getDailyReportTotalsForRange({
   let query = supabase
     .from("user_daily_reports")
     .select(
-      "calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, sodium_mg, added_sugar_g, calcium_mg, vit_c_mg, vit_b12_mcg, vit_d_mcg, sat_fat_g, omega3_g, exercise_minutes, estimated_burn_kcal",
+      "calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, sodium_mg, added_sugar_g, calcium_mg, vit_c_mg, vit_b12_mcg, vit_d_mcg, sat_fat_g, omega3_g, cholesterol_mg, exercise_minutes, estimated_burn_kcal",
     )
     .eq("user_id", userId);
   if (excludeReportId) query = query.neq("id", excludeReportId);
@@ -232,6 +235,7 @@ export async function getDailyReportTotalsForRange({
       vitDMcg: acc.vitDMcg + Number(row.vit_d_mcg ?? 0),
       satFatG: acc.satFatG + Number(row.sat_fat_g ?? 0),
       omega3G: acc.omega3G + Number(row.omega3_g ?? 0),
+      cholesterolMg: acc.cholesterolMg + Number(row.cholesterol_mg ?? 0),
       exerciseMinutes: acc.exerciseMinutes + Number(row.exercise_minutes ?? 0),
       estimatedBurnKcal: acc.estimatedBurnKcal + Number(row.estimated_burn_kcal ?? 0),
     }),
@@ -312,6 +316,7 @@ export async function getTodaysLoggedItems({
           vitDMcg: Number(raw.vitDMcg ?? 0),
           satFatG: Number(raw.satFatG ?? 0),
           omega3G: Number(raw.omega3G ?? 0),
+          cholesterolMg: Number(raw.cholesterolMg ?? 0),
         });
       }
     }
@@ -400,6 +405,7 @@ function rowToMetrics(row: Record<string, unknown>): DailyReportMetrics {
     vitDMcg: Number(row.vit_d_mcg ?? 0),
     satFatG: Number(row.sat_fat_g ?? 0),
     omega3G: Number(row.omega3_g ?? 0),
+    cholesterolMg: Number(row.cholesterol_mg ?? 0),
     exerciseMinutes: Number(row.exercise_minutes ?? 0),
     estimatedBurnKcal: Number(row.estimated_burn_kcal ?? 0),
   };
@@ -442,7 +448,7 @@ export async function getLoggedDaysAverageDailyReportTotals({
   const { data: rows } = await supabase
     .from("user_daily_reports")
     .select(
-      "report_at, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, sodium_mg, added_sugar_g, calcium_mg, vit_c_mg, vit_b12_mcg, vit_d_mcg, sat_fat_g, omega3_g, exercise_minutes, estimated_burn_kcal",
+      "report_at, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, sodium_mg, added_sugar_g, calcium_mg, vit_c_mg, vit_b12_mcg, vit_d_mcg, sat_fat_g, omega3_g, cholesterol_mg, exercise_minutes, estimated_burn_kcal",
     )
     .eq("user_id", userId)
     .gte("report_at", rangeStartIso)
@@ -531,6 +537,7 @@ type FoodProfile = {
   vitDMcg: number;
   satFatG: number;
   omega3G: number;
+  cholesterolMg: number;
 };
 
 const foodProfiles: FoodProfile[] = [
@@ -555,6 +562,7 @@ const foodProfiles: FoodProfile[] = [
     vitDMcg: 0,
     satFatG: 0.05,
     omega3G: 0.01,
+    cholesterolMg: 0,
   },
   {
     aliases: ["egg", "eggs", "boiled egg", "boilled egg", "boilled eggs", "boiled eggs", "ביצה", "ביצים", "ביצה קשה", "ביצים קשות"],
@@ -577,6 +585,7 @@ const foodProfiles: FoodProfile[] = [
     vitDMcg: 1.1,
     satFatG: 1.6,
     omega3G: 0.04,
+    cholesterolMg: 186,
   },
   {
     aliases: ["banana", "bananas", "בננה", "בננות"],
@@ -599,6 +608,7 @@ const foodProfiles: FoodProfile[] = [
     vitDMcg: 0,
     satFatG: 0.1,
     omega3G: 0.03,
+    cholesterolMg: 0,
   },
   {
     aliases: ["chicken breast", "grilled chicken", "chicken", "עוף", "חזה עוף", "עוף בגריל"],
@@ -621,6 +631,7 @@ const foodProfiles: FoodProfile[] = [
     vitDMcg: 0.1,
     satFatG: 1,
     omega3G: 0.05,
+    cholesterolMg: 85,
   },
   {
     aliases: ["rice", "white rice", "brown rice", "אורז", "אורז לבן", "אורז מלא"],
@@ -643,6 +654,7 @@ const foodProfiles: FoodProfile[] = [
     vitDMcg: 0,
     satFatG: 0.1,
     omega3G: 0.02,
+    cholesterolMg: 0,
   },
 ];
 
@@ -788,6 +800,7 @@ export function parseDailyReportText({
         vitDMcg: 0,
         satFatG: 0,
         omega3G: 0,
+        cholesterolMg: 0,
       });
       matchedFood = true;
       recognizedSignals += 1;
@@ -818,6 +831,7 @@ export function parseDailyReportText({
             vitDMcg: round(profile.vitDMcg * quantity),
             satFatG: round(profile.satFatG * quantity),
             omega3G: round(profile.omega3G * quantity),
+            cholesterolMg: round(profile.cholesterolMg * quantity),
           });
           matchedFood = true;
           recognizedSignals += 1;
@@ -872,6 +886,7 @@ export function parseDailyReportText({
     totals.vitDMcg += item.vitDMcg;
     totals.satFatG += item.satFatG;
     totals.omega3G += item.omega3G;
+    totals.cholesterolMg += item.cholesterolMg;
   }
 
   for (const item of exerciseItems) {
@@ -906,6 +921,7 @@ export function parseDailyReportText({
       vitDMcg: round(totals.vitDMcg),
       satFatG: round(totals.satFatG),
       omega3G: round(totals.omega3G),
+      cholesterolMg: round(totals.cholesterolMg),
       exerciseMinutes: Math.round(totals.exerciseMinutes),
       estimatedBurnKcal: round(totals.estimatedBurnKcal),
     },

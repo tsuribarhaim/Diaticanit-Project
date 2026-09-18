@@ -28,7 +28,7 @@ function parseRecentEmailsCookie(value: string | undefined): string[] {
 export default async function SignInPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string }>;
+  searchParams: Promise<{ next?: string; reason?: string }>;
 }) {
   const resolvedSearchParams = await searchParams;
   const cookieStore = await cookies();
@@ -44,6 +44,12 @@ export default async function SignInPage({
       nextPath={nextPath}
       recentEmails={recentEmails}
       environmentBadgeLabel={environmentBadgeLabel}
+      // Set by middleware.ts when it signs the user out itself, after the
+      // idle-timeout or absolute-session-cap policy elapsed (see
+      // lib/auth-policy.ts) - distinguishes "you were signed out for a
+      // policy reason" from a plain first-time/never-logged-in visit, which
+      // would otherwise look identical (both just land here with no user).
+      sessionExpired={resolvedSearchParams.reason === "expired"}
     />
   );
 }

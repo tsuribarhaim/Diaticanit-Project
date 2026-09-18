@@ -41,6 +41,7 @@ const aiFoodItemSchema = z.object({
   vitDMcg: numberFromUnknown,
   satFatG: numberFromUnknown,
   omega3G: numberFromUnknown,
+  cholesterolMg: numberFromUnknown,
 });
 
 const aiExerciseItemSchema = z.object({
@@ -68,6 +69,7 @@ const aiMetricsSchema = z.object({
   vitDMcg: numberFromUnknown,
   satFatG: numberFromUnknown,
   omega3G: numberFromUnknown,
+  cholesterolMg: numberFromUnknown,
   exerciseMinutes: numberFromUnknown,
   estimatedBurnKcal: numberFromUnknown,
 });
@@ -134,6 +136,7 @@ function toFoodItems(items: z.infer<typeof aiFoodItemSchema>[]): ParsedFoodItem[
     vitDMcg: round(clamp(item.vitDMcg, 0, 500), 2),
     satFatG: round(clamp(item.satFatG, 0, 1000), 2),
     omega3G: round(clamp(item.omega3G, 0, 100), 2),
+    cholesterolMg: round(clamp(item.cholesterolMg, 0, 5000), 2),
   }));
 }
 
@@ -171,6 +174,7 @@ function computeMetrics({
     vitDMcg: 0,
     satFatG: 0,
     omega3G: 0,
+    cholesterolMg: 0,
     exerciseMinutes: 0,
     estimatedBurnKcal: 0,
   };
@@ -194,6 +198,7 @@ function computeMetrics({
     totals.vitDMcg += item.vitDMcg;
     totals.satFatG += item.satFatG;
     totals.omega3G += item.omega3G;
+    totals.cholesterolMg += item.cholesterolMg;
   }
 
   for (const item of exerciseItems) {
@@ -220,6 +225,7 @@ function computeMetrics({
     vitDMcg: round(totals.vitDMcg),
     satFatG: round(totals.satFatG),
     omega3G: round(totals.omega3G),
+    cholesterolMg: round(totals.cholesterolMg),
     exerciseMinutes: Math.round(totals.exerciseMinutes),
     estimatedBurnKcal: round(totals.estimatedBurnKcal),
   };
@@ -267,6 +273,7 @@ async function callDailyReportChatCompletion({
         vitDMcg: round(clamp(metricsFromAi.vitDMcg, 0, 500), 2),
         satFatG: round(clamp(metricsFromAi.satFatG, 0, 1000), 2),
         omega3G: round(clamp(metricsFromAi.omega3G, 0, 100), 2),
+        cholesterolMg: round(clamp(metricsFromAi.cholesterolMg, 0, 5000), 2),
         exerciseMinutes: Math.round(clamp(metricsFromAi.exerciseMinutes, 0, 720)),
         estimatedBurnKcal: round(clamp(metricsFromAi.estimatedBurnKcal, 0, 12000), 2),
       }
@@ -294,9 +301,9 @@ async function callDailyReportChatCompletion({
 }
 
 const FOOD_ITEM_JSON_SHAPE =
-  '{"name":"string","quantity":number,"unit":"string","caloriesKcal":number,"proteinG":number,"carbsG":number,"fatG":number,"fiberG":number,"waterMl":number,"magnesiumMg":number,"potassiumMg":number,"ironMg":number,"zincMg":number,"sodiumMg":number,"addedSugarG":number,"calciumMg":number,"vitCMg":number,"vitB12Mcg":number,"vitDMcg":number,"satFatG":number,"omega3G":number}';
+  '{"name":"string","quantity":number,"unit":"string","caloriesKcal":number,"proteinG":number,"carbsG":number,"fatG":number,"fiberG":number,"waterMl":number,"magnesiumMg":number,"potassiumMg":number,"ironMg":number,"zincMg":number,"sodiumMg":number,"addedSugarG":number,"calciumMg":number,"vitCMg":number,"vitB12Mcg":number,"vitDMcg":number,"satFatG":number,"omega3G":number,"cholesterolMg":number}';
 const METRICS_JSON_SHAPE =
-  '{"caloriesKcal":number,"proteinG":number,"carbsG":number,"fatG":number,"fiberG":number,"waterMl":number,"magnesiumMg":number,"potassiumMg":number,"ironMg":number,"zincMg":number,"sodiumMg":number,"addedSugarG":number,"calciumMg":number,"vitCMg":number,"vitB12Mcg":number,"vitDMcg":number,"satFatG":number,"omega3G":number,"exerciseMinutes":number,"estimatedBurnKcal":number}';
+  '{"caloriesKcal":number,"proteinG":number,"carbsG":number,"fatG":number,"fiberG":number,"waterMl":number,"magnesiumMg":number,"potassiumMg":number,"ironMg":number,"zincMg":number,"sodiumMg":number,"addedSugarG":number,"calciumMg":number,"vitCMg":number,"vitB12Mcg":number,"vitDMcg":number,"satFatG":number,"omega3G":number,"cholesterolMg":number,"exerciseMinutes":number,"estimatedBurnKcal":number}';
 
 export async function parseDailyReportWithAi({
   config,
@@ -327,7 +334,7 @@ export async function parseDailyReportWithAi({
           `{"foodItems":[${FOOD_ITEM_JSON_SHAPE}],"exerciseItems":[{"name":"string","minutes":number,"estimatedBurnKcal":number}],"metrics":${METRICS_JSON_SHAPE},"isDangerous":boolean,"dangerReason":"string"}`,
           "Rules:",
           "- Use only non-negative numbers.",
-          "- Include reasonable estimates when exact values are unclear, including the less common nutrients (sodiumMg, addedSugarG, calciumMg, vitCMg, vitB12Mcg, vitDMcg, satFatG, omega3G) - never leave them at 0 unless the food genuinely has none.",
+          "- Include reasonable estimates when exact values are unclear, including the less common nutrients (sodiumMg, addedSugarG, calciumMg, vitCMg, vitB12Mcg, vitDMcg, satFatG, omega3G, cholesterolMg) - never leave them at 0 unless the food genuinely has none.",
           "- Plain carbonated/sparkling water (soda water, seltzer, club soda, or Hebrew \"סודה\"/\"מי סודה\") is 0 calories and 0 sugar, and counts entirely as water intake (waterMl), exactly like still water - it is NOT a sugary soft drink by default. Only estimate calories/sugar for it when the text explicitly says it's sweetened, flavored, or a specific sugary-drink brand (e.g. cola, Sprite, \"sweet soda\").",
           `- DRINK UNITS: for EVERY drink (water, coffee, tea, juice, milk, soda, alcohol, a shake, anything liquid), always report the amount in milliliters (unit "ml") - never a serving word like "cup"/"glass"/"can"/"bottle"/"mug"/"unit" as the unit itself. Convert whatever serving size the user mentioned yourself (a cup ≈ 250ml, a glass ≈ 200-250ml, a can ≈ 330ml, a bottle ≈ 500ml, a mug ≈ 300ml, a shot ≈ 30ml) rather than passing the serving word through as the unit. For plain drinking water specifically (still or sparkling, nothing else added), also always use exactly one foodItems[] name, "${languageName === "Hebrew" ? "מים" : "Water"}" - never a more specific name like "Cup of water"/"Glass of water"/"Bottle of water" - so the identical drink logged in different words always comes out as the identical name+unit, not a new variant each time; other drinks keep their own descriptive name (e.g. "Coffee", "Orange juice", "Cola") with only their unit standardized to ml.`,
           "- SAFETY CHECK: set isDangerous to true only when daily_report_text describes consuming something that is not actually food/drink and would be dangerous or harmful (e.g. fuel, gasoline, cleaning products, poison, batteries, or other inedible/hazardous items). If so, set dangerReason to a short plain-language explanation telling the user to seek medical attention if they actually consumed it. Do NOT set isDangerous for an implausible-but-harmless amount of real food (e.g. \"I ate 50 eggs\") - estimate those literally instead; isDangerous is only for genuinely non-food/hazardous substances.",
@@ -383,7 +390,7 @@ export async function parseDailyReportPhotoWithAi({
               "Rules:",
               "- Estimate realistic portion sizes from visual cues (plate size, utensils, packaging).",
               "- Use only non-negative numbers.",
-              "- Include reasonable estimates for every nutrient field, including the less common ones (sodiumMg, addedSugarG, calciumMg, vitCMg, vitB12Mcg, vitDMcg, satFatG, omega3G) - never leave them at 0 unless the food genuinely has none.",
+              "- Include reasonable estimates for every nutrient field, including the less common ones (sodiumMg, addedSugarG, calciumMg, vitCMg, vitB12Mcg, vitDMcg, satFatG, omega3G, cholesterolMg) - never leave them at 0 unless the food genuinely has none.",
               "- Plain carbonated/sparkling water (soda water, seltzer, club soda) visible in the photo is 0 calories and 0 sugar, and counts entirely as water intake (waterMl), exactly like still water - it is NOT a sugary soft drink by default. Only estimate calories/sugar for it when the packaging/can clearly shows it's a sweetened or flavored drink.",
               `- DRINK UNITS: for EVERY drink visible in the photo (water, coffee, tea, juice, milk, soda, alcohol, a shake, anything liquid), always report the amount in milliliters (unit "ml") - never a container word like "cup"/"glass"/"can"/"bottle"/"mug"/"unit" as the unit itself - estimated from the container's visible size. For plain drinking water specifically (still or sparkling, nothing else added), also always use exactly one foodItems[] name, "${languageName === "Hebrew" ? "מים" : "Water"}" - never a more specific name like "Cup of water"/"Glass of water"/"Bottle of water" - so the identical drink logged from different photos always comes out as the identical name+unit; other drinks keep their own descriptive name (e.g. "Coffee", "Orange juice", "Cola") with only their unit standardized to ml.`,
               "- exerciseItems must always be an empty array; this is a food photo only.",

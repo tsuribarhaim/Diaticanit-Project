@@ -60,23 +60,23 @@ export function TargetsStaleModal({
     // to those buttons, an equal z-index risked this modal's backdrop and
     // dialog landing visually behind/beside them instead of clearly on top
     // of the whole page as a modal should.
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/40 p-4">
-      <div className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl">
-        <div className="flex items-center gap-2 bg-teal-50 px-5 py-4">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/40 p-4 dark:bg-slate-950/60">
+      <div className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900">
+        <div className="flex items-center gap-2 bg-teal-50 px-5 py-4 dark:bg-teal-950/30">
           <span className="text-lg">🎯</span>
-          <h2 className="text-sm font-semibold text-teal-900">
+          <h2 className="text-sm font-semibold text-teal-900 dark:text-teal-300">
             {tr(locale, "Your targets may need an update", "ייתכן שהיעדים שלך זקוקים לעדכון")}
           </h2>
         </div>
         <div className="px-5 py-4">
-          <p className="text-sm text-slate-700">
+          <p className="text-sm text-slate-700 dark:text-slate-300">
             {tr(
               locale,
               "The following just changed, which may affect your daily targets:",
               "הפרטים הבאים עודכנו כעת, מה שעשוי להשפיע על היעדים היומיים שלך:",
             )}
           </p>
-          <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto text-sm text-slate-700">
+          <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto text-sm text-slate-700 dark:text-slate-300">
             {changes.map((row) => (
               <li key={row.labelEn}>
                 <span className="font-medium">{tr(locale, row.labelEn, row.labelHe)}:</span> {row.before} → {row.after}
@@ -84,17 +84,17 @@ export function TargetsStaleModal({
             ))}
           </ul>
         </div>
-        <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3">
+        <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3 dark:border-slate-800">
           <button
             type="button"
             onClick={dismiss}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             {tr(locale, "Got it", "הבנתי")}
           </button>
           <Link
             href="/app/targets"
-            className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800"
+            className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
           >
             {tr(locale, "Go to Targets", "מעבר ליעדים")}
           </Link>

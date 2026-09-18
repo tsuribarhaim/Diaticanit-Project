@@ -1,32 +1,90 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useState } from "react";
+import { useActionState, useState, useSyncExternalStore } from "react";
 
 import {
+  recordLoginAction,
   signInAction,
   type AuthActionState,
 } from "@/app/auth/actions";
 import { AuthSubmitButton } from "@/components/auth-submit-button";
 import { EnvironmentBadge } from "@/components/environment-badge";
 import { tr, type AppLocale } from "@/lib/locale";
+import { createClient } from "@/lib/supabase/client";
 
 const initialState: AuthActionState = {};
+
+/**
+ * Whether this browser supports WebAuthn at all - read via
+ * useSyncExternalStore (see subscribePasskeySupport below) rather than a
+ * useState+useEffect pair, since `PublicKeyCredential` doesn't exist during
+ * SSR at all (referencing it outside a browser context would throw) and
+ * this is a one-time synchronous capability check, not state that changes
+ * over the component's lifetime - exactly what useSyncExternalStore's
+ * server/client snapshot split exists for, the same pattern already used
+ * elsewhere in this app for "is this definitely running on the client yet."
+ */
+function subscribePasskeySupport() {
+  return () => {};
+}
+function getPasskeySupportSnapshot() {
+  return typeof window !== "undefined" && "PublicKeyCredential" in window;
+}
+function getServerPasskeySupportSnapshot() {
+  return false;
+}
 
 export function SignInForm({
   locale,
   nextPath,
   recentEmails,
   environmentBadgeLabel,
+  sessionExpired = false,
 }: {
   locale: AppLocale;
   nextPath: string;
   recentEmails: string[];
   environmentBadgeLabel: string | null;
+  sessionExpired?: boolean;
 }) {
   const [state, formAction] = useActionState(signInAction, initialState);
   const [email, setEmail] = useState("");
   const [showEmailSuggestions, setShowEmailSuggestions] = useState(false);
+
+  const supportsPasskey = useSyncExternalStore(
+    subscribePasskeySupport,
+    getPasskeySupportSnapshot,
+    getServerPasskeySupportSnapshot,
+  );
+  const [passkeyState, setPasskeyState] = useState<{ status: "idle" | "pending" | "error"; error?: string }>({
+    status: "idle",
+  });
+
+  async function handlePasskeySignIn() {
+    setPasskeyState({ status: "pending" });
+    const supabase = createClient();
+    // No email needed here - unlike the password form, a passkey ceremony
+    // identifies the account from the credential the device's own
+    // authenticator already has stored for it.
+    const { error } = await supabase.auth.signInWithPasskey();
+
+    if (error) {
+      setPasskeyState({ status: "error", error: error.message });
+      return;
+    }
+
+    // Starts this device's session-policy clocks the same way a password
+    // sign-in does (see markSuccessfulLogin's own comment) - there's no
+    // form submission here for the server to hook that into directly, so
+    // it's recorded explicitly right after the ceremony succeeds.
+    await recordLoginAction();
+    // A full navigation (not router.push) so the server-rendered layout and
+    // middleware both see the session cookie signInWithPasskey just set,
+    // cleanly, on the very next request - the same reasoning already
+    // applied to every other post-auth redirect in this app.
+    window.location.href = nextPath;
+  }
 
   const normalizedEmail = email.trim().toLowerCase();
   const filteredRecentEmails = recentEmails.filter((item) =>
@@ -48,7 +106,47 @@ export function SignInForm({
           {tr(locale, "Continue to your secure health workspace.", "המשיכו למרחב הבריאות המאובטח שלכם.")}
         </p>
 
-        <form action={formAction} className="mt-6 space-y-4" autoComplete="off">
+        {sessionExpired ? (
+          <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            {tr(
+              locale,
+              "You were signed out after a period without activity. Please sign in again.",
+              "התנתקת אוטומטית בעקבות תקופה ללא פעילות. יש להתחבר מחדש.",
+            )}
+          </p>
+        ) : null}
+
+        {supportsPasskey ? (
+          <div className="mt-5">
+            <button
+              type="button"
+              onClick={handlePasskeySignIn}
+              disabled={passkeyState.status === "pending"}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-teal-300 px-3 py-2.5 text-sm font-semibold text-teal-700 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M9 12.5a3 3 0 1 1 6 0c0 1.5-.5 2.5-1.5 4" />
+                <path d="M12 2a10 10 0 0 0-10 10c0 2 .5 3.5 1 4.5" />
+                <path d="M12 2a10 10 0 0 1 10 10c0 3-.5 5-1.5 7" />
+                <path d="M6.5 17.5C7.5 16 8 14.5 8 12.5a4 4 0 0 1 4-4" />
+                <path d="M12 8.5a4 4 0 0 1 4 4c0 3-1 5-3 7" />
+              </svg>
+              {passkeyState.status === "pending"
+                ? tr(locale, "Waiting for Face ID / Touch ID...", "ממתין לזיהוי פנים / טביעת אצבע...")
+                : tr(locale, "Sign in with Face ID / Touch ID", "כניסה עם זיהוי פנים / טביעת אצבע")}
+            </button>
+            {passkeyState.status === "error" ? (
+              <p className="mt-2 text-xs text-rose-700">{passkeyState.error}</p>
+            ) : null}
+            <div className="my-5 flex items-center gap-3 text-xs font-medium uppercase tracking-wide text-slate-400">
+              <span className="h-px flex-1 bg-slate-200" />
+              {tr(locale, "or", "או")}
+              <span className="h-px flex-1 bg-slate-200" />
+            </div>
+          </div>
+        ) : null}
+
+        <form action={formAction} className={supportsPasskey ? "space-y-4" : "mt-6 space-y-4"} autoComplete="off">
           <input type="hidden" name="next" value={nextPath} />
 
           <label className="block relative">
