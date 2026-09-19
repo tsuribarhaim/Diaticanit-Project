@@ -96,6 +96,12 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    // manifest.webmanifest, sw.js, and api/version are deliberately
+    // unauthenticated PWA endpoints - a browser fetches them on every visit
+    // (sw.js on every foreground re-check, api/version on its own polling
+    // interval - see AppUpdateBanner), so without this exclusion every
+    // anonymous hit logged a "get_user_failed" error below for a state
+    // that's completely expected here, not an actual problem.
+    "/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|api/version|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

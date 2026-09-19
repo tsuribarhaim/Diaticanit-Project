@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 
 import { AppBottomNav } from "@/components/app-bottom-nav";
 import { AppNav } from "@/components/app-nav";
+import { AppUpdateBanner } from "@/components/app-update-banner";
+import { ServiceWorkerRegister } from "@/components/service-worker-register";
 import { UnsavedPreviewProvider } from "@/components/unsaved-preview-context";
 import { directionForLocale, normalizeLocale } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
@@ -65,6 +67,8 @@ export default async function ProtectedAppLayout({
     // sign-in page, the marketing page, and this file's own root-layout
     // chrome stay on the light palette, matching locale/RTL precedent).
     <div lang={locale} dir={directionForLocale(locale)} data-theme={theme} className="min-h-screen bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+      <ServiceWorkerRegister />
+      <AppUpdateBanner locale={locale} />
       <UnsavedPreviewProvider locale={locale}>
         {user ? <AppNav locale={locale} avatarColor={profileRow?.avatar_color} name={profileRow?.first_name ?? null} /> : null}
         {/* Reserves space for AppBottomNav's fixed height below `sm`, where
