@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { logServerError } from "@/lib/server-log";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 const authSchema = z.object({
@@ -174,6 +175,35 @@ export async function signUpAction(
     return {
       error: parsed.error.issues[0]?.message ?? "Invalid sign-up payload.",
     };
+  }
+
+  const normalizedEmail = parsed.data.email.trim().toLowerCase();
+
+  // Invite-only pilot gate (db/migrations/041) - can be lifted later without
+  // a code change by setting PILOT_ALLOWLIST_ENABLED=false, once the app is
+  // ready for open sign-up. Checked with the service-role client since this
+  // runs before the visitor has any session for the usual anon-key client
+  // to authenticate as, and the allow-list table has no anon-readable RLS
+  // policy at all (see that migration's own comment).
+  if (process.env.PILOT_ALLOWLIST_ENABLED !== "false") {
+    const admin = createAdminClient();
+    const { data: allowListEntry, error: allowListError } = await admin
+      .from("pilot_allowlist")
+      .select("email")
+      .eq("email", normalizedEmail)
+      .maybeSingle();
+
+    if (allowListError) {
+      logServerError("auth.signUp", "allowlist_check_failed", { error: allowListError.message });
+      return { error: "Something went wrong. Please try again in a moment." };
+    }
+
+    if (!allowListEntry) {
+      logServerError("auth.signUp", "allowlist_rejected", { email: normalizedEmail });
+      return {
+        error: "This is a private pilot and your email isn't on the invite list yet. Contact the team if you believe this is a mistake.",
+      };
+    }
   }
 
   const supabase = await createClient();

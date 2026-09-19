@@ -8,7 +8,7 @@ export default function Home() {
           Phase 1
         </p>
         <h1 className="mt-3 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
-          Personal Health Companion
+          Daffy
         </h1>
         <p className="mt-4 text-base leading-7 text-slate-600">
           Securely create your health profile and manage your personal documents.
