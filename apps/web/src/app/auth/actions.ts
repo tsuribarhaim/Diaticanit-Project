@@ -21,6 +21,7 @@ export type AuthActionState = {
 const RECENT_SIGNIN_EMAILS_COOKIE = "phc_recent_signin_emails";
 const MAX_RECENT_SIGNIN_EMAILS = 5;
 const LOCALE_COOKIE = "phc_locale";
+const INSTALL_PROMPT_COOKIE = "phc_prompt_install";
 
 function normalizeLocaleCookieValue(value: unknown): "en" | "he" {
   return value === "he" ? "he" : "en";
@@ -66,6 +67,31 @@ async function persistLocalePreference(locale: "en" | "he"): Promise<void> {
     secure: process.env.NODE_ENV === "production",
     maxAge: 60 * 60 * 24 * 365,
   });
+}
+
+/**
+ * A brand-new tester who never sees an install prompt just reads as "this
+ * PWA thing didn't work" - InstallAppPrompt's own cooldown/dismissal logic
+ * is right for ordinary browsing, but the very first successful login is
+ * the one moment worth overriding that for. Readable (not httpOnly) since
+ * InstallAppPrompt (a client component) is what actually consumes and
+ * clears it - see that component's own comment. Short-lived because it
+ * only needs to survive the redirect straight into the one page load right
+ * after login.
+ */
+async function markInstallPromptDue(): Promise<void> {
+  const cookieStore = await cookies();
+  cookieStore.set(INSTALL_PROMPT_COOKIE, "1", {
+    path: "/",
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: 60 * 10,
+  });
+}
+
+async function isFirstLogin(supabase: Awaited<ReturnType<typeof createClient>>, userId: string): Promise<boolean> {
+  const { data } = await supabase.from("user_profile").select("last_login_at").eq("user_id", userId).maybeSingle();
+  return !data?.last_login_at;
 }
 
 function sanitizeNextPath(nextPath: string | null): string {
@@ -152,6 +178,9 @@ export async function signInAction(
       .maybeSingle();
 
     await persistLocalePreference(normalizeLocaleCookieValue(profile?.preferred_language));
+    if (await isFirstLogin(supabase, userId)) {
+      await markInstallPromptDue();
+    }
     await markSuccessfulLogin(supabase, userId);
   }
 
@@ -219,6 +248,9 @@ export async function signUpAction(
   }
 
   if (data.session && data.user) {
+    // Always a first login by definition (the account was just created this
+    // request), so no isFirstLogin check needed here unlike signInAction.
+    await markInstallPromptDue();
     await markSuccessfulLogin(supabase, data.user.id);
     redirect("/app");
   }

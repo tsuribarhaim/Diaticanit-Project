@@ -6,6 +6,11 @@ import { tr, type AppLocale } from "@/lib/locale";
 
 const DISMISS_KEY = "daffy_install_prompt_dismissed_at";
 const DISMISS_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
+// Set server-side by signInAction/signUpAction (app/auth/actions.ts) right
+// after a user's very first successful login - overrides the normal
+// dismissal cooldown below for that one page load, since a brand-new tester
+// who never sees an install prompt just reads as "this didn't work."
+const INSTALL_PROMPT_DUE_COOKIE = "phc_prompt_install";
 
 /**
  * Chrome's own native install prompt is heuristic-gated (visit count/
@@ -40,13 +45,23 @@ function wasRecentlyDismissed(): boolean {
   }
 }
 
+function consumeInstallPromptDueCookie(): boolean {
+  const isDue = document.cookie.split("; ").some((entry) => entry === `${INSTALL_PROMPT_DUE_COOKIE}=1`);
+  if (isDue) {
+    document.cookie = `${INSTALL_PROMPT_DUE_COOKIE}=; path=/; max-age=0`;
+  }
+  return isDue;
+}
+
 export function InstallAppPrompt({ locale }: { locale: AppLocale }) {
   const [deferredEvent, setDeferredEvent] = useState<BeforeInstallPromptEvent | null>(null);
   const [showIosInstructions, setShowIosInstructions] = useState(false);
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    if (isStandalone() || wasRecentlyDismissed()) return;
+    if (isStandalone()) return;
+    const justLoggedInFirstTime = consumeInstallPromptDueCookie();
+    if (!justLoggedInFirstTime && wasRecentlyDismissed()) return;
 
     if (isIos()) {
       startTransition(() => setShowIosInstructions(true));
