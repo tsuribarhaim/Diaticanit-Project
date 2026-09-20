@@ -14,10 +14,14 @@ export function AppNav({
   locale,
   avatarColor,
   name,
+  notificationCount,
 }: {
   locale: AppLocale;
   avatarColor?: string | null;
   name?: string | null;
+  /** Unresolved count for the badge below (see app/app/layout.tsx's own
+   * query) - defaults to 0 for any caller that hasn't wired it through. */
+  notificationCount?: number;
 }) {
   const pathname = usePathname();
 
@@ -66,17 +70,33 @@ export function AppNav({
           </GuardedLink>
         ))}
 
+        <GuardedLink
+          href="/app/notifications"
+          confirmMessage={tr(locale, CONFIRM_MESSAGE_EN, CONFIRM_MESSAGE_HE)}
+          aria-label={tr(locale, "Notifications", "התראות")}
+          className={`relative ms-auto flex items-center rounded-lg px-3 py-2 text-sm font-medium ${
+            pathname?.startsWith("/app/notifications")
+              ? "bg-teal-700 text-white dark:bg-teal-600"
+              : "text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+          }`}
+        >
+          {tr(locale, "Notifications", "התראות")}
+          {notificationCount ? (
+            <span className="ms-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[11px] font-bold text-white">
+              {notificationCount > 9 ? "9+" : notificationCount}
+            </span>
+          ) : null}
+        </GuardedLink>
+
         {/* "Which account is this" at a glance on every page - separate from
             the "Profile" nav link above (which still goes to the same
             place), the way most apps keep a persistent account avatar
-            distinct from an in-list nav entry. ms-auto here (not on the
-            sign-out form below it) pushes this avatar + sign-out together
-            as one trailing cluster, in normal flow order after it. */}
+            distinct from an in-list nav entry. */}
         <GuardedLink
           href="/app/profile"
           confirmMessage={tr(locale, CONFIRM_MESSAGE_EN, CONFIRM_MESSAGE_HE)}
           aria-label={tr(locale, "Profile", "פרופיל")}
-          className="ms-auto flex items-center rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+          className="flex items-center rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
         >
           <UserAvatar avatarColor={avatarColor} name={name} className="h-8 w-8 text-xs" />
         </GuardedLink>

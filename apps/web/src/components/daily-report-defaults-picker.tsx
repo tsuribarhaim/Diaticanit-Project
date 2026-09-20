@@ -323,9 +323,14 @@ export function DailyReportDefaultsPicker({
                     ) : null}
                   </span>
                 </span>
-                <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${kindBadgeClass(item.kind)}`}>
-                  {formatDefaultItemKind(item.kind, locale)}
-                </span>
+                {/* "Custom" ("מותאם אישית") is the note ticket #5 asked to
+                    remove - a real kind value, not a meaningful label to
+                    show the user, unlike food/hydration/exercise. */}
+                {item.kind !== "custom" ? (
+                  <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${kindBadgeClass(item.kind)}`}>
+                    {formatDefaultItemKind(item.kind, locale)}
+                  </span>
+                ) : null}
               </div>
               <div className="mt-2 flex items-center gap-2">
                 <span className="text-xs text-slate-600 dark:text-slate-400">{tr(locale, "Quantity", "כמות")}</span>

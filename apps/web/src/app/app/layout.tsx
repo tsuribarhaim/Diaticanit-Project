@@ -59,6 +59,20 @@ export default async function ProtectedAppLayout({
   const locale = normalizeLocale(profileRow?.preferred_language);
   const theme = normalizeTheme(profileRow?.theme_preference);
 
+  // Unresolved count for the nav badge (see AppNav) - resolved status, not
+  // read status, since the whole point of that distinction (see the
+  // Targets save-flow redesign's notification system) is that opening a
+  // notification doesn't mean the underlying concern is actually settled.
+  let unresolvedNotificationCount = 0;
+  if (user) {
+    const { count } = await supabase
+      .from("user_notifications")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .is("resolved_at", null);
+    unresolvedNotificationCount = count ?? 0;
+  }
+
   return (
     // data-theme drives every dark: utility class within /app/* (see
     // globals.css's own comment on the custom variant) - the same wrapper
@@ -72,7 +86,14 @@ export default async function ProtectedAppLayout({
       <AppUpdateBanner locale={locale} />
       <InstallAppPrompt locale={locale} />
       <UnsavedPreviewProvider locale={locale}>
-        {user ? <AppNav locale={locale} avatarColor={profileRow?.avatar_color} name={profileRow?.first_name ?? null} /> : null}
+        {user ? (
+          <AppNav
+            locale={locale}
+            avatarColor={profileRow?.avatar_color}
+            name={profileRow?.first_name ?? null}
+            notificationCount={unresolvedNotificationCount}
+          />
+        ) : null}
         {/* Reserves space for AppBottomNav's fixed height below `sm`, where
             it replaces AppNav - zeroed out above that breakpoint, where
             AppNav (not fixed-positioned) needs no such reservation. Adds

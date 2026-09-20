@@ -9,6 +9,7 @@ import { resolveUserGenderForAddressing } from "@/lib/ai/persona";
 import { buildBmiWarningMessage } from "@/lib/bmi";
 import { getHomeOverviewData, parseRangeParam } from "@/lib/home-overview";
 import { formatDateTimeForLocale, normalizeLocale, tr } from "@/lib/locale";
+import { markNotificationRead } from "@/lib/notifications";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 import {
   computeProfileDiff,
@@ -25,7 +26,7 @@ export const dynamic = "force-dynamic";
 export default async function TargetsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ range?: string }>;
+  searchParams: Promise<{ range?: string; concern?: string }>;
 }) {
   const resolvedSearchParams = await searchParams;
   const range = parseRangeParam(resolvedSearchParams.range);
@@ -60,6 +61,24 @@ export default async function TargetsPage({
   // grammatically correct Hebrew addressing, same rules/normalization the
   // AI chat itself follows (see lib/ai/persona.ts).
   const userGender = resolveUserGenderForAddressing(profileRow.gender, profileRow.biological_sex);
+
+  // Arrived here from a Notifications entry (see app/app/notifications/
+  // page.tsx) - seed that concern into the chat and mark it read. RLS's own
+  // "select own" policy on user_notifications means this simply returns
+  // nothing for an id that isn't this user's, rather than needing an extra
+  // ownership check here.
+  let seedConcernMessage: string | undefined;
+  if (resolvedSearchParams.concern) {
+    const { data: notificationRow } = await supabase
+      .from("user_notifications")
+      .select("id, message")
+      .eq("id", resolvedSearchParams.concern)
+      .maybeSingle();
+    if (notificationRow) {
+      seedConcernMessage = notificationRow.message;
+      await markNotificationRead({ supabase, userId: user.id, notificationId: notificationRow.id });
+    }
+  }
 
   const profile: ProfileForTargets = {
     age: Number(profileRow.age ?? 0),
@@ -235,6 +254,7 @@ export default async function TargetsPage({
                 // gates this branch.
                 overview={overview!}
                 range={range}
+                seedConcernMessage={seedConcernMessage}
               />
             ) : (
               <TargetsWorkspace

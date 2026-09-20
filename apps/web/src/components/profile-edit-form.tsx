@@ -884,7 +884,7 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
             {renderFieldError("date_of_birth")}
           </label>
           <div className="block" data-field="biological_sex">
-            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Biological sex", "מין ביולוגי")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Sex", "מין")}</span>
             <div className={`grid grid-cols-2 overflow-hidden rounded-xl border ${inputErrorClass("biological_sex")}`}>
               <button type="button" onClick={() => updateDraft({ biological_sex: "male", pregnancy_lactation_status: "none" })} className={`px-3 py-2 text-sm ${draft.biological_sex === "male" ? "bg-teal-700 text-white" : "bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300"}`}>{tr(locale, "Male", "זכר")}</button>
               <button type="button" onClick={() => updateDraft({ biological_sex: "female" })} className={`px-3 py-2 text-sm ${draft.biological_sex === "female" ? "bg-teal-700 text-white" : "bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300"}`}>{tr(locale, "Female", "נקבה")}</button>

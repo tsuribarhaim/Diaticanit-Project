@@ -1,12 +1,13 @@
-import type { NextRequest } from "next/server";
+import { after, type NextRequest } from "next/server";
 
-import { generateTargetsPayload, hasAiTargetsConsent } from "@/app/app/targets/actions";
+import { applyQuickTargetFieldAction, hasAiTargetsConsent, runBackgroundTargetsCheck } from "@/app/app/targets/actions";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { openChatReplyStream, type ChatMessage } from "@/lib/ai/targets-chat";
+import { classifyTargetsQuickApply } from "@/lib/ai/targets-quick-apply";
 import { normalizeLocale } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
-import { mapTargetProfileRowToPayload, TARGET_PROFILE_COLUMNS, type ProfileForTargets } from "@/lib/targets";
+import { evaluateTargetWeightSafety, mapTargetProfileRowToPayload, TARGET_PROFILE_COLUMNS, type ProfileForTargets } from "@/lib/targets";
 
 export const runtime = "nodejs";
 
@@ -176,73 +177,92 @@ export async function POST(request: NextRequest) {
           const conversationText = buildConversationText(chatHistory);
           const goalText = `Based on the following conversation with the user, update their daily targets accordingly:\n\n${conversationText}`;
 
-          let lastStatusEmitAt = Date.now();
-          const emitGeneratingStatus = () => {
-            safeEnqueue(controller, { type: "status", status: "generating_targets" });
-            lastStatusEmitAt = Date.now();
-          };
-          emitGeneratingStatus();
+          safeEnqueue(controller, { type: "status", status: "generating_targets" });
 
-          let targetsPayload;
-          let source: "ai" | "heuristic" = "heuristic";
-          let warning: string | undefined;
-
-          // The structured-JSON generation this calls can legitimately take
-          // well past the client's inactivity timeout (large schema), so it
-          // must never go quiet for 20s+ - but now that generateTargetsPayload
-          // streams from the provider and reports real progress via
-          // onProgress below, most of these events are genuine progress
-          // rather than a fixed timer. This interval is only a SAFETY NET
-          // for the gap before the first token arrives (or for a non-
-          // Anthropic provider, where onProgress never fires) - it emits
-          // only when nothing real has been sent recently, so it never
-          // fights with real progress events.
-          const heartbeat = setInterval(() => {
-            if (Date.now() - lastStatusEmitAt >= 8000) {
-              emitGeneratingStatus();
-            }
-          }, 2000);
+          // Save-flow redesign (docs/design/targets-save-performance-
+          // redesign.md): a tiny, fast classification call replaces the
+          // old synchronous full-schema generation here. When it identifies
+          // a literal, single-value ask, that field is patched immediately
+          // and the user sees it applied in a couple of seconds; the full,
+          // careful regeneration (including medical-document context,
+          // deliberately NOT run inline here - see decision #3) always
+          // still runs, via after(), once this response has gone out.
+          const quickAppliedFieldKeys: string[] = [];
 
           try {
-            const result = await generateTargetsPayload({
+            const classification = await classifyTargetsQuickApply({
+              config: aiConfig,
+              goalText,
+              profile,
+              currentTargets,
+              locale,
+            });
+
+            const hasQuickApplyCandidate =
+              !classification.needsFullReview &&
+              (classification.quickApplyWeightKg !== null || classification.quickApplyDurationDays !== null);
+
+            if (hasQuickApplyCandidate) {
+              const candidatePayload = {
+                ...currentTargets,
+                targetWeightKg: classification.quickApplyWeightKg ?? currentTargets.targetWeightKg,
+              };
+              const safetyMessage = evaluateTargetWeightSafety(candidatePayload, profile, locale);
+
+              if (safetyMessage) {
+                safeEnqueue(controller, { type: "error", message: safetyMessage });
+                safeEnqueue(controller, { type: "done" });
+                safeClose(controller);
+                return;
+              }
+
+              const applyResult = await applyQuickTargetFieldAction({
+                weightKg: classification.quickApplyWeightKg,
+                durationDays: classification.quickApplyDurationDays,
+              });
+
+              if (applyResult.error) {
+                logServerError("targets.chat", "quick_apply_failed", { userId: user.id, error: applyResult.error });
+                safeEnqueue(controller, { type: "error", message: "Could not update your targets. Please try again." });
+                safeEnqueue(controller, { type: "done" });
+                safeClose(controller);
+                return;
+              }
+
+              if (classification.quickApplyWeightKg !== null) quickAppliedFieldKeys.push("target_weight_kg");
+              if (classification.quickApplyDurationDays !== null) quickAppliedFieldKeys.push("duration_days");
+
+              safeEnqueue(controller, {
+                type: "quick_apply",
+                weightKg: classification.quickApplyWeightKg,
+                durationDays: classification.quickApplyDurationDays,
+              });
+            } else {
+              safeEnqueue(controller, { type: "queued" });
+            }
+          } catch (error) {
+            // Fail safe rather than fail closed: a broken classification
+            // call shouldn't block the request - just skip straight to the
+            // full background review, same as an explicit needsFullReview.
+            logServerError("targets.chat", "quick_apply_classification_failed", {
+              userId: user.id,
+              error: error instanceof Error ? error.message : "Unknown error",
+            });
+            safeEnqueue(controller, { type: "queued" });
+          }
+
+          after(() =>
+            runBackgroundTargetsCheck({
+              supabase,
+              userId: user.id,
               goalText,
               profile,
               locale,
               aiConfig,
-              hasConsent,
-              currentTargets,
-              supabase,
-              userId: user.id,
-              onProgress: emitGeneratingStatus,
-            });
+              quickAppliedFieldKeys,
+            }),
+          );
 
-            if (result.safetyRejectionMessage || result.notActionableMessage) {
-              safeEnqueue(controller, {
-                type: "error",
-                message: result.safetyRejectionMessage ?? result.notActionableMessage,
-              });
-              safeEnqueue(controller, { type: "done" });
-              safeClose(controller);
-              return;
-            }
-
-            targetsPayload = result.payload;
-            source = result.source;
-            warning = result.heuristicReason ?? undefined;
-          } catch (error) {
-            logServerError("targets.chat", "targets_generation_failed", {
-              userId: user.id,
-              error: error instanceof Error ? error.message : "Unknown error",
-            });
-            safeEnqueue(controller, { type: "error", message: "Could not update your targets. Please try again." });
-            safeEnqueue(controller, { type: "done" });
-            safeClose(controller);
-            return;
-          } finally {
-            clearInterval(heartbeat);
-          }
-
-          safeEnqueue(controller, { type: "targets", payload: targetsPayload, source, warning });
           safeEnqueue(controller, { type: "done" });
           safeClose(controller);
           return;

@@ -8,6 +8,7 @@ import { generateTargetsWithAi, NoActionableChangeError } from "@/lib/ai/targets
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { getRecentCustomTargetLogs } from "@/lib/daily-report";
 import { normalizeLocale, tr } from "@/lib/locale";
+import { createNotification } from "@/lib/notifications";
 import { logServerError } from "@/lib/server-log";
 import {
   evaluateTargetWeightSafety,
@@ -440,6 +441,173 @@ async function performTargetsLock({
   return { success: true };
 }
 
+/**
+ * The fast half of the Targets save-flow redesign (see
+ * docs/design/targets-save-performance-redesign.md, decision #1) - patches
+ * just target_weight_kg and/or duration_days on the CURRENTLY ACTIVE row
+ * (a single UPDATE, not the full deactivate+insert lock cycle), so the
+ * user sees their ask reflected immediately while the full plan is
+ * reviewed in the background (see runBackgroundTargetsCheck below). Both
+ * values have already been validated by the caller (route.ts) against
+ * evaluateTargetWeightSafety before this is called - this function trusts
+ * that and just writes.
+ */
+export async function applyQuickTargetFieldAction({
+  weightKg,
+  durationDays,
+}: {
+  weightKg: number | null;
+  durationDays: number | null;
+}): Promise<{ error?: string; targetProfileId?: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/sign-in");
+  }
+
+  const patch: Record<string, number> = {};
+  if (weightKg !== null) patch.target_weight_kg = weightKg;
+  if (durationDays !== null) patch.duration_days = durationDays;
+
+  if (Object.keys(patch).length === 0) {
+    return { error: "Nothing to apply." };
+  }
+
+  const { data: activeRow, error: activeRowError } = await supabase
+    .from("user_target_profiles")
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (activeRowError || !activeRow) {
+    return { error: activeRowError?.message ?? "No active target profile to update." };
+  }
+
+  const { error: updateError } = await supabase.from("user_target_profiles").update(patch).eq("id", activeRow.id);
+
+  if (updateError) {
+    logServerError("targets.quickApply", "update_failed", { userId: user.id, error: updateError.message });
+    return { error: updateError.message };
+  }
+
+  revalidatePath("/app");
+  revalidatePath("/app/targets");
+
+  return { targetProfileId: activeRow.id };
+}
+
+/**
+ * The slow, thorough half of the redesign - runs the full AI regeneration
+ * (now including medical-document context, deliberately moved here rather
+ * than blocking the fast path - see decision #3) and performs the
+ * authoritative save. Called via Next.js's after() from route.ts, so it
+ * keeps running once the fast SSE response has already reached the
+ * browser, rather than blocking on it.
+ *
+ * Never silently overwrites a value the user already saw quick-applied and
+ * confirmed: if the full pass finds a real safety concern
+ * (safetyRejectionMessage) or a profile inconsistency worth flagging
+ * (profileDiscrepancyMessage), it records a notification instead of
+ * discarding/replacing what's already showing - see
+ * docs/design/targets-save-performance-redesign.md's own decision on this.
+ */
+export async function runBackgroundTargetsCheck({
+  supabase,
+  userId,
+  goalText,
+  profile,
+  locale,
+  aiConfig,
+  quickAppliedFieldKeys,
+}: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  userId: string;
+  goalText: string;
+  profile: ProfileForTargets;
+  locale: ReturnType<typeof normalizeLocale>;
+  aiConfig: ReturnType<typeof getAiExtractionConfig>;
+  quickAppliedFieldKeys: string[];
+}): Promise<void> {
+  try {
+    const { data: activeRow } = await supabase
+      .from("user_target_profiles")
+      .select(TARGET_PROFILE_COLUMNS)
+      .eq("user_id", userId)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (!activeRow) return;
+
+    const currentTargets = mapTargetProfileRowToPayload(activeRow);
+    const hasConsent = aiConfig ? await hasAiTargetsConsent({ supabase, userId }) : false;
+
+    const { payload, source, safetyRejectionMessage, notActionableMessage } = await generateTargetsPayload({
+      goalText,
+      profile,
+      locale,
+      aiConfig,
+      hasConsent,
+      currentTargets,
+      supabase,
+      userId,
+    });
+
+    if (safetyRejectionMessage) {
+      await createNotification({
+        supabase,
+        userId,
+        targetProfileId: activeRow.id,
+        severity: "concern",
+        message: safetyRejectionMessage,
+        fieldKeys: quickAppliedFieldKeys.length ? quickAppliedFieldKeys : ["target_weight_kg"],
+      });
+      return;
+    }
+
+    if (notActionableMessage) {
+      // Only worth a notification if something had already been quick-
+      // applied on the strength of this same request - otherwise there's
+      // genuinely nothing to flag or save.
+      if (quickAppliedFieldKeys.length) {
+        await createNotification({
+          supabase,
+          userId,
+          targetProfileId: activeRow.id,
+          severity: "info",
+          message: notActionableMessage,
+          fieldKeys: quickAppliedFieldKeys,
+        });
+      }
+      return;
+    }
+
+    if (payload.profileDiscrepancyMessage) {
+      await createNotification({
+        supabase,
+        userId,
+        targetProfileId: activeRow.id,
+        severity: "info",
+        message: payload.profileDiscrepancyMessage,
+        fieldKeys: quickAppliedFieldKeys,
+      });
+    }
+
+    const result = await performTargetsLock({ supabase, userId, goalText, source, payload });
+    if ("error" in result) {
+      logServerError("targets.backgroundCheck", "lock_failed", { userId, error: result.error });
+    }
+  } catch (error) {
+    logServerError("targets.backgroundCheck", "unhandled_error", {
+      userId,
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+}
+
 export async function lockTargetsAction(
   _prevState: TargetsActionState,
   formData: FormData,
@@ -478,41 +646,6 @@ export async function lockTargetsAction(
     return { error: result.error };
   }
   return { success: "Targets approved and locked in." };
-}
-
-/**
- * Programmatic counterpart to lockTargetsAction for the AI chat workspace's
- * auto-save flow (see targets-chat-workspace.tsx's requestTargetsUpdate) -
- * called directly as a function rather than bound to a <form>, since there's
- * no user-facing "Lock in" submit step to trigger it anymore: once the AI's
- * reply comes back with an actual change, this is invoked immediately.
- * `payload` is trusted pre-validated TargetGenerationPayload (it just came
- * from generateTargetsPayload/runStream's own "targets" event on this same
- * request, not from unvalidated form input), so no schema re-parse here.
- */
-export async function autoLockTargetsAction({
-  goalText,
-  source,
-  payload,
-}: {
-  goalText: string;
-  source: "ai" | "heuristic";
-  payload: TargetGenerationPayload;
-}): Promise<{ error?: string }> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/auth/sign-in");
-  }
-
-  const result = await performTargetsLock({ supabase, userId: user.id, goalText, source, payload });
-  if ("error" in result) {
-    return { error: result.error };
-  }
-  return {};
 }
 
 /**

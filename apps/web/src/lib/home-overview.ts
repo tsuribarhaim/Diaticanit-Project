@@ -8,6 +8,7 @@ import {
   getTodaysDailyReportTotals,
 } from "@/lib/daily-report";
 import { tr, type AppLocale } from "@/lib/locale";
+import { getFlaggedFieldKeys } from "@/lib/notifications";
 import { normalizeUserTargetsJson } from "@/lib/targets";
 import type { createClient } from "@/lib/supabase/server";
 
@@ -134,6 +135,17 @@ export async function getHomeOverviewData({
   const loggableCustomTargets = normalizeUserTargetsJson(activeTargetProfile?.user_targets).filter(
     (entry) => entry.id && entry.unit && entry.targetMin !== undefined && entry.targetMax !== undefined,
   );
+
+  // For the warning-icon flag on the rings below (see the Targets
+  // save-flow redesign's notification system) - an unresolved
+  // notification's field_keys are matched against each RingMetric's own
+  // id. Currently only custom-target and nutrient ring ids can match this
+  // way; target_weight_kg/duration_days concerns (see
+  // runBackgroundTargetsCheck) don't correspond to a rendered ring today,
+  // so they surface in the Notifications view but not yet as an icon on a
+  // specific number - a known, narrower scope than the full design for
+  // this first pass.
+  const flaggedFieldKeys = await getFlaggedFieldKeys({ supabase, userId });
 
   // Same "sum of each planned modality's frequency" convention already used
   // on the Targets page (see evaluateEnergyImbalanceRisk's
@@ -331,7 +343,7 @@ export async function getHomeOverviewData({
       // true (see UserTargetEntry's own comment) for legacy entries.
       exceedingIsPositive: entry.higherIsBetter ?? true,
     })),
-  ];
+  ].map((metric) => (flaggedFieldKeys.has(metric.id) ? { ...metric, flagged: true } : metric));
 
   const exerciseRingMetric: RingMetric = {
     id: "exerciseConsistency",

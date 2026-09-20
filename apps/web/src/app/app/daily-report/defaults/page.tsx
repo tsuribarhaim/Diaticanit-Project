@@ -2,11 +2,11 @@ import { redirect } from "next/navigation";
 
 import {
   addDefaultItemAction,
-  deleteDefaultItemAction,
   updateDefaultItemAction,
   type SavedListIngredient,
 } from "@/app/app/daily-report/defaults/actions";
 import { IngredientRowsFieldset, type IngredientRowValue } from "@/components/ingredient-rows-fieldset";
+import { SavedItemRowActions } from "@/components/saved-item-row-actions";
 import { formatDefaultItemKind, formatDefaultItemName, formatDefaultUnit, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 
@@ -145,66 +145,56 @@ export default async function DailyReportDefaultsPage({
                   ? ingredients
                   : [{ name: item.name, kind: item.kind, quantity: Number(item.default_quantity) || 1, unit: item.default_unit }];
 
+              const displayName = formatDefaultItemName(item.name, locale);
+
               return (
-                <div key={item.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/60">
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <span className="font-semibold text-slate-900 dark:text-slate-100">{formatDefaultItemName(item.name, locale)}</span>
+                <details key={item.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/60">
+                  <summary className="flex list-none flex-wrap items-center justify-between gap-2 [&::-webkit-details-marker]:hidden">
+                    <div className="min-w-0">
+                      <span className="font-semibold text-slate-900 dark:text-slate-100">{displayName}</span>
+                      {/* "Custom" ("מותאם אישית") was the note ticket #5
+                          asked to remove - it's a real kind value
+                          (DailyReportDefaultItem["kind"]) but not a
+                          meaningful label to show the user, unlike
+                          food/hydration/exercise. */}
+                      {item.kind !== "custom" ? (
+                        <span className={`ms-2 rounded-full border px-2.5 py-0.5 align-middle text-xs font-semibold ${kindBadgeClass(item.kind)}`}>
+                          {formatDefaultItemKind(item.kind, locale)}
+                        </span>
+                      ) : null}
                       {isBundle ? (
                         <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{formatIngredientsSummary(ingredients, locale)}</p>
                       ) : null}
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${kindBadgeClass(item.kind)}`}>
-                        {formatDefaultItemKind(item.kind, locale)}
-                      </span>
-                      <span
-                        className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
-                          item.is_active
-                            ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-400"
-                            : "border-slate-300 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400"
-                        }`}
-                      >
-                        {item.is_active ? tr(locale, "Active", "פעיל") : tr(locale, "Inactive", "לא פעיל")}
-                      </span>
-                    </div>
-                  </div>
+                    <SavedItemRowActions locale={locale} itemId={item.id} itemName={displayName} isActive={item.is_active} />
+                  </summary>
 
-                  <details>
-                    <summary className="cursor-pointer text-xs font-semibold text-teal-700 dark:text-teal-400">{tr(locale, "Edit", "עריכה")}</summary>
-                    <form action={updateDefaultItemAction} className="mt-2 space-y-3">
-                      <input type="hidden" name="id" value={item.id} />
-                      <label className="block space-y-1">
-                        <span className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                          {tr(locale, "Item name (only needed for a bundle of several ingredients)", "שם הפריט (נדרש רק עבור צירוף של כמה מרכיבים)")}
-                        </span>
-                        <input
-                          name="name"
-                          defaultValue={isBundle ? formatDefaultItemName(item.name, locale) : ""}
-                          placeholder={tr(locale, "e.g. My Breakfast - leave blank for a single ingredient", "לדוגמה: ארוחת הבוקר שלי - ניתן להשאיר ריק עבור מרכיב בודד")}
-                          className="w-full max-w-md rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
-                        />
-                      </label>
-
-                      <IngredientRowsFieldset locale={locale} initialRows={editRows} />
-
-                      <label className="flex w-fit items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900">
-                        <input type="checkbox" name="is_active" defaultChecked={item.is_active} /> {tr(locale, "Active", "פעיל")}
-                      </label>
-
-                      <button type="submit" className="rounded-lg border border-teal-300 px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 dark:border-teal-700 dark:text-teal-400 dark:hover:bg-teal-950/40">
-                        {tr(locale, "Save", "שמירה")}
-                      </button>
-                    </form>
-                  </details>
-
-                  <form action={deleteDefaultItemAction} className="mt-2">
+                  <form action={updateDefaultItemAction} className="mt-3 space-y-3">
                     <input type="hidden" name="id" value={item.id} />
-                    <button type="submit" className="rounded-lg border border-rose-300 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-700 dark:text-rose-400 dark:hover:bg-rose-950/40">
-                      {tr(locale, "Delete", "מחיקה")}
+                    {/* Active is now the standalone toggle icon above, not a
+                        checkbox in this form - preserves whatever that
+                        toggle currently has it at so submitting an edit
+                        here doesn't silently flip it back off. */}
+                    <input type="hidden" name="is_active" value={item.is_active ? "on" : "off"} />
+                    <label className="block space-y-1">
+                      <span className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                        {tr(locale, "Item name (only needed for a bundle of several ingredients)", "שם הפריט (נדרש רק עבור צירוף של כמה מרכיבים)")}
+                      </span>
+                      <input
+                        name="name"
+                        defaultValue={isBundle ? displayName : ""}
+                        placeholder={tr(locale, "e.g. My Breakfast - leave blank for a single ingredient", "לדוגמה: ארוחת הבוקר שלי - ניתן להשאיר ריק עבור מרכיב בודד")}
+                        className="w-full max-w-md rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+                      />
+                    </label>
+
+                    <IngredientRowsFieldset locale={locale} initialRows={editRows} />
+
+                    <button type="submit" className="rounded-lg border border-teal-300 px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 dark:border-teal-700 dark:text-teal-400 dark:hover:bg-teal-950/40">
+                      {tr(locale, "Save", "שמירה")}
                     </button>
                   </form>
-                </div>
+                </details>
               );
             })}
           </div>

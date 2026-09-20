@@ -1247,6 +1247,35 @@ async function extractTextFromDocument({
   };
 }
 
+/**
+ * A hung extraction step (observed in production: a document stuck in
+ * extraction_status "processing" indefinitely, with no error ever logged -
+ * consistent with tesseract.js's OCR worker stalling rather than
+ * rejecting, which no try/catch anywhere in this pipeline can catch) is
+ * worse than a failed one: a failure at least transitions the document to
+ * "failed", where it's visibly retryable; a hang leaves it silently
+ * "processing" forever, and (before the Targets save-flow redesign moved
+ * document extraction out of that synchronous path) re-triggered on every
+ * future Targets save for that user too. This wraps the whole extraction
+ * attempt so no failure mode - a hang, or an exception from a code path
+ * that doesn't already catch its own - can escape without resolving.
+ */
+function withExtractionTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 async function processQueuedExtraction({
   supabase,
   userId,
@@ -1827,16 +1856,25 @@ export async function runDocumentExtraction({
       .eq("id", reportId)
       .eq("user_id", userId);
 
-    const processingResult = await processQueuedExtraction({
-      supabase,
-      userId,
-      documentId,
-      reportId,
-      fromStatus: startStatus,
-      strategy,
-      previousParserVersion,
-      extractionMode: mode,
-    });
+    const processingResult = await withExtractionTimeout(
+      processQueuedExtraction({
+        supabase,
+        userId,
+        documentId,
+        reportId,
+        fromStatus: startStatus,
+        strategy,
+        previousParserVersion,
+        extractionMode: mode,
+      }),
+      120_000,
+      "Document extraction timed out.",
+    ).catch(
+      (error: unknown): { ok: false; error: string } => ({
+        ok: false,
+        error: error instanceof Error ? error.message : "Unknown extraction error.",
+      }),
+    );
 
     if (processingResult.ok) {
       return { ok: true, reportId };
