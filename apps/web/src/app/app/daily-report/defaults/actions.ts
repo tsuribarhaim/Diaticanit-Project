@@ -359,6 +359,38 @@ export async function updateDefaultItemAction(formData: FormData): Promise<void>
   revalidatePath("/app/daily-report");
 }
 
+/**
+ * Ticket #5 (Aggregated Tickets): flips is_active on its own, without
+ * re-running the full parse/nutrient-recompute updateDefaultItemAction does
+ * - the Active toggle is now a standalone icon in the row itself (see
+ * saved-item-row-actions.tsx), not something that requires opening the
+ * edit form just to check a box.
+ */
+export async function toggleDefaultItemActiveAction({
+  id,
+  isActive,
+}: {
+  id: string;
+  isActive: boolean;
+}): Promise<{ error?: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) redirect("/auth/sign-in");
+
+  const { error } = await supabase.from("user_default_items").update({ is_active: isActive }).eq("id", id).eq("user_id", user.id);
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  revalidatePath("/app/daily-report/defaults");
+  revalidatePath("/app/daily-report");
+  return {};
+}
+
 export async function deleteDefaultItemAction(formData: FormData): Promise<void> {
   const supabase = await createClient();
   const {

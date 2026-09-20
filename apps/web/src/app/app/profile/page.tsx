@@ -156,13 +156,12 @@ export default async function ProfilePage({
     }
   }
 
-  const [{ data: documents }, { data: activeTargetProfile }, { data: earliestWeightReport }, hasAiConsent] = await Promise.all([
+  const [{ data: documents }, { data: earliestWeightReport }, hasAiConsent] = await Promise.all([
     supabase
       .from("user_documents")
       .select("id, category, file_name, mime_type, file_size_bytes, created_at")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false }),
-    supabase.from("user_target_profiles").select("target_weight_kg").eq("user_id", user.id).eq("is_active", true).maybeSingle(),
     supabase
       .from("user_daily_reports")
       .select("reported_weight_kg, report_at")
@@ -207,7 +206,7 @@ export default async function ProfilePage({
           />
           <QuickScalarFieldRow
             locale={locale}
-            label={tr(locale, "Biological sex", "מין ביולוגי")}
+            label={tr(locale, "Sex", "מין")}
             field="biological_sex"
             value={profile.biological_sex ?? "male"}
             displayValue={profile.biological_sex ? formatGender(profile.biological_sex, locale) : tr(locale, "n/a", "לא זמין")}
@@ -244,13 +243,6 @@ export default async function ProfilePage({
                 ? tr(locale, `From your first Daily Report entry, ${formatDateTimeForLocale(earliestWeightReport.report_at, locale)}`, `מהדיווח היומי הראשון שלך, ${formatDateTimeForLocale(earliestWeightReport.report_at, locale)}`)
                 : tr(locale, "Log a weight in Daily Report to set this", "רשמו משקל בדיווח היומי כדי להגדיר זאת")
             }
-          />
-          <ProfileRow
-            label={tr(locale, "Goal weight", "משקל יעד")}
-            value={activeTargetProfile?.target_weight_kg != null ? `${activeTargetProfile.target_weight_kg} ${formatMeasurementUnit("kg", locale)}` : tr(locale, "n/a", "לא זמין")}
-            caption={tr(locale, "Set from your active Targets plan", "נקבע מתכנית היעדים הפעילה שלך")}
-            href="/app/targets"
-            rightIcon="external"
           />
           <QuickScalarFieldRow
             locale={locale}

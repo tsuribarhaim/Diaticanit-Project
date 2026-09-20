@@ -107,7 +107,18 @@ export function InstallAppPrompt({ locale }: { locale: AppLocale }) {
     <div className="fixed inset-x-3 bottom-[calc(3.25rem+env(safe-area-inset-bottom)+0.5rem)] z-40 flex items-center justify-between gap-3 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-900 shadow-lg sm:bottom-3 dark:border-teal-800 dark:bg-teal-950/90 dark:text-teal-200">
       <span>
         {showIosInstructions
-          ? tr(locale, 'Install Daffy: tap Share, then "Add to Home Screen".', 'התקינו את Daffy: הקישו על שיתוף, ואז "הוספה למסך הבית".')
+          ? // Opened from a messaging/email app's in-app browser (very
+            // common - a tester who tapped this link from WhatsApp/iMessage/
+            // Mail reported never seeing an install option at all) often
+            // has no "Add to Home Screen" in its share sheet at all, even
+            // though it looks like ordinary Safari. Naming "open in Safari"
+            // as the first step covers that case and costs nothing for
+            // someone already in Safari, where it's a no-op.
+            tr(
+              locale,
+              'To install: open this page in Safari, then tap Share and choose "Add to Home Screen".',
+              'להתקנה: יש לפתוח את העמוד בספארי, להקיש על שיתוף ולבחור "הוספה למסך הבית".',
+            )
           : tr(locale, "Install Daffy for quicker access.", "התקינו את Daffy לגישה מהירה יותר.")}
       </span>
       <div className="flex shrink-0 items-center gap-2">

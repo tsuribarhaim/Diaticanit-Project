@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { formatMeasurementUnit, formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
 
 export type RingMetric = {
@@ -8,6 +10,13 @@ export type RingMetric = {
   min: number;
   max: number;
   unit: string;
+  /** True when an unresolved background-check notification concerns this
+   * specific field (see docs/design/targets-save-performance-redesign.md's
+   * notification system) - shows a small warning icon linking to
+   * Notifications. Deliberately not a color change: red already means
+   * "over your limit" in this same ring system (see ringColorClass below),
+   * so reusing it here would give one color two conflicting meanings. */
+  flagged?: boolean;
   /**
    * Only set for calories, and only when the user has logged exercise
    * today: `total` is the NET value (gross intake minus estimated exercise
@@ -164,7 +173,18 @@ export function DailyReportProgressRings({ locale, metrics }: { locale: AppLocal
                   <span className={`text-sm font-bold ${labelColor}`}>{Math.max(0, Math.round(percent))}%</span>
                 </div>
               </div>
-              <p className="mt-2 text-xs font-semibold text-slate-800 dark:text-slate-200">{tr(locale, metric.labelEn, metric.labelHe)}</p>
+              <p className="mt-2 flex items-center gap-1 text-xs font-semibold text-slate-800 dark:text-slate-200">
+                <span>{tr(locale, metric.labelEn, metric.labelHe)}</span>
+                {metric.flagged ? (
+                  <Link
+                    href="/app/notifications"
+                    title={tr(locale, "A background review flagged something about this - tap to view", "בדיקת רקע סימנה משהו לגבי זה - יש להקיש לצפייה")}
+                    className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-700 hover:bg-amber-200 dark:bg-amber-900/40 dark:text-amber-400 dark:hover:bg-amber-900/60"
+                  >
+                    {"⚠"}
+                  </Link>
+                ) : null}
+              </p>
               {/* A bare numeric ratio like "188 / 2,200" is two LTR number
                   runs joined by a neutral "/" - inside an RTL page, the
                   Unicode bidi algorithm can visually swap which number

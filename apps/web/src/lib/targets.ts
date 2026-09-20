@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { BMI_GOOD_MIN, classifyBmi, computeBmi } from "@/lib/bmi";
+import { BMI_GOOD_MAX, BMI_GOOD_MIN, classifyBmi, computeBmi } from "@/lib/bmi";
 import type { AppLocale } from "@/lib/locale";
 import {
   formatActivityLevel,
@@ -1251,9 +1251,12 @@ export function computeProfileDiff(before: ProfileForTargets, after: ProfileForT
 }
 
 /** Guards against a generated target weight that would push the user's BMI
- * into the unsafe (red/"out_of_range") underweight zone. Only fires for a
- * genuine weight-LOSS direction (target below current weight) - a target
- * above current weight is a different risk this check doesn't cover.
+ * into the unsafe (red/"out_of_range") zone, in EITHER direction - a
+ * weight-loss ask landing in unsafe underweight territory, or a weight-gain
+ * ask landing in unsafe obese territory. (Originally only checked the
+ * weight-loss direction; the weight-gain side was an unguarded gap found
+ * and closed as part of the Targets save-flow redesign - see
+ * docs/design/targets-save-performance-redesign.md.)
  * Returns a user-facing rejection message, or null if the target is safe
  * (or there isn't enough data - no height, or no target weight - to judge). */
 export function evaluateTargetWeightSafety(
@@ -1262,21 +1265,70 @@ export function evaluateTargetWeightSafety(
   locale: AppLocale,
 ): string | null {
   if (payload.targetWeightKg === null) return null;
-  if (payload.targetWeightKg >= profile.weight_kg) return null;
+  if (payload.targetWeightKg === profile.weight_kg) return null;
   if (!profile.height_cm || profile.height_cm <= 0) return null;
 
   const projectedBmi = computeBmi(payload.targetWeightKg, profile.height_cm);
   if (projectedBmi <= 0) return null;
 
   const zone = classifyBmi(projectedBmi);
-  if (zone !== "out_of_range" || projectedBmi >= BMI_GOOD_MIN) {
+  if (zone !== "out_of_range") return null;
+
+  const isLossDirection = payload.targetWeightKg < profile.weight_kg;
+  // A loss-direction target only counts as unsafe if it landed BELOW the
+  // healthy range (an already-underweight starting point moving further
+  // down); a gain-direction target only counts as unsafe if it landed
+  // ABOVE it - each direction is judged against the boundary it's actually
+  // approaching, not both.
+  if (isLossDirection ? projectedBmi >= BMI_GOOD_MIN : projectedBmi <= BMI_GOOD_MAX) {
     return null;
   }
 
   const bmiText = formatNumberForLocale(projectedBmi, locale, { maximumFractionDigits: 1 });
+  const weightText = formatNumberForLocale(payload.targetWeightKg, locale, { maximumFractionDigits: 1 });
+  const zoneLabelEn = isLossDirection ? "unsafe underweight (red)" : "unsafe overweight/obese (red)";
+  const zoneLabelHe = isLossDirection ? "תת-משקל לא בטוח (אדום)" : "עודף משקל/השמנה לא בטוחים (אדום)";
+  const adviceEn = isLossDirection ? "a smaller weight reduction" : "a smaller weight increase";
+  const adviceHe = isLossDirection ? "הפחתת משקל קטנה יותר" : "העלאת משקל קטנה יותר";
+
   return tr(
     locale,
-    `A target weight of ${formatNumberForLocale(payload.targetWeightKg, locale, { maximumFractionDigits: 1 })} kg would bring your BMI down to about ${bmiText}, which is in the unsafe underweight (red) zone. For your health and safety, this target was not applied - please ask for a smaller weight reduction or a different target weight.`,
-    `משקל יעד של ${formatNumberForLocale(payload.targetWeightKg, locale, { maximumFractionDigits: 1 })} ק"ג היה מוריד את ה-BMI שלך לכ-${bmiText}, שנמצא באזור לא בטוח של תת-משקל (אדום). לשמירה על בריאותך ובטיחותך, היעד לא הוחל - נא לבקש הפחתת משקל קטנה יותר או משקל יעד אחר.`,
+    `A target weight of ${weightText} kg would bring your BMI to about ${bmiText}, which is in the ${zoneLabelEn} zone. For your health and safety, this target was not applied - please ask for ${adviceEn} or a different target weight.`,
+    `משקל יעד של ${weightText} ק"ג היה מביא את ה-BMI שלך לכ-${bmiText}, שנמצא באזור ${zoneLabelHe}. לשמירה על בריאותך ובטיחותך, היעד לא הוחל - נא לבקש ${adviceHe} או משקל יעד אחר.`,
+  );
+}
+
+/** Sane hard-coded ranges for the common quick-apply-eligible user_targets
+ * units (see the Targets save-flow redesign doc) - deterministic, no AI
+ * call, so this can gate an instant quick-apply the same way
+ * evaluateTargetWeightSafety already does for target weight. Matched
+ * loosely by unit substring since the AI writes the unit string itself
+ * (e.g. "hours", "steps", "ml") rather than from a fixed enum. Returns a
+ * rejection message when the value is implausible for its unit, or null
+ * when it's within range (or the unit isn't one this function judges, in
+ * which case there's nothing deterministic to check and the caller should
+ * fall through to the tiny AI scope-check instead). */
+export function evaluateCustomTargetQuickApplySafety(
+  entry: { unit: string; targetMin: number; targetMax: number },
+  locale: AppLocale,
+): string | null {
+  const unit = entry.unit.trim().toLowerCase();
+  const value = Math.max(entry.targetMin, entry.targetMax);
+
+  const range = unit.includes("hour")
+    ? { min: 3, max: 14, labelEn: "hours of sleep", labelHe: "שעות שינה" }
+    : unit.includes("step")
+      ? { min: 500, max: 40000, labelEn: "steps", labelHe: "צעדים" }
+      : unit === "ml" || unit.includes("liter") || unit.includes("litre")
+        ? { min: 250, max: 8000, labelEn: "ml of water", labelHe: 'מ"ל מים' }
+        : null;
+
+  if (!range) return null;
+  if (value >= range.min && value <= range.max) return null;
+
+  return tr(
+    locale,
+    `A target of ${formatNumberForLocale(value, locale, { maximumFractionDigits: 1 })} ${range.labelEn} is outside a plausible range for that goal. This wasn't applied automatically - please review it with the AI coach.`,
+    `יעד של ${formatNumberForLocale(value, locale, { maximumFractionDigits: 1 })} ${range.labelHe} חורג מטווח סביר עבור יעד מסוג זה. השינוי לא הוחל אוטומטית - נא לבדוק זאת עם מאמן ה-AI.`,
   );
 }

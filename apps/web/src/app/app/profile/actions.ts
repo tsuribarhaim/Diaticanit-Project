@@ -805,7 +805,7 @@ const SIMPLE_FIELD_CONFIG: Record<string, SimpleFieldConfig> = {
   biological_sex: {
     column: "biological_sex",
     schema: z.enum(biologicalSexOptions),
-    invalidMessage: { en: "Select a valid biological sex.", he: "יש לבחור מין ביולוגי תקין." },
+    invalidMessage: { en: "Select a valid sex.", he: "יש לבחור מין תקין." },
     mirrorTo: ["gender"],
   },
   height_cm: {

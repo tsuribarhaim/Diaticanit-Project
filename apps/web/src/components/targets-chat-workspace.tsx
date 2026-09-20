@@ -4,12 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 
-import { autoLockTargetsAction, dismissProfileChangeAction } from "@/app/app/targets/actions";
+import { dismissProfileChangeAction } from "@/app/app/targets/actions";
 import { TargetsSectionTabs, type TargetsHistoryInfo } from "@/components/targets-section-tabs";
 import { useUnsavedPreview } from "@/components/unsaved-preview-context";
 import type { HomeOverviewData, HomeRange } from "@/lib/home-overview";
 import { directionForLocale, tr, trGendered, type AppLocale } from "@/lib/locale";
-import { computeTargetsDiff } from "@/lib/targets-diff";
 import type { ProfileDiffRow, TargetGenerationPayload } from "@/lib/targets";
 import { useIsDesktopViewport, useVisualViewportHeight } from "@/lib/use-viewport";
 
@@ -18,7 +17,8 @@ type SseEvent =
   | { type: "token"; text: string }
   | { type: "actionable"; value: boolean }
   | { type: "status"; status: "generating_targets" }
-  | { type: "targets"; payload: TargetGenerationPayload; source: "ai" | "heuristic"; warning?: string }
+  | { type: "quick_apply"; weightKg: number | null; durationDays: number | null }
+  | { type: "queued" }
   | { type: "error"; message: string }
   | { type: "done" };
 
@@ -27,25 +27,15 @@ type Decision = {
   actionable: boolean;
   /** "applying" hides the pending decision banner the instant the user
    * clicks "Update Targets" - without it, the banner (and its still-live
-   * buttons) stayed visible for the whole 30-50s generation call. Reverts
-   * back to "pending" if the request didn't end in a save (a failure of any
-   * kind), so the banner reappears and the user can try again. */
-  status: "pending" | "applying" | "updated" | "ignored";
+   * buttons) stayed visible for the whole classification call. "quick_applied"
+   * and "queued" reflect which of the two save-flow-redesign outcomes this
+   * request landed in (see requestTargetsUpdate) - both revert back to
+   * "pending" if the request failed outright, so the banner reappears and
+   * the user can try again. */
+  status: "pending" | "applying" | "quick_applied" | "queued" | "ignored";
 };
 
 const STREAM_INACTIVITY_TIMEOUT_MS = 20000;
-
-/** Rotated through, one per "status" event, while an update_targets request
- * is in flight (see requestTargetsUpdate's onStatus handler) - the route now
- * emits these as real generation progress arrives rather than on a fixed
- * timer (see route.ts), so the rotation itself tracks genuine progress
- * through the call instead of just reassuring the user nothing has frozen. */
-const GENERATING_TARGETS_STATUS_MESSAGES: Array<{ en: string; he: string }> = [
-  { en: "Reviewing your goals and profile...", he: "בוחן את המטרות והפרופיל שלך..." },
-  { en: "Balancing your nutrition ranges...", he: "מאזן את טווחי התזונה שלך..." },
-  { en: "Shaping your exercise plan...", he: "מעצב את תוכנית האימונים שלך..." },
-  { en: "Finalizing your updated targets...", he: "משלים את היעדים המעודכנים שלך..." },
-];
 
 function Spinner({ className }: { className: string }) {
   return (
@@ -131,6 +121,7 @@ export function TargetsChatWorkspace({
   history,
   overview,
   range,
+  seedConcernMessage,
 }: {
   locale: AppLocale;
   maintenanceCalories: number;
@@ -152,6 +143,13 @@ export function TargetsChatWorkspace({
    * through to TargetsSectionTabs, same as the Home page's own use of it. */
   overview: HomeOverviewData;
   range: HomeRange;
+  /** Set when the user arrived here from a Notifications entry (see
+   * app/app/targets/page.tsx's own ?concern= handling) - seeds that
+   * notification's message into the conversation and opens the chat
+   * automatically, so the concern is resolved collaboratively with the AI
+   * rather than dead-ending on a static notification (see the Targets
+   * save-flow redesign's own decision on this). */
+  seedConcernMessage?: string;
 }) {
   const router = useRouter();
   // Seeded (not fetched) so the BMI concern is visible in the conversation
@@ -162,14 +160,20 @@ export function TargetsChatWorkspace({
   // reused by confirmClearChat below (a "New chat" always returns to this
   // same starting point, not a blank slate that would drop the BMI notice).
   function buildInitialMessages(): ChatMessage[] {
-    return bmiWarning
-      ? [
-          {
-            role: "assistant",
-            content: `${tr(locale, "Before you ask - I noticed something important:", "לפני שתשאלו - שמתי לב למשהו חשוב:")}\n\n${bmiWarning}`,
-          },
-        ]
-      : [];
+    const seeded: ChatMessage[] = [];
+    if (bmiWarning) {
+      seeded.push({
+        role: "assistant",
+        content: `${tr(locale, "Before you ask - I noticed something important:", "לפני שתשאלו - שמתי לב למשהו חשוב:")}\n\n${bmiWarning}`,
+      });
+    }
+    if (seedConcernMessage) {
+      seeded.push({
+        role: "assistant",
+        content: `${tr(locale, "Following up on a recent review of your targets:", "בהמשך לבדיקה שנעשתה לאחרונה ביעדים שלך:")}\n\n${seedConcernMessage}`,
+      });
+    }
+    return seeded;
   }
 
   const [messages, setMessages] = useState<ChatMessage[]>(buildInitialMessages);
@@ -178,8 +182,6 @@ export function TargetsChatWorkspace({
   const [streamError, setStreamError] = useState<string | null>(null);
   const [retryAction, setRetryAction] = useState<(() => void) | null>(null);
   const [isGeneratingTargets, setIsGeneratingTargets] = useState(false);
-  const [isSavingTargets, setIsSavingTargets] = useState(false);
-  const [generatingStatusIndex, setGeneratingStatusIndex] = useState(0);
   const [decision, setDecision] = useState<Decision | null>(null);
   const [isDismissingProfileChange, setIsDismissingProfileChange] = useState(false);
   const { setHasUnsavedPreview } = useUnsavedPreview();
@@ -189,7 +191,7 @@ export function TargetsChatWorkspace({
   // portal-sheet pattern as the Daily Report chat (see that file's own
   // comments for the full reasoning), reused here via lib/use-viewport.ts
   // instead of a second copy of the same detection code.
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(Boolean(seedConcernMessage));
   const [pendingClearConfirm, setPendingClearConfirm] = useState(false);
   const [closeAfterClear, setCloseAfterClear] = useState(false);
   const isDesktopViewport = useIsDesktopViewport();
@@ -204,17 +206,23 @@ export function TargetsChatWorkspace({
   const hasDoneInitialScrollRef = useRef(false);
 
   useEffect(() => {
-    // Guards navigation away from the moment any conversation has happened -
-    // losing a chat you typed (and the AI's reply) silently on an accidental
-    // tab switch is real lost work, even though a generated target change is
-    // no longer something that can be lost this way (it's auto-saved the
-    // moment it comes back - see requestTargetsUpdate). Checks for a *user*
-    // message specifically (not just any message) - the seeded BMI-warning
-    // bubble above is shown automatically on mount and isn't something the
-    // user typed or would lose, so it shouldn't trip this guard by itself.
-    const hasUserMessage = messages.some((message) => message.role === "user");
-    setHasUnsavedPreview(hasUserMessage);
-  }, [messages, setHasUnsavedPreview]);
+    // Guards navigation away only while there's something a page-leave
+    // could actually still lose: a request genuinely in flight
+    // (isStreaming - covers both the chat-reply call and the
+    // classification/quick-apply call in requestTargetsUpdate), or an
+    // ACTIONABLE suggestion the user hasn't acted on yet (decision.status
+    // "pending"). Once a request reaches "quick_applied" or "queued", the
+    // server already has it - the fast field is patched, and the full
+    // review keeps running via after() regardless of whether this tab
+    // stays open (see runBackgroundTargetsCheck) - so leaving the page at
+    // that point loses nothing, and warning anyway was reported as exactly
+    // this: the fast save had already landed, but the user was told they'd
+    // lose it if they left. Plain conversation with no pending suggestion
+    // (an INFO reply, or the seeded BMI-warning bubble shown on mount) was
+    // never something a page-leave could lose either way.
+    const hasPendingActionableSuggestion = decision?.status === "pending" && decision.actionable;
+    setHasUnsavedPreview(isStreaming || Boolean(hasPendingActionableSuggestion));
+  }, [isStreaming, decision, setHasUnsavedPreview]);
 
   useEffect(() => {
     return () => {
@@ -223,6 +231,21 @@ export function TargetsChatWorkspace({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Ticket #1 (Aggregated Tickets): the "quick applied"/"queued" banner
+  // was staying up indefinitely - reads as something still needing the
+  // user's attention when it's really just a brief acknowledgment. Fades
+  // on its own after a couple of seconds; the chat message history is
+  // still the durable record, nothing is lost by clearing the banner.
+  useEffect(() => {
+    if (decision?.status !== "quick_applied" && decision?.status !== "queued") return;
+    const timeoutId = setTimeout(() => {
+      setDecision((previous) =>
+        previous && (previous.status === "quick_applied" || previous.status === "queued") ? null : previous,
+      );
+    }, 2500);
+    return () => clearTimeout(timeoutId);
+  }, [decision]);
 
   function handleThreadScroll() {
     const container = threadRef.current;
@@ -248,7 +271,7 @@ export function TargetsChatWorkspace({
     if (isPinnedToBottomRef.current) {
       container.scrollTop = container.scrollHeight;
     }
-  }, [messages, isGeneratingTargets, isSavingTargets]);
+  }, [messages, isGeneratingTargets]);
 
   async function runStream(
     requestBody: Record<string, unknown>,
@@ -256,7 +279,8 @@ export function TargetsChatWorkspace({
       onToken?: (text: string) => void;
       onActionable?: (value: boolean) => void;
       onStatus?: (status: string) => void;
-      onTargets?: (payload: TargetGenerationPayload, source: "ai" | "heuristic", warning?: string) => void;
+      onQuickApply?: (weightKg: number | null, durationDays: number | null) => void;
+      onQueued?: () => void;
       onErrorEvent?: (message: string) => void;
     },
   ): Promise<{ ok: boolean; receivedAnything: boolean; errorMessage: string | null }> {
@@ -316,8 +340,10 @@ export function TargetsChatWorkspace({
             handlers.onActionable?.(event.value);
           } else if (event.type === "status" && event.status === "generating_targets") {
             handlers.onStatus?.(event.status);
-          } else if (event.type === "targets") {
-            handlers.onTargets?.(event.payload, event.source, event.warning);
+          } else if (event.type === "quick_apply") {
+            handlers.onQuickApply?.(event.weightKg, event.durationDays);
+          } else if (event.type === "queued") {
+            handlers.onQueued?.();
           } else if (event.type === "error") {
             handlers.onErrorEvent?.(event.message);
           }
@@ -415,55 +441,20 @@ export function TargetsChatWorkspace({
     setIsStreaming(false);
   }
 
-  /** Core network call for applying whatever the conversation currently
-   * asks for - shared by the persistent decision area and the profile-
-   * staleness "Recalculate now" trigger, neither of which manage decision
-   * bookkeeping themselves. */
-  /** Attempts to save one already-generated payload, sharing this same
-   * retryable path whether it's called right after a fresh generation or
-   * from the "Retry" banner after a prior save attempt failed - retrying
-   * only re-runs the save, never the expensive AI generation call itself.
-   * Returns whether the save succeeded. */
-  async function attemptSaveTargets(pending: { payload: TargetGenerationPayload; source: "ai" | "heuristic"; goalText: string }): Promise<boolean> {
-    setStreamError(null);
-    setRetryAction(null);
-    setIsGeneratingTargets(true);
-    setIsSavingTargets(true);
-
-    const lockResult = await autoLockTargetsAction({ goalText: pending.goalText, source: pending.source, payload: pending.payload });
-
-    setIsSavingTargets(false);
-
-    if (lockResult.error) {
-      setIsGeneratingTargets(false);
-      setStreamError(lockResult.error);
-      setRetryAction(() => () => {
-        void attemptSaveTargets(pending);
-      });
-      return false;
-    }
-
-    // Success - the parent page (targets/page.tsx) re-fetches with the
-    // newly-locked active target profile, which remounts this whole
-    // component (it's keyed by that profile's id) back to its fresh default
-    // state - Overview tab, chat closed. Closing here too just avoids a
-    // brief flash of the open sheet while that refresh lands.
-    setIsOpen(false);
-    router.refresh();
-    return true;
-  }
-
   type UpdateOutcome =
-    | { kind: "saved" }
-    | { kind: "nothing_to_save" }
-    | { kind: "save_failed" }
+    | { kind: "quick_applied"; weightKg: number | null; durationDays: number | null }
+    | { kind: "queued" }
     | { kind: "generation_failed"; semanticErrorMessage: string | null };
 
-  /** Runs the AI generation call and, once a payload comes back, saves it
-   * immediately - there is no separate review/lock step anymore. When the
-   * result doesn't actually change anything measurable (compared via the
-   * same diff used to build the old preview table), nothing is saved, since
-   * locking an identical duplicate target profile row would be pointless. */
+  /**
+   * Save-flow redesign (docs/design/targets-save-performance-redesign.md):
+   * a fast classification call on the server either quick-applies a
+   * literal weight/duration change immediately (kind: "quick_applied") or
+   * queues the full careful review to run in the background (kind:
+   * "queued") - either way this resolves in a couple of seconds, not the
+   * old 20-90s wait, since the actual save already happened server-side by
+   * the time this returns (see route.ts's update_targets handler).
+   */
   async function requestTargetsUpdate(history: ChatMessage[]): Promise<UpdateOutcome> {
     if (isStreaming || history.length === 0) return { kind: "generation_failed", semanticErrorMessage: null };
 
@@ -471,28 +462,18 @@ export function TargetsChatWorkspace({
     setRetryAction(null);
     setIsStreaming(true);
     setIsGeneratingTargets(true);
-    setIsSavingTargets(false);
-    setGeneratingStatusIndex(0);
 
-    let receivedPayload: TargetGenerationPayload | null = null;
-    let receivedSource: "ai" | "heuristic" = "heuristic";
+    let outcome: UpdateOutcome | null = null;
     let semanticErrorMessage: string | null = null;
 
     const result = await runStream(
       { action: "update_targets", chatHistory: history },
       {
-        onStatus: () => {
-          // Each event is either genuine generation progress or the
-          // route's own safety-net heartbeat (see route.ts) - either way,
-          // advancing here keeps the message moving roughly in step with
-          // how far the call has actually gotten, rather than looping a
-          // single static line for the whole 30-50s wait.
-          setGeneratingStatusIndex((previous) => (previous + 1) % GENERATING_TARGETS_STATUS_MESSAGES.length);
+        onQuickApply: (weightKg, durationDays) => {
+          outcome = { kind: "quick_applied", weightKg, durationDays };
         },
-        onTargets: (payload, source, warning) => {
-          receivedPayload = payload;
-          receivedSource = source;
-          if (warning) setStreamError(warning);
+        onQueued: () => {
+          outcome = { kind: "queued" };
         },
         onErrorEvent: (message) => {
           semanticErrorMessage = message;
@@ -502,60 +483,43 @@ export function TargetsChatWorkspace({
     );
 
     setIsStreaming(false);
+    setIsGeneratingTargets(false);
 
-    if (!receivedPayload) {
-      setIsGeneratingTargets(false);
+    if (!outcome) {
       return { kind: "generation_failed", semanticErrorMessage: semanticErrorMessage ?? result.errorMessage ?? null };
     }
 
-    const diffRows = computeTargetsDiff(currentPayload, receivedPayload, locale);
-    if (diffRows.length === 0) {
-      setIsGeneratingTargets(false);
-      isPinnedToBottomRef.current = true;
-      setMessages((previous) => [
-        ...previous,
-        {
-          role: "assistant",
-          content: tr(
-            locale,
-            "This didn't change anything measurable in your targets, so there's nothing new to save.",
-            "זה לא שינה דבר מדיד ביעדים שלך, ולכן אין מה לשמור.",
-          ),
-        },
-      ]);
-      return { kind: "nothing_to_save" };
-    }
-
-    const goalTextForLock = history.filter((message) => message.role === "user").at(-1)?.content ?? "";
-    const saved = await attemptSaveTargets({ payload: receivedPayload, source: receivedSource, goalText: goalTextForLock });
-    return saved ? { kind: "saved" } : { kind: "save_failed" };
+    isPinnedToBottomRef.current = true;
+    // The active target row already has whatever changed (a quick-applied
+    // field, or nothing yet if queued) - refresh so the page's own
+    // server-fetched numbers catch up. Not a remount (same profile id
+    // unless/until the background pass later replaces it), so chat state
+    // and scroll position are preserved.
+    router.refresh();
+    return outcome;
   }
 
   async function handleUpdateTargetsDecision() {
     if (!decision || decision.status !== "pending" || !decision.actionable) return;
     // Hides the decision banner (and its buttons) the instant the request
-    // starts, instead of leaving it up and clickable for the whole
-    // generation call - the isGeneratingTargets spinner takes over as the
-    // "something is happening" indicator from here.
+    // starts, instead of leaving it up and clickable for the whole call -
+    // the isGeneratingTargets spinner takes over as the "something is
+    // happening" indicator from here.
     setDecision((previous) => (previous ? { ...previous, status: "applying" } : previous));
     const history = messages;
     const outcome = await requestTargetsUpdate(history);
-    if (outcome.kind === "saved") return; // Component is about to remount.
-    if (outcome.kind === "nothing_to_save") {
-      setDecision((previous) => (previous ? { ...previous, status: "updated" } : previous));
+    if (outcome.kind === "quick_applied" || outcome.kind === "queued") {
+      setDecision((previous) => (previous ? { ...previous, status: outcome.kind } : previous));
       return;
     }
-    // Any other outcome (a failed generation, or a failed save) didn't end
-    // in a save - bring the banner back so the user can try again, matching
-    // this outcome's original "leave the pending decision as-is" behavior.
+    // Generation/classification failure - bring the banner back so the
+    // user can try again.
     setDecision((previous) => (previous ? { ...previous, status: "pending" } : previous));
-    if (outcome.kind === "generation_failed" && !outcome.semanticErrorMessage) {
+    if (!outcome.semanticErrorMessage) {
       // A genuine connection/timeout failure (not a server-explained
       // rejection) - offer to retry the exact same request.
       setRetryAction(() => () => handleUpdateTargetsDecision());
     }
-    // "save_failed": attemptSaveTargets already surfaced its own error and
-    // a retry that re-attempts just the save, not the whole generation.
   }
 
   /** The decision banner only appears when the AI itself marks a reply
@@ -592,53 +556,43 @@ export function TargetsChatWorkspace({
     setMessages(updatedHistory);
     setDecision(null);
     const outcome = await requestTargetsUpdate(updatedHistory);
-    if (outcome.kind === "saved") return; // Component is about to remount, with a fresh profile snapshot - the banner is already gone.
-    if (outcome.kind === "nothing_to_save") {
-      // The AI reviewed the change and found nothing that needed adjusting -
-      // re-baseline the stored snapshot so this same drift doesn't keep
-      // prompting, without touching the locked targets themselves.
+    if (outcome.kind === "quick_applied" || outcome.kind === "queued") {
+      // Deliberately does NOT dismiss the profile-change banner here (unlike
+      // the old "saved" case, which relied on a remount to make the banner
+      // disappear along with everything else) - the full review is still
+      // running in the background (see runBackgroundTargetsCheck), and its
+      // own successful save re-baselines the profile snapshot on its own
+      // once it completes, which is what actually resolves this banner
+      // accurately. Dismissing it here, before that's confirmed, would risk
+      // hiding a genuinely-needed change.
       setMessages((previous) => [
         ...previous,
         {
           role: "assistant",
           content: tr(
             locale,
-            "I reviewed this profile change against your current targets - no adjustment is needed, they're still accurate as-is.",
-            "בדקתי את שינוי הפרופיל הזה מול היעדים הנוכחיים שלך - אין צורך בעדכון, הם עדיין מדויקים כפי שהם.",
+            "Reviewing this profile change now - I'll let you know if it needs anything beyond what I've already applied.",
+            "בודק/ת כעת את שינוי הפרופיל הזה - אעדכן אותך אם יש צורך במשהו מעבר למה שכבר הוחל.",
           ),
         },
       ]);
-      await handleSkipProfileChange();
       return;
     }
-    if (outcome.kind === "generation_failed") {
-      if (outcome.semanticErrorMessage) {
-        // The AI reviewed the profile change against the current targets and
-        // concluded no numeric/text adjustment is warranted. Unlike above,
-        // this does NOT dismiss the profile-change banner - a "no change
-        // needed" conclusion from a single AI pass isn't reliable enough to
-        // treat as final (a genuinely significant change, e.g. a newly added
-        // medical condition, has been seen going through as a false negative
-        // here), so the banner stays up and "Recalculate now" stays
-        // available to try again, rather than silently losing the pending
-        // change with no easy way back to it.
-        setMessages((previous) => [
-          ...previous,
-          {
-            role: "assistant",
-            content: tr(
-              locale,
-              "I reviewed this profile change against your current targets - no adjustment is needed, they're still accurate as-is. If that doesn't sound right, you can try \"Recalculate now\" again or describe the concern here.",
-              "בדקתי את שינוי הפרופיל הזה מול היעדים הנוכחיים שלך - אין צורך בעדכון, הם עדיין מדויקים כפי שהם. אם זה לא נשמע נכון, אפשר לנסות שוב \"לחישוב מחדש\" או לתאר כאן את החשש.",
-            ),
-          },
-        ]);
-      } else {
-        setRetryAction(() => () => handleRecalculateFromProfileChange());
-      }
+    if (outcome.semanticErrorMessage) {
+      setMessages((previous) => [
+        ...previous,
+        {
+          role: "assistant",
+          content: tr(
+            locale,
+            "I reviewed this profile change against your current targets - no adjustment is needed, they're still accurate as-is. If that doesn't sound right, you can try \"Recalculate now\" again or describe the concern here.",
+            "בדקתי את שינוי הפרופיל הזה מול היעדים הנוכחיים שלך - אין צורך בעדכון, הם עדיין מדויקים כפי שהם. אם זה לא נשמע נכון, אפשר לנסות שוב \"לחישוב מחדש\" או לתאר כאן את החשש.",
+          ),
+        },
+      ]);
+    } else {
+      setRetryAction(() => () => handleRecalculateFromProfileChange());
     }
-    // "save_failed": attemptSaveTargets already surfaced its own error and
-    // a save-only retry.
   }
 
   async function handleSkipProfileChange() {
@@ -805,13 +759,7 @@ export function TargetsChatWorkspace({
             <div className="flex justify-start">
               <div className="flex items-center gap-2 rounded-2xl bg-slate-100 px-3 py-2 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-400">
                 <Spinner className="h-3.5 w-3.5 animate-spin" />
-                {isSavingTargets
-                  ? tr(locale, "Saving your targets...", "שומר את היעדים שלך...")
-                  : tr(
-                      locale,
-                      GENERATING_TARGETS_STATUS_MESSAGES[generatingStatusIndex].en,
-                      GENERATING_TARGETS_STATUS_MESSAGES[generatingStatusIndex].he,
-                    )}
+                {tr(locale, "Checking your request...", "בודק/ת את הבקשה שלך...")}
               </div>
             </div>
           ) : null}
@@ -840,8 +788,16 @@ export function TargetsChatWorkspace({
                 </button>
               </div>
             </div>
-          ) : decision && decision.status === "updated" ? (
-            <p className="text-xs text-slate-400 dark:text-slate-500">{tr(locale, "Targets updated from your last request.", "היעדים עודכנו בהתאם לבקשתך האחרונה.")}</p>
+          ) : decision && decision.status === "quick_applied" ? (
+            <div className="flex items-center gap-2 rounded-xl border border-teal-200 bg-teal-50 p-3 text-xs text-teal-800 dark:border-teal-800 dark:bg-teal-950/30 dark:text-teal-300">
+              <Spinner className="h-3.5 w-3.5 shrink-0 animate-spin" />
+              <span>{tr(locale, "Applied - reviewing your full plan in the background now.", "הוחל - בודק/ת כעת את התכנית המלאה שלך ברקע.")}</span>
+            </div>
+          ) : decision && decision.status === "queued" ? (
+            <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-400">
+              <Spinner className="h-3.5 w-3.5 shrink-0 animate-spin" />
+              <span>{tr(locale, "Reviewing your full plan in the background - we'll let you know if anything needs your attention.", "בודק/ת כעת את התכנית המלאה שלך ברקע - נעדכן אותך אם יש צורך בתשומת לבך.")}</span>
+            </div>
           ) : decision && decision.status === "ignored" ? (
             <p className="text-xs text-slate-400 dark:text-slate-500">{tr(locale, "Suggestion ignored.", "ההצעה נדחתה.")}</p>
           ) : null}

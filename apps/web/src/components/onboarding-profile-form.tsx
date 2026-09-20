@@ -868,7 +868,7 @@ export function OnboardingProfileForm({
       if (!draft.last_name.trim()) nextErrors.last_name = tr(effectiveLocale, "Last name is required.", "שם משפחה חובה.");
       if (!draft.date_of_birth) nextErrors.date_of_birth = tr(effectiveLocale, "Date of birth is required.", "תאריך לידה חובה.");
       if (ageYears == null) nextErrors.date_of_birth = tr(effectiveLocale, "Enter a valid date of birth.", "יש להזין תאריך לידה תקין.");
-      if (!draft.biological_sex) nextErrors.biological_sex = tr(effectiveLocale, "Select biological sex.", "יש לבחור מין ביולוגי.");
+      if (!draft.biological_sex) nextErrors.biological_sex = tr(effectiveLocale, "Select sex.", "יש לבחור מין.");
       if (weightKg == null || weightKg < 20 || weightKg > 400) {
         nextErrors.weight = tr(effectiveLocale, "Weight must be between 20 and 400 kg.", "המשקל חייב להיות בין 20 ל-400 ק" + "ג.");
       }
@@ -1248,7 +1248,7 @@ export function OnboardingProfileForm({
             </label>
 
             <div className="block" data-field="biological_sex">
-              <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Biological sex", "מין ביולוגי")}</span>
+              <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Sex", "מין")}</span>
               <div className={`grid grid-cols-2 overflow-hidden rounded-xl border ${inputErrorClass("biological_sex")}`}>
                 <button
                   type="button"

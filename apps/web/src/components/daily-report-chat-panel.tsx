@@ -827,6 +827,47 @@ export function DailyReportChatPanel({
     }
   }
 
+  /** Formats a picked saved-list item's full breakdown as chat text - same
+   * content the old decorative echo bubble showed, now actually sent as a
+   * real message so the AI (and any later edit request, e.g. "remove the
+   * coffee") can see and act on it, instead of the item only ever reaching
+   * the final report through the separate, AI-invisible selected_default_ids
+   * merge at save time (ticket #4, Aggregated Tickets). */
+  function buildSavedItemChatText(item: SelectedSavedListItem): string {
+    const header = tr(locale, `Add my saved "${item.name}"`, `להוסיף את "${item.name}" מהרשימה השמורה שלי`);
+    if (item.ingredients && item.ingredients.length > 1) {
+      const breakdown = item.ingredients
+        .map((ingredient) => `${ingredient.quantity} ${formatDefaultUnit(ingredient.unit, locale)} ${formatDefaultItemName(ingredient.name, locale)}`)
+        .join(", ");
+      return `${header}: ${breakdown}`;
+    }
+    return `${header} (${item.quantity} ${formatDefaultUnit(item.unit, locale)})`;
+  }
+
+  /** Injects a real chat message the instant an item is picked (per ticket
+   * #4's answer: "added automatically once selected"), rather than only
+   * updating the decorative selectedSavedListItems display - diffs by name
+   * (saved-list item names are already enforced unique per user) so only
+   * newly-checked items get a message, not the whole selection every time
+   * a box is (un)checked. Doesn't trigger an AI reply on its own - it just
+   * becomes part of the conversation history the next real Send/Conclude
+   * already includes, matching "only update and save once the user asks."
+   * Un-checking an item doesn't retract its message - same as anything
+   * else typed into this chat, correcting it is a normal follow-up message
+   * ("remove that"), not an undo. */
+  function handleSavedListSelectionChange(next: SelectedSavedListItem[]) {
+    const previousNames = new Set(selectedSavedListItems.map((item) => item.name));
+    const newlySelected = next.filter((item) => !previousNames.has(item.name));
+    if (newlySelected.length > 0) {
+      isPinnedToBottomRef.current = true;
+      setMessages((previous) => [
+        ...previous,
+        ...newlySelected.map((item) => ({ role: "user" as const, content: buildSavedItemChatText(item) })),
+      ]);
+    }
+    setSelectedSavedListItems(next);
+  }
+
   async function handlePhotoSelected(file: File | null) {
     setPhotoError(null);
     if (!file) return;
@@ -1024,35 +1065,6 @@ export function DailyReportChatPanel({
               </div>
             </div>
           ))}
-          {selectedSavedListItems.length ? (
-            <div className="flex flex-col items-end">
-              <div className="max-w-[85%] space-y-2 rounded-2xl border-2 border-dashed border-teal-300 bg-teal-50 px-3 py-2 text-sm text-teal-900 dark:border-teal-700 dark:bg-teal-950/30 dark:text-teal-200">
-                <p className="text-xs font-semibold uppercase tracking-wide text-teal-700 dark:text-teal-400">
-                  {tr(locale, "From your saved list", "מהרשימה השמורה")}
-                </p>
-                {selectedSavedListItems.map((item, index) => (
-                  <div key={index}>
-                    <p>
-                      {item.name} ({item.quantity} {formatDefaultUnit(item.unit, locale)})
-                    </p>
-                    {/* Only what the user actually saved under this item -
-                        no nutrient extraction/recalculation here, just an
-                        echo of its stored ingredient breakdown (same
-                        format the saved-list picker itself already shows
-                        while browsing), so a bundled item like "My
-                        Breakfast" doesn't reduce to just its name. */}
-                    {item.ingredients && item.ingredients.length > 1 ? (
-                      <p className="mt-0.5 text-xs text-teal-800/70 dark:text-teal-300/70">
-                        {item.ingredients
-                          .map((ingredient) => `${ingredient.quantity} ${formatDefaultUnit(ingredient.unit, locale)} ${formatDefaultItemName(ingredient.name, locale)}`)
-                          .join(", ")}
-                      </p>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
           <div ref={messagesEndRef} />
         </div>
       </div>
@@ -1130,7 +1142,7 @@ export function DailyReportChatPanel({
             <DailyReportDefaultsPicker
               locale={locale}
               defaultItems={defaultItems}
-              onSelectionChange={setSelectedSavedListItems}
+              onSelectionChange={handleSavedListSelectionChange}
               dropDirection="up"
               showQuickAdd
               formId="daily-report-form"
