@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 
+import { ChangePasswordForm } from "@/components/change-password-form";
 import { EnvironmentBadge } from "@/components/environment-badge";
 import { LanguageToggle } from "@/components/language-toggle";
 import { PasskeyManager } from "@/components/passkey-manager";
@@ -57,6 +58,30 @@ export default async function SettingsPage() {
           </div>
           <ThemeToggle locale={locale} theme={theme} />
         </div>
+
+        <details className="group p-6">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
+            <div>
+              <p className="font-medium text-slate-900 dark:text-slate-100">{tr(locale, "Password", "סיסמה")}</p>
+              <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+                {tr(locale, "Change your account password.", "שינוי סיסמת החשבון שלכם.")}
+              </p>
+            </div>
+            <svg
+              className="h-4 w-4 shrink-0 text-slate-400 transition-transform group-open:rotate-90 rtl:group-open:-rotate-90"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M9 6l6 6-6 6" />
+            </svg>
+          </summary>
+          <ChangePasswordForm locale={locale} />
+        </details>
 
         <div className="flex flex-col gap-3 p-6">
           <div>

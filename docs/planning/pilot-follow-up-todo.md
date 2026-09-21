@@ -17,6 +17,24 @@ against. Not urgent - the pilot itself runs as-is in the meantime.
   something the service worker can help with: caching personalized
   Supabase/AI data client-side would mean sometimes showing stale numbers,
   which is a worse tradeoff than the current load time.
+  - **Update (Sept 2026):** measured real per-query latency against the dev
+    Supabase project directly - each round-trip costs ~350-400ms regardless
+    of query complexity, and most pages were paying that cost multiple times
+    over by awaiting independent queries one at a time instead of together.
+    Parallelized the shared layout's nav-chrome queries, and the Targets,
+    Profile, and Targets-overview pages' own independent queries, via
+    `Promise.all` - measured 2x-5x faster for those batches with no change
+    in behavior (same data, just fetched concurrently). Still outstanding:
+    **investigate and implement caching** as the next lever - every page is
+    still `force-dynamic`, so even the now-parallelized cost is paid again
+    on every single navigation, including switching back to a page visited
+    seconds earlier. Needs care around the stale-data tradeoff noted above
+    (this is live personal health data) - likely candidates are a short-lived
+    server-side cache (e.g. `unstable_cache` with a several-second TTL) for
+    data that's expensive but doesn't need to be instantly fresh (the shared
+    layout's nav chrome - name/avatar/theme/notification count - is the
+    obvious first candidate), rather than caching anything client-side or
+    anything the user just edited.
 - **Grow the pilot allow-list as more testers are added.** Currently 4 rows
   in `pilot_allowlist` (staging DB only) out of the ~25-tester cap discussed
   when this was set up. Adding more is just an insert - no redeploy needed.
@@ -60,4 +78,22 @@ against. Not urgent - the pilot itself runs as-is in the meantime.
 
 ## Bugs found during pilot testing
 
-(Nothing logged yet - append here as testers report issues.)
+- **[Fixed on dev, not yet promoted] Targets page stuck loading forever on
+  iPhone for a tester without a locked-in plan.** Reported Sept 2026: a
+  tester on iPhone (app v1.1.16) could load Profile but Targets and Daily
+  Report both "kept rendering and never came up." Root cause found for
+  Targets: `targets/page.tsx` called `generateTargetsPayload` (AI baseline
+  generation) synchronously during server render whenever the user has no
+  active target plan yet - that call routinely takes 30-90s (see its own
+  `timeoutMs` comment), blocking the entire page from rendering anything
+  until it finished. Confirmed this tester hadn't locked in a plan yet,
+  matching the theory. Fixed by moving that generation off the server
+  render entirely - the page now renders immediately, and
+  `TargetsWorkspace` triggers the same generation client-side on mount via
+  the existing `generateTargetsAction` form, with its own visible pending
+  state instead of a blank stuck page. Daily Report's cause for the same
+  tester is still open - its own server render has no equivalent blocking
+  AI call (already just fast, already-batched Supabase queries), so it's
+  likely a separate, client-side issue specific to that tester's own data;
+  needs their account data checked directly, or another report, to narrow
+  down further.

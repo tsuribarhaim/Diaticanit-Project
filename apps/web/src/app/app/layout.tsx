@@ -37,12 +37,30 @@ export default async function ProtectedAppLayout({
     avatar_color?: string | null;
     theme_preference?: string | null;
   } | null = null;
+  // Unresolved count for the nav badge (see AppNav) - resolved status, not
+  // read status, since the whole point of that distinction (see the
+  // Targets save-flow redesign's notification system) is that opening a
+  // notification doesn't mean the underlying concern is actually settled.
+  let unresolvedNotificationCount = 0;
+
   if (user) {
-    const fullSelect = await supabase
-      .from("user_profile")
-      .select("preferred_language, first_name, avatar_color, theme_preference")
-      .eq("user_id", user.id)
-      .maybeSingle();
+    // This layout re-runs on every single page navigation (every child page
+    // is force-dynamic) - these two queries don't depend on each other, so
+    // they're fired together rather than paying two sequential round trips
+    // on every page view.
+    const [fullSelect, notificationCountResult] = await Promise.all([
+      supabase
+        .from("user_profile")
+        .select("preferred_language, first_name, avatar_color, theme_preference")
+        .eq("user_id", user.id)
+        .maybeSingle(),
+      supabase
+        .from("user_notifications")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", user.id)
+        .is("resolved_at", null),
+    ]);
+
     if (fullSelect.error?.message.includes("avatar_color") || fullSelect.error?.message.includes("theme_preference")) {
       profileRow = (
         await supabase
@@ -54,24 +72,12 @@ export default async function ProtectedAppLayout({
     } else {
       profileRow = fullSelect.data;
     }
+
+    unresolvedNotificationCount = notificationCountResult.count ?? 0;
   }
 
   const locale = normalizeLocale(profileRow?.preferred_language);
   const theme = normalizeTheme(profileRow?.theme_preference);
-
-  // Unresolved count for the nav badge (see AppNav) - resolved status, not
-  // read status, since the whole point of that distinction (see the
-  // Targets save-flow redesign's notification system) is that opening a
-  // notification doesn't mean the underlying concern is actually settled.
-  let unresolvedNotificationCount = 0;
-  if (user) {
-    const { count } = await supabase
-      .from("user_notifications")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", user.id)
-      .is("resolved_at", null);
-    unresolvedNotificationCount = count ?? 0;
-  }
 
   return (
     // data-theme drives every dark: utility class within /app/* (see

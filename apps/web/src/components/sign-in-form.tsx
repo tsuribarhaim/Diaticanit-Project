@@ -124,13 +124,20 @@ export function SignInForm({
               disabled={passkeyState.status === "pending"}
               className="flex w-full items-center justify-center gap-2 rounded-xl border border-teal-300 px-3 py-2.5 text-sm font-semibold text-teal-700 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-70"
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M9 12.5a3 3 0 1 1 6 0c0 1.5-.5 2.5-1.5 4" />
-                <path d="M12 2a10 10 0 0 0-10 10c0 2 .5 3.5 1 4.5" />
-                <path d="M12 2a10 10 0 0 1 10 10c0 3-.5 5-1.5 7" />
-                <path d="M6.5 17.5C7.5 16 8 14.5 8 12.5a4 4 0 0 1 4-4" />
-                <path d="M12 8.5a4 4 0 0 1 4 4c0 3-1 5-3 7" />
-              </svg>
+              {passkeyState.status === "pending" ? (
+                <svg className="h-[18px] w-[18px] animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                </svg>
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M9 12.5a3 3 0 1 1 6 0c0 1.5-.5 2.5-1.5 4" />
+                  <path d="M12 2a10 10 0 0 0-10 10c0 2 .5 3.5 1 4.5" />
+                  <path d="M12 2a10 10 0 0 1 10 10c0 3-.5 5-1.5 7" />
+                  <path d="M6.5 17.5C7.5 16 8 14.5 8 12.5a4 4 0 0 1 4-4" />
+                  <path d="M12 8.5a4 4 0 0 1 4 4c0 3-1 5-3 7" />
+                </svg>
+              )}
               {passkeyState.status === "pending"
                 ? tr(locale, "Waiting for Face ID / Touch ID...", "ממתין לזיהוי פנים / טביעת אצבע...")
                 : tr(locale, "Sign in with Face ID / Touch ID", "כניסה עם זיהוי פנים / טביעת אצבע")}
@@ -188,8 +195,11 @@ export function SignInForm({
           </label>
 
           <label className="block">
-            <span className="mb-1 block text-sm font-medium text-slate-700">
+            <span className="mb-1 flex items-center justify-between gap-2 text-sm font-medium text-slate-700">
               {tr(locale, "Password", "סיסמה")}
+              <Link href="/auth/forgot-password" className="text-xs font-semibold text-teal-700">
+                {tr(locale, "Forgot your password?", "שכחתם סיסמה?")}
+              </Link>
             </span>
             <input
               type="password"
