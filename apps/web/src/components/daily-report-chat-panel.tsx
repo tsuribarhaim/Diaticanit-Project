@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal, flushSync, useFormStatus } from "react-dom";
 
 import { deleteDailyReportAction } from "@/app/app/daily-report/actions";
@@ -832,17 +832,23 @@ export function DailyReportChatPanel({
    * real message so the AI (and any later edit request, e.g. "remove the
    * coffee") can see and act on it, instead of the item only ever reaching
    * the final report through the separate, AI-invisible selected_default_ids
-   * merge at save time (ticket #4, Aggregated Tickets). */
-  function buildSavedItemChatText(item: SelectedSavedListItem): string {
-    const header = tr(locale, `Add my saved "${item.name}"`, `להוסיף את "${item.name}" מהרשימה השמורה שלי`);
-    if (item.ingredients && item.ingredients.length > 1) {
-      const breakdown = item.ingredients
-        .map((ingredient) => `${ingredient.quantity} ${formatDefaultUnit(ingredient.unit, locale)} ${formatDefaultItemName(ingredient.name, locale)}`)
-        .join(", ");
-      return `${header}: ${breakdown}`;
-    }
-    return `${header} (${item.quantity} ${formatDefaultUnit(item.unit, locale)})`;
-  }
+   * merge at save time (ticket #4, Aggregated Tickets). Wrapped in
+   * useCallback (deps: locale only) so it - and handleSavedListSelectionChange
+   * below, which depends on it - keep a stable identity across renders; see
+   * that function's own comment for why stability here specifically matters. */
+  const buildSavedItemChatText = useCallback(
+    (item: SelectedSavedListItem): string => {
+      const header = tr(locale, `Add my saved "${item.name}"`, `להוסיף את "${item.name}" מהרשימה השמורה שלי`);
+      if (item.ingredients && item.ingredients.length > 1) {
+        const breakdown = item.ingredients
+          .map((ingredient) => `${ingredient.quantity} ${formatDefaultUnit(ingredient.unit, locale)} ${formatDefaultItemName(ingredient.name, locale)}`)
+          .join(", ");
+        return `${header}: ${breakdown}`;
+      }
+      return `${header} (${item.quantity} ${formatDefaultUnit(item.unit, locale)})`;
+    },
+    [locale],
+  );
 
   /** Injects a real chat message the instant an item is picked (per ticket
    * #4's answer: "added automatically once selected"), rather than only
@@ -854,19 +860,38 @@ export function DailyReportChatPanel({
    * already includes, matching "only update and save once the user asks."
    * Un-checking an item doesn't retract its message - same as anything
    * else typed into this chat, correcting it is a normal follow-up message
-   * ("remove that"), not an undo. */
-  function handleSavedListSelectionChange(next: SelectedSavedListItem[]) {
-    const previousNames = new Set(selectedSavedListItems.map((item) => item.name));
-    const newlySelected = next.filter((item) => !previousNames.has(item.name));
-    if (newlySelected.length > 0) {
-      isPinnedToBottomRef.current = true;
-      setMessages((previous) => [
-        ...previous,
-        ...newlySelected.map((item) => ({ role: "user" as const, content: buildSavedItemChatText(item) })),
-      ]);
-    }
-    setSelectedSavedListItems(next);
-  }
+   * ("remove that"), not an undo.
+   *
+   * MUST stay referentially stable across renders (useCallback, no
+   * selectedSavedListItems in the closure - read via the functional
+   * setState updater instead) - this is passed as
+   * DailyReportDefaultsPicker's onSelectionChange prop, which that
+   * component's own internal useCallback/useEffect chain depends on
+   * (syncSelectionUi depends on [..., onSelectionChange], and an effect
+   * depends on syncSelectionUi and calls it immediately). A plain function
+   * recreated every render broke that chain into an infinite loop - passing
+   * a new prop reference re-ran the child's effect, which called this
+   * again, which re-rendered this component, which passed yet another new
+   * reference - seen live as React's "Maximum update depth exceeded" and,
+   * because it pegs the render cycle, everything else on the page (Save,
+   * other buttons) reads as hung or unresponsive while it's happening. */
+  const handleSavedListSelectionChange = useCallback(
+    (next: SelectedSavedListItem[]) => {
+      setSelectedSavedListItems((previousSelection) => {
+        const previousNames = new Set(previousSelection.map((item) => item.name));
+        const newlySelected = next.filter((item) => !previousNames.has(item.name));
+        if (newlySelected.length > 0) {
+          isPinnedToBottomRef.current = true;
+          setMessages((previousMessages) => [
+            ...previousMessages,
+            ...newlySelected.map((item) => ({ role: "user" as const, content: buildSavedItemChatText(item) })),
+          ]);
+        }
+        return next;
+      });
+    },
+    [buildSavedItemChatText],
+  );
 
   async function handlePhotoSelected(file: File | null) {
     setPhotoError(null);
