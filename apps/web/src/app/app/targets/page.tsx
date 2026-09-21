@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-import { generateTargetsPayload, hasAiTargetsConsent } from "@/app/app/targets/actions";
+import { hasAiTargetsConsent } from "@/app/app/targets/actions";
 import { TargetsChatWorkspace } from "@/components/targets-chat-workspace";
 import { TargetsWorkspace } from "@/components/targets-workspace";
 import type { TargetsHistoryInfo } from "@/components/targets-section-tabs";
@@ -14,7 +14,6 @@ import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 import {
   computeProfileDiff,
   estimateMaintenanceCalories,
-  generateHeuristicTargetProfile,
   mapTargetProfileRowToPayload,
   parseProfileSnapshot,
   TARGET_PROFILE_COLUMNS,
@@ -40,13 +39,36 @@ export default async function TargetsPage({
     redirect("/auth/sign-in");
   }
 
-  const { data: profileRow, error: profileError } = await supabase
-    .from("user_profile")
-    .select(
-      "first_name, age, gender, biological_sex, height_cm, weight_kg, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, habits, pregnancy_lactation_status, hot_climate_or_heavy_sweating, preferred_language",
-    )
-    .eq("user_id", user.id)
-    .maybeSingle();
+  const aiConfig = getAiExtractionConfig();
+
+  // None of these four depend on each other's result - all four only need
+  // user.id (and, for the notification lookup, the concern id already in
+  // hand from searchParams) - so they're fired together instead of paying
+  // four sequential round trips before the page can even start rendering.
+  const [
+    { data: profileRow, error: profileError },
+    { data: activeTargetProfile, error: targetProfileError },
+    { data: notificationRow },
+    hasAiChatAvailable,
+  ] = await Promise.all([
+    supabase
+      .from("user_profile")
+      .select(
+        "first_name, age, gender, biological_sex, height_cm, weight_kg, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, habits, pregnancy_lactation_status, hot_climate_or_heavy_sweating, preferred_language",
+      )
+      .eq("user_id", user.id)
+      .maybeSingle(),
+    supabase.from("user_target_profiles").select(TARGET_PROFILE_COLUMNS).eq("user_id", user.id).eq("is_active", true).maybeSingle(),
+    // Arrived here from a Notifications entry (see app/app/notifications/
+    // page.tsx) - seed that concern into the chat and mark it read below.
+    // RLS's own "select own" policy on user_notifications means this simply
+    // returns nothing for an id that isn't this user's, rather than needing
+    // an extra ownership check here.
+    resolvedSearchParams.concern
+      ? supabase.from("user_notifications").select("id, message").eq("id", resolvedSearchParams.concern).maybeSingle()
+      : Promise.resolve({ data: null as { id: string; message: string } | null }),
+    aiConfig ? hasAiTargetsConsent({ supabase, userId: user.id }) : Promise.resolve(false),
+  ]);
 
   if (profileError) {
     throw new Error(profileError.message);
@@ -56,28 +78,20 @@ export default async function TargetsPage({
     redirect("/app/onboarding");
   }
 
+  if (targetProfileError) {
+    throw new Error(targetProfileError.message);
+  }
+
   const locale = normalizeLocale(profileRow.preferred_language);
   // For the chat workspace's own static UI copy (not AI-generated) -
   // grammatically correct Hebrew addressing, same rules/normalization the
   // AI chat itself follows (see lib/ai/persona.ts).
   const userGender = resolveUserGenderForAddressing(profileRow.gender, profileRow.biological_sex);
 
-  // Arrived here from a Notifications entry (see app/app/notifications/
-  // page.tsx) - seed that concern into the chat and mark it read. RLS's own
-  // "select own" policy on user_notifications means this simply returns
-  // nothing for an id that isn't this user's, rather than needing an extra
-  // ownership check here.
   let seedConcernMessage: string | undefined;
-  if (resolvedSearchParams.concern) {
-    const { data: notificationRow } = await supabase
-      .from("user_notifications")
-      .select("id, message")
-      .eq("id", resolvedSearchParams.concern)
-      .maybeSingle();
-    if (notificationRow) {
-      seedConcernMessage = notificationRow.message;
-      await markNotificationRead({ supabase, userId: user.id, notificationId: notificationRow.id });
-    }
+  if (notificationRow) {
+    seedConcernMessage = notificationRow.message;
+    await markNotificationRead({ supabase, userId: user.id, notificationId: notificationRow.id });
   }
 
   const profile: ProfileForTargets = {
@@ -105,19 +119,6 @@ export default async function TargetsPage({
 
   const maintenanceCalories = estimateMaintenanceCalories(profile);
 
-  const { data: activeTargetProfile, error: targetProfileError } = await supabase
-    .from("user_target_profiles")
-    .select(TARGET_PROFILE_COLUMNS)
-    .eq("user_id", user.id)
-    .eq("is_active", true)
-    .maybeSingle();
-
-  if (targetProfileError) {
-    throw new Error(targetProfileError.message);
-  }
-
-  let initialPreview: { goalText: string; source: "ai" | "heuristic"; payload: ReturnType<typeof mapTargetProfileRowToPayload> } | null = null;
-  let initialWarning: string | undefined;
   let profileChanges: ReturnType<typeof computeProfileDiff> | undefined;
   let bmiWarning: string | undefined;
   let missingProfileSnapshot = false;
@@ -138,32 +139,18 @@ export default async function TargetsPage({
     }
   }
 
-  const aiConfig = getAiExtractionConfig();
-  const hasAiChatAvailable = aiConfig ? await hasAiTargetsConsent({ supabase, userId: user.id }) : false;
-
-  if (!activeTargetProfile) {
-    const generated = await generateTargetsPayload({
-      goalText: "",
-      profile,
-      locale,
-      aiConfig,
-      hasConsent: hasAiChatAvailable,
-      supabase,
-      userId: user.id,
-    });
-    // A baseline generation from profile data alone (no explicit user ask)
-    // should never trip the weight-safety check, but fall back to a plain
-    // heuristic bake if it somehow does, rather than failing the page.
-    const { payload, source, heuristicReason } = generated.safetyRejectionMessage
-      ? {
-          payload: generateHeuristicTargetProfile({ freeText: "", profile, locale }),
-          source: "heuristic" as const,
-          heuristicReason: generated.safetyRejectionMessage,
-        }
-      : generated;
-    initialPreview = { goalText: "", source, payload };
-    initialWarning = source === "heuristic" ? heuristicReason ?? undefined : undefined;
-  }
+  // Deliberately NOT generating a baseline plan here (this used to call
+  // generateTargetsPayload synchronously, which routinely takes 30-90s -
+  // see that function's own timeoutMs comment). Blocking the entire page's
+  // server render on an AI call that slow meant Targets simply never
+  // finished loading for a first-time user on a slower connection (reported
+  // by a pilot tester on iPhone as the page "keeps rendering and not come
+  // up" - exactly what a request stuck for up to 90s looks like). The page
+  // now renders immediately with no preview, and TargetsWorkspace itself
+  // triggers the same generation client-side on mount (see its own
+  // auto-generate effect) through the existing generateTargetsAction form -
+  // the same action the "Generate my targets" button already used, just
+  // fired automatically instead of blocking this render.
 
   // Only fetched for the AI-chat-enabled experience's own Overview view
   // (see lib/home-overview.ts's own comment) - the no-AI-consent fallback
@@ -219,8 +206,6 @@ export default async function TargetsPage({
                 locale={locale}
                 mode="initial"
                 maintenanceCalories={maintenanceCalories}
-                initialPreview={initialPreview ?? undefined}
-                initialWarning={initialWarning}
                 firstName={profileRow.first_name ?? null}
               />
             </div>

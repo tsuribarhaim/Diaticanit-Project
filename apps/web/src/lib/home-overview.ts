@@ -145,7 +145,11 @@ export async function getHomeOverviewData({
   // so they surface in the Notifications view but not yet as an icon on a
   // specific number - a known, narrower scope than the full design for
   // this first pass.
-  const flaggedFieldKeys = await getFlaggedFieldKeys({ supabase, userId });
+  // Fired now but only awaited right before its first use (building
+  // ringMetrics below) - it doesn't depend on, and nothing below depends on,
+  // the today/range branch's own queries, so it overlaps with all of them
+  // instead of adding its own sequential round trip on top.
+  const flaggedFieldKeysPromise = getFlaggedFieldKeys({ supabase, userId });
 
   // Same "sum of each planned modality's frequency" convention already used
   // on the Targets page (see evaluateEnergyImbalanceRisk's
@@ -183,6 +187,12 @@ export async function getHomeOverviewData({
   let reportingConsistencyPercent: number | null = null;
 
   let customTargetTotals: Record<string, number> = {};
+  // Layer C ("milestone celebrations") only fires when there's an actual
+  // weight shift to celebrate - "today" has no meaningful shift within a
+  // single day, and a period with fewer than two weigh-ins can't establish
+  // one either, so weightShiftKg stays null in both cases and the prompt
+  // is told to skip celebration language entirely.
+  let weightShiftKg: number | null = null;
 
   // The exercise ring's own total/max/unit - computed inside the same
   // today-vs-range branch as everything else below, using that branch's
@@ -199,19 +209,19 @@ export async function getHomeOverviewData({
     const todayStartIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
     const todayEndIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString();
 
-    const todaysTotals = await getTodaysDailyReportTotals({ supabase, userId });
+    // Neither query depends on the other's result - both only need
+    // userId/the date bounds - so they're fired together instead of paying
+    // two sequential round trips.
+    const [todaysTotals, todaysCustomTargetTotals] = await Promise.all([
+      getTodaysDailyReportTotals({ supabase, userId }),
+      loggableCustomTargets.length
+        ? getCustomTargetValueTotals({ supabase, userId, rangeStartIso: todayStartIso, rangeEndIso: todayEndIso })
+        : Promise.resolve({} as Record<string, number>),
+    ]);
     caloriesKcal = todaysTotals.caloriesKcal;
     proteinG = todaysTotals.proteinG;
     estimatedBurnKcal = todaysTotals.estimatedBurnKcal;
-
-    if (loggableCustomTargets.length) {
-      customTargetTotals = await getCustomTargetValueTotals({
-        supabase,
-        userId,
-        rangeStartIso: todayStartIso,
-        rangeEndIso: todayEndIso,
-      });
-    }
+    customTargetTotals = todaysCustomTargetTotals;
 
     // A single day has no clean "how many sessions" answer the way a
     // longer period does - a 3x/week plan doesn't imply "every single
@@ -229,16 +239,26 @@ export async function getHomeOverviewData({
     const rangeStartIso = new Date(todayStartMs - (rangeDays - 1) * 24 * 60 * 60 * 1000).toISOString();
     const rangeEndIso = new Date(todayStartMs + 24 * 60 * 60 * 1000).toISOString();
 
-    if (loggableCustomTargets.length) {
-      customTargetTotals = await getCustomTargetValueTotals({ supabase, userId, rangeStartIso, rangeEndIso });
-    }
-
-    const { averages, loggedDayCount, totalDayCount } = await getLoggedDaysAverageDailyReportTotals({
-      supabase,
-      userId,
-      rangeStartIso,
-      rangeEndIso,
-    });
+    // None of these four depend on each other's result - all four only
+    // need userId/the date bounds - so they're fired together instead of
+    // paying four sequential round trips.
+    const [rangeCustomTargetTotals, loggedDaysAverageTotals, rangeExerciseTotal, weightRowsResult] = await Promise.all([
+      loggableCustomTargets.length
+        ? getCustomTargetValueTotals({ supabase, userId, rangeStartIso, rangeEndIso })
+        : Promise.resolve({} as Record<string, number>),
+      getLoggedDaysAverageDailyReportTotals({ supabase, userId, rangeStartIso, rangeEndIso }),
+      getExerciseSessionDayCount({ supabase, userId, rangeStartIso, rangeEndIso }),
+      supabase
+        .from("user_daily_reports")
+        .select("report_at, reported_weight_kg")
+        .eq("user_id", userId)
+        .not("reported_weight_kg", "is", null)
+        .gte("report_at", rangeStartIso)
+        .lt("report_at", rangeEndIso)
+        .order("report_at", { ascending: true }),
+    ]);
+    customTargetTotals = rangeCustomTargetTotals;
+    const { averages, loggedDayCount, totalDayCount } = loggedDaysAverageTotals;
     caloriesKcal = averages.caloriesKcal;
     proteinG = averages.proteinG;
     estimatedBurnKcal = averages.estimatedBurnKcal;
@@ -278,10 +298,23 @@ export async function getHomeOverviewData({
     // however many days are actually in the selected range - a 3x/week
     // plan implies roughly 3*(30/7)≈13 sessions across 30 days, not still
     // just 3.
-    exerciseTotal = await getExerciseSessionDayCount({ supabase, userId, rangeStartIso, rangeEndIso });
+    exerciseTotal = rangeExerciseTotal;
     exerciseMax = Math.round(weeklyExerciseTarget * (rangeDays / 7));
     exerciseUnit = "days";
+
+    const weighIns = (weightRowsResult.data ?? []).filter((row) => row.reported_weight_kg !== null);
+    if (weighIns.length >= 2) {
+      const first = Number(weighIns[0].reported_weight_kg);
+      const last = Number(weighIns[weighIns.length - 1].reported_weight_kg);
+      weightShiftKg = last - first;
+    }
   }
+
+  // flaggedFieldKeysPromise was fired before the branch above and has been
+  // running alongside it this whole time - awaited here, right before its
+  // first use below, so its cost is fully absorbed by the branch's own
+  // queries rather than adding a sequential round trip on top.
+  const flaggedFieldKeys = await flaggedFieldKeysPromise;
 
   // Same net-vs-gross calorie treatment as the Daily Report page: exercise
   // burn offsets calories gained from food/drink, and can legitimately push
@@ -376,36 +409,6 @@ export async function getHomeOverviewData({
           `${rangeLabels[range].en}: ${exerciseTotal} of ${exerciseMax} planned sessions logged. Any day with exercise logged counts as a session.`,
           `${rangeLabels[range].he}: נרשמו ${exerciseTotal} מתוך ${exerciseMax} אימונים מתוכננים. כל יום שבו נרשמה פעילות נחשב לאימון.`,
         );
-
-  // Layer C ("milestone celebrations") only fires when there's an actual
-  // weight shift to celebrate - "today" has no meaningful shift within a
-  // single day, and a period with fewer than two weigh-ins can't establish
-  // one either, so weightShiftKg stays null in both cases and the prompt
-  // is told to skip celebration language entirely.
-  let weightShiftKg: number | null = null;
-  if (range !== "today") {
-    const rangeDays = Number(range);
-    const now = new Date();
-    const todayStartMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-    const rangeStartIso = new Date(todayStartMs - (rangeDays - 1) * 24 * 60 * 60 * 1000).toISOString();
-    const rangeEndIso = new Date(todayStartMs + 24 * 60 * 60 * 1000).toISOString();
-
-    const { data: weightRows } = await supabase
-      .from("user_daily_reports")
-      .select("report_at, reported_weight_kg")
-      .eq("user_id", userId)
-      .not("reported_weight_kg", "is", null)
-      .gte("report_at", rangeStartIso)
-      .lt("report_at", rangeEndIso)
-      .order("report_at", { ascending: true });
-
-    const weighIns = (weightRows ?? []).filter((row) => row.reported_weight_kg !== null);
-    if (weighIns.length >= 2) {
-      const first = Number(weighIns[0].reported_weight_kg);
-      const last = Number(weighIns[weighIns.length - 1].reported_weight_kg);
-      weightShiftKg = last - first;
-    }
-  }
 
   // AI Coach card (Release 6, Layers B+C only - Layer A's missing-log
   // nudges are explicitly deferred). Cached in user_home_coach_narratives

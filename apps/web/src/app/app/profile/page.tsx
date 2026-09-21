@@ -74,26 +74,57 @@ export default async function ProfilePage({
     redirect("/auth/sign-in");
   }
 
-  const { data: profile, error } = await supabase
-    .from("user_profile_enriched")
-    .select(
-      "first_name, last_name, date_of_birth, gender, biological_sex, calculated_age_years, bmi, height_cm, weight_kg, activity_level, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, exercise_frequency_days_per_week, exercise_duration_minutes, nutritional_goal, pregnancy_lactation_status, has_medical_conditions, medical_conditions, medical_conditions_details, has_regular_medications, regular_medications_details, hot_climate_or_heavy_sweating, habits, alcohol_consumption_level, smoking_packs_per_day, dietary_preference, additional_information, allergies, updated_at",
-    )
-    .eq("user_id", user.id)
-    .maybeSingle();
+  // None of these six queries depend on each other's result - all six only
+  // need user.id (and, for the target-snapshot lookup, whether the
+  // targetsStale query param is set, already known here) - so they're all
+  // fired together instead of paying up to six sequential round trips
+  // before this page can even start rendering.
+  const [
+    { data: profile, error },
+    localeAndAvatarSelect,
+    { data: activeTargetProfileForStaleCheck },
+    { data: documents },
+    { data: earliestWeightReport },
+    hasAiConsent,
+  ] = await Promise.all([
+    supabase
+      .from("user_profile_enriched")
+      .select(
+        "first_name, last_name, date_of_birth, gender, biological_sex, calculated_age_years, bmi, height_cm, weight_kg, activity_level, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, exercise_frequency_days_per_week, exercise_duration_minutes, nutritional_goal, pregnancy_lactation_status, has_medical_conditions, medical_conditions, medical_conditions_details, has_regular_medications, regular_medications_details, hot_climate_or_heavy_sweating, habits, alcohol_consumption_level, smoking_packs_per_day, dietary_preference, additional_information, allergies, updated_at",
+      )
+      .eq("user_id", user.id)
+      .maybeSingle(),
+    // Falls back to a query without avatar_color when that column doesn't
+    // exist yet (migration 033 not applied) - same reasoning/pattern as
+    // layout.tsx's own copy of this fallback.
+    supabase
+      .from("user_profile")
+      .select("preferred_language, avatar_color, theme_preference")
+      .eq("user_id", user.id)
+      .maybeSingle(),
+    resolvedSearchParams.targetsStale === "1"
+      ? supabase.from("user_target_profiles").select("profile_snapshot").eq("user_id", user.id).eq("is_active", true).maybeSingle()
+      : Promise.resolve({ data: null as { profile_snapshot: unknown } | null }),
+    supabase
+      .from("user_documents")
+      .select("id, category, file_name, mime_type, file_size_bytes, created_at")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("user_daily_reports")
+      .select("reported_weight_kg, report_at")
+      .eq("user_id", user.id)
+      .not("reported_weight_kg", "is", null)
+      .order("report_at", { ascending: true })
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+    hasAiTargetsConsent({ supabase, userId: user.id }),
+  ]);
 
   if (error || !profile) {
     redirect("/app/onboarding");
   }
-
-  // Falls back to a query without avatar_color when that column doesn't
-  // exist yet (migration 033 not applied) - same reasoning/pattern as
-  // layout.tsx's own copy of this fallback.
-  const localeAndAvatarSelect = await supabase
-    .from("user_profile")
-    .select("preferred_language, avatar_color, theme_preference")
-    .eq("user_id", user.id)
-    .maybeSingle();
 
   let preferredLanguage: string | null = localeAndAvatarSelect.data?.preferred_language ?? null;
   let avatarColorRaw: string | null = localeAndAvatarSelect.data?.avatar_color ?? null;
@@ -119,14 +150,9 @@ export default async function ProfilePage({
   // snapshot-diff the Targets page's own banner already shows.
   let targetsStaleChanges: ReturnType<typeof computeProfileDiff> | null = null;
   if (resolvedSearchParams.targetsStale === "1") {
-    const { data: activeTargetProfile } = await supabase
-      .from("user_target_profiles")
-      .select("profile_snapshot")
-      .eq("user_id", user.id)
-      .eq("is_active", true)
-      .maybeSingle();
-
-    const snapshot = activeTargetProfile ? parseProfileSnapshot(activeTargetProfile.profile_snapshot) : null;
+    const snapshot = activeTargetProfileForStaleCheck
+      ? parseProfileSnapshot(activeTargetProfileForStaleCheck.profile_snapshot)
+      : null;
     if (snapshot) {
       const currentProfileForTargets: ProfileForTargets = {
         age: profile.calculated_age_years ?? 0,
@@ -155,24 +181,6 @@ export default async function ProfilePage({
       }
     }
   }
-
-  const [{ data: documents }, { data: earliestWeightReport }, hasAiConsent] = await Promise.all([
-    supabase
-      .from("user_documents")
-      .select("id, category, file_name, mime_type, file_size_bytes, created_at")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("user_daily_reports")
-      .select("reported_weight_kg, report_at")
-      .eq("user_id", user.id)
-      .not("reported_weight_kg", "is", null)
-      .order("report_at", { ascending: true })
-      .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle(),
-    hasAiTargetsConsent({ supabase, userId: user.id }),
-  ]);
 
   const scheduleByModality =
     profile.exercise_schedule_by_modality && typeof profile.exercise_schedule_by_modality === "object"

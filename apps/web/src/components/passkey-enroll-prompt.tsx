@@ -61,8 +61,20 @@ export function PasskeyEnrollPrompt({ locale, passkeyOfferDismissed }: { locale:
 
   if (state.status === "success") {
     return (
-      <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
-        {tr(locale, "Passkey set up - you can now sign in with Face ID / Touch ID on this device.", "מפתח הגישה הוגדר - כעת ניתן להתחבר עם זיהוי פנים / טביעת אצבע במכשיר זה.")}
+      <div className="mb-4 flex items-start justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
+        <p>
+          {tr(locale, "Passkey set up - you can now sign in with Face ID / Touch ID on this device.", "מפתח הגישה הוגדר - כעת ניתן להתחבר עם זיהוי פנים / טביעת אצבע במכשיר זה.")}
+        </p>
+        <button
+          type="button"
+          onClick={() => setDismissed(true)}
+          aria-label={tr(locale, "Close", "סגירה")}
+          className="shrink-0 rounded-md p-1 text-emerald-700 hover:bg-emerald-100 dark:text-emerald-300 dark:hover:bg-emerald-900/40"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        </button>
       </div>
     );
   }

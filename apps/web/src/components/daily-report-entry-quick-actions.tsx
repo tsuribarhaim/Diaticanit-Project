@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, useFormStatus } from "react-dom";
 
 import { deleteDailyReportAction } from "@/app/app/daily-report/actions";
 import { DailyReportEditPencilIcon } from "@/components/daily-report-entry-edit-form";
@@ -12,6 +12,39 @@ function DeleteXIcon({ className }: { className: string }) {
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M6 6l12 12M18 6 6 18" />
     </svg>
+  );
+}
+
+function Spinner({ className }: { className: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+    </svg>
+  );
+}
+
+/** useFormStatus() only reflects the nearest ancestor <form>'s pending
+ * state from within a child of that form - reported as the delete
+ * confirmation appearing to do nothing until the server action finished,
+ * with no indication anything was happening in the meantime. */
+function DeleteConfirmSubmitButton({
+  locale,
+  userGender,
+}: {
+  locale: AppLocale;
+  userGender?: "male" | "female" | null;
+}) {
+  const { pending } = useFormStatus();
+  return (
+    <button
+      type="submit"
+      disabled={pending}
+      className="flex items-center gap-1.5 rounded-lg bg-rose-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-rose-800 disabled:cursor-not-allowed disabled:opacity-70 dark:bg-rose-600 dark:hover:bg-rose-500"
+    >
+      {pending ? <Spinner className="h-3.5 w-3.5 animate-spin" /> : null}
+      {trGendered(locale, userGender, "Delete", "מחיקה", "מחיקה")}
+    </button>
   );
 }
 
@@ -42,6 +75,12 @@ export function DailyReportEntryQuickActions({
   hasInlineEdit: boolean;
 }) {
   const [pendingDeleteConfirm, setPendingDeleteConfirm] = useState(false);
+  // Separate from the form's own useFormStatus-driven spinner (see
+  // DeleteConfirmSubmitButton) - this gates the backdrop-click-to-dismiss
+  // and the "Disregard" button too, so the dialog (and its spinner) can't
+  // be dismissed out from under an in-flight delete, which would leave the
+  // user back at "nothing visibly happening" for whatever time remains.
+  const [isDeleting, setIsDeleting] = useState(false);
 
   /** Opens both the row's own <details> (so the edit section is even
    * reachable) and the inline edit <details> nested inside it (marked with
@@ -113,7 +152,9 @@ export function DailyReportEntryQuickActions({
               dir={directionForLocale(locale)}
               className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/40 p-4"
               role="presentation"
-              onClick={() => setPendingDeleteConfirm(false)}
+              onClick={() => {
+                if (!isDeleting) setPendingDeleteConfirm(false);
+              }}
             >
               <div
                 className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900"
@@ -133,19 +174,15 @@ export function DailyReportEntryQuickActions({
                 <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3 dark:border-slate-800">
                   <button
                     type="button"
+                    disabled={isDeleting}
                     onClick={() => setPendingDeleteConfirm(false)}
-                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
                   >
                     {trGendered(locale, userGender, "Disregard", "התעלם", "התעלמי")}
                   </button>
-                  <form action={deleteDailyReportAction}>
+                  <form action={deleteDailyReportAction} onSubmit={() => setIsDeleting(true)}>
                     <input type="hidden" name="report_id" value={reportId} />
-                    <button
-                      type="submit"
-                      className="rounded-lg bg-rose-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-rose-800 dark:bg-rose-600 dark:hover:bg-rose-500"
-                    >
-                      {trGendered(locale, userGender, "Delete", "מחיקה", "מחיקה")}
-                    </button>
+                    <DeleteConfirmSubmitButton locale={locale} userGender={userGender} />
                   </form>
                 </div>
               </div>

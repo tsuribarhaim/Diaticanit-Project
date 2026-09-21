@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, useFormStatus } from "react-dom";
 
 import { deleteDefaultItemAction, toggleDefaultItemActiveAction } from "@/app/app/daily-report/defaults/actions";
 import { directionForLocale, tr, type AppLocale } from "@/lib/locale";
@@ -31,6 +31,32 @@ function ActiveDotIcon({ className }: { className: string }) {
   );
 }
 
+function Spinner({ className }: { className: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+    </svg>
+  );
+}
+
+/** Same fix as DailyReportEntryQuickActions' own delete button - without
+ * useFormStatus, hitting Delete here just sat there with no feedback until
+ * the server action finished. */
+function DeleteConfirmSubmitButton({ locale }: { locale: AppLocale }) {
+  const { pending } = useFormStatus();
+  return (
+    <button
+      type="submit"
+      disabled={pending}
+      className="flex items-center gap-1.5 rounded-lg bg-rose-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-rose-800 disabled:cursor-not-allowed disabled:opacity-70 dark:bg-rose-600 dark:hover:bg-rose-500"
+    >
+      {pending ? <Spinner className="h-3.5 w-3.5 animate-spin" /> : null}
+      {tr(locale, "Delete", "מחיקה")}
+    </button>
+  );
+}
+
 /**
  * Ticket #5 (Aggregated Tickets): replaces the Saved Items list's old
  * inconsistent layout (a static Active/Inactive pill, a separate "Edit"
@@ -56,6 +82,7 @@ export function SavedItemRowActions({
   const [isToggling, setIsToggling] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [pendingDeleteConfirm, setPendingDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     if (!toast) return;
@@ -152,7 +179,9 @@ export function SavedItemRowActions({
               dir={directionForLocale(locale)}
               className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/40 p-4"
               role="presentation"
-              onClick={() => setPendingDeleteConfirm(false)}
+              onClick={() => {
+                if (!isDeleting) setPendingDeleteConfirm(false);
+              }}
             >
               <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900" onClick={(event) => event.stopPropagation()}>
                 <div className="px-5 py-4">
@@ -163,16 +192,15 @@ export function SavedItemRowActions({
                 <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3 dark:border-slate-800">
                   <button
                     type="button"
+                    disabled={isDeleting}
                     onClick={() => setPendingDeleteConfirm(false)}
-                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
                   >
                     {tr(locale, "Cancel", "ביטול")}
                   </button>
-                  <form action={deleteDefaultItemAction}>
+                  <form action={deleteDefaultItemAction} onSubmit={() => setIsDeleting(true)}>
                     <input type="hidden" name="id" value={itemId} />
-                    <button type="submit" className="rounded-lg bg-rose-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-rose-800 dark:bg-rose-600 dark:hover:bg-rose-500">
-                      {tr(locale, "Delete", "מחיקה")}
-                    </button>
+                    <DeleteConfirmSubmitButton locale={locale} />
                   </form>
                 </div>
               </div>

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { z } from "zod";
 
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
@@ -99,6 +100,67 @@ export async function updateLocaleAction(locale: "en" | "he") {
   });
 
   revalidatePath("/app", "layout");
+}
+
+export type ChangePasswordState = {
+  error?: string;
+  success?: string;
+};
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, "Enter your current password."),
+  newPassword: z.string().min(8, "New password must be at least 8 characters."),
+});
+
+/**
+ * For an already-signed-in user (Settings -> Password), unlike the sign-in
+ * page's own forgot-password flow - no email round trip needed since
+ * they're already authenticated. Still re-verifies the CURRENT password
+ * first (via a second signInWithPassword call, using the session's own
+ * email) rather than letting an open session change the password outright -
+ * a stolen/left-open session shouldn't be enough on its own to lock the
+ * real owner out.
+ */
+export async function changePasswordAction(
+  _prevState: ChangePasswordState,
+  formData: FormData,
+): Promise<ChangePasswordState> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user || !user.email) {
+    redirect("/auth/sign-in");
+  }
+
+  const parsed = changePasswordSchema.safeParse({
+    currentPassword: formData.get("current_password"),
+    newPassword: formData.get("new_password"),
+  });
+
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid password payload." };
+  }
+
+  const { error: reauthError } = await supabase.auth.signInWithPassword({
+    email: user.email,
+    password: parsed.data.currentPassword,
+  });
+
+  if (reauthError) {
+    logServerError("app.changePassword", "reauth_failed", { userId: user.id, error: reauthError.message });
+    return { error: "Current password is incorrect." };
+  }
+
+  const { error: updateError } = await supabase.auth.updateUser({ password: parsed.data.newPassword });
+
+  if (updateError) {
+    logServerError("app.changePassword", "update_failed", { userId: user.id, error: updateError.message });
+    return { error: updateError.message };
+  }
+
+  return { success: "Password updated." };
 }
 
 export async function signOutAction() {

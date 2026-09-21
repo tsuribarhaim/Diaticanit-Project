@@ -1,6 +1,6 @@
 "use server";
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
@@ -259,4 +259,57 @@ export async function signUpAction(
     success:
       "Account created. Check your email if confirmation is enabled, then sign in.",
   };
+}
+
+const forgotPasswordSchema = z.object({
+  email: z.email("Enter a valid email address."),
+});
+
+/**
+ * Always returns the same success message regardless of whether the email
+ * actually belongs to an account - confirming/denying that in the response
+ * would let anyone probe which emails are registered. Supabase's own
+ * resetPasswordForEmail already behaves this way (no error for an unknown
+ * email), so this just mirrors that at the UI layer for a genuine
+ * validation failure (a malformed email) too.
+ */
+export async function forgotPasswordAction(
+  _prevState: AuthActionState,
+  formData: FormData,
+): Promise<AuthActionState> {
+  const parsed = forgotPasswordSchema.safeParse({
+    email: formData.get("email"),
+  });
+
+  const genericSuccess = {
+    success:
+      "If that email has an account, a password reset link is on its way. Check your inbox (and spam folder).",
+  };
+
+  if (!parsed.success) {
+    // Still the generic message, not the validation error - see this
+    // function's own comment on why literal email-existence/validity isn't
+    // distinguished in the response.
+    return genericSuccess;
+  }
+
+  const supabase = await createClient();
+  const headerList = await headers();
+  // Derived from the incoming request rather than a hardcoded env var, so
+  // this resolves correctly whichever of dev/staging/the Vercel pilot the
+  // request actually came in on, with nothing to keep in sync between them.
+  const origin = headerList.get("origin") ?? `https://${headerList.get("host")}`;
+
+  const { error } = await supabase.auth.resetPasswordForEmail(parsed.data.email, {
+    redirectTo: `${origin}/auth/reset-password`,
+  });
+
+  if (error) {
+    logServerError("auth.forgotPassword", "reset_email_failed", {
+      email: parsed.data.email,
+      error: error.message,
+    });
+  }
+
+  return genericSuccess;
 }
