@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { evaluateProfileTextWithAi } from "@/lib/ai/profile-text";
+import { revalidateNavChrome } from "@/lib/nav-chrome";
 import {
   calculateAgeYears,
   deriveExerciseSummaryFromSchedule,
@@ -469,5 +470,12 @@ export async function saveOnboardingProfileAction(
     maxAge: 60 * 60 * 24 * 365,
   });
 
+  // Onboarding renders under the same /app layout that caches nav chrome
+  // (see getNavChrome) - without this, a viewer who'd already rendered the
+  // layout mid-onboarding (with no profile row yet) could land back on
+  // /app right after finishing and still see the pre-onboarding cached
+  // "no profile" state for up to that cache's TTL, instead of their
+  // just-entered name.
+  revalidateNavChrome();
   redirect("/app");
 }

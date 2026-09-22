@@ -5,6 +5,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
+import { revalidateNavChrome } from "@/lib/nav-chrome";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
 
@@ -65,6 +66,7 @@ export async function updateThemeAction(theme: "light" | "dark") {
     return;
   }
 
+  revalidateNavChrome();
   revalidatePath("/app", "layout");
 }
 
@@ -99,6 +101,7 @@ export async function updateLocaleAction(locale: "en" | "he") {
     maxAge: 60 * 60 * 24 * 365,
   });
 
+  revalidateNavChrome();
   revalidatePath("/app", "layout");
 }
 

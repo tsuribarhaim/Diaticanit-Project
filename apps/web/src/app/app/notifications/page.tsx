@@ -51,6 +51,14 @@ export default async function NotificationsPage() {
           notifications.map((notification) => {
             const isResolved = Boolean(notification.resolved_at);
             const isConcern = notification.severity === "concern";
+            // A ticket-status-change notification (see tickets table's own
+            // notify_ticket_status_change trigger) carries a
+            // "ticket_<uuid>" field key instead of a RingMetric id -
+            // routes to that ticket instead of assuming every notification
+            // is a Targets concern, which was true when this page was
+            // first built but no longer is.
+            const ticketFieldKey = notification.field_keys.find((key) => key.startsWith("ticket_"));
+            const ticketId = ticketFieldKey?.slice("ticket_".length);
             return (
               <div
                 key={notification.id}
@@ -81,7 +89,14 @@ export default async function NotificationsPage() {
                   <span className="text-xs text-slate-400 dark:text-slate-500">{formatDateTimeForLocale(notification.created_at, locale)}</span>
                 </div>
                 <p className="mt-2 text-sm text-slate-800 dark:text-slate-200">{notification.message}</p>
-                {!isResolved ? (
+                {!isResolved && ticketId ? (
+                  <Link
+                    href={`/app/tickets/${ticketId}`}
+                    className="mt-3 inline-flex items-center rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+                  >
+                    {tr(locale, "View ticket", "צפייה בפנייה")}
+                  </Link>
+                ) : !isResolved ? (
                   <Link
                     href={`/app/targets?concern=${notification.id}`}
                     className="mt-3 inline-flex items-center rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"

@@ -8,6 +8,7 @@ import { z } from "zod";
 import { isAvatarColorId } from "@/lib/avatar-colors";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { evaluateProfileTextWithAi } from "@/lib/ai/profile-text";
+import { revalidateNavChrome } from "@/lib/nav-chrome";
 import {
   activityLevelOptions,
   biologicalSexOptions,
@@ -74,7 +75,14 @@ export async function setAvatarColorAction(_prevState: AvatarActionState, formDa
     redirect("/auth/sign-in");
   }
 
-  const locale = await resolveUserLocale(supabase, user.id);
+  // Read straight from the form (see profile-header-card.tsx's hidden
+  // preferred_language input) rather than a resolveUserLocale DB round
+  // trip - this action already pays for auth.getUser() plus the update
+  // itself, and a third sequential round trip just to translate an error
+  // message that's almost never shown was real, avoidable latency on every
+  // single color change (reported as the picker taking ~4s with no
+  // feedback while it ran).
+  const locale = requestLocale(formData);
 
   const colorRaw = formData.get("color")?.toString() ?? "";
   if (!isAvatarColorId(colorRaw)) {
@@ -99,6 +107,7 @@ export async function setAvatarColorAction(_prevState: AvatarActionState, formDa
     };
   }
 
+  revalidateNavChrome();
   revalidatePath("/app");
   revalidatePath("/app/profile");
 
@@ -575,6 +584,7 @@ export async function updateProfileAction(
     });
   }
 
+  revalidateNavChrome();
   revalidatePath("/app");
   revalidatePath("/app/profile");
   revalidatePath("/app/profile/edit");
@@ -714,6 +724,14 @@ async function applyProfilePatchAndFlagTargets({
     return { error: tr(locale, "Failed to save. Please try again.", "השמירה נכשלה. יש לנסות שוב.") };
   }
 
+  // Unconditional even though only some callers (e.g. updateIdentityAction,
+  // which writes first_name) actually touch a nav-chrome field - this
+  // shared helper backs every quick-edit action (allergies, medical
+  // conditions, habits, etc.), and revalidating a few extra times for
+  // fields nav chrome doesn't use is free compared to the alternative of
+  // threading "does this patch touch a nav-chrome field" through every
+  // caller.
+  revalidateNavChrome();
   revalidatePath("/app");
   revalidatePath("/app/profile");
   revalidatePath("/app/targets");
