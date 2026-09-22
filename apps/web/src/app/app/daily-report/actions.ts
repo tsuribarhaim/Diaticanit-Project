@@ -20,6 +20,7 @@ import {
   type DailyReportChartPreferences,
 } from "@/lib/daily-report-chart-preferences";
 import { parseDailyReportPhotoWithAi, parseDailyReportWithAi, reconcileCustomTargetValueUnits } from "@/lib/ai/daily-report";
+import type { SavedListIngredient } from "@/app/app/daily-report/defaults/actions";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { buildBmiWarningMessage } from "@/lib/bmi";
 import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
@@ -1173,7 +1174,7 @@ export async function addReportToDefaultsAction(formData: FormData): Promise<voi
   const { data: reportRow, error: reportError } = await supabase
     .from("user_daily_reports")
     .select(
-      "id, report_at, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, sodium_mg, added_sugar_g, calcium_mg, vit_c_mg, vit_b12_mcg, vit_d_mcg, sat_fat_g, omega3_g, cholesterol_mg, exercise_minutes, estimated_burn_kcal, parse_mode, parser_version, parse_confidence",
+      "id, report_at, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, sodium_mg, added_sugar_g, calcium_mg, vit_c_mg, vit_b12_mcg, vit_d_mcg, sat_fat_g, omega3_g, cholesterol_mg, exercise_minutes, estimated_burn_kcal, parse_mode, parser_version, parse_confidence, parsed_items, parsed_exercises",
     )
     .eq("id", reportId)
     .eq("user_id", user.id)
@@ -1189,6 +1190,26 @@ export async function addReportToDefaultsAction(formData: FormData): Promise<voi
 
   const fallbackName = `Saved report ${new Date(reportRow.report_at).toISOString().slice(0, 10)}`;
   const defaultName = customName || fallbackName;
+
+  // Without this, a default item created this way (saving a whole logged
+  // report as one Saved List entry, as opposed to the dedicated multi-
+  // ingredient builder in daily-report/defaults/actions.ts) carried only
+  // its aggregate nutrient totals - never the individual food/exercise
+  // breakdown - so picking it later only ever added its bare name to the
+  // chat, with nothing to build a breakdown from (reported as the
+  // ingredient breakdown "working in the browser but not on the phone":
+  // both platforms use the same display code, but only items actually
+  // created THIS way were ever missing the data behind it). The nutrition
+  // totals inserted below are unaffected either way - this only feeds the
+  // purely descriptive ingredients list (see SavedListIngredient's own
+  // comment) used to build that breakdown text and the picker's own
+  // ingredient sub-line.
+  const parsedFoodItems: ParsedFoodItem[] = Array.isArray(reportRow.parsed_items) ? reportRow.parsed_items : [];
+  const parsedExerciseItems: ParsedExerciseItem[] = Array.isArray(reportRow.parsed_exercises) ? reportRow.parsed_exercises : [];
+  const ingredients: SavedListIngredient[] = [
+    ...parsedFoodItems.map((item) => ({ name: item.name, kind: "food", quantity: item.quantity, unit: item.unit })),
+    ...parsedExerciseItems.map((item) => ({ name: item.name, kind: "exercise", quantity: item.minutes, unit: "min" })),
+  ];
 
   const { data: existingNameMatch } = await supabase
     .from("user_default_items")
@@ -1217,6 +1238,7 @@ export async function addReportToDefaultsAction(formData: FormData): Promise<voi
       kind: "custom",
       default_quantity: 1,
       default_unit: "entry",
+      ingredients,
       is_active: true,
       parse_mode: reportRow.parse_mode === "ai" ? "ai" : "heuristic",
       parser_version: reportRow.parser_version ?? "daily-heuristic-v1",

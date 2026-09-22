@@ -7,7 +7,8 @@ import { InstallAppPrompt } from "@/components/install-app-prompt";
 import { ServiceWorkerRegister } from "@/components/service-worker-register";
 import { UnsavedPreviewProvider } from "@/components/unsaved-preview-context";
 import { directionForLocale, normalizeLocale } from "@/lib/locale";
-import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
+import { getNavChrome, type NavChromeData } from "@/lib/nav-chrome";
+import { getAuthenticatedUser } from "@/lib/supabase/server";
 import { normalizeTheme } from "@/lib/theme";
 
 export default async function ProtectedAppLayout({
@@ -15,66 +16,25 @@ export default async function ProtectedAppLayout({
 }: {
   children: ReactNode;
 }) {
-  const supabase = await createClient();
   const {
     data: { user },
   } = await getAuthenticatedUser();
 
-  // Falls back to a query without avatar_color when that column doesn't
-  // exist yet (migration 033 not applied) - this runs on every single page,
-  // so a missing-column error here can't be allowed to also take down
-  // locale detection (preferred_language, a column that's existed for a
-  // long time and has nothing to do with avatars) for every user on every
-  // page just because one new, unrelated column isn't there yet. Same
-  // "detect a missing-column error and retry without it" shape used
-  // elsewhere in this app (e.g. isMissingReportedWeightColumn in
-  // daily-report/page.tsx) - just resolved here instead of surfaced as a
-  // user-facing error, since nothing about layout.tsx has an error banner
-  // to show it in.
-  let profileRow: {
-    preferred_language: string | null;
-    first_name: string | null;
-    avatar_color?: string | null;
-    theme_preference?: string | null;
-  } | null = null;
+  // This layout re-runs on every single page navigation (every child page
+  // is force-dynamic), so name/avatar/theme/notification-count used to be
+  // fetched fresh on every single tap - see getNavChrome's own comment for
+  // why that read is now cached for a few seconds instead. Falls back to a
+  // query without avatar_color when that column doesn't exist yet
+  // (migration 033 not applied), same "detect a missing-column error and
+  // retry without it" shape used elsewhere in this app (e.g.
+  // isMissingReportedWeightColumn in daily-report/page.tsx).
+  const navChrome: NavChromeData | null = user ? await getNavChrome(user.id) : null;
+  const profileRow = navChrome?.profile ?? null;
   // Unresolved count for the nav badge (see AppNav) - resolved status, not
   // read status, since the whole point of that distinction (see the
   // Targets save-flow redesign's notification system) is that opening a
   // notification doesn't mean the underlying concern is actually settled.
-  let unresolvedNotificationCount = 0;
-
-  if (user) {
-    // This layout re-runs on every single page navigation (every child page
-    // is force-dynamic) - these two queries don't depend on each other, so
-    // they're fired together rather than paying two sequential round trips
-    // on every page view.
-    const [fullSelect, notificationCountResult] = await Promise.all([
-      supabase
-        .from("user_profile")
-        .select("preferred_language, first_name, avatar_color, theme_preference")
-        .eq("user_id", user.id)
-        .maybeSingle(),
-      supabase
-        .from("user_notifications")
-        .select("id", { count: "exact", head: true })
-        .eq("user_id", user.id)
-        .is("resolved_at", null),
-    ]);
-
-    if (fullSelect.error?.message.includes("avatar_color") || fullSelect.error?.message.includes("theme_preference")) {
-      profileRow = (
-        await supabase
-          .from("user_profile")
-          .select("preferred_language, first_name")
-          .eq("user_id", user.id)
-          .maybeSingle()
-      ).data;
-    } else {
-      profileRow = fullSelect.data;
-    }
-
-    unresolvedNotificationCount = notificationCountResult.count ?? 0;
-  }
+  const unresolvedNotificationCount = navChrome?.unresolvedNotificationCount ?? 0;
 
   const locale = normalizeLocale(profileRow?.preferred_language);
   const theme = normalizeTheme(profileRow?.theme_preference);

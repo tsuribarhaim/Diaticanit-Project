@@ -294,3 +294,46 @@ export function formatDefaultItemName(value: string, locale: AppLocale): string 
     .replace(/\bexercis\b/gi, "פעילות")
     .replace(/\bwalk\b/gi, "הליכה");
 }
+
+export function formatTicketType(value: string, locale: AppLocale): string {
+  const token = normalizeToken(value);
+  if (token === "bug") return tr(locale, "Bug", "תקלה");
+  if (token === "feature_request") return tr(locale, "Feature request", "בקשת תכונה");
+  return locale === "he" ? value : titleCase(value.replace(/_/g, " "));
+}
+
+export function formatTicketArea(value: string, locale: AppLocale): string {
+  const token = normalizeToken(value);
+  if (token === "home") return tr(locale, "Home", "בית");
+  if (token === "daily_report") return tr(locale, "Daily Report", "דיווח יומי");
+  if (token === "targets") return tr(locale, "Targets", "יעדים");
+  if (token === "profile") return tr(locale, "Profile", "פרופיל");
+  if (token === "documents") return tr(locale, "Documents", "מסמכים");
+  if (token === "health_labs") return tr(locale, "Health / Labs", "בריאות / בדיקות מעבדה");
+  if (token === "notifications") return tr(locale, "Notifications", "התראות");
+  if (token === "settings") return tr(locale, "Settings", "הגדרות");
+  if (token === "account_auth") return tr(locale, "Account & Sign-in", "חשבון והתחברות");
+  if (token === "other") return tr(locale, "Other", "אחר");
+  return locale === "he" ? value : titleCase(value.replace(/_/g, " "));
+}
+
+export function formatTicketPriority(value: string, locale: AppLocale): string {
+  const token = normalizeToken(value);
+  if (token === "low") return tr(locale, "Low", "נמוכה");
+  if (token === "medium") return tr(locale, "Medium", "בינונית");
+  if (token === "high") return tr(locale, "High", "גבוהה");
+  if (token === "urgent") return tr(locale, "Urgent", "דחופה");
+  return locale === "he" ? value : titleCase(value);
+}
+
+export function formatTicketStatus(value: string, locale: AppLocale): string {
+  const token = normalizeToken(value);
+  if (token === "open") return tr(locale, "Open", "פתוחה");
+  if (token === "in_progress") return tr(locale, "In Progress", "בטיפול");
+  if (token === "resolved") return tr(locale, "Resolved", "טופלה");
+  if (token === "closed") return tr(locale, "Closed", "סגורה");
+  if (token === "cancelled") return tr(locale, "Cancelled", "בוטלה");
+  if (token === "duplicate") return tr(locale, "Duplicate", "כפולה");
+  if (token === "reopened") return tr(locale, "Reopened", "נפתחה מחדש");
+  return locale === "he" ? value : titleCase(value.replace(/_/g, " "));
+}

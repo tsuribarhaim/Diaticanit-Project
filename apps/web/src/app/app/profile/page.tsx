@@ -18,7 +18,6 @@ import {
   MedicalConditionsRow,
   MedicationsRow,
 } from "@/components/profile-health-detail-rows";
-import { EnvironmentBadge } from "@/components/environment-badge";
 import { ProfileHeaderCard } from "@/components/profile-header-card";
 import { ExpandableRow, ProfileRow, ProfileRowGroup, ProfileSectionTitle, QuickBooleanFieldRow, QuickScalarFieldRow } from "@/components/profile-quick-edit";
 import { LanguageToggle } from "@/components/language-toggle";
@@ -408,8 +407,13 @@ export default async function ProfilePage({
           <PasskeysRow locale={locale} />
           <ProfileRow label={tr(locale, "Manage saved meals list", "ניהול רשימת ארוחות שמורות")} href="/app/daily-report/defaults" />
           <DataPrivacyRow locale={locale} />
+          {/* Plain text, not the pill/badge treatment EnvironmentBadge
+              renders elsewhere (Settings, sign-in) - a ticket (TCK-6)
+              reported the highlighted frame looked out of place next to
+              every other row on this page, which all show their value as
+              plain text via ProfileRow's own `value` prop. */}
           {environmentBadgeLabel ? (
-            <ProfileRow label={tr(locale, "Environment", "סביבה")} endSlot={<EnvironmentBadge label={environmentBadgeLabel} />} />
+            <ProfileRow label={tr(locale, "Environment", "סביבה")} value={environmentBadgeLabel} />
           ) : null}
         </ProfileRowGroup>
       </div>
@@ -417,6 +421,7 @@ export default async function ProfilePage({
       <div>
         <ProfileSectionTitle>{tr(locale, "Account & Support", "חשבון ותמיכה")}</ProfileSectionTitle>
         <ProfileRowGroup>
+          <ProfileRow label={tr(locale, "Support Tickets", "פניות תמיכה")} href="/app/tickets" />
           <ComingSoonRow locale={locale} label={tr(locale, "Help Center / FAQ", "מרכז עזרה / שאלות נפוצות")} />
           <ComingSoonRow locale={locale} label={tr(locale, "Terms of Service", "תנאי שימוש")} />
         </ProfileRowGroup>

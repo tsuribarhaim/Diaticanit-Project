@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { startTransition, useActionState, useOptimistic, useState } from "react";
+import { useFormStatus } from "react-dom";
 
 import { setAvatarColorAction, updateIdentityAction, type AvatarActionState, type QuickEditState } from "@/app/app/profile/actions";
 import { QuickEditSheet, SheetActions, useQuickEditSuccessEffect } from "@/components/profile-quick-edit";
@@ -17,13 +18,82 @@ function PencilIcon({ className }: { className: string }) {
   );
 }
 
+function Spinner({ className }: { className: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+    </svg>
+  );
+}
+
+/** The color swatches themselves, as their own component so useFormStatus
+ * (which only sees a <form> from inside one of its descendants, not from
+ * the component that renders the <form> tag) can report whether a swatch
+ * tap is still in flight - previously each swatch just submitted with no
+ * feedback at all, reported as "no clue if it got the request or not".
+ * onPick fires the optimistic avatar-color update (see ProfileHeaderCard's
+ * useOptimistic) alongside the real form submission, so the avatar itself
+ * updates the instant a swatch is tapped instead of waiting on the round
+ * trip - reported as the color change itself feeling slow, separately from
+ * the missing feedback. */
+function AvatarColorSwatches({
+  locale,
+  currentColor,
+  onPick,
+}: {
+  locale: AppLocale;
+  currentColor: AvatarColorId;
+  onPick: (color: AvatarColorId) => void;
+}) {
+  const { pending } = useFormStatus();
+  return (
+    <>
+      <div className="flex flex-wrap justify-center gap-3">
+        {AVATAR_COLOR_IDS.map((color) => (
+          <button
+            key={color}
+            type="submit"
+            name="color"
+            value={color}
+            disabled={pending}
+            onClick={() => startTransition(() => onPick(color))}
+            aria-label={color}
+            aria-pressed={currentColor === color}
+            style={{ backgroundColor: AVATAR_COLOR_HEX[color] }}
+            className={`h-10 w-10 rounded-full outline-none transition disabled:cursor-not-allowed disabled:opacity-50 ${
+              currentColor === color
+                ? "ring-2 ring-offset-2 ring-slate-900 dark:ring-slate-100 dark:ring-offset-slate-900"
+                : "hover:ring-2 hover:ring-offset-2 hover:ring-slate-300 dark:hover:ring-slate-600 dark:ring-offset-slate-900"
+            }`}
+          />
+        ))}
+      </div>
+      {pending ? (
+        <p className="mt-3 flex items-center justify-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+          <Spinner className="h-3.5 w-3.5 animate-spin" />
+          {tr(locale, "Saving…", "שומר…")}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
 /**
  * The avatar's color swatches, previously always visible on the Profile page
  * (see the old AvatarColorPicker), now tucked behind the small pencil badge
  * on the avatar itself and shown in a popover on tap - the same underlying
  * setAvatarColorAction, just a lighter-weight trigger for it.
  */
-function AvatarColorPopover({ locale, currentColor }: { locale: AppLocale; currentColor: AvatarColorId }) {
+function AvatarColorPopover({
+  locale,
+  currentColor,
+  onPick,
+}: {
+  locale: AppLocale;
+  currentColor: AvatarColorId;
+  onPick: (color: AvatarColorId) => void;
+}) {
   const [isOpen, setIsOpen] = useState(false);
   const [state, formAction] = useActionState(setAvatarColorAction, {} as AvatarActionState);
 
@@ -41,24 +111,8 @@ function AvatarColorPopover({ locale, currentColor }: { locale: AppLocale; curre
       </button>
       <QuickEditSheet locale={locale} isOpen={isOpen} onClose={() => setIsOpen(false)} title={tr(locale, "Avatar color", "צבע האווטאר")}>
         <form action={formAction}>
-          <div className="flex flex-wrap justify-center gap-3">
-            {AVATAR_COLOR_IDS.map((color) => (
-              <button
-                key={color}
-                type="submit"
-                name="color"
-                value={color}
-                aria-label={color}
-                aria-pressed={currentColor === color}
-                style={{ backgroundColor: AVATAR_COLOR_HEX[color] }}
-                className={`h-10 w-10 rounded-full outline-none transition ${
-                  currentColor === color
-                    ? "ring-2 ring-offset-2 ring-slate-900 dark:ring-slate-100 dark:ring-offset-slate-900"
-                    : "hover:ring-2 hover:ring-offset-2 hover:ring-slate-300 dark:hover:ring-slate-600 dark:ring-offset-slate-900"
-                }`}
-              />
-            ))}
-          </div>
+          <input type="hidden" name="preferred_language" value={locale} />
+          <AvatarColorSwatches locale={locale} currentColor={currentColor} onPick={onPick} />
           {state.error ? <p className="mt-3 text-center text-xs text-rose-600 dark:text-rose-400">{state.error}</p> : null}
         </form>
       </QuickEditSheet>
@@ -182,11 +236,21 @@ export function ProfileHeaderCard({
 }) {
   const fullName = [firstName, lastName].filter(Boolean).join(" ") || tr(locale, "Your profile", "הפרופיל שלך");
 
+  // Shows a tapped color immediately, without waiting for the round trip
+  // (reported as the picker feeling slow, on top of the earlier missing
+  // feedback) - reverts on its own back to `avatarColor` if the save
+  // action fails (that prop never changes in that case), and resolves to
+  // the real value once useQuickEditSuccessEffect's router.refresh() lands
+  // it. Scoped to this card only - the nav bar's own avatar (AppNav/
+  // AppBottomNav, rendered from the layout, not a descendant of this
+  // component) still updates on the normal round trip.
+  const [optimisticAvatarColor, setOptimisticAvatarColor] = useOptimistic(avatarColor);
+
   return (
     <div dir={directionForLocale(locale)} className="flex flex-col items-center rounded-2xl border border-slate-200 bg-white px-6 py-8 text-center dark:border-slate-800 dark:bg-slate-900">
       <div className="relative">
-        <UserAvatar avatarColor={avatarColor} name={firstName} className="h-20 w-20 text-2xl" alt={tr(locale, "Profile picture", "תמונת פרופיל")} />
-        <AvatarColorPopover locale={locale} currentColor={avatarColor} />
+        <UserAvatar avatarColor={optimisticAvatarColor} name={firstName} className="h-20 w-20 text-2xl" alt={tr(locale, "Profile picture", "תמונת פרופיל")} />
+        <AvatarColorPopover locale={locale} currentColor={optimisticAvatarColor} onPick={setOptimisticAvatarColor} />
       </div>
 
       <p className="mt-3 text-lg font-bold text-slate-900 dark:text-slate-100">{fullName}</p>
