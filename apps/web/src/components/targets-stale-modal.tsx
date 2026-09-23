@@ -93,7 +93,17 @@ export function TargetsStaleModal({
             {tr(locale, "Got it", "הבנתי")}
           </button>
           <Link
-            href="/app/targets"
+            // fromProfileChange=1: a deliberate click, not just landing on
+            // Targets some other way - the one exception to "only ever
+            // open the chat via a notification" (see
+            // targets-chat-workspace.tsx's own comment on that), since the
+            // user explicitly asked to go check right now. There's nothing
+            // to actually show yet at this exact moment (the background
+            // check the profile edit itself already kicked off is just
+            // starting), so this only opens the chat to its own "reviewing
+            // this now" status - the diff/draft still only ever appears
+            // via the notification once that check finishes.
+            href="/app/targets?fromProfileChange=1"
             className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
           >
             {tr(locale, "Go to Targets", "מעבר ליעדים")}

@@ -8,7 +8,7 @@ import { generateTargetsWithAi, NoActionableChangeError } from "@/lib/ai/targets
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { getRecentCustomTargetLogs } from "@/lib/daily-report";
 import { normalizeLocale, tr } from "@/lib/locale";
-import { createNotification } from "@/lib/notifications";
+import { createNotification, markAllTargetsNotificationsRead, markNotificationRead } from "@/lib/notifications";
 import { logServerError } from "@/lib/server-log";
 import {
   evaluateTargetWeightSafety,
@@ -17,9 +17,11 @@ import {
   TARGET_PROFILE_COLUMNS,
   targetGenerationPayloadSchema,
   targetInputSchema,
+  toProfileForTargets,
   type ProfileForTargets,
   type TargetGenerationPayload,
 } from "@/lib/targets";
+import { computeTargetsDiff } from "@/lib/targets-diff";
 import { createClient } from "@/lib/supabase/server";
 
 export type TargetsActionState = {
@@ -194,31 +196,6 @@ export async function generateTargetsPayload({
   return { payload, source, heuristicReason, safetyRejectionMessage };
 }
 
-function toProfileForTargets(profile: Record<string, unknown>): ProfileForTargets {
-  return {
-    age: Number(profile.age ?? 0),
-    gender: (profile.gender as string) ?? null,
-    biological_sex: (profile.biological_sex as string) ?? null,
-    height_cm: Number(profile.height_cm ?? 0),
-    weight_kg: Number(profile.weight_kg ?? 0),
-    activity_level: (profile.activity_level as ProfileForTargets["activity_level"]) ?? "sedentary",
-    allergies: Array.isArray(profile.allergies) ? (profile.allergies as string[]) : [],
-    medical_conditions: Array.isArray(profile.medical_conditions) ? (profile.medical_conditions as string[]) : [],
-    medical_conditions_details: (profile.medical_conditions_details as string) ?? null,
-    regular_medications_details: (profile.regular_medications_details as string) ?? null,
-    dietary_preference: (profile.dietary_preference as string) ?? null,
-    exercise_modalities: Array.isArray(profile.exercise_modalities) ? (profile.exercise_modalities as string[]) : [],
-    exercise_other_activities: Array.isArray(profile.exercise_other_activities)
-      ? (profile.exercise_other_activities as ProfileForTargets["exercise_other_activities"])
-      : [],
-    exercise_schedule_by_modality:
-      (profile.exercise_schedule_by_modality as ProfileForTargets["exercise_schedule_by_modality"]) ?? null,
-    habits: Array.isArray(profile.habits) ? (profile.habits as string[]) : [],
-    pregnancy_lactation_status: (profile.pregnancy_lactation_status as string) ?? null,
-    hot_climate_or_heavy_sweating: Boolean(profile.hot_climate_or_heavy_sweating),
-  };
-}
-
 export async function generateTargetsAction(
   _prevState: TargetsActionState,
   formData: FormData,
@@ -292,13 +269,16 @@ export async function generateTargetsAction(
 }
 
 /**
- * Shared insert/deactivate logic behind both lockTargetsAction (the form-
- * based flow still used by the no-AI-consent fallback page, TargetsWorkspace)
- * and autoLockTargetsAction (the AI chat workspace's auto-save, called
- * directly rather than via a form) - both trust their own caller to have
- * already validated `payload` against targetGenerationPayloadSchema.
+ * Shared insert/deactivate logic behind lockTargetsAction (the form-based
+ * flow still used by the no-AI-consent fallback page, TargetsWorkspace),
+ * approveTargetsDraftAction (the post-onboarding review flow), and the
+ * new onboarding Targets step (src/app/app/onboarding/targets-actions.ts)
+ * - every caller trusts its own validation of `payload` against
+ * targetGenerationPayloadSchema before calling this; exported rather than
+ * duplicated so the same safety-critical insert/deactivate logic has one
+ * implementation regardless of which flow locks a plan in.
  */
-async function performTargetsLock({
+export async function performTargetsLock({
   supabase,
   userId,
   goalText,
@@ -519,6 +499,7 @@ export async function runBackgroundTargetsCheck({
   supabase,
   userId,
   goalText,
+  displayGoalText,
   profile,
   locale,
   aiConfig,
@@ -527,6 +508,9 @@ export async function runBackgroundTargetsCheck({
   supabase: Awaited<ReturnType<typeof createClient>>;
   userId: string;
   goalText: string;
+  /** The same request in presentable form - see route.ts's own comment on
+   * why this is kept separate from goalText (the full AI-prompt wrapper). */
+  displayGoalText: string;
   profile: ProfileForTargets;
   locale: ReturnType<typeof normalizeLocale>;
   aiConfig: ReturnType<typeof getAiExtractionConfig>;
@@ -545,7 +529,12 @@ export async function runBackgroundTargetsCheck({
     const currentTargets = mapTargetProfileRowToPayload(activeRow);
     const hasConsent = aiConfig ? await hasAiTargetsConsent({ supabase, userId }) : false;
 
-    const { payload, source, safetyRejectionMessage, notActionableMessage } = await generateTargetsPayload({
+    const {
+      payload: rawPayload,
+      source,
+      safetyRejectionMessage,
+      notActionableMessage,
+    } = await generateTargetsPayload({
       goalText,
       profile,
       locale,
@@ -585,6 +574,28 @@ export async function runBackgroundTargetsCheck({
       return;
     }
 
+    // Neither generateTargetsPayload's own return type nor the AI's raw
+    // JSON schema (aiTargetsSchema in lib/ai/targets.ts) actually
+    // guarantees every field satisfies targetGenerationPayloadSchema's
+    // stricter bounds (string length caps in particular - the two schemas
+    // aren't kept in lockstep by construction). The old direct-lock path
+    // never validated this either, which is exactly how a too-long
+    // aiRationaleExplanation could previously reach the database
+    // unnoticed; now that a later step (approveTargetsDraftAction) does
+    // validate strictly before locking in, an invalid payload needs to be
+    // caught HERE instead, or it would sit in user_target_profile_drafts
+    // as a draft the user can see (targets/page.tsx's own safeParse) but
+    // can never actually approve.
+    const validatedPayload = targetGenerationPayloadSchema.safeParse(rawPayload);
+    if (!validatedPayload.success) {
+      logServerError("targets.backgroundCheck", "invalid_generated_payload", {
+        userId,
+        error: validatedPayload.error.message,
+      });
+      return;
+    }
+    const payload = validatedPayload.data;
+
     if (payload.profileDiscrepancyMessage) {
       await createNotification({
         supabase,
@@ -596,9 +607,70 @@ export async function runBackgroundTargetsCheck({
       });
     }
 
-    const result = await performTargetsLock({ supabase, userId, goalText, source, payload });
-    if ("error" in result) {
-      logServerError("targets.backgroundCheck", "lock_failed", { userId, error: result.error });
+    // Targets redesign, round 2 (docs/design/targets-save-performance-
+    // redesign.md's own follow-up): this used to lock the freshly computed
+    // plan in automatically the moment it finished, with no chance for the
+    // user to actually see what changed before it took effect. It now
+    // stops one step short - save the computed payload as a draft and
+    // notify, and let the user's own explicit approval
+    // (approveTargetsDraftAction) do the actual locking. "en" here is
+    // arbitrary and only used to detect whether there's anything to show
+    // at all - the diff itself is recomputed with the viewer's real locale
+    // at display time (see targets/page.tsx), never stored pre-formatted.
+    const diffRows = computeTargetsDiff(currentTargets, payload, "en");
+
+    if (diffRows.length === 0) {
+      // Reviewed, nothing actually changed - still worth a quiet
+      // confirmation rather than leaving the user to wonder, but nothing
+      // to approve.
+      await createNotification({
+        supabase,
+        userId,
+        targetProfileId: activeRow.id,
+        severity: "info",
+        message: tr(
+          locale,
+          "I reviewed this and your targets are still accurate as-is - no changes needed.",
+          "בדקתי את זה והיעדים שלך עדיין מדויקים כפי שהם - אין צורך בשינויים.",
+        ),
+        fieldKeys: quickAppliedFieldKeys,
+      });
+      return;
+    }
+
+    const { error: draftError } = await supabase
+      .from("user_target_profile_drafts")
+      .upsert({ user_id: userId, goal_text: displayGoalText, source, payload }, { onConflict: "user_id" });
+
+    if (draftError) {
+      logServerError("targets.backgroundCheck", "draft_save_failed", { userId, error: draftError.message });
+      return;
+    }
+
+    const notification = await createNotification({
+      supabase,
+      userId,
+      targetProfileId: activeRow.id,
+      severity: "info",
+      message: tr(
+        locale,
+        "I've reviewed this and have an updated plan ready for you to approve.",
+        "בדקתי את זה ויש לי תכנית מעודכנת שמוכנה לאישורך.",
+      ),
+      fieldKeys: quickAppliedFieldKeys,
+    });
+
+    // Best-effort link-back, not a blocking step: approveTargetsDraftAction/
+    // discardTargetsDraftAction use this to also mark the notification read
+    // when the draft is resolved directly from the auto-refreshing chat -
+    // never visiting /app/notifications at all - so the user doesn't still
+    // find the same "ready to review" notification sitting unread
+    // afterward and click back into a now-empty draft. If this update
+    // fails for any reason, the draft (already saved above) is still fully
+    // approvable/discardable - it just won't also mark the notification
+    // read on its own.
+    if (notification?.id) {
+      await supabase.from("user_target_profile_drafts").update({ notification_id: notification.id }).eq("user_id", userId);
     }
   } catch (error) {
     logServerError("targets.backgroundCheck", "unhandled_error", {
@@ -606,6 +678,111 @@ export async function runBackgroundTargetsCheck({
       error: error instanceof Error ? error.message : "Unknown error",
     });
   }
+}
+
+export type TargetsDraftActionState = { error?: string };
+
+/**
+ * The user's explicit approval of a pending draft (see
+ * runBackgroundTargetsCheck's own comment on why this now stops short of
+ * locking automatically) - the only thing this does is the same fast DB
+ * write lockTargetsAction already does for the manually-generated-preview
+ * case, since the slow part (actually computing the payload) already
+ * happened in the background well before this is ever clicked.
+ */
+export async function approveTargetsDraftAction(): Promise<TargetsDraftActionState> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/sign-in");
+  }
+
+  const { data: draft, error: draftError } = await supabase
+    .from("user_target_profile_drafts")
+    .select("goal_text, source, payload, notification_id")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (draftError || !draft) {
+    return { error: "No pending targets update found. It may have already been handled." };
+  }
+
+  // safeParse, not parse: runBackgroundTargetsCheck already validates the
+  // payload against this exact schema before ever saving it as a draft, so
+  // this should never actually fail - but it's cheap insurance against an
+  // uncaught exception crashing this server action outright (which reads
+  // to the user as the button spinning forever, with no way to tell what
+  // happened) if the two ever drift out of sync again.
+  const parsedResult = targetGenerationPayloadSchema.safeParse(draft.payload);
+  if (!parsedResult.success) {
+    logServerError("targets.approveDraft", "invalid_draft_payload", { userId: user.id, error: parsedResult.error.message });
+    return { error: "This pending update could not be validated. Please discard it and ask the AI to review your targets again." };
+  }
+  const parsedPayload = parsedResult.data;
+  const result = await performTargetsLock({
+    supabase,
+    userId: user.id,
+    goalText: draft.goal_text,
+    source: draft.source === "ai" ? "ai" : "heuristic",
+    payload: parsedPayload,
+  });
+
+  if ("error" in result) {
+    return { error: result.error };
+  }
+
+  await supabase.from("user_target_profile_drafts").delete().eq("user_id", user.id);
+
+  // Resolves every still-unread targets notification, not just the one
+  // that announced this specific draft (see markAllTargetsNotificationsRead's
+  // own comment) - a successful save makes any earlier "ready to review"/
+  // "still accurate"/profile-discrepancy note moot regardless of which
+  // draft or check it came from, and leaving those behind was reported
+  // directly as confusing ("several with the target changes not knowing
+  // what changed").
+  await markAllTargetsNotificationsRead({ supabase, userId: user.id });
+
+  revalidatePath("/app/targets");
+  revalidatePath("/app");
+  return {};
+}
+
+/** Declining a pending draft - discards the computed payload without
+ * locking it in. Doesn't touch the active target profile at all, so
+ * whatever was already in effect stays exactly as it was. */
+export async function discardTargetsDraftAction(): Promise<TargetsDraftActionState> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/sign-in");
+  }
+
+  // .select() after .delete() returns the deleted row(s) in one round
+  // trip - used here only to grab notification_id, same reasoning as
+  // approveTargetsDraftAction's own use of it.
+  const { data: deletedDrafts, error } = await supabase
+    .from("user_target_profile_drafts")
+    .delete()
+    .eq("user_id", user.id)
+    .select("notification_id");
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  const notificationId = deletedDrafts?.[0]?.notification_id;
+  if (notificationId) {
+    await markNotificationRead({ supabase, userId: user.id, notificationId });
+  }
+
+  revalidatePath("/app/targets");
+  return {};
 }
 
 export async function lockTargetsAction(

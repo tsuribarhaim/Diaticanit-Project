@@ -26,6 +26,15 @@ export type OnboardingActionState = {
     field: string;
     message: string;
   }>;
+  /** Was a plain redirect("/app") before the onboarding redesign added a
+   * 5th "Targets" step (see onboarding-targets-step.tsx) that needs to
+   * render as part of this SAME wizard right after profile data saves -
+   * a server-side redirect would leave no chance for the client to do
+   * that. The client reacts to this flag by advancing its own step state
+   * instead of navigating away; nothing here decides where the user ends
+   * up next, that's entirely the Targets step's own completion action
+   * (lockOnboardingTargetsAction, which redirects to /app/daily-report). */
+  success?: boolean;
 };
 
 const LOCALE_COOKIE = "phc_locale";
@@ -138,6 +147,7 @@ export async function saveOnboardingProfileAction(
     smoking_packs_per_day: getFormString(formData, "smoking_packs_per_day"),
     dietary_preference: getFormString(formData, "dietary_preference"),
     additional_information: getFormString(formData, "additional_information"),
+    has_allergies: parseBooleanField(formData.get("has_allergies")),
     allergies: parseDelimitedList(formData.get("allergies")),
     medical_conditions: parseDelimitedList(formData.get("medical_conditions")),
   });
@@ -215,10 +225,21 @@ export async function saveOnboardingProfileAction(
     alcohol_consumption_level: parsed.data.habits.includes("alcohol") ? parsed.data.alcohol_consumption_level : null,
     smoking_packs_per_day: parsed.data.habits.includes("smoking_or_vaping") ? parsed.data.smoking_packs_per_day : null,
     additional_information: parsed.data.additional_information,
+    has_allergies: parsed.data.has_allergies,
     allergies: parsed.data.allergies,
     medical_conditions: legacyMedicalConditions,
     onboarding_version: 2,
-    needs_onboarding_refresh: false,
+    // NOT cleared here anymore - see lockOnboardingTargetsAction (targets-
+    // actions.ts) for why. Clearing it at this step used to race with
+    // Next's own automatic re-fetch of the current route after a Server
+    // Action completes: that re-fetch re-runs this page's own redirect
+    // check, and for anyone re-entering onboarding on an account that
+    // already has an OLD active target profile from before this flow
+    // existed, "flag now false + a target profile already exists" looked
+    // exactly like "fully onboarded," bouncing them to /app before step 5
+    // ever got a chance to mount - confirmed live via the Network tab (the
+    // save's own fetch completing, immediately followed by an RSC fetch
+    // for /app with no user action in between).
     weight_unit: "kg",
     height_unit: "cm",
   };
@@ -477,5 +498,5 @@ export async function saveOnboardingProfileAction(
   // "no profile" state for up to that cache's TTL, instead of their
   // just-entered name.
   revalidateNavChrome();
-  redirect("/app");
+  return { success: true };
 }

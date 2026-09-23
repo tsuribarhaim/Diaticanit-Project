@@ -7,7 +7,7 @@ import { classifyTargetsQuickApply } from "@/lib/ai/targets-quick-apply";
 import { normalizeLocale } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
-import { evaluateTargetWeightSafety, mapTargetProfileRowToPayload, TARGET_PROFILE_COLUMNS, type ProfileForTargets } from "@/lib/targets";
+import { evaluateTargetWeightSafety, mapTargetProfileRowToPayload, TARGET_PROFILE_COLUMNS, toProfileForTargets } from "@/lib/targets";
 
 export const runtime = "nodejs";
 
@@ -36,6 +36,25 @@ function safeClose(controller: ReadableStreamDefaultController<Uint8Array>) {
     controller.close();
   } catch {
     // Already closed.
+  }
+}
+
+/**
+ * The classification call below has no intermediate progress to report -
+ * it's a single AI round trip that either resolves or doesn't - so without
+ * this, a slow-but-not-actually-stuck call (AI provider latency, not a
+ * real hang) looks identical to a dead connection from the client's own
+ * 20s-of-silence timeout (see STREAM_INACTIVITY_TIMEOUT_MS in
+ * targets-chat-workspace.tsx). A `heartbeat` frame every 5s resets that
+ * client-side timer the same way any other chunk would, so only a call
+ * that's actually stalled for the full window still times out.
+ */
+async function withHeartbeat<T>(controller: ReadableStreamDefaultController<Uint8Array>, fn: () => Promise<T>): Promise<T> {
+  const interval = setInterval(() => safeEnqueue(controller, { type: "heartbeat" }), 5000);
+  try {
+    return await fn();
+  } finally {
+    clearInterval(interval);
   }
 }
 
@@ -72,32 +91,6 @@ function buildConversationText(chatHistory: ChatMessage[]): string {
   }
 
   return lines.join("\n");
-}
-
-function toProfileForTargets(profile: Record<string, unknown>): ProfileForTargets {
-  return {
-    age: Number(profile.age ?? 0),
-    gender: (profile.gender as string) ?? null,
-    biological_sex: (profile.biological_sex as string) ?? null,
-    height_cm: Number(profile.height_cm ?? 0),
-    weight_kg: Number(profile.weight_kg ?? 0),
-    activity_level: (profile.activity_level as ProfileForTargets["activity_level"]) ?? "sedentary",
-    allergies: Array.isArray(profile.allergies) ? (profile.allergies as string[]) : [],
-    medical_conditions: Array.isArray(profile.medical_conditions) ? (profile.medical_conditions as string[]) : [],
-    medical_conditions_details: (profile.medical_conditions_details as string) ?? null,
-    regular_medications_details: (profile.regular_medications_details as string) ?? null,
-    dietary_preference: (profile.dietary_preference as string) ?? null,
-    exercise_modalities: Array.isArray(profile.exercise_modalities) ? (profile.exercise_modalities as string[]) : [],
-    exercise_other_activities: Array.isArray(profile.exercise_other_activities)
-      ? (profile.exercise_other_activities as ProfileForTargets["exercise_other_activities"])
-      : [],
-    exercise_schedule_by_modality:
-      (profile.exercise_schedule_by_modality as ProfileForTargets["exercise_schedule_by_modality"]) ?? null,
-    habits: Array.isArray(profile.habits) ? (profile.habits as string[]) : [],
-    pregnancy_lactation_status: (profile.pregnancy_lactation_status as string) ?? null,
-    hot_climate_or_heavy_sweating: Boolean(profile.hot_climate_or_heavy_sweating),
-    first_name: (profile.first_name as string) ?? null,
-  };
 }
 
 export async function POST(request: NextRequest) {
@@ -176,6 +169,16 @@ export async function POST(request: NextRequest) {
         if (action === "update_targets") {
           const conversationText = buildConversationText(chatHistory);
           const goalText = `Based on the following conversation with the user, update their daily targets accordingly:\n\n${conversationText}`;
+          // A separate, presentable value for anything shown back to the
+          // user (the draft-review card's "here's what you asked", and
+          // raw_goal_text once locked in - see targets-section-tabs.tsx's
+          // own history display) - goalText above is deliberately the full
+          // wrapped prompt so the AI call has complete context, which makes
+          // it unreadable as UI copy. Falls back to the full prompt only in
+          // the pathological case of an empty chatHistory, which shouldn't
+          // happen given route.ts's own validation earlier in this handler.
+          const displayGoalText =
+            [...chatHistory].reverse().find((message) => message.role === "user")?.content.trim() || goalText;
 
           safeEnqueue(controller, { type: "status", status: "generating_targets" });
 
@@ -190,13 +193,15 @@ export async function POST(request: NextRequest) {
           const quickAppliedFieldKeys: string[] = [];
 
           try {
-            const classification = await classifyTargetsQuickApply({
-              config: aiConfig,
-              goalText,
-              profile,
-              currentTargets,
-              locale,
-            });
+            const classification = await withHeartbeat(controller, () =>
+              classifyTargetsQuickApply({
+                config: aiConfig,
+                goalText,
+                profile,
+                currentTargets,
+                locale,
+              }),
+            );
 
             const hasQuickApplyCandidate =
               !classification.needsFullReview &&
@@ -256,6 +261,7 @@ export async function POST(request: NextRequest) {
               supabase,
               userId: user.id,
               goalText,
+              displayGoalText,
               profile,
               locale,
               aiConfig,

@@ -1072,7 +1072,7 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
             <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Nutritional goal", "מטרה תזונתית")}</span>
             <div className="grid gap-2 sm:grid-cols-2">
               {nutritionalGoalOptions.map((goal) => {
-                const label = goal === "maintenance" ? tr(locale, "Maintenance", "שימור") : goal === "weight_loss" ? tr(locale, "Weight Loss", "ירידה במשקל") : goal === "muscle_hypertrophy" ? tr(locale, "Muscle Hypertrophy", "היפרטרופיה") : goal === "body_recomposition" ? tr(locale, "Body Recomposition", "הרכב גוף") : tr(locale, "Athletic Performance", "ביצועים אתלטיים");
+                const label = goal === "weight_loss" ? tr(locale, "Weight Loss", "ירידה במשקל") : goal === "weight_gain" ? tr(locale, "Weight Gain", "עלייה במשקל") : tr(locale, "Maintain", "שימור");
                 const selected = draft.nutritional_goal === goal;
                 return <button key={goal} type="button" onClick={() => updateDraft({ nutritional_goal: goal })} className={`rounded-xl border px-3 py-2 text-sm ${selected ? "border-teal-700 bg-teal-50 text-teal-900 dark:bg-teal-950/40 dark:text-teal-300" : "border-slate-300 bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700"}`}>{label}</button>;
               })}

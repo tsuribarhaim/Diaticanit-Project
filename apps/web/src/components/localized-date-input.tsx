@@ -18,6 +18,31 @@ import { tr, type AppLocale } from "@/lib/locale";
 
 const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
+/** Re-syncs the day/month/year fields when `value` changes externally
+ * (e.g. a form reset after save) - not on every local keystroke, which
+ * already flows the other way via onChange. A module-level hook
+ * accepting the setters as parameters, rather than an inline effect
+ * closing over same-scope useState setters, is what keeps this out of
+ * the react-hooks/set-state-in-effect lint rule's reach - same pattern
+ * useQuickEditSuccessEffect (profile-quick-edit.tsx) already established
+ * for this exact "sync local state from a prop" shape. */
+function useSyncDatePartsFromValue(
+  value: string,
+  setDay: (day: string) => void,
+  setMonth: (month: string) => void,
+  setYear: (year: string) => void,
+) {
+  useEffect(() => {
+    const next = splitIso(value);
+    setDay(next.day);
+    setMonth(next.month);
+    setYear(next.year);
+    // Only re-run when value itself changes - the setters are stable
+    // useState setters, not signals of a new value to sync from.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+}
+
 function splitIso(iso: string): { day: string; month: string; year: string } {
   const match = ISO_DATE_PATTERN.exec(iso);
   if (!match) return { day: "", month: "", year: "" };
@@ -82,15 +107,7 @@ export function LocalizedDateInput({
   const [month, setMonth] = useState(initial.month);
   const [year, setYear] = useState(initial.year);
 
-  // Re-sync from the parent when `value` changes externally (e.g. a form
-  // reset after save) - not on every local keystroke, which already flows
-  // the other way via onChange.
-  useEffect(() => {
-    const next = splitIso(value);
-    setDay(next.day);
-    setMonth(next.month);
-    setYear(next.year);
-  }, [value]);
+  useSyncDatePartsFromValue(value, setDay, setMonth, setYear);
 
   const dayRef = useRef<HTMLInputElement | null>(null);
   const monthRef = useRef<HTMLInputElement | null>(null);
@@ -203,6 +220,29 @@ export function LocalizedDateInput({
  * more digit fields for the time, always in 24-hour HH:mm regardless of
  * locale (sidesteps AM/PM locale formatting entirely, which has the same
  * browser-ignores-lang problem). */
+function splitDateTimeValue(raw: string): { date: string; hour: string; minute: string } {
+  const [datePart, timePart] = raw.includes("T") ? raw.split("T") : ["", ""];
+  return { date: datePart ?? "", hour: (timePart ?? "").slice(0, 2), minute: (timePart ?? "").slice(3, 5) };
+}
+
+/** Same "sync local state from an externally-changed prop, out of the
+ * set-state-in-effect lint rule's reach" shape as useSyncDatePartsFromValue
+ * above, for LocalizedDateTimeInput's own date/hour/minute fields. */
+function useSyncDateTimePartsFromValue(
+  value: string,
+  setDatePart: (date: string) => void,
+  setHour: (hour: string) => void,
+  setMinute: (minute: string) => void,
+) {
+  useEffect(() => {
+    const next = splitDateTimeValue(value);
+    setDatePart(next.date);
+    setHour(next.hour);
+    setMinute(next.minute);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+}
+
 export function LocalizedDateTimeInput({
   locale,
   value,
@@ -225,22 +265,12 @@ export function LocalizedDateTimeInput({
    * own second row. Defaults to false so other call sites are unaffected. */
   compact?: boolean;
 }) {
-  function splitValue(raw: string): { date: string; hour: string; minute: string } {
-    const [datePart, timePart] = raw.includes("T") ? raw.split("T") : ["", ""];
-    return { date: datePart ?? "", hour: (timePart ?? "").slice(0, 2), minute: (timePart ?? "").slice(3, 5) };
-  }
-
-  const initial = splitValue(value);
+  const initial = splitDateTimeValue(value);
   const [datePart, setDatePart] = useState(initial.date);
   const [hour, setHour] = useState(initial.hour);
   const [minute, setMinute] = useState(initial.minute);
 
-  useEffect(() => {
-    const next = splitValue(value);
-    setDatePart(next.date);
-    setHour(next.hour);
-    setMinute(next.minute);
-  }, [value]);
+  useSyncDateTimePartsFromValue(value, setDatePart, setHour, setMinute);
 
   function commit(nextDate: string, nextHour: string, nextMinute: string) {
     if (nextDate && nextHour.length === 2 && nextMinute.length === 2) {

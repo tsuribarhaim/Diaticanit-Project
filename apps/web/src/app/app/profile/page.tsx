@@ -18,6 +18,7 @@ import {
   MedicalConditionsRow,
   MedicationsRow,
 } from "@/components/profile-health-detail-rows";
+import { LocalDateTime } from "@/components/local-time";
 import { ProfileHeaderCard } from "@/components/profile-header-card";
 import { ExpandableRow, ProfileRow, ProfileRowGroup, ProfileSectionTitle, QuickBooleanFieldRow, QuickScalarFieldRow } from "@/components/profile-quick-edit";
 import { LanguageToggle } from "@/components/language-toggle";
@@ -35,7 +36,6 @@ import {
 } from "@/lib/profile";
 import {
   formatActivityLevel,
-  formatDateTimeForLocale,
   formatDietaryPreference,
   formatGender,
   formatMeasurementUnit,
@@ -246,9 +246,14 @@ export default async function ProfilePage({
             label={tr(locale, "Starting weight", "משקל התחלתי")}
             value={earliestWeightReport?.reported_weight_kg != null ? `${earliestWeightReport.reported_weight_kg} ${formatMeasurementUnit("kg", locale)}` : tr(locale, "n/a", "לא זמין")}
             caption={
-              earliestWeightReport?.report_at
-                ? tr(locale, `From your first Daily Report entry, ${formatDateTimeForLocale(earliestWeightReport.report_at, locale)}`, `מהדיווח היומי הראשון שלך, ${formatDateTimeForLocale(earliestWeightReport.report_at, locale)}`)
-                : tr(locale, "Log a weight in Daily Report to set this", "רשמו משקל בדיווח היומי כדי להגדיר זאת")
+              earliestWeightReport?.report_at ? (
+                <>
+                  {tr(locale, "From your first Daily Report entry, ", "מהדיווח היומי הראשון שלך, ")}
+                  <LocalDateTime value={earliestWeightReport.report_at} locale={locale} />
+                </>
+              ) : (
+                tr(locale, "Log a weight in Daily Report to set this", "רשמו משקל בדיווח היומי כדי להגדיר זאת")
+              )
             }
           />
           <QuickScalarFieldRow
@@ -363,7 +368,7 @@ export default async function ProfilePage({
                           {doc.category} • {doc.mime_type ?? tr(locale, "Unknown type", "סוג לא ידוע")} • {formatFileSize(doc.file_size_bytes)}
                         </p>
                         <p className="mt-1 text-xs text-slate-500">
-                          {tr(locale, "Uploaded", "הועלה")} {formatDateTimeForLocale(doc.created_at, locale)}
+                          {tr(locale, "Uploaded", "הועלה")} <LocalDateTime value={doc.created_at} locale={locale} />
                         </p>
                       </div>
                       <div className="flex flex-wrap gap-2">
@@ -402,7 +407,6 @@ export default async function ProfilePage({
           <ProfileRow label={tr(locale, "Language", "שפה")} endSlot={<LanguageToggle locale={locale} />} />
           <ProfileRow label={tr(locale, "Theme", "ערכת נושא")} endSlot={<ThemeToggle locale={locale} theme={theme} />} />
           <ComingSoonRow locale={locale} label={tr(locale, "Measurement units", "יחידות מידה")} caption={tr(locale, "Metric (kg, cm)", "מטרי (ק\"ג, ס\"מ)")} />
-          <ComingSoonRow locale={locale} label={tr(locale, "Notifications", "התראות")} />
           <ComingSoonRow locale={locale} label={tr(locale, "Connected apps & devices", "אפליקציות ומכשירים מחוברים")} />
           <PasskeysRow locale={locale} />
           <ProfileRow label={tr(locale, "Manage saved meals list", "ניהול רשימת ארוחות שמורות")} href="/app/daily-report/defaults" />
@@ -421,6 +425,14 @@ export default async function ProfilePage({
       <div>
         <ProfileSectionTitle>{tr(locale, "Account & Support", "חשבון ותמיכה")}</ProfileSectionTitle>
         <ProfileRowGroup>
+          {/* Always available here regardless of whether anything's
+              pending - the nav bar's own Notifications link (see
+              app-nav.tsx) only shows up at all once there's something
+              unread/unresolved to act on, so this is the way in the rest
+              of the time. The notification-preferences row that used to
+              live under App & Feature Settings above (still not built)
+              was dropped rather than kept alongside this one. */}
+          <ProfileRow label={tr(locale, "Notifications", "התראות")} href="/app/notifications" />
           <ProfileRow label={tr(locale, "Support Tickets", "פניות תמיכה")} href="/app/tickets" />
           <ComingSoonRow locale={locale} label={tr(locale, "Help Center / FAQ", "מרכז עזרה / שאלות נפוצות")} />
           <ComingSoonRow locale={locale} label={tr(locale, "Terms of Service", "תנאי שימוש")} />

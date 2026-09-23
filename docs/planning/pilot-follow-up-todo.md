@@ -4,6 +4,26 @@ Deferred items from the PWA pilot rollout (Sept 2026), to revisit once the
 current pilot round has surfaced enough real bugs to be worth prioritizing
 against. Not urgent - the pilot itself runs as-is in the meantime.
 
+## Top priority
+
+- **System-wide, chat-driven editing.** Give the chat box the capability to
+  edit most things in the app via conversation, not just Targets - profile
+  attributes, daily report entries, saved items, and targets. Surfaced
+  while designing the Targets profile-change draft/approval flow above
+  (see `docs/design/targets-save-performance-redesign.md`'s own
+  follow-up section): that flow is itself a narrow, Targets-specific
+  instance of a pattern ("chat proposes a change, user reviews a concrete
+  diff, then approves or discards it") that could generalize across the
+  app instead of being rebuilt separately per feature. Explicitly **not**
+  to be implemented yet - logged here for a dedicated discussion once the
+  Targets flow itself has been used for real. Connects to an open question
+  already flagged there and deliberately deferred: what the experience
+  should do when a background check comes back with a genuine *concern*
+  about a change (today only a plain "ready to review" outcome exists; a
+  concern-flavored variant of the same draft/notification pattern is a
+  natural next step, worth designing together with this broader
+  capability rather than bolted on separately).
+
 ## Open items
 
 - **Investigate perceived load speed.** Installing as a PWA didn't make the
@@ -75,6 +95,13 @@ against. Not urgent - the pilot itself runs as-is in the meantime.
   WhatsApp Business Platform/Cloud API (opt-in and messaging-window rules,
   approval process, cost per conversation) and how an inbound WhatsApp
   message maps onto this app's existing daily-report chat/save flow.
+- **Admin-configurable nutrient display order.** Surfaced while designing
+  the new onboarding Targets step (see `docs/design/onboarding-redesign.md`
+  §7.6): the 19-nutrient list's display order is being set once, by hand,
+  for the initial build. Longer-term, let an admin reorder it from a
+  settings screen backed by a real reference table, instead of the order
+  living in code - same reasoning as any other editorial/reference data an
+  admin should be able to tune without a deploy.
 
 ## Bugs found during pilot testing
 

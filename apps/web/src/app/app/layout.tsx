@@ -4,12 +4,24 @@ import { AppBottomNav } from "@/components/app-bottom-nav";
 import { AppNav } from "@/components/app-nav";
 import { AppUpdateBanner } from "@/components/app-update-banner";
 import { InstallAppPrompt } from "@/components/install-app-prompt";
+import { NavChromeRefresher } from "@/components/nav-chrome-refresher";
 import { ServiceWorkerRegister } from "@/components/service-worker-register";
 import { UnsavedPreviewProvider } from "@/components/unsaved-preview-context";
 import { directionForLocale, normalizeLocale } from "@/lib/locale";
 import { getNavChrome, type NavChromeData } from "@/lib/nav-chrome";
 import { getAuthenticatedUser } from "@/lib/supabase/server";
 import { normalizeTheme } from "@/lib/theme";
+
+// Was implied but never actually declared - every child page under /app is
+// force-dynamic, and this layout's own comment already assumed that forces
+// a fresh render of this layout too on every navigation. Declaring it
+// explicitly here removes any doubt: without it, Next's own client-side
+// Router Cache can still serve a previously-fetched RSC payload for this
+// segment on a plain <Link> navigation between tabs, which is a real
+// candidate for exactly what got reported ("the notification badge only
+// updated after a save-triggered router.refresh(), not on a normal tab
+// switch").
+export const dynamic = "force-dynamic";
 
 export default async function ProtectedAppLayout({
   children,
@@ -51,6 +63,7 @@ export default async function ProtectedAppLayout({
       <ServiceWorkerRegister />
       <AppUpdateBanner locale={locale} />
       <InstallAppPrompt locale={locale} />
+      {user ? <NavChromeRefresher /> : null}
       <UnsavedPreviewProvider locale={locale}>
         {user ? (
           <AppNav
@@ -69,7 +82,14 @@ export default async function ProtectedAppLayout({
             a fixed px value would undershoot there and the nav would cover
             the page's last few pixels of content. */}
         <div className="pb-[calc(3.25rem+env(safe-area-inset-bottom))] sm:pb-0">{children}</div>
-        {user ? <AppBottomNav locale={locale} avatarColor={profileRow?.avatar_color} name={profileRow?.first_name ?? null} /> : null}
+        {user ? (
+          <AppBottomNav
+            locale={locale}
+            avatarColor={profileRow?.avatar_color}
+            name={profileRow?.first_name ?? null}
+            notificationCount={unresolvedNotificationCount}
+          />
+        ) : null}
       </UnsavedPreviewProvider>
     </div>
   );

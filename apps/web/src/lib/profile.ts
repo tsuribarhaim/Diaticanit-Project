@@ -34,19 +34,23 @@ export type ExerciseOtherActivity = {
   days_per_week: number;
   minutes_per_session: number;
 };
-export const nutritionalGoalOptions = [
-  "maintenance",
-  "weight_loss",
-  "muscle_hypertrophy",
-  "body_recomposition",
-  "athletic_performance",
-] as const;
+/** Collapsed from 5 values to these 3 as part of the onboarding redesign
+ * (see docs/design/onboarding-redesign.md §7.4) - these are the exact
+ * same 3 values TargetGoalType (lib/targets.ts) already uses, so there's
+ * no separate reconciliation step needed between "the goal collected at
+ * onboarding" and "the goal targets generation acts on." The retired
+ * values (maintenance, muscle_hypertrophy, body_recomposition,
+ * athletic_performance) were one-time backfilled onto these 3 for
+ * existing profiles in migration 051. */
+export const nutritionalGoalOptions = ["weight_loss", "weight_gain", "maintain"] as const;
 export const pregnancyLactationOptions = ["none", "pregnant", "lactating"] as const;
 export const dietaryPreferenceOptions = [
   "standard",
   "vegetarian",
   "vegan",
   "low_carb_keto",
+  "kosher",
+  "gluten_free",
 ] as const;
 export const medicalConditionOptions = [
   "celiac_disease",
@@ -849,6 +853,12 @@ export const onboardingProfileSchema = z.object({
     .max(1000, "Additional information must be at most 1000 characters.")
     .optional()
     .default(""),
+  /** Mirrors has_medical_conditions/has_regular_medications exactly (see
+   * migration 051's own comment) - makes "must actively answer, even if
+   * the answer is none" real for allergies too, instead of leaving an
+   * empty allergies array ambiguous between "confirmed none" and "never
+   * asked." */
+  has_allergies: z.boolean(),
   allergies: z.array(z.string().trim().min(1)).default([]),
 }).superRefine((data, ctx) => {
   const includesAlcohol = data.habits.includes("alcohol");
@@ -975,6 +985,14 @@ export const onboardingProfileSchema = z.object({
         message: "Please include medication name and/or dosage/frequency (for example: Metformin 500mg twice daily).",
       });
     }
+  }
+
+  if (data.has_allergies && data.allergies.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["allergies"],
+      message: "List at least one allergy, or select 'No known allergies'.",
+    });
   }
 
   if (data.additional_information) {

@@ -1,0 +1,21 @@
+-- Phase 23 follow-up: links a pending targets draft back to the
+-- notification that announced it ("I've reviewed this and have an updated
+-- plan ready for you to approve" - see runBackgroundTargetsCheck) so that
+-- approving or discarding the draft can also mark that specific
+-- notification read.
+--
+-- Without this, a user who reaches the draft directly (the chat surface
+-- auto-refreshing once the background review finishes - see
+-- targets-chat-workspace.tsx's own polling effect) and saves from there,
+-- without ever visiting /app/notifications, would still see the same
+-- "ready to review" notification sitting unread afterward - clicking it
+-- would route back to a Targets page with nothing left to approve
+-- (harmless, but a confusing dead end reported directly in testing: "load
+-- it again and do save again").
+--
+-- Nullable and on delete set null: a draft can in principle exist without
+-- a known notification (e.g. one created before this column existed), and
+-- losing that specific link if the notification itself were ever deleted
+-- should not take the draft down with it.
+alter table public.user_target_profile_drafts
+  add column notification_id uuid references public.user_notifications(id) on delete set null;

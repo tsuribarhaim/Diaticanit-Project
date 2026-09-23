@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { DailyReportProgressRings } from "@/components/daily-report-progress-rings";
 import { GuardedLink } from "@/components/unsaved-preview-context";
 import { InfoPopoverButton } from "@/components/info-popover";
+import { LocalDateTime } from "@/components/local-time";
 import { RangeSelector } from "@/components/range-selector";
 import { Spinner } from "@/components/spinner";
 import type { HomeOverviewData, HomeRange } from "@/lib/home-overview";
@@ -18,7 +19,11 @@ type TabId = "overview" | "nutrients" | "exercise" | "suggestions" | "informatio
 
 export type TargetsHistoryInfo = {
   rawGoalText: string;
-  lockedAtLabel: string;
+  /** Raw timestamp, not a pre-formatted string - formatted at render time
+   * below via LocalDateTime, so it shows in the visitor's own timezone
+   * instead of whatever timezone the server happened to render in (see
+   * local-time.tsx's own comment on why that distinction matters). */
+  lockedAt: string;
   analysisSource: "ai" | "heuristic";
 };
 
@@ -535,7 +540,7 @@ export function TargetsSectionTabs({
                   </p>
                   <p className="mt-1">
                     <span className="font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Locked at", "ננעל בתאריך")}:</span>{" "}
-                    {history.lockedAtLabel}
+                    <LocalDateTime value={history.lockedAt} locale={locale} />
                   </p>
                   <p className="mt-1">
                     <span className="font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Analysis source", "מקור ניתוח")}:</span>{" "}

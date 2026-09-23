@@ -40,9 +40,30 @@ export default async function OnboardingPage() {
   const hasAnyProfile = Boolean(profile || fallbackProfile);
   const needsRefresh = Boolean(profile?.needs_onboarding_refresh);
 
+  // Onboarding isn't actually complete once the profile (steps 1-4) is
+  // saved anymore - it's complete once step 5's targets are locked in.
+  // saveOnboardingProfileAction sets needs_onboarding_refresh back to
+  // false as soon as step 4 saves (a no-op for a first-time user, since
+  // it was never true), so hasAnyProfile alone can't tell "fully done"
+  // apart from "profile saved, targets step not finished yet" - e.g. the
+  // user refreshed or closed the tab mid-step-5. Checking for an active
+  // target profile disambiguates the two.
+  let hasActiveTargetProfile = false;
   if (hasAnyProfile && !needsRefresh) {
+    const { data: activeTargetProfile } = await supabase
+      .from("user_target_profiles")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("is_active", true)
+      .maybeSingle();
+    hasActiveTargetProfile = Boolean(activeTargetProfile);
+  }
+
+  if (hasAnyProfile && !needsRefresh && hasActiveTargetProfile) {
     redirect("/app");
   }
+
+  const startAtTargetsStep = hasAnyProfile && !needsRefresh && !hasActiveTargetProfile;
 
   const locale = profile?.preferred_language === "he" ? "he" : "en";
 
@@ -65,12 +86,11 @@ export default async function OnboardingPage() {
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-10">
       <section className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">{tr(locale, "Onboarding", "אונבורדינג")}</h1>
-        <p className="mt-3 text-sm text-slate-600 dark:text-slate-400">
-          {tr(locale, "Complete your required profile before using the app.", "יש להשלים את הפרופיל לפני השימוש במערכת.")}
-        </p>
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">
+          {tr(locale, "Welcome to Daffy — your personal AI coach for a healthier life", "ברוכים הבאים ל-Daffy - מאמן ה-AI האישי שלכם לחיים בריאים")}
+        </h1>
 
-        <OnboardingProfileForm locale={locale} defaults={formDefaults} />
+        <OnboardingProfileForm locale={locale} defaults={formDefaults} startAtTargetsStep={startAtTargetsStep} />
       </section>
     </main>
   );

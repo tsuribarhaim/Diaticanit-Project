@@ -1,12 +1,14 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
+import type { ReactNode } from "react";
 
 import { openTicketAttachmentAction } from "@/app/app/tickets/actions";
+import { AdminStatusDropdown } from "@/components/admin-status-dropdown";
 import { CancelTicketDialog } from "@/components/cancel-ticket-dialog";
+import { LocalDateTime } from "@/components/local-time";
 import { formatFileSize } from "@/lib/documents";
 import { markNotificationRead } from "@/lib/notifications";
 import {
-  formatDateTimeForLocale,
   formatTicketArea,
   formatTicketPriority,
   formatTicketStatus,
@@ -16,11 +18,11 @@ import {
   type AppLocale,
 } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
-import { isCancellableTicketStatus, type TicketStatus } from "@/lib/tickets";
+import { isCancellableTicketStatus, isCurrentUserAdmin, type TicketStatus } from "@/lib/tickets";
 
 export const dynamic = "force-dynamic";
 
-function DetailRow({ label, value }: { label: string; value: string }) {
+function DetailRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-3">
       <span className="w-32 shrink-0 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</span>
@@ -44,20 +46,39 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
     (await supabase.from("user_profile").select("preferred_language").eq("user_id", user.id).maybeSingle()).data?.preferred_language,
   );
 
-  const { data: ticket, error } = await supabase
+  const isAdmin = await isCurrentUserAdmin(supabase, user.id);
+
+  // Admins can open any ticket (RLS's own tickets_select_admin policy
+  // already allows this); a plain user's query stays scoped to their own.
+  let ticketQuery = supabase
     .from("tickets")
     .select(
-      "id, ticket_seq, subject, ticket_type, area, priority, description, status, created_at, attachment_storage_path, attachment_file_name, attachment_file_size_bytes, cancelled_reason, cancelled_at, fix_description, resolved_at",
+      "id, ticket_seq, subject, ticket_type, area, priority, description, status, created_at, created_by, attachment_storage_path, attachment_file_name, attachment_file_size_bytes, cancelled_reason, cancelled_at, fix_description, resolved_at",
     )
-    .eq("id", id)
-    .eq("created_by", user.id)
-    .maybeSingle();
+    .eq("id", id);
+  if (!isAdmin) {
+    ticketQuery = ticketQuery.eq("created_by", user.id);
+  }
+  const { data: ticket, error } = await ticketQuery.maybeSingle();
 
   if (error) {
     throw new Error(error.message);
   }
   if (!ticket) {
     notFound();
+  }
+
+  // Only fetched for admins viewing someone else's ticket - a plain user's
+  // own tickets are all theirs, and an admin viewing their own doesn't
+  // need to be told they submitted it.
+  let submittedByName: string | null = null;
+  if (isAdmin && ticket.created_by !== user.id) {
+    const { data: creator } = await supabase
+      .from("user_profile")
+      .select("first_name, last_name")
+      .eq("user_id", ticket.created_by)
+      .maybeSingle();
+    submittedByName = creator ? [creator.first_name, creator.last_name].filter(Boolean).join(" ") || null : null;
   }
 
   // Landing on a ticket this way (typically via a "View ticket" click from
@@ -95,18 +116,27 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="font-mono text-xs text-slate-500 dark:text-slate-400">TCK-{ticket.ticket_seq}</p>
-            <h1 className="mt-0.5 text-xl font-bold text-slate-900 dark:text-slate-100">{ticket.subject}</h1>
+            <h1 className="mt-0.5 text-xl font-bold text-slate-900 dark:text-slate-100" dir="auto">{ticket.subject}</h1>
+            {submittedByName ? (
+              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                {tr(locale, "Submitted by", "נשלח על ידי")} {submittedByName}
+              </p>
+            ) : null}
           </div>
-          <span className="rounded-full border border-slate-300 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-            {formatTicketStatus(status, locale)}
-          </span>
+          {isAdmin ? (
+            <AdminStatusDropdown locale={locale} ticketId={ticket.id} status={status} size="md" />
+          ) : (
+            <span className="rounded-full border border-slate-300 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+              {formatTicketStatus(status, locale)}
+            </span>
+          )}
         </div>
 
         <div className="mt-5 space-y-3 border-t border-slate-100 pt-4 dark:border-slate-800">
           <DetailRow label={tr(locale, "Type", "סוג")} value={formatTicketType(ticket.ticket_type, locale)} />
           <DetailRow label={tr(locale, "Area", "אזור")} value={formatTicketArea(ticket.area, locale)} />
           <DetailRow label={tr(locale, "Priority", "עדיפות")} value={formatTicketPriority(ticket.priority, locale)} />
-          <DetailRow label={tr(locale, "Submitted", "נשלח")} value={formatDateTimeForLocale(ticket.created_at, locale)} />
+          <DetailRow label={tr(locale, "Submitted", "נשלח")} value={<LocalDateTime value={ticket.created_at} locale={locale} />} />
         </div>
 
         <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800">
@@ -144,11 +174,13 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
         ) : null}
 
         {/* Close here just navigates back to the ticket list - not a
-            status change. Cancel Ticket (the only status change a user
-            can make themselves) sits opposite it, shown only while still
-            cancellable. */}
+            status change. Cancel Ticket (the only status change a plain
+            user can make themselves) sits opposite it, shown only while
+            still cancellable - admins already have full status control via
+            the dropdown above, so they don't get a second, narrower
+            control down here too. */}
         <div className="mt-6 flex items-center justify-between border-t border-slate-100 pt-4 dark:border-slate-800">
-          {isCancellableTicketStatus(status) ? (
+          {!isAdmin && isCancellableTicketStatus(status) ? (
             <CancelTicketDialog locale={locale} ticketId={ticket.id} ticketSeq={ticket.ticket_seq} />
           ) : (
             <span />

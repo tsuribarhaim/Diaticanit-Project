@@ -135,7 +135,13 @@ export const targetGenerationPayloadSchema = z
     habitsDont: z.array(habitEntrySchema).max(10),
     userTargets: z.array(userTargetEntrySchema).max(10),
 
-    aiRationaleExplanation: z.string().max(2000),
+    // Matches aiTargetsSchema's own global_coaching_explanation cap (lib/ai/
+    // targets.ts) - the two were out of sync (2000 here vs. 2500 there)
+    // until a real AI response landed right in that gap and failed this
+    // schema the first time anything actually validated an AI-generated
+    // payload against it (see runBackgroundTargetsCheck/
+    // approveTargetsDraftAction).
+    aiRationaleExplanation: z.string().max(2500),
     confidence: z.number().min(0).max(1),
     assumptions: z.array(z.string().max(500)).max(20),
     profileDiscrepancyMessage: z.string().max(500).optional().default(""),
@@ -285,6 +291,41 @@ export type ProfileForTargets = {
    * caller of this type can safely omit it. */
   first_name?: string | null;
 };
+
+/** Was duplicated privately in both src/app/app/targets/actions.ts and
+ * src/app/api/targets/chat/route.ts before being consolidated here for a
+ * third caller (onboarding) - one implementation of this row-shape
+ * conversion rather than a fourth copy. */
+export function toProfileForTargets(profile: Record<string, unknown>): ProfileForTargets {
+  return {
+    age: Number(profile.age ?? 0),
+    gender: (profile.gender as string) ?? null,
+    biological_sex: (profile.biological_sex as string) ?? null,
+    height_cm: Number(profile.height_cm ?? 0),
+    weight_kg: Number(profile.weight_kg ?? 0),
+    activity_level: (profile.activity_level as ProfileForTargets["activity_level"]) ?? "sedentary",
+    allergies: Array.isArray(profile.allergies) ? (profile.allergies as string[]) : [],
+    medical_conditions: Array.isArray(profile.medical_conditions) ? (profile.medical_conditions as string[]) : [],
+    medical_conditions_details: (profile.medical_conditions_details as string) ?? null,
+    regular_medications_details: (profile.regular_medications_details as string) ?? null,
+    dietary_preference: (profile.dietary_preference as string) ?? null,
+    exercise_modalities: Array.isArray(profile.exercise_modalities) ? (profile.exercise_modalities as string[]) : [],
+    exercise_other_activities: Array.isArray(profile.exercise_other_activities)
+      ? (profile.exercise_other_activities as ProfileForTargets["exercise_other_activities"])
+      : [],
+    exercise_schedule_by_modality:
+      (profile.exercise_schedule_by_modality as ProfileForTargets["exercise_schedule_by_modality"]) ?? null,
+    habits: Array.isArray(profile.habits) ? (profile.habits as string[]) : [],
+    pregnancy_lactation_status: (profile.pregnancy_lactation_status as string) ?? null,
+    hot_climate_or_heavy_sweating: Boolean(profile.hot_climate_or_heavy_sweating),
+    // Only meaningfully used by the Targets chat's ADDRESSING THE USER
+    // persona rule (lib/ai/targets-chat.ts) - the route.ts caller passed
+    // this in its own now-removed private copy of this function; other
+    // callers simply won't have it in their input row, which is fine
+    // since it's optional.
+    first_name: (profile.first_name as string) ?? null,
+  };
+}
 
 function round(value: number, digits = 1): number {
   const factor = 10 ** digits;
@@ -828,13 +869,50 @@ export function generateHeuristicTargetProfileFromAnalysis({
     `הטווחים הללו הם תכנית ייחוס כללית למבוגרים עבור מטרת "${goalLabelForRationale}", המותאמת למשקל, לגובה, לגיל ולרמת הפעילות שלך. המידע הוא לצרכי ידע בלבד ואינו תחליף לייעוץ קליני או תזונתי מותאם אישית.`,
   );
 
+  // Three standing, always-generated targets (see the matching AI prompt
+  // rule in lib/ai/targets.ts) - weight, sleep, and steps are suggested
+  // for every user by default now, not only when a free-text goal
+  // happens to mention them. targetMin/targetMax are set for the
+  // loggable shape (a numeric input in Daily Report, a ring on Home)
+  // rather than as a meaningful range to display - weight in particular
+  // has no real stored range at all (its future update-validation range
+  // is a live ±10% of whatever the user's latest known weight is, not a
+  // number kept here - see docs/design/onboarding-redesign.md §4).
   const userTargets: UserTargetEntry[] = [];
-  if (targetWeightKg !== null) {
-    userTargets.push({
-      label: tr(locale, "Target weight", "משקל יעד"),
-      value: `${formatNumberForLocale(targetWeightKg, locale, { maximumFractionDigits: 1 })} kg`,
-    });
-  }
+  const targetWeightForDisplay = targetWeightKg ?? round(profile.weight_kg);
+  userTargets.push({
+    label: tr(locale, "Target weight", "משקל יעד"),
+    value: `${formatNumberForLocale(targetWeightForDisplay, locale, { maximumFractionDigits: 1 })} kg`,
+    id: "target_weight",
+    unit: "kg",
+    targetMin: targetWeightForDisplay,
+    targetMax: targetWeightForDisplay,
+    higherIsBetter: true,
+  });
+
+  const sleepHoursTarget = 8;
+  userTargets.push({
+    label: tr(locale, "Sleep duration", "משך שינה"),
+    value: `${sleepHoursTarget} ${tr(locale, "hours", "שעות")}`,
+    id: "sleep_hours",
+    unit: "hours",
+    targetMin: 7,
+    targetMax: 9,
+    higherIsBetter: true,
+  });
+
+  const dailyStepsTarget =
+    profile.activity_level === "sedentary" ? 7000 : profile.activity_level === "active" ? 10000 : 8500;
+  userTargets.push({
+    label: tr(locale, "Daily steps", "צעדים יומיים"),
+    value: `${formatNumberForLocale(dailyStepsTarget, locale)} ${tr(locale, "steps", "צעדים")}`,
+    id: "daily_steps",
+    unit: "steps",
+    targetMin: dailyStepsTarget,
+    targetMax: dailyStepsTarget + 3000,
+    higherIsBetter: true,
+  });
+
   if (durationDays !== null) {
     userTargets.push({
       label: tr(locale, "Duration", "משך"),
