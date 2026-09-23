@@ -200,3 +200,94 @@ entirely. Not adopted because:
   inherits the mandatory-review coupling rules.
 - Nav placement and exact visual treatment for the notification badge and
   the ⚠ warning icon.
+
+## Follow-up: profile-change flow bugs and redesign (implemented)
+
+Real pilot testing (both the user's own use and a tester's, reproducible on
+dev with no Vercel involved) surfaced a genuine bug in the profile-change
+"Recalculate" path above, distinct from the original latency problem: after
+clicking Recalculate, the amber "profile changed" banner could stay stuck
+indefinitely — no error, no success, no way to tell what had happened or
+whether anything was saved.
+
+### Root cause
+
+`requestTargetsUpdate`'s `UpdateOutcome` type merged two genuinely different
+situations into one ambiguous `semanticErrorMessage` field: a real answer
+from the server (a safety rejection, a save failure) and a client-side
+connection/timeout failure where nothing had actually been reviewed at all.
+`handleRecalculateFromProfileChange` then substituted a hardcoded "no
+adjustment needed, you're fine" message whenever the outcome wasn't a clean
+success — including on a plain client timeout, which is exactly backwards:
+telling the user everything's fine when the request may not have even
+reached a conclusion.
+
+### Fix #1 — honest error messaging
+
+Replaced the ambiguous outcome shape with `{ kind: "failed"; message:
+string }`, always surfacing the real message (server-explained or
+connection-level) via the existing red error banner, with a retry action.
+No more false reassurance on a failure path.
+
+### Fix #2 — heartbeat to prevent premature client timeout
+
+`api/targets/chat/route.ts` now sends a `{ type: "heartbeat" }` SSE frame
+every 5s (`withHeartbeat`) while the slow classification/full-review call is
+in flight. The client's `STREAM_INACTIVITY_TIMEOUT_MS` (20s) resets on
+*any* received frame, so a real, still-alive AI call is no longer mistaken
+for a dead connection just because it hasn't emitted a token in 20s.
+
+Both fixes were verified against real background-job completions in the
+dev database before moving on to the larger redesign below.
+
+### Redesign: deprecate the amber banner, always land in chat
+
+Agreed with the user that a banner asking them to manually trigger
+Recalculate (or Skip) was itself the wrong shape, independent of the two
+bugs above. Replaced with:
+
+1. **Auto-trigger, no button.** The instant there's a fresh, unreviewed
+   profile change, the check just runs — the user is dropped straight into
+   the Targets chat (opened automatically on mobile, where it's a
+   collapsed sheet by default) showing exactly what changed and that it's
+   being reviewed. The old amber banner, its "Recalculate now"/"Skip"
+   buttons, and `dismissProfileChangeAction`'s use in this specific
+   component are all removed (the simpler `TargetsWorkspace` fallback
+   component keeps its own independent copy of the skip flow unchanged).
+2. **Draft, don't auto-lock.** `runBackgroundTargetsCheck` (the `after()`
+   job) no longer locks in its computed plan automatically on completion.
+   It now diffs the newly computed payload against the current active
+   targets (`computeTargetsDiff`); if nothing actually changed, it just
+   notifies ("still accurate, no changes needed"). If something did
+   change, it upserts the full payload into a new
+   `user_target_profile_drafts` table (one row per user — a second
+   completed check replaces rather than stacks alongside an earlier
+   unreviewed draft) and sends a "ready to review" notification.
+3. **Always notify, resolve back in context.** Clicking that notification
+   returns the user to the Targets page, which now reads the pending draft
+   and renders it as a review card (`TargetsDiffTable` — "Protein 30 →
+   35"-style rows) with **Update my targets** / **Discard** actions,
+   sitting in the same always-visible spot the old banner occupied — so it
+   works identically whether the user is still on the tab or returns via
+   the notification days later, chat history long gone, since it's read
+   straight from the draft row rather than in-memory chat state.
+4. **Approve is fast.** `approveTargetsDraftAction` just re-validates and
+   locks in the already-computed payload (the same `performTargetsLock`
+   used elsewhere) — no new AI call, so this step is fast regardless of how
+   long the original background review took.
+5. **The manual "Try updating targets from this conversation" button**
+   stays for genuine mid-conversation use, but now hides for the *entire*
+   span a check is active — "applying" through "quick_applied"/"queued" —
+   not just the original narrow "pending decision" moment, closing a gap
+   where a second request could previously stack on top of one still
+   running. It reappears once that check resolves (success or concern),
+   never while one is still in flight.
+
+**Deliberately not addressed here, logged separately:** what the chat
+experience should do when the background check comes back with a genuine
+*concern* about the profile-driven change (today it only has a plain
+"ready to review" notification path; a concern-flavored draft/notification
+variant is a natural extension but wasn't built in this pass). Also logged
+separately: giving the chat box system-wide capability to edit most things
+in the app via conversation (profile attributes, daily reports, saved
+items, targets) — see `docs/planning/pilot-follow-up-todo.md`.

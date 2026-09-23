@@ -12,6 +12,15 @@ export type NavChromeData = {
     theme_preference?: string | null;
   } | null;
   profileError: { message: string } | null;
+  /** "Pending your attention" - not simply every unresolved row. A concern
+   * notification (a flagged Targets value) only ever leaves this count when
+   * a later background check confirms it's actually fixed, same as before -
+   * opening it only marks it read, on purpose, so a real warning can't
+   * silently vanish just because it was glanced at. A plain info
+   * notification (e.g. a ticket status change) has no such second check to
+   * wait on, so for those, read is the resolution: they leave this count
+   * the moment they're marked read. See mark-notification-read-button.tsx
+   * for the only UI that writes read_at for this purpose. */
   unresolvedNotificationCount: number;
 };
 
@@ -52,7 +61,7 @@ const getCachedNavChrome = unstable_cache(
         .from("user_notifications")
         .select("id", { count: "exact", head: true })
         .eq("user_id", userId)
-        .is("resolved_at", null),
+        .or("and(severity.eq.concern,resolved_at.is.null),and(severity.eq.info,read_at.is.null)"),
     ]);
 
     let profile: NavChromeData["profile"] = fullSelect.data;

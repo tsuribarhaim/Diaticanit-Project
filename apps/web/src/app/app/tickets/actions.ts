@@ -8,7 +8,15 @@ import { ALLOWED_DOCUMENT_MIME_TYPES, MAX_DOCUMENT_SIZE_BYTES, sanitizeFileName 
 import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
-import { isCancellableTicketStatus, ticketAreaOptions, ticketPriorityOptions, ticketTypeOptions } from "@/lib/tickets";
+import {
+  isCancellableTicketStatus,
+  isCurrentUserAdmin,
+  ticketAreaOptions,
+  ticketPriorityOptions,
+  ticketStatusOptions,
+  ticketTypeOptions,
+  type TicketStatus,
+} from "@/lib/tickets";
 
 export type TicketFormState = {
   error?: string;
@@ -227,12 +235,17 @@ export async function openTicketAttachmentAction(formData: FormData): Promise<vo
   const ticketId = formData.get("ticket_id")?.toString();
   if (!ticketId) return;
 
-  const { data: row, error: rowError } = await supabase
-    .from("tickets")
-    .select("attachment_storage_path")
-    .eq("id", ticketId)
-    .eq("created_by", user.id)
-    .maybeSingle();
+  // Admins can open any ticket's attachment, same as they can view any
+  // ticket - RLS's own tickets_select_admin policy already allows the
+  // read underneath this, the explicit created_by filter below is just
+  // for a plain user's own case (RLS would block a cross-user read
+  // anyway, but the query shape should match what's actually intended).
+  const isAdmin = await isCurrentUserAdmin(supabase, user.id);
+  let attachmentQuery = supabase.from("tickets").select("attachment_storage_path").eq("id", ticketId);
+  if (!isAdmin) {
+    attachmentQuery = attachmentQuery.eq("created_by", user.id);
+  }
+  const { data: row, error: rowError } = await attachmentQuery.maybeSingle();
 
   if (rowError || !row?.attachment_storage_path) {
     logServerError("tickets.openAttachment", "ticket_not_found_or_no_attachment", {
@@ -257,4 +270,51 @@ export async function openTicketAttachmentAction(formData: FormData): Promise<vo
   }
 
   redirect(signedData.signedUrl);
+}
+
+export type AdminStatusUpdateResult = { error?: string };
+
+/**
+ * The one write an admin makes through this UI (see
+ * docs/design/user-support-tickets-design.md and its own is_admin follow-
+ * up migration) - any ticket, to any status, freely. Called directly from
+ * a client component's onChange (not through useActionState/a <form>,
+ * since there's no form here - just a select), so it returns a plain
+ * result object instead of the {error,success} shape the form actions
+ * above use. is_admin is checked here too, not just relied on via RLS -
+ * RLS is still what actually stops a non-admin from writing, this is only
+ * so a non-admin never even gets a real error to reverse-engineer
+ * anything from.
+ */
+export async function updateTicketStatusAdminAction(ticketId: string, status: TicketStatus): Promise<AdminStatusUpdateResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/sign-in");
+  }
+
+  const locale = await resolveUserLocale(supabase, user.id);
+
+  if (!ticketStatusOptions.includes(status)) {
+    return { error: tr(locale, "Unknown status.", "סטטוס לא מוכר.") };
+  }
+
+  const isAdmin = await isCurrentUserAdmin(supabase, user.id);
+  if (!isAdmin) {
+    return { error: tr(locale, "Not authorized.", "אין הרשאה.") };
+  }
+
+  const { error: updateError } = await supabase.from("tickets").update({ status }).eq("id", ticketId);
+
+  if (updateError) {
+    logServerError("tickets.adminUpdateStatus", "update_failed", { userId: user.id, ticketId, status, error: updateError.message });
+    return { error: tr(locale, "Could not update status. Please try again.", "לא ניתן היה לעדכן את הסטטוס. יש לנסות שוב.") };
+  }
+
+  revalidatePath("/app/tickets");
+  revalidatePath(`/app/tickets/${ticketId}`);
+  return {};
 }

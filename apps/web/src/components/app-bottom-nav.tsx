@@ -22,10 +22,20 @@ export function AppBottomNav({
   locale,
   avatarColor,
   name,
+  notificationCount,
 }: {
   locale: AppLocale;
   avatarColor?: string | null;
   name?: string | null;
+  /** The one gap this tab bar had until now: AppNav's own notification
+   * badge (see that file) only ever rendered in the desktop top nav -
+   * `hidden sm:block` on AppNav means mobile had NO notification signal
+   * anywhere at all, confirmed directly in testing ("I don't see it on the
+   * phone in any place"). A small dot on the Profile tab (where the
+   * always-available Notifications row lives - see app/profile/page.tsx)
+   * is this bar's own equivalent, sized for a tab icon rather than
+   * repeating AppNav's full pill+count treatment. */
+  notificationCount?: number;
 }) {
   const pathname = usePathname();
 
@@ -35,15 +45,33 @@ export function AppBottomNav({
 
   const tabs: Array<{ href: string; label: string; isActive: boolean; icon: ReactNode }> = [
     {
-      href: "/app/profile",
+      // Goes straight to Notifications instead of Profile when there's
+      // something pending - a bare dot with no label told the user
+      // something was waiting but not what or where, and tapping it only
+      // landed on Profile itself (confirmed directly: "I pressed it and I
+      // got to the top of the page of the profile not to the
+      // Notifications"). The tap target is the same size either way (the
+      // whole tab, not just the small dot), so this doesn't need its own
+      // separate hit area.
+      href: notificationCount ? "/app/notifications" : "/app/profile",
       label: tr(locale, "Profile", "פרופיל"),
-      isActive: pathname?.startsWith("/app/profile") ?? false,
+      isActive: (pathname?.startsWith("/app/profile") || pathname?.startsWith("/app/notifications")) ?? false,
       // The user's own picture/initial doubles as this tab's icon - "which
       // account is this" and "go to your profile" are the same destination
       // here, so there's no need for a separate persistent avatar element
       // the way the desktop nav (with its own list of links, not a tab bar)
       // needed one.
-      icon: <UserAvatar avatarColor={avatarColor} name={name} className="h-5 w-5 text-[10px]" />,
+      icon: (
+        <span className="relative inline-flex">
+          <UserAvatar avatarColor={avatarColor} name={name} className="h-5 w-5 text-[10px]" />
+          {notificationCount ? (
+            <span
+              aria-hidden="true"
+              className="absolute -end-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border border-white bg-rose-600 dark:border-slate-900"
+            />
+          ) : null}
+        </span>
+      ),
     },
     {
       href: "/app/targets",

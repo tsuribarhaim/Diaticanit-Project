@@ -1,35 +1,26 @@
 import { redirect } from "next/navigation";
 
-import { hasAiTargetsConsent } from "@/app/app/targets/actions";
-import { TargetsChatWorkspace } from "@/components/targets-chat-workspace";
-import { TargetsWorkspace } from "@/components/targets-workspace";
-import type { TargetsHistoryInfo } from "@/components/targets-section-tabs";
-import { getAiExtractionConfig } from "@/lib/ai/env";
+import { TargetsPageClient } from "@/components/targets-page-client";
 import { resolveUserGenderForAddressing } from "@/lib/ai/persona";
-import { buildBmiWarningMessage } from "@/lib/bmi";
-import { getHomeOverviewData, parseRangeParam } from "@/lib/home-overview";
-import { formatDateTimeForLocale, normalizeLocale, tr } from "@/lib/locale";
-import { markNotificationRead } from "@/lib/notifications";
+import { normalizeLocale, tr } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
-import {
-  computeProfileDiff,
-  estimateMaintenanceCalories,
-  mapTargetProfileRowToPayload,
-  parseProfileSnapshot,
-  TARGET_PROFILE_COLUMNS,
-  type ProfileForTargets,
-} from "@/lib/targets";
+import { mapTargetProfileRowToPayload, TARGET_PROFILE_COLUMNS } from "@/lib/targets";
 
 export const dynamic = "force-dynamic";
 
-export default async function TargetsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ range?: string; concern?: string }>;
-}) {
-  const resolvedSearchParams = await searchParams;
-  const range = parseRangeParam(resolvedSearchParams.range);
-
+/**
+ * The standalone Targets page - full replacement of the old tabbed
+ * workspace (TargetsWorkspace/TargetsChatWorkspace/targets-section-tabs),
+ * reusing the exact same read-only plan view and chat pattern the
+ * onboarding Targets step already established (see targets-plan-view.tsx
+ * and targets-page-client.tsx's own comments). This page assumes an
+ * active target profile already exists - if the profile is incomplete or
+ * no plan has ever been locked in, onboarding is where that gets fixed
+ * (its own page.tsx now routes straight to its Targets step in that
+ * case - see its startAtTargetsStep computation), so there's no
+ * "generate a baseline here" fallback to maintain in two places anymore.
+ */
+export default async function TargetsPage() {
   const supabase = await createClient();
   const {
     data: { user },
@@ -39,223 +30,38 @@ export default async function TargetsPage({
     redirect("/auth/sign-in");
   }
 
-  const aiConfig = getAiExtractionConfig();
-
-  // None of these four depend on each other's result - all four only need
-  // user.id (and, for the notification lookup, the concern id already in
-  // hand from searchParams) - so they're fired together instead of paying
-  // four sequential round trips before the page can even start rendering.
-  const [
-    { data: profileRow, error: profileError },
-    { data: activeTargetProfile, error: targetProfileError },
-    { data: notificationRow },
-    hasAiChatAvailable,
-  ] = await Promise.all([
+  const [{ data: profileRow }, { data: activeRow, error: activeError }] = await Promise.all([
     supabase
       .from("user_profile")
-      .select(
-        "first_name, age, gender, biological_sex, height_cm, weight_kg, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, habits, pregnancy_lactation_status, hot_climate_or_heavy_sweating, preferred_language",
-      )
+      .select("first_name, gender, biological_sex, preferred_language")
       .eq("user_id", user.id)
       .maybeSingle(),
     supabase.from("user_target_profiles").select(TARGET_PROFILE_COLUMNS).eq("user_id", user.id).eq("is_active", true).maybeSingle(),
-    // Arrived here from a Notifications entry (see app/app/notifications/
-    // page.tsx) - seed that concern into the chat and mark it read below.
-    // RLS's own "select own" policy on user_notifications means this simply
-    // returns nothing for an id that isn't this user's, rather than needing
-    // an extra ownership check here.
-    resolvedSearchParams.concern
-      ? supabase.from("user_notifications").select("id, message").eq("id", resolvedSearchParams.concern).maybeSingle()
-      : Promise.resolve({ data: null as { id: string; message: string } | null }),
-    aiConfig ? hasAiTargetsConsent({ supabase, userId: user.id }) : Promise.resolve(false),
   ]);
 
-  if (profileError) {
-    throw new Error(profileError.message);
+  if (activeError) {
+    throw new Error(activeError.message);
   }
 
-  if (!profileRow) {
+  if (!profileRow || !activeRow) {
     redirect("/app/onboarding");
   }
 
-  if (targetProfileError) {
-    throw new Error(targetProfileError.message);
-  }
-
   const locale = normalizeLocale(profileRow.preferred_language);
-  // For the chat workspace's own static UI copy (not AI-generated) -
-  // grammatically correct Hebrew addressing, same rules/normalization the
-  // AI chat itself follows (see lib/ai/persona.ts).
   const userGender = resolveUserGenderForAddressing(profileRow.gender, profileRow.biological_sex);
-
-  let seedConcernMessage: string | undefined;
-  if (notificationRow) {
-    seedConcernMessage = notificationRow.message;
-    await markNotificationRead({ supabase, userId: user.id, notificationId: notificationRow.id });
-  }
-
-  const profile: ProfileForTargets = {
-    age: Number(profileRow.age ?? 0),
-    gender: profileRow.gender ?? null,
-    biological_sex: profileRow.biological_sex ?? null,
-    height_cm: Number(profileRow.height_cm ?? 0),
-    weight_kg: Number(profileRow.weight_kg ?? 0),
-    activity_level: (profileRow.activity_level as ProfileForTargets["activity_level"]) ?? "sedentary",
-    allergies: Array.isArray(profileRow.allergies) ? profileRow.allergies : [],
-    medical_conditions: Array.isArray(profileRow.medical_conditions) ? profileRow.medical_conditions : [],
-    medical_conditions_details: profileRow.medical_conditions_details ?? null,
-    regular_medications_details: profileRow.regular_medications_details ?? null,
-    dietary_preference: profileRow.dietary_preference ?? null,
-    exercise_modalities: Array.isArray(profileRow.exercise_modalities) ? profileRow.exercise_modalities : [],
-    exercise_other_activities: Array.isArray(profileRow.exercise_other_activities)
-      ? (profileRow.exercise_other_activities as ProfileForTargets["exercise_other_activities"])
-      : [],
-    exercise_schedule_by_modality:
-      (profileRow.exercise_schedule_by_modality as ProfileForTargets["exercise_schedule_by_modality"]) ?? null,
-    habits: Array.isArray(profileRow.habits) ? profileRow.habits : [],
-    pregnancy_lactation_status: profileRow.pregnancy_lactation_status ?? null,
-    hot_climate_or_heavy_sweating: Boolean(profileRow.hot_climate_or_heavy_sweating),
-  };
-
-  const maintenanceCalories = estimateMaintenanceCalories(profile);
-
-  let profileChanges: ReturnType<typeof computeProfileDiff> | undefined;
-  let bmiWarning: string | undefined;
-  let missingProfileSnapshot = false;
-
-  if (activeTargetProfile) {
-    const snapshot = parseProfileSnapshot(activeTargetProfile.profile_snapshot);
-    if (snapshot) {
-      profileChanges = computeProfileDiff(snapshot, profile, locale);
-      // Deterministic, not AI-generated - shown immediately alongside the
-      // "profile changed" banner below so an unhealthy BMI is flagged the
-      // first time the page renders, rather than only if/when the user
-      // happens to ask the chat about it (see lib/bmi.ts).
-      if (profileChanges.some((row) => row.labelEn === "Weight")) {
-        bmiWarning = buildBmiWarningMessage(profile.weight_kg, profile.height_cm, locale);
-      }
-    } else {
-      missingProfileSnapshot = true;
-    }
-  }
-
-  // Deliberately NOT generating a baseline plan here (this used to call
-  // generateTargetsPayload synchronously, which routinely takes 30-90s -
-  // see that function's own timeoutMs comment). Blocking the entire page's
-  // server render on an AI call that slow meant Targets simply never
-  // finished loading for a first-time user on a slower connection (reported
-  // by a pilot tester on iPhone as the page "keeps rendering and not come
-  // up" - exactly what a request stuck for up to 90s looks like). The page
-  // now renders immediately with no preview, and TargetsWorkspace itself
-  // triggers the same generation client-side on mount (see its own
-  // auto-generate effect) through the existing generateTargetsAction form -
-  // the same action the "Generate my targets" button already used, just
-  // fired automatically instead of blocking this render.
-
-  // Only fetched for the AI-chat-enabled experience's own Overview view
-  // (see lib/home-overview.ts's own comment) - the no-AI-consent fallback
-  // page (TargetsWorkspace) doesn't get an Overview tab at all right now,
-  // per this redesign's own scope (AI-enabled experience first).
-  const overview =
-    activeTargetProfile && hasAiChatAvailable
-      ? await getHomeOverviewData({
-          supabase,
-          userId: user.id,
-          locale,
-          range,
-          activeTargetProfile,
-          aiConfig,
-          userGender,
-          userFirstName: profileRow.first_name,
-        })
-      : null;
-
-  const targetsHistory: TargetsHistoryInfo | undefined = activeTargetProfile
-    ? {
-        rawGoalText: activeTargetProfile.raw_goal_text,
-        lockedAtLabel: formatDateTimeForLocale(activeTargetProfile.sys_start_date, locale),
-        analysisSource: activeTargetProfile.analysis_source === "ai" ? "ai" : "heuristic",
-      }
-    : undefined;
+  const payload = mapTargetProfileRowToPayload(activeRow);
+  const source: "ai" | "heuristic" = activeRow.analysis_source === "ai" ? "ai" : "heuristic";
 
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 py-10">
+    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-10">
       <section className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">{tr(locale, "Daily Targets", "יעדים יומיים")}</h1>
-          <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-            {tr(
-              locale,
-              "Your personalized daily nutrition, exercise, and habit targets.",
-              "יעדי התזונה, הפעילות וההרגלים היומיים המותאמים אישית שלך.",
-            )}
-          </p>
-        </div>
-
-        {!activeTargetProfile ? (
-          <>
-            <p className="mt-4 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600 dark:border-slate-700 dark:text-slate-400">
-              {tr(
-                locale,
-                "Here's a recommended baseline based on your profile. Optionally describe a specific goal below and regenerate to refine it, then approve to lock it in.",
-                "להלן תכנית בסיס מומלצת בהתאם לפרופיל שלך. ניתן לתאר מטרה ספציפית למטה וליצור מחדש כדי לחדד אותה, ולאחר מכן לאשר וננעל אותה.",
-              )}
-            </p>
-            <div className="mt-5">
-              <TargetsWorkspace
-                locale={locale}
-                mode="initial"
-                maintenanceCalories={maintenanceCalories}
-                firstName={profileRow.first_name ?? null}
-              />
-            </div>
-          </>
-        ) : (
-          <div className="mt-5 space-y-4">
-            {missingProfileSnapshot ? (
-              <p className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800 dark:border-sky-800 dark:bg-sky-950/30 dark:text-sky-400">
-                {tr(
-                  locale,
-                  "These targets were locked before profile-change detection was added, so we can't yet tell if your profile has changed since then. Request any adjustment below to refresh this check going forward.",
-                  "היעדים הללו ננעלו לפני שנוסף מעקב שינויי פרופיל, ולכן לא ניתן עדיין לבדוק אם הפרופיל שלך השתנה מאז. יש לבקש כל שינוי למטה כדי לרענן בדיקה זו מכאן ואילך.",
-                )}
-              </p>
-            ) : null}
-
-            {hasAiChatAvailable ? (
-              <TargetsChatWorkspace
-                key={activeTargetProfile.id}
-                locale={locale}
-                maintenanceCalories={maintenanceCalories}
-                currentPayload={mapTargetProfileRowToPayload(activeTargetProfile)}
-                profileChanges={profileChanges}
-                bmiWarning={bmiWarning}
-                firstName={profileRow.first_name ?? null}
-                userGender={userGender}
-                history={targetsHistory}
-                // Non-null by construction: overview is only ever null when
-                // `activeTargetProfile && hasAiChatAvailable` is false (see
-                // its own computation above), the exact same condition that
-                // gates this branch.
-                overview={overview!}
-                range={range}
-                seedConcernMessage={seedConcernMessage}
-              />
-            ) : (
-              <TargetsWorkspace
-                key={activeTargetProfile.id}
-                locale={locale}
-                mode="adjust"
-                maintenanceCalories={maintenanceCalories}
-                currentPayload={mapTargetProfileRowToPayload(activeTargetProfile)}
-                profileChanges={profileChanges}
-                bmiWarning={bmiWarning}
-                firstName={profileRow.first_name ?? null}
-                history={targetsHistory}
-              />
-            )}
-          </div>
-        )}
+        <TargetsPageClient
+          initialPayload={payload}
+          initialSource={source}
+          locale={locale}
+          firstName={profileRow.first_name}
+          userGender={userGender}
+        />
 
         <p className="mt-6 border-t border-slate-100 pt-4 text-xs text-slate-500 dark:border-slate-800">
           {tr(

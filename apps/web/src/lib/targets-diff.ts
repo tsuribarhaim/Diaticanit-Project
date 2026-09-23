@@ -3,13 +3,20 @@ import type { TargetGenerationPayload } from "@/lib/targets";
 
 export type MetricDiffRow = { labelEn: string; labelHe: string; before: string; after: string };
 
-const NUTRIENT_DIFF_FIELDS: Array<{
+export type NutrientFieldInfo = {
   labelEn: string;
   labelHe: string;
   minKey: keyof TargetGenerationPayload;
   maxKey: keyof TargetGenerationPayload;
   unit: string;
-}> = [
+};
+
+/** Exported for the onboarding Targets step's own nutrient table
+ * (onboarding-targets-step.tsx), which needs the same field/label/unit
+ * mapping to display a single value per nutrient - not just this file's
+ * own diff-only use. Order here doesn't matter for diffing; that
+ * component re-sorts by the user's own chosen display order. */
+export const NUTRIENT_DIFF_FIELDS: NutrientFieldInfo[] = [
   { labelEn: "Calories", labelHe: "קלוריות", minKey: "caloriesMin", maxKey: "caloriesMax", unit: "kcal" },
   { labelEn: "Protein", labelHe: "חלבון", minKey: "proteinMinG", maxKey: "proteinMaxG", unit: "g" },
   { labelEn: "Carbohydrates", labelHe: "פחמימות", minKey: "carbsMinG", maxKey: "carbsMaxG", unit: "g" },
@@ -45,14 +52,38 @@ function habitsSummary(payload: TargetGenerationPayload): string {
     .join(" | ");
 }
 
-function userTargetsSummary(payload: TargetGenerationPayload): string {
-  return payload.userTargets
-    // Sort by id when present so a relabeled-but-same-target adjustment
-    // (id unchanged, per the AI prompt's "keep its id unchanged" rule)
-    // sorts stably rather than jumping around by label text.
-    .map((entry) => `${entry.id ?? entry.label}|${entry.label}: ${entry.value}${entry.unit ? ` (${entry.targetMin}-${entry.targetMax} ${entry.unit})` : ""}`)
-    .sort()
-    .join(" | ");
+/** One row per userTargets entry that actually changed (matched by id,
+ * falling back to label for older entries saved without one), each shown
+ * in plain "value unit" form using the entry's own human label - not the
+ * single giant `id|label: value (min-max unit)` blob this used to compare
+ * as one string. That blob leaked straight into the AI chat's diff
+ * summary as literal, unreadable text (confirmed live: a user saw
+ * "daily_steps|Daily steps: 7500 steps (7000-8000 steps) | ..." after
+ * asking about an unrelated calorie change) and, since it compared the
+ * WHOLE set as one string, a change to any single entry - or even the
+ * model just reformatting text without changing a value - showed as a
+ * "changed" diff for every entry, not just the one that actually moved. */
+function userTargetsDiffRows(before: TargetGenerationPayload, after: TargetGenerationPayload, locale: AppLocale): MetricDiffRow[] {
+  const rows: MetricDiffRow[] = [];
+  const key = (entry: TargetGenerationPayload["userTargets"][number]) => entry.id ?? entry.label;
+  const beforeByKey = new Map(before.userTargets.map((entry) => [key(entry), entry]));
+  const afterByKey = new Map(after.userTargets.map((entry) => [key(entry), entry]));
+  const allKeys = new Set([...beforeByKey.keys(), ...afterByKey.keys()]);
+
+  const display = (entry: TargetGenerationPayload["userTargets"][number] | undefined) =>
+    entry ? `${entry.value}${entry.unit ? ` ${entry.unit}` : ""}` : tr(locale, "Not set", "לא מוגדר");
+
+  for (const entryKey of allKeys) {
+    const beforeEntry = beforeByKey.get(entryKey);
+    const afterEntry = afterByKey.get(entryKey);
+    const beforeText = display(beforeEntry);
+    const afterText = display(afterEntry);
+    if (beforeText === afterText) continue;
+    const label = afterEntry?.label ?? beforeEntry?.label ?? entryKey;
+    rows.push({ labelEn: label, labelHe: label, before: beforeText, after: afterText });
+  }
+
+  return rows;
 }
 
 /** Compares every quantifiable field (all nutrient ranges, exercise plan,
@@ -94,16 +125,7 @@ export function computeTargetsDiff(before: TargetGenerationPayload, after: Targe
     });
   }
 
-  const beforeUserTargets = userTargetsSummary(before);
-  const afterUserTargets = userTargetsSummary(after);
-  if (beforeUserTargets !== afterUserTargets) {
-    rows.push({
-      labelEn: "User Targets",
-      labelHe: "יעדי המשתמש",
-      before: beforeUserTargets || tr(locale, "None", "ללא"),
-      after: afterUserTargets || tr(locale, "None", "ללא"),
-    });
-  }
+  rows.push(...userTargetsDiffRows(before, after, locale));
 
   if (before.goalType !== after.goalType) {
     rows.push({

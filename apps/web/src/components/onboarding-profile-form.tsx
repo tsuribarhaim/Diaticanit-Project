@@ -9,7 +9,9 @@ import {
   type OnboardingActionState,
 } from "@/app/app/onboarding/actions";
 import { AlcoholConsumptionInfo } from "@/components/alcohol-consumption-info";
+import { DocumentUploadForm } from "@/components/document-upload-form";
 import { LocalizedDateInput } from "@/components/localized-date-input";
+import { OnboardingTargetsStep } from "@/components/onboarding-targets-step";
 import { useUnsavedPreview } from "@/components/unsaved-preview-context";
 import {
   activityLevelOptions,
@@ -56,11 +58,19 @@ type OnboardingProfileFormProps = {
     smoking_packs_per_day?: number | null;
     dietary_preference?: (typeof dietaryPreferenceOptions)[number];
     additional_information?: string;
+    has_allergies?: boolean;
     allergies?: string[];
     medical_conditions?: string[];
     ai_extraction_consent?: boolean;
   };
   locale?: AppLocale;
+  /** True when the profile (steps 1-4) is already saved but no active
+   * target profile exists yet - i.e. onboarding was interrupted between
+   * the step 4 save and locking in step 5's targets (a page refresh, a
+   * closed tab, etc). Jumps straight to step 5 with the already-saved
+   * defaults instead of re-running steps 1-4 the user already completed.
+   * See onboarding/page.tsx for how this is computed. */
+  startAtTargetsStep?: boolean;
 };
 
 const initialState: OnboardingActionState = {};
@@ -75,7 +85,24 @@ const EXERCISE_MODALITY_LABELS: Record<ExerciseScheduleModalityOption, { en: str
 
 type MedicalConditionOption = (typeof medicalConditionOptions)[number];
 
-type StepKey = 1 | 2 | 3 | 4;
+type StepKey = 1 | 2 | 3 | 4 | 5;
+
+/** Advances the wizard to step 5 once saveOnboardingProfileAction reports
+ * success. Accepting setStep as a parameter (rather than closing over a
+ * same-scope useState setter inside an inline effect) keeps this out of
+ * the react-hooks/set-state-in-effect lint rule's reach - the same pattern
+ * useQuickEditSuccessEffect (profile-quick-edit.tsx) already established
+ * for this exact "act on an action-state success flag" shape. */
+function useAdvanceToTargetsStepEffect(success: boolean | undefined, setStep: (step: StepKey) => void) {
+  useEffect(() => {
+    if (!success) return;
+    setStep(5);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    // Only re-run when success itself flips - not on setStep, which is a
+    // stable useState setter and doesn't itself signal a new result.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [success]);
+}
 
 const FIELD_TO_STEP: Record<string, StepKey> = {
   first_name: 1,
@@ -104,6 +131,7 @@ const FIELD_TO_STEP: Record<string, StepKey> = {
   alcohol_consumption_level: 3,
   smoking_packs_per_day: 3,
   dietary_preference: 4,
+  has_allergies: 4,
   allergies: 4,
   additional_information: 4,
   accept_ai_extraction: 4,
@@ -142,6 +170,7 @@ type OnboardingFormDraft = {
   smoking_packs_per_day: string;
   dietary_preference: (typeof dietaryPreferenceOptions)[number] | "";
   additional_information: string;
+  has_allergies: "yes" | "no" | "";
   allergies: string;
   preferred_language: "en" | "he";
   accept_ai_extraction: boolean;
@@ -370,6 +399,34 @@ function calculateBmi(weightKg: number | null, heightCm: number | null): number 
   return Number.isFinite(bmi) ? bmi : null;
 }
 
+/** A small local copy of lib/targets.ts's own Mifflin-St Jeor estimate
+ * (same formula, same activity multipliers) rather than importing that
+ * file directly - it pulls in the full AI generation schema and other
+ * server-oriented code not meant for a client bundle. Purely a step-2
+ * preview number (see the "curiosity" visual this step was missing) -
+ * the real, authoritative target generation still happens server-side
+ * once onboarding completes. */
+function estimateMaintenanceCaloriesPreview(
+  weightKg: number | null,
+  heightCm: number | null,
+  ageYears: number | null,
+  biologicalSex: "male" | "female" | "",
+  activityLevel: (typeof activityLevelOptions)[number],
+): number | null {
+  if (weightKg == null || heightCm == null || ageYears == null || !biologicalSex) return null;
+  const bmr =
+    biologicalSex === "female"
+      ? 10 * weightKg + 6.25 * heightCm - 5 * ageYears - 161
+      : 10 * weightKg + 6.25 * heightCm - 5 * ageYears + 5;
+  const activityMultiplier: Record<(typeof activityLevelOptions)[number], number> = {
+    sedentary: 1.2,
+    moderate: 1.55,
+    active: 1.725,
+  };
+  const estimate = Math.round(bmr * activityMultiplier[activityLevel]);
+  return Number.isFinite(estimate) ? estimate : null;
+}
+
 const BMI_SCALE_MIN = 12;
 const BMI_SCALE_MAX = 40;
 const BMI_GOOD_MIN = 18.5;
@@ -404,27 +461,21 @@ function bmiPositionPercent(bmi: number): number {
 }
 
 function goalLabel(goal: (typeof nutritionalGoalOptions)[number], locale: AppLocale): string {
-  if (goal === "maintenance") return tr(locale, "Maintenance", "שימור");
   if (goal === "weight_loss") return tr(locale, "Weight Loss", "ירידה במשקל");
-  if (goal === "muscle_hypertrophy") return tr(locale, "Muscle Hypertrophy", "היפרטרופיה");
-  if (goal === "body_recomposition") return tr(locale, "Body Recomposition", "הרכב גוף");
-  return tr(locale, "Athletic Performance", "ביצועים אתלטיים");
+  if (goal === "weight_gain") return tr(locale, "Weight Gain", "עלייה במשקל");
+  return tr(locale, "Maintain", "שימור");
 }
 
 function goalEnergyTarget(goal: (typeof nutritionalGoalOptions)[number], locale: AppLocale): string {
-  if (goal === "maintenance") return tr(locale, "100% of TDEE", "100% מ-TDEE");
   if (goal === "weight_loss") return tr(locale, "-15% to -25% TDEE", "15%- עד 25%- TDEE");
-  if (goal === "muscle_hypertrophy") return tr(locale, "+5% to +15% TDEE", "+5% עד +15% TDEE");
-  if (goal === "body_recomposition") return tr(locale, "0% to -10% TDEE", "0% עד 10%- TDEE");
-  return tr(locale, "+5% to +10% TDEE", "+5% עד +10% TDEE");
+  if (goal === "weight_gain") return tr(locale, "+5% to +15% TDEE", "+5% עד +15% TDEE");
+  return tr(locale, "100% of TDEE", "100% מ-TDEE");
 }
 
 function goalProteinRange(goal: (typeof nutritionalGoalOptions)[number]): string {
-  if (goal === "maintenance") return "1.2-1.6 g/kg";
   if (goal === "weight_loss") return "1.8-2.4 g/kg";
-  if (goal === "muscle_hypertrophy") return "1.6-2.2 g/kg";
-  if (goal === "body_recomposition") return "2.0-2.4 g/kg";
-  return "1.4-2.0 g/kg";
+  if (goal === "weight_gain") return "1.6-2.2 g/kg";
+  return "1.2-1.6 g/kg";
 }
 
 function normalizeServerField(field: string): string {
@@ -514,6 +565,10 @@ function createInitialDraft(
     smoking_packs_per_day: packsPerDayToCigarettesString(defaults?.smoking_packs_per_day),
     dietary_preference: defaults?.dietary_preference ?? "",
     additional_information: defaults?.additional_information ?? "",
+    has_allergies:
+      defaults?.has_allergies == null
+        ? ""
+        : (defaults.has_allergies ? "yes" : "no"),
     allergies: defaults?.allergies?.join(", ") ?? "",
     preferred_language: defaults?.preferred_language ?? locale,
     accept_ai_extraction: false,
@@ -563,6 +618,7 @@ function isValidDraft(value: unknown): value is OnboardingFormDraft {
     (candidate.dietary_preference === ""
       || dietaryPreferenceOptions.includes(candidate.dietary_preference as (typeof dietaryPreferenceOptions)[number])) &&
     typeof candidate.additional_information === "string" &&
+    (candidate.has_allergies === "yes" || candidate.has_allergies === "no" || candidate.has_allergies === "") &&
     typeof candidate.allergies === "string" &&
     (candidate.preferred_language === "en" || candidate.preferred_language === "he") &&
     typeof candidate.accept_ai_extraction === "boolean"
@@ -586,6 +642,7 @@ function SubmitButton({ locale, canSubmit }: { locale: AppLocale; canSubmit: boo
 export function OnboardingProfileForm({
   defaults,
   locale = "en",
+  startAtTargetsStep = false,
 }: OnboardingProfileFormProps) {
   const [state, formAction] = useActionState(
     saveOnboardingProfileAction,
@@ -626,7 +683,7 @@ export function OnboardingProfileForm({
       return initialDraft;
     }
   });
-  const [step, setStep] = useState<StepKey>(1);
+  const [step, setStep] = useState<StepKey>(startAtTargetsStep ? 5 : 1);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   // Warns before navigating away (nav bar links) once anything's changed
@@ -649,6 +706,14 @@ export function OnboardingProfileForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // saveOnboardingProfileAction used to redirect("/app") directly on
+  // success - now that step 5 (OnboardingTargetsStep) needs to render as
+  // part of this SAME wizard right after the profile saves, a server
+  // redirect would leave no chance for that. The action now just returns
+  // { success: true } and this advances the wizard's own step state
+  // instead of navigating away.
+  useAdvanceToTargetsStepEffect(state.success, setStep);
+
   const effectiveLocale = draft.preferred_language;
 
   const normalizedDateOfBirth = draft.date_of_birth;
@@ -660,6 +725,13 @@ export function OnboardingProfileForm({
   const isUnderweight = bmi != null && bmi < 18.5;
   const isHighBmi = bmi != null && bmi >= 35;
   const bmiState = bmi != null ? bmiStatus(bmi) : null;
+  const maintenanceCaloriesPreview = estimateMaintenanceCaloriesPreview(
+    weightKg,
+    heightCm,
+    ageYears,
+    draft.biological_sex,
+    draft.activity_level,
+  );
   const bmiPercent = bmi != null ? bmiPositionPercent(bmi) : null;
   const selectedExerciseModalities = getScheduledModalities(draft.exercise_modalities);
   const exerciseSummary = computeExerciseSummaryFromDraft(
@@ -820,7 +892,7 @@ export function OnboardingProfileForm({
   };
 
   const setYesNo = (
-    key: "has_medical_conditions" | "has_regular_medications" | "hot_climate_or_heavy_sweating",
+    key: "has_medical_conditions" | "has_regular_medications" | "hot_climate_or_heavy_sweating" | "has_allergies",
     value: "yes" | "no",
   ) => {
     if (key === "has_medical_conditions" && value === "no") {
@@ -829,6 +901,11 @@ export function OnboardingProfileForm({
         medical_conditions: [],
         medical_conditions_details: "",
       });
+      return;
+    }
+
+    if (key === "has_allergies" && value === "no") {
+      updateDraft({ has_allergies: "no", allergies: "" });
       return;
     }
 
@@ -948,11 +1025,11 @@ export function OnboardingProfileForm({
       if (!draft.nutritional_goal) {
         nextErrors.nutritional_goal = tr(effectiveLocale, "Select a nutritional goal.", "יש לבחור מטרה תזונתית.");
       }
-      if (isUnderweight && (draft.nutritional_goal === "weight_loss" || draft.nutritional_goal === "body_recomposition")) {
+      if (isUnderweight && draft.nutritional_goal === "weight_loss") {
         nextErrors.nutritional_goal = tr(
           effectiveLocale,
-          "Weight Loss and Body Recomposition are disabled for BMI below 18.5.",
-          "ירידה במשקל והרכב גוף מושבתים עבור BMI מתחת ל-18.5.",
+          "Weight Loss is disabled for BMI below 18.5.",
+          "ירידה במשקל מושבתת עבור BMI מתחת ל-18.5.",
         );
       }
     }
@@ -1012,10 +1089,22 @@ export function OnboardingProfileForm({
     }
 
     if (stepToValidate === 4) {
+      if (!draft.has_allergies) {
+        nextErrors.has_allergies = tr(effectiveLocale, "Choose Yes or No.", "יש לבחור כן או לא.");
+      }
+
       const allergyEntries = draft.allergies
         .split(",")
         .map((item) => item.trim())
         .filter(Boolean);
+
+      if (draft.has_allergies === "yes" && allergyEntries.length === 0) {
+        nextErrors.allergies = tr(
+          effectiveLocale,
+          "List at least one allergy, or choose 'No' above.",
+          "יש לרשום אלרגיה אחת לפחות, או לבחור 'לא' למעלה.",
+        );
+      }
 
       const invalidAllergy = allergyEntries.find((entry) => !validateAllergyEntry(entry).isMeaningful);
       if (invalidAllergy) {
@@ -1090,7 +1179,7 @@ export function OnboardingProfileForm({
   };
 
   const isGoalDisabled = (goal: (typeof nutritionalGoalOptions)[number]): boolean => {
-    return isUnderweight && (goal === "weight_loss" || goal === "body_recomposition");
+    return isUnderweight && goal === "weight_loss";
   };
 
   const showSedentaryHint = draft.activity_level === "sedentary";
@@ -1106,33 +1195,52 @@ export function OnboardingProfileForm({
   };
 
   return (
+    <>
+    {step < 5 ? (
+      // Only makes sense while there's still a profile to set up - step 5
+      // (OnboardingTargetsStep) has its own contextual copy once the
+      // profile is done and targets are being reviewed.
+      <p className="mt-3 text-sm text-slate-600 dark:text-slate-400">
+        {tr(
+          effectiveLocale,
+          "Let's set up your profile and your first daily targets - just a few minutes to get started.",
+          "בואו נגדיר את הפרופיל שלכם ואת היעדים היומיים הראשונים שלכם - רק כמה דקות כדי להתחיל.",
+        )}
+      </p>
+    ) : null}
     <form action={formAction} onSubmit={onSubmit} className="mt-6 space-y-5 pb-20">
       <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/60">
         <div className="text-sm font-medium text-slate-700 dark:text-slate-300">
-          {tr(effectiveLocale, `Step ${step} of 4`, `שלב ${step} מתוך 4`)}
+          {tr(effectiveLocale, `Step ${step} of 5`, `שלב ${step} מתוך 5`)}
         </div>
-        <div className="flex gap-1.5" data-field="preferred_language">
-          <button
-            type="button"
-            onClick={() => updateDraft({ preferred_language: "en", weight_unit: "lbs" })}
-            className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${draft.preferred_language === "en" ? "bg-slate-900 text-white dark:bg-slate-600" : "bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300"}`}
-          >
-            English
-          </button>
-          <button
-            type="button"
-            onClick={() => updateDraft({ preferred_language: "he", weight_unit: "kg" })}
-            className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${draft.preferred_language === "he" ? "bg-slate-900 text-white dark:bg-slate-600" : "bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300"}`}
-          >
-            עברית
-          </button>
-        </div>
+        {step === 1 ? (
+          // Language is a one-time choice made right at the start, not a
+          // setting to keep re-offering on every step - once step 1 is
+          // past, later steps just carry draft.preferred_language forward
+          // (still submitted via the hidden input below on every step).
+          <div className="flex gap-1.5" data-field="preferred_language">
+            <button
+              type="button"
+              onClick={() => updateDraft({ preferred_language: "en", weight_unit: "lbs" })}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${draft.preferred_language === "en" ? "bg-slate-900 text-white dark:bg-slate-600" : "bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300"}`}
+            >
+              English
+            </button>
+            <button
+              type="button"
+              onClick={() => updateDraft({ preferred_language: "he", weight_unit: "kg" })}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${draft.preferred_language === "he" ? "bg-slate-900 text-white dark:bg-slate-600" : "bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300"}`}
+            >
+              עברית
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
         <div
           className="h-full rounded-full bg-teal-600 transition-all"
-          style={{ width: `${(step / 4) * 100}%` }}
+          style={{ width: `${(step / 5) * 100}%` }}
         />
       </div>
 
@@ -1186,7 +1294,8 @@ export function OnboardingProfileForm({
       <input type="hidden" name="alcohol_consumption_level" value={draft.alcohol_consumption_level} />
       <input type="hidden" name="smoking_packs_per_day" value={cigarettesPerDayToPacksString(draft.smoking_packs_per_day)} />
       <input type="hidden" name="dietary_preference" value={draft.dietary_preference} />
-      <input type="hidden" name="allergies" value={draft.allergies} />
+      <input type="hidden" name="has_allergies" value={draft.has_allergies} />
+      <input type="hidden" name="allergies" value={draft.has_allergies === "yes" ? draft.allergies : ""} />
       <input
         type="hidden"
         name="additional_information"
@@ -1207,6 +1316,13 @@ export function OnboardingProfileForm({
       {step === 1 ? (
         <section className="space-y-4">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{tr(effectiveLocale, "Identity & Vital Statistics", "זהות ומדדים בסיסיים")}</h2>
+          <p className="text-sm text-slate-600 dark:text-slate-400">
+            {tr(
+              effectiveLocale,
+              "A few basics so we can calculate your daily needs accurately.",
+              "כמה פרטים בסיסיים כדי שנוכל לחשב את הצרכים היומיים שלך במדויק.",
+            )}
+          </p>
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block" data-field="first_name">
               <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "First name", "שם פרטי")}</span>
@@ -1445,6 +1561,13 @@ export function OnboardingProfileForm({
       {step === 2 ? (
         <section className="space-y-4">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{tr(effectiveLocale, "Lifestyle & Physical Activity", "אורח חיים ופעילות")}</h2>
+          <p className="text-sm text-slate-600 dark:text-slate-400">
+            {tr(
+              effectiveLocale,
+              "How you move and what you're aiming for shape the whole plan - this is where it starts taking real shape.",
+              "איך אתם זזים ולאן אתם שואפים מעצבים את כל התכנית - כאן היא מתחילה לקבל צורה אמיתית.",
+            )}
+          </p>
 
           <div data-field="activity_level">
             <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Daily activity level", "רמת פעילות יומית")}</span>
@@ -1460,6 +1583,16 @@ export function OnboardingProfileForm({
             </select>
             {renderFieldError("activity_level")}
           </div>
+
+          {maintenanceCaloriesPreview != null ? (
+            <p className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-xs text-teal-800 dark:border-teal-800 dark:bg-teal-950/30 dark:text-teal-400">
+              {tr(
+                effectiveLocale,
+                `Based on what you've entered so far, your estimated maintenance is about ${maintenanceCaloriesPreview} kcal/day - your actual targets will refine this once your full profile is ready.`,
+                `לפי מה שהזנתם עד כה, אחזקת האנרגיה המוערכת שלכם היא כ-${maintenanceCaloriesPreview} קק"ל ליום - היעדים המדויקים שלכם יחדדו את זה לאחר השלמת הפרופיל.`,
+              )}
+            </p>
+          ) : null}
 
           <div data-field="exercise_modalities">
             <span className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Exercise modality", "סוג אימון")}</span>
@@ -1651,11 +1784,8 @@ export function OnboardingProfileForm({
                     <p className="font-semibold text-slate-900 dark:text-slate-100">{goalLabel(goal, effectiveLocale)}</p>
                     <p className="mt-1 text-slate-600 dark:text-slate-400">{goalEnergyTarget(goal, effectiveLocale)}</p>
                     <p className="text-slate-600 dark:text-slate-400">{goalProteinRange(goal)}</p>
-                    {showSedentaryHint && goal === "muscle_hypertrophy" ? (
-                      <p className="mt-1 text-amber-700 dark:text-amber-400">{tr(effectiveLocale, "Hypertrophy requires structured resistance training.", "היפרטרופיה דורשת אימון התנגדות מובנה.")}</p>
-                    ) : null}
-                    {showSedentaryHint && goal === "athletic_performance" ? (
-                      <p className="mt-1 text-amber-700 dark:text-amber-400">{tr(effectiveLocale, "Athletic performance targets active training lifestyles.", "ביצועים אתלטיים מיועדים לאורח חיים פעיל.")}</p>
+                    {showSedentaryHint && goal === "weight_gain" ? (
+                      <p className="mt-1 text-amber-700 dark:text-amber-400">{tr(effectiveLocale, "Weight gain works best alongside structured resistance training.", "עלייה במשקל עובדת בצורה הטובה ביותר יחד עם אימוני התנגדות מובנים.")}</p>
                     ) : null}
                   </button>
                 );
@@ -1667,18 +1797,18 @@ export function OnboardingProfileForm({
               <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400">
                 {tr(
                   effectiveLocale,
-                  "Weight Loss and Recomposition are disabled because your calculated BMI is under 18.5. We recommend Maintenance or Hypertrophy.",
-                  "ירידה במשקל והרכב גוף מושבתים כי BMI נמוך מ-18.5. מומלץ שימור או היפרטרופיה.",
+                  "Weight Loss is disabled because your calculated BMI is under 18.5. We recommend Maintain or Weight Gain.",
+                  "ירידה במשקל מושבתת כי BMI נמוך מ-18.5. מומלץ שימור או עלייה במשקל.",
                 )}
               </p>
             ) : null}
 
-            {isHighBmi && selectedGoal === "muscle_hypertrophy" ? (
+            {isHighBmi && selectedGoal === "weight_gain" ? (
               <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400">
                 {tr(
                   effectiveLocale,
-                  "Caloric surplus may not be recommended at your current BMI. Body Recomposition or Weight Loss is typically advised.",
-                  "עודף קלורי עשוי לא להתאים ל-BMI הנוכחי. בדרך כלל מומלץ הרכב גוף או ירידה במשקל.",
+                  "Caloric surplus may not be recommended at your current BMI. Maintain or Weight Loss is typically advised.",
+                  "עודף קלורי עשוי לא להתאים ל-BMI הנוכחי. בדרך כלל מומלץ שימור או ירידה במשקל.",
                 )}
               </p>
             ) : null}
@@ -1689,6 +1819,13 @@ export function OnboardingProfileForm({
       {step === 3 ? (
         <section className="space-y-4">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{tr(effectiveLocale, "Medical & Physiological Status", "מצב רפואי ופיזיולוגי")}</h2>
+          <p className="text-sm text-slate-600 dark:text-slate-400">
+            {tr(
+              effectiveLocale,
+              "This is what keeps your targets safe and realistic - every field here needs an answer, even if it's \"none.\"",
+              "זה מה ששומר על היעדים שלכם בטוחים ומציאותיים - כל שדה כאן דורש מענה, גם אם התשובה היא \"אין\".",
+            )}
+          </p>
 
           {draft.biological_sex === "female" ? (
             <div data-field="pregnancy_lactation_status">
@@ -1885,12 +2022,26 @@ export function OnboardingProfileForm({
 
             {renderFieldError("habits")}
           </div>
+
+          {/* The document-upload card renders as a sibling AFTER this
+             outer <form> closes (see below, gated on the same step === 3
+             check) - DocumentUploadForm has its own <form>, and a <form>
+             can't nest inside another <form> without breaking HTML
+             validity (and, on real browsers, silently detaching the
+             wizard's own Back/Next/Submit buttons from this form). */}
         </section>
       ) : null}
 
       {step === 4 ? (
         <section className="space-y-4">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{tr(effectiveLocale, "Dietary Profile & Context", "פרופיל תזונתי והקשר")}</h2>
+          <p className="text-sm text-slate-600 dark:text-slate-400">
+            {tr(
+              effectiveLocale,
+              "Last step - right after this, your AI coach will put together your first daily targets.",
+              "השלב האחרון - מיד לאחר מכן, מאמן ה-AI שלכם יכין עבורכם את היעדים היומיים הראשונים.",
+            )}
+          </p>
 
           <div data-field="dietary_preference">
             <span className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Dietary preference", "העדפה תזונתית")}</span>
@@ -1903,7 +2054,11 @@ export function OnboardingProfileForm({
                       ? tr(effectiveLocale, "Vegetarian", "צמחוני")
                       : value === "vegan"
                         ? tr(effectiveLocale, "Vegan", "טבעוני")
-                        : tr(effectiveLocale, "Low-Carb / Keto", "דל פחמימה / קטו");
+                        : value === "low_carb_keto"
+                          ? tr(effectiveLocale, "Low-Carb / Keto", "דל פחמימה / קטו")
+                          : value === "kosher"
+                            ? tr(effectiveLocale, "Kosher", "כשר")
+                            : tr(effectiveLocale, "Gluten-Free", "ללא גלוטן");
                 const selected = draft.dietary_preference === value;
 
                 return (
@@ -1921,25 +2076,36 @@ export function OnboardingProfileForm({
             {renderFieldError("dietary_preference")}
           </div>
 
-          <label className="block" data-field="allergies">
-            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Allergies (optional)", "אלרגיות (אופציונלי)")}</span>
-            <input
-              type="text"
-              name="allergies"
-              value={draft.allergies}
-              onChange={(event) => updateDraft({ allergies: event.target.value })}
-              placeholder={tr(effectiveLocale, "e.g., peanuts, shellfish", "לדוגמה: בוטנים, רכיכות")}
-              className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("allergies")}`}
-            />
-            <p className="mt-1 text-xs text-slate-500">
-              {tr(
-                effectiveLocale,
-                "Use real allergy names. Typos are okay, random text is not.",
-                "יש להזין שמות אלרגיה אמיתיים. שגיאות כתיב נסבלות, טקסט אקראי לא.",
-              )}
-            </p>
-            {renderFieldError("allergies")}
-          </label>
+          <div data-field="has_allergies">
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Allergies", "אלרגיות")}</span>
+            <div className="flex gap-3 text-sm">
+              <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_allergies === "yes" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_allergies" value="yes" checked={draft.has_allergies === "yes"} onChange={() => setYesNo("has_allergies", "yes")} /> {tr(effectiveLocale, "Yes", "כן")}</label>
+              <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.has_allergies === "no" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}><input className="h-4 w-4 accent-teal-700" type="radio" name="has_allergies" value="no" checked={draft.has_allergies === "no"} onChange={() => setYesNo("has_allergies", "no")} /> {tr(effectiveLocale, "No", "לא")}</label>
+            </div>
+            {renderFieldError("has_allergies")}
+            <div
+              className={`overflow-hidden transition-all duration-300 ${draft.has_allergies === "yes" ? "mt-3 max-h-[300px] opacity-100" : "max-h-0 opacity-0"}`}
+            >
+              <label className="block" data-field="allergies">
+                <input
+                  type="text"
+                  name="allergies"
+                  value={draft.allergies}
+                  onChange={(event) => updateDraft({ allergies: event.target.value })}
+                  placeholder={tr(effectiveLocale, "e.g., peanuts, shellfish", "לדוגמה: בוטנים, רכיכות")}
+                  className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("allergies")}`}
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  {tr(
+                    effectiveLocale,
+                    "Use real allergy names. Typos are okay, random text is not.",
+                    "יש להזין שמות אלרגיה אמיתיים. שגיאות כתיב נסבלות, טקסט אקראי לא.",
+                  )}
+                </p>
+                {renderFieldError("allergies")}
+              </label>
+            </div>
+          </div>
 
           <label className="block" data-field="additional_information">
             <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Additional information", "מידע נוסף")}</span>
@@ -1984,6 +2150,12 @@ export function OnboardingProfileForm({
         </section>
       ) : null}
 
+      {step === 5 ? (
+        <section>
+          <OnboardingTargetsStep locale={effectiveLocale} firstName={draft.first_name} userGender={draft.biological_sex || null} />
+        </section>
+      ) : null}
+
       {state.error && !state.fieldErrors?.length ? (
         <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-400">
           {state.error}
@@ -1996,30 +2168,65 @@ export function OnboardingProfileForm({
         </p>
       ) : null}
 
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 px-6 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95">
-        <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-2">
-          <button
-            type="button"
-            disabled={step === 1}
-            onClick={() => setStep((step - 1) as StepKey)}
-            className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-300"
-          >
-            {tr(effectiveLocale, "Back", "חזרה")}
-          </button>
-
-          {step < 4 ? (
+      {step < 5 ? (
+        // Step 5 (OnboardingTargetsStep) has its own inline "Complete
+        // onboarding" action - this Back/Next/Submit bar is for the
+        // plain form-field steps only. No Back on step 5 either: the
+        // profile is already saved server-side by the time it renders,
+        // and Daffy's chat there is the mechanism for changing anything,
+        // not re-editing earlier steps.
+        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 px-6 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95">
+          <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-2">
             <button
               type="button"
-              onClick={() => goToStep((step + 1) as StepKey)}
-              className="rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+              disabled={step === 1}
+              onClick={() => setStep((step - 1) as StepKey)}
+              className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-300"
             >
-              {tr(effectiveLocale, "Next", "הבא")}
+              {tr(effectiveLocale, "Back", "חזרה")}
             </button>
-          ) : (
-            <SubmitButton locale={effectiveLocale} canSubmit={draft.accept_ai_extraction} />
-          )}
+
+            {step < 4 ? (
+              <button
+                type="button"
+                onClick={() => goToStep((step + 1) as StepKey)}
+                className="rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+              >
+                {tr(effectiveLocale, "Next", "הבא")}
+              </button>
+            ) : (
+              <SubmitButton locale={effectiveLocale} canSubmit={draft.accept_ai_extraction} />
+            )}
+          </div>
+        </div>
+      ) : null}
+    </form>
+
+    {step === 3 ? (
+      // Rendered here, as a sibling AFTER the wizard's own <form> closes
+      // above, rather than inside step 3's <section> - DocumentUploadForm
+      // has its own <form>, and a <form> can't validly nest inside
+      // another one (browsers silently detach descendant submit buttons
+      // from the wrong form when that happens, breaking the wizard's own
+      // Back/Next/Submit). It still renders in the same visual position:
+      // every OTHER step is hidden while step 3 is active, so this is the
+      // next (and only) visible thing right below step 3's own content.
+      <div className="mt-4 space-y-4 pb-20">
+        <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
+          <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+            {tr(effectiveLocale, "Medical documents (optional)", "מסמכים רפואיים (אופציונלי)")}
+          </span>
+          <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
+            {tr(
+              effectiveLocale,
+              "A recent lab result or report helps your AI coach factor in things like blood markers. This uploads and processes on its own - feel free to keep going without waiting for it.",
+              "תוצאת בדיקת מעבדה או דוח רפואי עדכני עוזרים למאמן ה-AI שלכם לקחת בחשבון דברים כמו סמנים בדם. ההעלאה והעיבוד מתבצעים באופן עצמאי - אפשר להמשיך הלאה בלי להמתין.",
+            )}
+          </p>
+          <DocumentUploadForm locale={effectiveLocale} />
         </div>
       </div>
-    </form>
+    ) : null}
+    </>
   );
 }

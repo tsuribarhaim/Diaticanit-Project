@@ -36,7 +36,20 @@ export function trGendered(
   return gender === "female" ? heFemale : heMale;
 }
 
-export function formatDateTimeForLocale(value: Date | string, locale: AppLocale): string {
+/**
+ * `timeZone` is optional and deliberately so: omitted, `Intl.DateTimeFormat`
+ * falls back to the runtime's own local timezone - correct when called from
+ * the browser (the visitor's real timezone), wrong when called from a
+ * server component (Vercel's runtime is UTC, not the visitor's timezone).
+ * Confirmed against real data: a report saved at 13:13 Israel time is
+ * stored correctly as 10:13 UTC, but a server-rendered page with no
+ * `timeZone` printed "10:13" as if that were the local time. Pass the
+ * browser's real timezone (see useLocalTimeZone in lib/use-viewport.ts,
+ * and the LocalTime/LocalDateTime client components in
+ * components/local-time.tsx) from anywhere a timestamp - not a plain
+ * calendar date - is actually shown to a user.
+ */
+export function formatDateTimeForLocale(value: Date | string, locale: AppLocale, timeZone?: string): string {
   const date = typeof value === "string" ? new Date(value) : value;
   if (Number.isNaN(date.getTime())) {
     return "n/a";
@@ -45,13 +58,15 @@ export function formatDateTimeForLocale(value: Date | string, locale: AppLocale)
   return new Intl.DateTimeFormat(localeTag(locale), {
     dateStyle: "medium",
     timeStyle: "short",
+    timeZone,
   }).format(date);
 }
 
 /** Time only, no date - for rows already grouped under a single day's
  * heading (e.g. the Daily Report entries feed), where repeating the full
- * date on every row would be redundant. */
-export function formatTimeForLocale(value: Date | string, locale: AppLocale): string {
+ * date on every row would be redundant. See formatDateTimeForLocale's own
+ * comment on the `timeZone` parameter. */
+export function formatTimeForLocale(value: Date | string, locale: AppLocale, timeZone?: string): string {
   const date = typeof value === "string" ? new Date(value) : value;
   if (Number.isNaN(date.getTime())) {
     return "n/a";
@@ -59,10 +74,20 @@ export function formatTimeForLocale(value: Date | string, locale: AppLocale): st
 
   return new Intl.DateTimeFormat(localeTag(locale), {
     timeStyle: "short",
+    timeZone,
   }).format(date);
 }
 
-export function formatDateForLocale(value: Date | string, locale: AppLocale): string {
+/**
+ * A bare `YYYY-MM-DD` string (e.g. a date of birth) names a calendar day
+ * directly, not an instant in time - unlike formatDateTimeForLocale/
+ * formatTimeForLocale, there's no timezone conversion to get right or
+ * wrong for that case, so `timeZone` below is only ever applied to an
+ * actual timestamp (a Date instance, or a full ISO string with a
+ * time-of-day component).
+ */
+export function formatDateForLocale(value: Date | string, locale: AppLocale, timeZone?: string): string {
+  const isDateOnlyString = typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
   const date = typeof value === "string"
     ? (() => {
       const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -80,11 +105,18 @@ export function formatDateForLocale(value: Date | string, locale: AppLocale): st
     return "n/a";
   }
 
-  const day = String(date.getDate()).padStart(2, "0");
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const year = String(date.getFullYear());
+  const effectiveTimeZone = isDateOnlyString ? undefined : timeZone;
 
   if (locale === "he") {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      timeZone: effectiveTimeZone,
+    }).formatToParts(date);
+    const day = parts.find((part) => part.type === "day")?.value ?? "";
+    const month = parts.find((part) => part.type === "month")?.value ?? "";
+    const year = parts.find((part) => part.type === "year")?.value ?? "";
     return `${day}/${month}/${year}`;
   }
 
@@ -92,6 +124,7 @@ export function formatDateForLocale(value: Date | string, locale: AppLocale): st
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
+    timeZone: effectiveTimeZone,
   }).format(date);
 }
 

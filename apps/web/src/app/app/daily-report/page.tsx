@@ -13,6 +13,7 @@ import { DailyReportForm } from "@/components/daily-report-form";
 import { DailyReportPageNotice } from "@/components/daily-report-page-notice";
 import { DailyReportGoalBars, type RingMetric } from "@/components/daily-report-goal-bars";
 import { DailyReportWeightTrend, type WeightPoint } from "@/components/daily-report-weight-trend";
+import { LocalTime } from "@/components/local-time";
 import {
   CHART_CORE_METRIC_IDS,
   CHART_EXTRA_METRIC_IDS,
@@ -24,7 +25,7 @@ import { resolveUserGenderForAddressing } from "@/lib/ai/persona";
 import { getDailyReportTotalsForRange } from "@/lib/daily-report";
 import { normalizeUserTargetsJson } from "@/lib/targets";
 import { getAiExtractionConfig } from "@/lib/ai/env";
-import { formatDateForLocale, formatDefaultUnit, formatMeasurementUnit, formatNumberForLocale, formatTimeForLocale, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
+import { formatDateForLocale, formatDefaultUnit, formatMeasurementUnit, formatNumberForLocale, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -1230,7 +1231,7 @@ export default async function DailyReportPage({
                       <div className="flex items-center justify-between gap-3">
                         <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                           <span dir="ltr" className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                            {formatTimeForLocale(report.report_at, locale)}
+                            <LocalTime value={report.report_at} locale={locale} />
                           </span>
                           {isBeingEdited ? (
                             <span className="rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-semibold text-teal-800 dark:bg-teal-900/50 dark:text-teal-300">

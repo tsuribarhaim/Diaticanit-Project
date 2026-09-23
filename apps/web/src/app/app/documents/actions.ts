@@ -1969,15 +1969,21 @@ export async function requestExtractionAction(formData: FormData): Promise<void>
 }
 
 const MAX_MEDICAL_CONTEXT_CHARS = 6000;
-const MAX_COMPONENTS_PER_DOCUMENT = 30;
 
 /**
  * Builds a compact text summary of the user's uploaded medical documents for
  * inclusion in the target-generation AI prompt: auto-triggers extraction for
- * any document that hasn't been extracted yet, then formats each document's
- * extracted findings (with whatever dating info is available) so the model
- * can judge relevance/validity itself rather than the app pre-filtering.
- * Returns null when the user has no usable extracted document data.
+ * any document that hasn't been extracted yet, then formats each document
+ * down to its own summary_bullets/summary_overall_status only - NOT the
+ * full itemized extracted_components list (every individual lab value,
+ * reference range, and status) this used to also send. That per-component
+ * detail was real medical data leaving the app on every single targets
+ * generation/adjustment call, for no benefit the summary alone doesn't
+ * already cover for this specific use (nudging calorie/macro/micronutrient
+ * targets) - a deliberate data-minimization change, not just a prompt-size
+ * one, though it also shrinks the prompt meaningfully for documents with
+ * many components. Returns null when the user has no usable extracted
+ * document data.
  */
 export async function prepareMedicalContextForTargets({
   supabase,
@@ -2008,7 +2014,7 @@ export async function prepareMedicalContextForTargets({
   const documentIds = documents.map((doc) => doc.id);
   const { data: reports, error: reportsError } = await supabase
     .from("extracted_reports")
-    .select("id, document_id, summary_bullets, summary_overall_status, extracted_at")
+    .select("document_id, summary_bullets, summary_overall_status, extracted_at")
     .eq("user_id", userId)
     .in("document_id", documentIds)
     .in("status", ["extracted", "needs_review"])
@@ -2026,21 +2032,6 @@ export async function prepareMedicalContextForTargets({
     }
   }
   const latestReports = Array.from(latestReportByDocument.values());
-  const reportIds = latestReports.map((report) => report.id);
-
-  const { data: components } = await supabase
-    .from("extracted_components")
-    .select("report_id, category, component_name, measured_value, unit, reference_min, reference_max, status, observed_at")
-    .in("report_id", reportIds);
-
-  const componentsByReport = new Map<string, typeof components>();
-  for (const component of components ?? []) {
-    const list = componentsByReport.get(component.report_id) ?? [];
-    if (list.length < MAX_COMPONENTS_PER_DOCUMENT) {
-      list.push(component);
-    }
-    componentsByReport.set(component.report_id, list);
-  }
 
   const documentById = new Map(documents.map((doc) => [doc.id, doc]));
   const blocks: string[] = [];
@@ -2049,32 +2040,24 @@ export async function prepareMedicalContextForTargets({
     const doc = documentById.get(report.document_id);
     if (!doc) continue;
 
-    const reportComponents = componentsByReport.get(report.id) ?? [];
     const lines = [
       `Document: "${doc.file_name}" (category: ${doc.category}, uploaded: ${doc.created_at?.slice(0, 10) ?? "unknown"})`,
     ];
+
+    if (report.summary_overall_status) {
+      lines.push(`Overall status: ${report.summary_overall_status}`);
+    }
 
     if (report.summary_bullets?.length) {
       lines.push(`Summary: ${report.summary_bullets.join("; ")}`);
     }
 
-    if (reportComponents.length) {
-      lines.push("Findings:");
-      for (const component of reportComponents) {
-        const refRange =
-          component.reference_min || component.reference_max
-            ? ` (reference ${component.reference_min ?? "?"}-${component.reference_max ?? "?"})`
-            : "";
-        const observed = component.observed_at
-          ? `observed ${component.observed_at.slice(0, 10)}`
-          : `no report date found, upload date is the only available proxy`;
-        lines.push(
-          `- ${component.component_name}: ${component.measured_value ?? "?"} ${component.unit ?? ""}${refRange}, status ${component.status} (${observed})`,
-        );
-      }
+    // Only push a block when there's an actual summary to show - a
+    // document with neither field populated has nothing left to say now
+    // that the full component list is gone.
+    if (lines.length > 1) {
+      blocks.push(lines.join("\n"));
     }
-
-    blocks.push(lines.join("\n"));
   }
 
   if (!blocks.length) {

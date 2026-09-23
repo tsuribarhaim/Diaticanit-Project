@@ -70,33 +70,41 @@ export function AppNav({
           </GuardedLink>
         ))}
 
-        <GuardedLink
-          href="/app/notifications"
-          confirmMessage={tr(locale, CONFIRM_MESSAGE_EN, CONFIRM_MESSAGE_HE)}
-          aria-label={tr(locale, "Notifications", "התראות")}
-          className={`relative ms-auto flex items-center rounded-lg px-3 py-2 text-sm font-medium ${
-            pathname?.startsWith("/app/notifications")
-              ? "bg-teal-700 text-white dark:bg-teal-600"
-              : "text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-          }`}
-        >
-          {tr(locale, "Notifications", "התראות")}
-          {notificationCount ? (
+        {/* Only shown at all while there's something pending - with
+            nothing unread/unresolved, this would just be a static
+            "Notifications" link taking up nav space for an empty page;
+            the Profile page's own always-available Notifications row (see
+            profile/page.tsx) is the way in once this disappears. */}
+        {notificationCount ? (
+          <GuardedLink
+            href="/app/notifications"
+            confirmMessage={tr(locale, CONFIRM_MESSAGE_EN, CONFIRM_MESSAGE_HE)}
+            aria-label={tr(locale, "Notifications", "התראות")}
+            className={`relative ms-auto flex items-center rounded-lg px-3 py-2 text-sm font-medium ${
+              pathname?.startsWith("/app/notifications")
+                ? "bg-teal-700 text-white dark:bg-teal-600"
+                : "text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+            }`}
+          >
+            {tr(locale, "Notifications", "התראות")}
             <span className="ms-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[11px] font-bold text-white">
               {notificationCount > 9 ? "9+" : notificationCount}
             </span>
-          ) : null}
-        </GuardedLink>
+          </GuardedLink>
+        ) : null}
 
         {/* "Which account is this" at a glance on every page - separate from
             the "Profile" nav link above (which still goes to the same
             place), the way most apps keep a persistent account avatar
-            distinct from an in-list nav entry. */}
+            distinct from an in-list nav entry. Picks up ms-auto itself
+            whenever the notifications link above isn't rendered, so the
+            avatar/sign-out group still gets pushed to the far end either
+            way. */}
         <GuardedLink
           href="/app/profile"
           confirmMessage={tr(locale, CONFIRM_MESSAGE_EN, CONFIRM_MESSAGE_HE)}
           aria-label={tr(locale, "Profile", "פרופיל")}
-          className="flex items-center rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+          className={`flex items-center rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 ${notificationCount ? "" : "ms-auto"}`}
         >
           <UserAvatar avatarColor={avatarColor} name={name} className="h-8 w-8 text-xs" />
         </GuardedLink>

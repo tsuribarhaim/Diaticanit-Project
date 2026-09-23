@@ -14,7 +14,10 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#317091",
+  // Matches the app's own primary teal (bg-teal-700, used for every main
+  // action button) and the new logo's mint-teal badge - the old blue
+  // (#317091) was left over from a prior logo and didn't match either.
+  themeColor: "#0f766e",
   viewportFit: "cover",
 };
 

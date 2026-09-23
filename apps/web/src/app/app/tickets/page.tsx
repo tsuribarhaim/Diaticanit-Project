@@ -1,21 +1,13 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { AdminTicketsTable } from "@/components/admin-tickets-table";
 import { CancelTicketDialog } from "@/components/cancel-ticket-dialog";
 import { formatDateForLocale, formatTicketStatus, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
-import { isCancellableTicketStatus, type TicketStatus } from "@/lib/tickets";
+import { isCancellableTicketStatus, isCurrentUserAdmin, ticketStatusBadgeClass, type TicketStatus } from "@/lib/tickets";
 
 export const dynamic = "force-dynamic";
-
-function statusBadgeClass(status: TicketStatus): string {
-  if (status === "open") return "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-800 dark:bg-sky-950/30 dark:text-sky-400";
-  if (status === "in_progress" || status === "reopened")
-    return "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400";
-  if (status === "resolved")
-    return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-400";
-  return "border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300";
-}
 
 export default async function TicketsPage({ searchParams }: { searchParams: Promise<{ notice?: string }> }) {
   const resolvedSearchParams = await searchParams;
@@ -32,14 +24,53 @@ export default async function TicketsPage({ searchParams }: { searchParams: Prom
     (await supabase.from("user_profile").select("preferred_language").eq("user_id", user.id).maybeSingle()).data?.preferred_language,
   );
 
-  const { data: tickets, error } = await supabase
+  const isAdmin = await isCurrentUserAdmin(supabase, user.id);
+
+  // Admins see every user's tickets (RLS's own tickets_select_admin policy
+  // already allows this - see db/migrations/048_phase22_ticket_admin.sql);
+  // a plain user's query stays scoped to their own, exactly as before.
+  let ticketsQuery = supabase
     .from("tickets")
-    .select("id, ticket_seq, subject, status, created_at")
-    .eq("created_by", user.id)
+    .select("id, ticket_seq, subject, status, created_at, ticket_type, area, priority, created_by")
     .order("created_at", { ascending: false });
+  if (!isAdmin) {
+    ticketsQuery = ticketsQuery.eq("created_by", user.id);
+  }
+  const { data: tickets, error } = await ticketsQuery;
 
   if (error) {
     throw new Error(error.message);
+  }
+
+  // Ticket rows only carry created_by (a bare user id) - resolving that to
+  // a display name means a second query against user_profile, since
+  // tickets.created_by and user_profile.user_id both reference auth.users
+  // independently rather than each other (no FK PostgREST could embed
+  // through directly). Only fetched for admins - a plain user's own
+  // tickets are all theirs, so a "submitted by" name would be redundant.
+  let userNamesById = new Map<string, string>();
+  if (isAdmin && tickets && tickets.length > 0) {
+    const creatorIds = [...new Set(tickets.map((ticket) => ticket.created_by))];
+    const { data: creators } = await supabase.from("user_profile").select("user_id, first_name, last_name").in("user_id", creatorIds);
+    userNamesById = new Map(
+      (creators ?? []).map((row) => [row.user_id, [row.first_name, row.last_name].filter(Boolean).join(" ") || row.user_id]),
+    );
+  }
+
+  if (isAdmin) {
+    return (
+      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 py-10">
+        <AdminTicketsTable
+          locale={locale}
+          tickets={(tickets ?? []).map((ticket) => ({
+            ...ticket,
+            status: ticket.status as TicketStatus,
+            userName: userNamesById.get(ticket.created_by) ?? ticket.created_by,
+          }))}
+          notice={resolvedSearchParams.notice ? true : false}
+        />
+      </main>
+    );
   }
 
   return (
@@ -93,7 +124,7 @@ export default async function TicketsPage({ searchParams }: { searchParams: Prom
                     </td>
                     <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">{formatDateForLocale(ticket.created_at, locale)}</td>
                     <td className="py-3 pe-3">
-                      <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${statusBadgeClass(ticket.status as TicketStatus)}`}>
+                      <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${ticketStatusBadgeClass(ticket.status as TicketStatus)}`}>
                         {formatTicketStatus(ticket.status, locale)}
                       </span>
                     </td>

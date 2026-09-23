@@ -97,7 +97,11 @@ export function ProfileRow({
 }: {
   label: string;
   value?: string;
-  caption?: string;
+  /** Usually a plain translated string - ReactNode only so a caller can
+   * embed a client-rendered value (e.g. LocalDateTime, for a timestamp
+   * that needs the visitor's own timezone - see local-time.tsx) inside an
+   * otherwise-static sentence. */
+  caption?: ReactNode;
   onClick?: () => void;
   href?: string;
   disabled?: boolean;

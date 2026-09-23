@@ -1,3 +1,5 @@
+import type { createClient } from "@/lib/supabase/server";
+
 /** Support ticket types/constants shared between the server actions and
  * client forms (see docs/design/user-support-tickets-design.md). Mirrors
  * the tickets table's own check constraints (db/migrations/
@@ -51,6 +53,21 @@ export function isCancellableTicketStatus(status: string): boolean {
   return (CANCELLABLE_TICKET_STATUSES as readonly string[]).includes(status);
 }
 
+/** Shared between the plain ticket list's static badge and the admin
+ * status dropdown's own pill styling (see components/admin-status-
+ * dropdown.tsx) - one status-to-color mapping, not two copies that could
+ * drift apart. */
+export function ticketStatusBadgeClass(status: TicketStatus): string {
+  if (status === "open") return "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-800 dark:bg-sky-950/30 dark:text-sky-400";
+  if (status === "in_progress" || status === "reopened")
+    return "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400";
+  if (status === "resolved")
+    return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-400";
+  if (status === "cancelled")
+    return "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-400";
+  return "border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300";
+}
+
 export type TicketAttachment = {
   storagePath: string;
   fileName: string;
@@ -78,3 +95,17 @@ export type TicketDetail = TicketListRow & {
   fix_description: string | null;
   resolved_at: string | null;
 };
+
+/** Mirrors the is_admin() SQL function used in the tickets_select_admin/
+ * tickets_update_admin RLS policies (db/migrations/
+ * 048_phase22_ticket_admin.sql) - this is only ever used to decide what
+ * the UI shows (an extra column, filters, a free status dropdown); RLS is
+ * still the real enforcement boundary underneath every query and update
+ * this flag gates in the UI. */
+export async function isCurrentUserAdmin(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+): Promise<boolean> {
+  const { data } = await supabase.from("user_profile").select("is_admin").eq("user_id", userId).maybeSingle();
+  return Boolean(data?.is_admin);
+}

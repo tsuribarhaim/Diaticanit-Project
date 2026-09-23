@@ -16,7 +16,10 @@ export default function manifest(): MetadataRoute.Manifest {
     start_url: "/app",
     display: "standalone",
     background_color: "#f8fafc",
-    theme_color: "#317091",
+    // Matches the app's own primary teal (bg-teal-700) and the new logo's
+    // mint-teal badge - see layout.tsx's viewport.themeColor for the same
+    // change, applied there too since browsers read theme color from both.
+    theme_color: "#0f766e",
     icons: [
       { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
       { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
