@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { flagTargetsReviewPendingAction } from "@/app/app/actions";
 import { tr, type AppLocale } from "@/lib/locale";
 import type { ProfileDiffRow } from "@/lib/targets";
 
@@ -17,6 +17,14 @@ import type { ProfileDiffRow } from "@/lib/targets";
  * logged weight syncing back to the profile). Styled like the "Notice"
  * modal already used for the navigate-away guard, for visual consistency.
  *
+ * OK doesn't navigate anywhere (ticket #10) - an earlier version offered
+ * "Go to Targets", which used to kick off an automatic background review
+ * that no longer exists in the redesigned Targets page, making that button
+ * a promise the app didn't keep. OK now just flags the change
+ * (flagTargetsReviewPendingAction) so Daffy raises it herself the next
+ * time the Targets chat opens (see plan-actions.ts) - a single
+ * acknowledgement instead of an unkept "go check now."
+ *
  * Stays open until the user explicitly dismisses it, never automatically -
  * see the note on the Profile Edit page's use of onDismiss for a bug this
  * caused previously when dismissal was tied to a URL change instead.
@@ -28,24 +36,24 @@ export function TargetsStaleModal({
 }: {
   locale: AppLocale;
   changes: ProfileDiffRow[];
-  /** When set, dismissing via "Got it" also replaces the URL with this
-   * path (client-side, no full navigation) - Profile Edit passes its own
-   * pathname to strip the query param that triggers this modal in the
-   * first place (see profile/page.tsx), since a plain string is what can
-   * cross the server/client boundary from that Server Component (a
-   * function prop can't). Daily Report omits this entirely: it has no
-   * such param, and visibility there is already driven by the save
-   * action's own result, not the URL - an earlier version of this
-   * component stripped /app/profile unconditionally on dismiss, which
-   * would have navigated Daily Report users away just for closing the
-   * modal. */
+  /** When set, dismissing also replaces the URL with this path (client-
+   * side, no full navigation) - Profile Edit passes its own pathname to
+   * strip the query param that triggers this modal in the first place
+   * (see profile/page.tsx), since a plain string is what can cross the
+   * server/client boundary from that Server Component (a function prop
+   * can't). Daily Report omits this entirely: it has no such param, and
+   * visibility there is already driven by the save action's own result,
+   * not the URL - an earlier version of this component stripped
+   * /app/profile unconditionally on dismiss, which would have navigated
+   * Daily Report users away just for closing the modal. */
   dismissHref?: string;
 }) {
   const [isOpen, setIsOpen] = useState(true);
   const router = useRouter();
 
-  function dismiss() {
+  function acknowledge() {
     setIsOpen(false);
+    void flagTargetsReviewPendingAction(changes);
     if (dismissHref) {
       router.replace(dismissHref, { scroll: false });
     }
@@ -72,8 +80,8 @@ export function TargetsStaleModal({
           <p className="text-sm text-slate-700 dark:text-slate-300">
             {tr(
               locale,
-              "The following just changed, which may affect your daily targets:",
-              "הפרטים הבאים עודכנו כעת, מה שעשוי להשפיע על היעדים היומיים שלך:",
+              "The following changed, which might impact your targets:",
+              "הפרטים הבאים השתנו, מה שעשוי להשפיע על היעדים שלך:",
             )}
           </p>
           <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto text-sm text-slate-700 dark:text-slate-300">
@@ -83,31 +91,22 @@ export function TargetsStaleModal({
               </li>
             ))}
           </ul>
+          <p className="mt-3 text-sm text-slate-700 dark:text-slate-300">
+            {tr(
+              locale,
+              "Next time you open chat with Daffy, she'll remind you to check and adjust anything that needs it.",
+              "בפעם הבאה שתפתח/י צ'אט עם Daffy, היא תזכיר לך לבדוק ולהתאים את מה שצריך.",
+            )}
+          </p>
         </div>
-        <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3 dark:border-slate-800">
+        <div className="flex justify-end border-t border-slate-100 px-5 py-3 dark:border-slate-800">
           <button
             type="button"
-            onClick={dismiss}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+            onClick={acknowledge}
+            className="rounded-lg bg-teal-700 px-4 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
           >
-            {tr(locale, "Got it", "הבנתי")}
+            {tr(locale, "OK", "אישור")}
           </button>
-          <Link
-            // fromProfileChange=1: a deliberate click, not just landing on
-            // Targets some other way - the one exception to "only ever
-            // open the chat via a notification" (see
-            // targets-chat-workspace.tsx's own comment on that), since the
-            // user explicitly asked to go check right now. There's nothing
-            // to actually show yet at this exact moment (the background
-            // check the profile edit itself already kicked off is just
-            // starting), so this only opens the chat to its own "reviewing
-            // this now" status - the diff/draft still only ever appears
-            // via the notification once that check finishes.
-            href="/app/targets?fromProfileChange=1"
-            className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
-          >
-            {tr(locale, "Go to Targets", "מעבר ליעדים")}
-          </Link>
         </div>
       </div>
     </div>

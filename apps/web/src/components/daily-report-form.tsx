@@ -290,6 +290,15 @@ export function DailyReportForm({
   const customTargetsChanged = customTargets.some(
     (target) => (customTargetValues[target.id] ?? "") !== (customTargetsBaseline[target.id] ?? ""),
   );
+  // Which specific target ids actually changed THIS save vs. only sitting
+  // pre-filled with today's already-logged value (see initialCustomTargetValues'
+  // own comment on why every field starts pre-filled, not blank) - submitted
+  // alongside the values themselves so the server can record only what
+  // genuinely changed on this entry instead of every manual target being
+  // silently re-recorded on every save (ticket #61).
+  const changedCustomTargetIds = customTargets
+    .filter((target) => (customTargetValues[target.id] ?? "") !== (customTargetsBaseline[target.id] ?? ""))
+    .map((target) => target.id);
   // Gates the Weight/Sleep portal lookup below until the client has
   // definitely mounted - see subscribeMounted's comment above.
   const isMounted = useSyncExternalStore(subscribeMounted, getMountedSnapshot, getServerMountedSnapshot);
@@ -675,6 +684,7 @@ export function DailyReportForm({
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 dark:border-slate-700 dark:bg-slate-900"
                 />
               </label>
+              <input type="hidden" name="changed_custom_target_ids" form="daily-report-form" value={changedCustomTargetIds.join(",")} />
               {customTargets.map((target) => (
                 <label key={target.id} className="block min-w-[110px] flex-1">
                   <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">

@@ -8,6 +8,7 @@ import { z } from "zod";
 import { revalidateNavChrome } from "@/lib/nav-chrome";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
+import type { ProfileDiffRow } from "@/lib/targets";
 
 const LOCALE_COOKIE = "phc_locale";
 
@@ -31,6 +32,77 @@ export async function dismissPasskeyOfferAction() {
 
   if (error) {
     logServerError("app.dismissPasskeyOffer", "update_failed", {
+      userId: user.id,
+      error: error.message,
+    });
+  }
+}
+
+/**
+ * Captures the browser's own IANA timezone onto the user's profile
+ * (ticket #31) - there's no reliable server-side way to know a user's real
+ * timezone, so this is called once client-side (see components/
+ * timezone-sync.tsx) whenever it differs from what's already stored,
+ * which covers both a brand-new account and an existing one that predates
+ * this column, plus self-corrects if the user genuinely travels to a new
+ * zone. Every day-bucketing site falls back to UTC (lib/timezone.ts's
+ * DEFAULT_TIMEZONE) until this has run at least once.
+ */
+export async function setUserTimezoneAction(timezone: string) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) return;
+
+  // Intl throws on a malformed zone name rather than silently accepting
+  // one - cheap way to reject garbage before it reaches the database,
+  // since this value ultimately comes from the client.
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone: timezone });
+  } catch {
+    return;
+  }
+
+  const { error } = await supabase.from("user_profile").update({ timezone }).eq("user_id", user.id);
+
+  if (error) {
+    logServerError("app.setUserTimezone", "update_failed", {
+      userId: user.id,
+      error: error.message,
+    });
+    return;
+  }
+
+  revalidatePath("/app", "layout");
+}
+
+/**
+ * Ticket #10's redesign of TargetsStaleModal ("Your targets may need an
+ * update"): OK no longer promises an immediate automatic check (that
+ * mechanism doesn't exist in the redesigned Targets page) - it just saves
+ * what changed and flags it, so Daffy can raise it herself the next time
+ * the Targets chat opens (see plan-actions.ts's own read of this flag).
+ * Overwrites any still-pending change wholesale rather than merging - a
+ * newer profile change is what's actually current, not an addition to
+ * whatever was already pending.
+ */
+export async function flagTargetsReviewPendingAction(changes: ProfileDiffRow[]) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user || changes.length === 0) return;
+
+  const { error } = await supabase
+    .from("user_profile")
+    .update({ targets_review_pending: true, targets_review_changes: changes, targets_review_flagged_at: new Date().toISOString() })
+    .eq("user_id", user.id);
+
+  if (error) {
+    logServerError("app.flagTargetsReviewPending", "update_failed", {
       userId: user.id,
       error: error.message,
     });

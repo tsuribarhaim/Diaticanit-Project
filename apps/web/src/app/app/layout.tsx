@@ -6,10 +6,11 @@ import { AppUpdateBanner } from "@/components/app-update-banner";
 import { InstallAppPrompt } from "@/components/install-app-prompt";
 import { NavChromeRefresher } from "@/components/nav-chrome-refresher";
 import { ServiceWorkerRegister } from "@/components/service-worker-register";
+import { TimezoneSync } from "@/components/timezone-sync";
 import { UnsavedPreviewProvider } from "@/components/unsaved-preview-context";
 import { directionForLocale, normalizeLocale } from "@/lib/locale";
 import { getNavChrome, type NavChromeData } from "@/lib/nav-chrome";
-import { getAuthenticatedUser } from "@/lib/supabase/server";
+import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 import { normalizeTheme } from "@/lib/theme";
 
 // Was implied but never actually declared - every child page under /app is
@@ -42,6 +43,16 @@ export default async function ProtectedAppLayout({
   // isMissingReportedWeightColumn in daily-report/page.tsx).
   const navChrome: NavChromeData | null = user ? await getNavChrome(user.id) : null;
   const profileRow = navChrome?.profile ?? null;
+  // Deliberately its own small, uncached query rather than folded into
+  // getNavChrome's cached shape above (name/avatar/theme/notification
+  // count) - this only needs to be read once per genuine mismatch, not
+  // worth adding to that performance-sensitive cache's payload.
+  let storedTimezone: string | null = null;
+  if (user) {
+    const supabase = await createClient();
+    const { data } = await supabase.from("user_profile").select("timezone").eq("user_id", user.id).maybeSingle();
+    storedTimezone = data?.timezone ?? null;
+  }
   // Unresolved count for the nav badge (see AppNav) - resolved status, not
   // read status, since the whole point of that distinction (see the
   // Targets save-flow redesign's notification system) is that opening a
@@ -64,6 +75,7 @@ export default async function ProtectedAppLayout({
       <AppUpdateBanner locale={locale} />
       <InstallAppPrompt locale={locale} />
       {user ? <NavChromeRefresher /> : null}
+      {user ? <TimezoneSync currentTimezone={storedTimezone} /> : null}
       <UnsavedPreviewProvider locale={locale}>
         {user ? (
           <AppNav

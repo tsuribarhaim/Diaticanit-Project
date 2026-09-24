@@ -40,6 +40,7 @@ export const ticketStatusOptions = [
   "cancelled",
   "duplicate",
   "reopened",
+  "deferred",
 ] as const;
 export type TicketStatus = (typeof ticketStatusOptions)[number];
 
@@ -65,6 +66,8 @@ export function ticketStatusBadgeClass(status: TicketStatus): string {
     return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-400";
   if (status === "cancelled")
     return "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-400";
+  if (status === "deferred")
+    return "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-800 dark:bg-violet-950/30 dark:text-violet-400";
   return "border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300";
 }
 
