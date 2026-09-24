@@ -11,6 +11,7 @@ import { createClient } from "@/lib/supabase/server";
 import {
   isCancellableTicketStatus,
   isCurrentUserAdmin,
+  MAX_TICKET_ATTACHMENTS,
   ticketAreaOptions,
   ticketPriorityOptions,
   ticketStatusOptions,
@@ -85,31 +86,57 @@ export async function createTicketAction(_prevState: TicketFormState, formData: 
     return { error: parsed.error.issues[0]?.message ?? genericFailureMessage };
   }
 
-  // Optional - a ticket can be submitted with no attachment at all.
-  let attachment: {
-    storage_path: string;
-    file_name: string;
-    mime_type: string;
-    file_size_bytes: number;
-  } | null = null;
+  // Optional - a ticket can be submitted with no attachment at all. Every
+  // file under this field name (browse, drag-drop, and a pasted image all
+  // funnel into the same hidden multi-file input client-side - see
+  // TicketAttachmentsField) is validated and uploaded the same way.
+  const fileValues = formData.getAll("attachments").filter((value): value is File => value instanceof File && value.size > 0);
 
-  const fileValue = formData.get("attachment");
-  if (fileValue instanceof File && fileValue.size > 0) {
+  if (fileValues.length > MAX_TICKET_ATTACHMENTS) {
+    return {
+      error: tr(
+        locale,
+        `Only ${MAX_TICKET_ATTACHMENTS} attachments allowed per ticket.`,
+        `מותר עד ${MAX_TICKET_ATTACHMENTS} קבצים מצורפים לפנייה אחת.`,
+      ),
+    };
+  }
+
+  for (const fileValue of fileValues) {
     if (fileValue.size > MAX_DOCUMENT_SIZE_BYTES) {
-      return { error: tr(locale, "Attachment exceeds 10 MB limit.", "הקובץ המצורף חורג מהמגבלה של 10MB.") };
+      return {
+        error: tr(locale, `"${fileValue.name}" exceeds the 10 MB limit.`, `"${fileValue.name}" חורג מהמגבלה של 10MB.`),
+      };
     }
     if (!ALLOWED_DOCUMENT_MIME_TYPES.includes(fileValue.type as never)) {
       return {
         error: tr(
           locale,
-          "Unsupported attachment type. Allowed: PDF, PNG, JPG, WEBP, and text files.",
-          "סוג קובץ מצורף לא נתמך. מותר: PDF, PNG, JPG, WEBP וקבצי טקסט.",
+          `"${fileValue.name}" isn't a supported file type. Allowed: PDF, PNG, JPG, WEBP, and text files.`,
+          `"${fileValue.name}" אינו סוג קובץ נתמך. מותר: PDF, PNG, JPG, WEBP וקבצי טקסט.`,
         ),
       };
     }
+  }
 
+  const uploaded: { storage_path: string; file_name: string; mime_type: string; file_size_bytes: number }[] = [];
+  // Captured once, outside the closure below - TS doesn't carry the `user`
+  // null-check's narrowing into a nested function declaration.
+  const userId = user.id;
+
+  async function rollbackUploads() {
+    if (uploaded.length === 0) return;
+    const { error: rollbackError } = await supabase.storage
+      .from("ticket-attachments")
+      .remove(uploaded.map((item) => item.storage_path));
+    if (rollbackError) {
+      logServerError("tickets.create", "attachment_rollback_failed", { userId, error: rollbackError.message });
+    }
+  }
+
+  for (const [index, fileValue] of fileValues.entries()) {
     const safeName = sanitizeFileName(fileValue.name || "attachment");
-    const storagePath = `${user.id}/${Date.now()}-${safeName}`;
+    const storagePath = `${user.id}/${Date.now()}-${index}-${safeName}`;
 
     const { error: storageError } = await supabase.storage
       .from("ticket-attachments")
@@ -117,41 +144,54 @@ export async function createTicketAction(_prevState: TicketFormState, formData: 
 
     if (storageError) {
       logServerError("tickets.create", "attachment_upload_failed", { userId: user.id, error: storageError.message });
+      await rollbackUploads();
       return { error: genericFailureMessage };
     }
 
-    attachment = {
+    uploaded.push({
       storage_path: storagePath,
       file_name: fileValue.name,
       mime_type: fileValue.type,
       file_size_bytes: fileValue.size,
-    };
+    });
   }
 
-  const { error: insertError } = await supabase.from("tickets").insert({
-    created_by: user.id,
-    subject: parsed.data.subject,
-    ticket_type: parsed.data.ticket_type,
-    area: parsed.data.area,
-    priority: parsed.data.priority,
-    description: parsed.data.description,
-    attachment_storage_path: attachment?.storage_path ?? null,
-    attachment_file_name: attachment?.file_name ?? null,
-    attachment_mime_type: attachment?.mime_type ?? null,
-    attachment_file_size_bytes: attachment?.file_size_bytes ?? null,
-  });
+  const { data: insertedTicket, error: insertError } = await supabase
+    .from("tickets")
+    .insert({
+      created_by: user.id,
+      subject: parsed.data.subject,
+      ticket_type: parsed.data.ticket_type,
+      area: parsed.data.area,
+      priority: parsed.data.priority,
+      description: parsed.data.description,
+    })
+    .select("id")
+    .single();
 
-  if (insertError) {
-    logServerError("tickets.create", "insert_failed", { userId: user.id, error: insertError.message });
-
-    if (attachment) {
-      const { error: rollbackError } = await supabase.storage.from("ticket-attachments").remove([attachment.storage_path]);
-      if (rollbackError) {
-        logServerError("tickets.create", "attachment_rollback_failed", { userId: user.id, error: rollbackError.message });
-      }
-    }
-
+  if (insertError || !insertedTicket) {
+    logServerError("tickets.create", "insert_failed", { userId: user.id, error: insertError?.message });
+    await rollbackUploads();
     return { error: genericFailureMessage };
+  }
+
+  if (uploaded.length > 0) {
+    const { error: attachmentsInsertError } = await supabase.from("ticket_attachments").insert(
+      uploaded.map((item) => ({
+        ticket_id: insertedTicket.id,
+        storage_path: item.storage_path,
+        file_name: item.file_name,
+        mime_type: item.mime_type,
+        file_size_bytes: item.file_size_bytes,
+      })),
+    );
+
+    if (attachmentsInsertError) {
+      logServerError("tickets.create", "attachments_insert_failed", { userId: user.id, error: attachmentsInsertError.message });
+      await rollbackUploads();
+      await supabase.from("tickets").delete().eq("id", insertedTicket.id);
+      return { error: genericFailureMessage };
+    }
   }
 
   revalidatePath("/app/tickets");
@@ -221,6 +261,10 @@ export async function cancelTicketAction(_prevState: TicketFormState, formData: 
  * Same pattern as openOriginalDocumentAction in documents/actions.ts: a
  * short-lived (60s) signed URL generated fresh on click, rather than baked
  * into the server-rendered ticket detail page and left sitting around.
+ * One ticket can now have several attachments, so this targets a single
+ * attachment row by id rather than "the" ticket's one attachment -
+ * ticket_attachments_select's own RLS policy already enforces the same
+ * own-ticket-or-admin visibility this used to check by hand here.
  */
 export async function openTicketAttachmentAction(formData: FormData): Promise<void> {
   const supabase = await createClient();
@@ -232,25 +276,19 @@ export async function openTicketAttachmentAction(formData: FormData): Promise<vo
     redirect("/auth/sign-in");
   }
 
-  const ticketId = formData.get("ticket_id")?.toString();
-  if (!ticketId) return;
+  const attachmentId = formData.get("attachment_id")?.toString();
+  if (!attachmentId) return;
 
-  // Admins can open any ticket's attachment, same as they can view any
-  // ticket - RLS's own tickets_select_admin policy already allows the
-  // read underneath this, the explicit created_by filter below is just
-  // for a plain user's own case (RLS would block a cross-user read
-  // anyway, but the query shape should match what's actually intended).
-  const isAdmin = await isCurrentUserAdmin(supabase, user.id);
-  let attachmentQuery = supabase.from("tickets").select("attachment_storage_path").eq("id", ticketId);
-  if (!isAdmin) {
-    attachmentQuery = attachmentQuery.eq("created_by", user.id);
-  }
-  const { data: row, error: rowError } = await attachmentQuery.maybeSingle();
+  const { data: row, error: rowError } = await supabase
+    .from("ticket_attachments")
+    .select("storage_path")
+    .eq("id", attachmentId)
+    .maybeSingle();
 
-  if (rowError || !row?.attachment_storage_path) {
-    logServerError("tickets.openAttachment", "ticket_not_found_or_no_attachment", {
+  if (rowError || !row) {
+    logServerError("tickets.openAttachment", "attachment_not_found", {
       userId: user.id,
-      ticketId,
+      attachmentId,
       error: rowError?.message,
     });
     return;
@@ -258,12 +296,12 @@ export async function openTicketAttachmentAction(formData: FormData): Promise<vo
 
   const { data: signedData, error: signedError } = await supabase.storage
     .from("ticket-attachments")
-    .createSignedUrl(row.attachment_storage_path, 60);
+    .createSignedUrl(row.storage_path, 60);
 
   if (signedError || !signedData?.signedUrl) {
     logServerError("tickets.openAttachment", "signed_url_failed", {
       userId: user.id,
-      ticketId,
+      attachmentId,
       error: signedError?.message,
     });
     return;

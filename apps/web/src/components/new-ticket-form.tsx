@@ -4,6 +4,7 @@ import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 
 import { createTicketAction, type TicketFormState } from "@/app/app/tickets/actions";
+import { TicketAttachmentsField, useTicketAttachments } from "@/components/ticket-attachments-field";
 import { formatTicketArea, formatTicketPriority, formatTicketType, tr, type AppLocale } from "@/lib/locale";
 import { ticketAreaOptions, ticketPriorityOptions, ticketTypeOptions } from "@/lib/tickets";
 
@@ -37,6 +38,7 @@ const inputClassName =
 
 export function NewTicketForm({ locale }: { locale: AppLocale }) {
   const [state, formAction] = useActionState(createTicketAction, initialState);
+  const { attachments, flash, addFiles, removeFile } = useTicketAttachments(locale);
 
   return (
     <form action={formAction} className="space-y-4">
@@ -88,20 +90,36 @@ export function NewTicketForm({ locale }: { locale: AppLocale }) {
 
       <label className="block">
         <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Description", "תיאור")}</span>
-        <textarea name="description" required rows={6} maxLength={5000} className={inputClassName} />
+        <textarea
+          name="description"
+          required
+          rows={6}
+          maxLength={5000}
+          className={inputClassName}
+          onPaste={(event) => {
+            const items = Array.from(event.clipboardData?.items ?? []);
+            const imageFiles = items
+              .filter((item) => item.type.startsWith("image/"))
+              .map((item) => item.getAsFile())
+              .filter((file): file is File => file !== null);
+            if (imageFiles.length === 0) return; // plain text paste - let the browser handle it normally
+            event.preventDefault();
+            const renamed = imageFiles.map(
+              (file, index) => new File([file], file.name || `pasted-image-${Date.now()}-${index}.png`, { type: file.type }),
+            );
+            addFiles(renamed);
+          }}
+        />
+        <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-400 dark:text-slate-500">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="9" y="2" width="6" height="4" rx="1" />
+            <path d="M9 4H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-3" />
+          </svg>
+          {tr(locale, "Tip: you can paste a screenshot directly into this box.", "טיפ: אפשר להדביק צילום מסך ישירות לתוך התיבה הזו.")}
+        </p>
       </label>
 
-      <label className="block">
-        <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-          {tr(locale, "Attachment (optional)", "קובץ מצורף (אופציונלי)")}
-        </span>
-        <input
-          type="file"
-          name="attachment"
-          accept=".pdf,.png,.jpg,.jpeg,.webp,.txt"
-          className="block w-full text-sm text-slate-600 file:me-3 file:rounded-lg file:border-0 file:bg-teal-50 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-teal-700 hover:file:bg-teal-100 dark:text-slate-400 dark:file:bg-teal-950/40 dark:file:text-teal-400"
-        />
-      </label>
+      <TicketAttachmentsField locale={locale} attachments={attachments} flash={flash} onAdd={addFiles} onRemove={removeFile} />
 
       {state.error ? (
         <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-400">
