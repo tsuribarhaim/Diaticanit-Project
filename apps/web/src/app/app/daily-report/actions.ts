@@ -238,7 +238,27 @@ function isMissingEditHistoryColumn(errorMessage: string): boolean {
  * DailyReportForm's customTargets prop) into a plain `{id: number}` map,
  * skipping blanks/invalid numbers rather than writing 0 for a target the
  * user didn't fill in today. */
+/**
+ * Every manual-target field on the form starts pre-filled with whatever
+ * was already logged today for it (see daily-report-form.tsx's own
+ * comment on initialCustomTargetValues), so a plain "is this field
+ * non-empty" check can't tell a value the user just typed apart from one
+ * that's only sitting there unchanged - without the extra filter below,
+ * every save silently re-recorded every manual target, not just the one
+ * actually being changed (ticket #61). changed_custom_target_ids (a
+ * comma-separated list the form computes client-side by diffing against
+ * its own baseline) narrows this down to only the ones genuinely part of
+ * THIS save; getCustomTargetValueTotals already merges the latest value
+ * per id across a day's rows on its own, so no row needs to carry a
+ * value it didn't actually change for that aggregation to stay correct.
+ * Falls back to the old "every non-empty field" behavior if that field is
+ * ever missing (e.g. a stale cached page predating this change) rather
+ * than silently dropping every custom target in that edge case.
+ */
 function extractCustomTargetValues(formData: FormData): Record<string, number> {
+  const changedIdsRaw = formData.get("changed_custom_target_ids");
+  const changedIds = typeof changedIdsRaw === "string" ? new Set(changedIdsRaw.split(",").filter(Boolean)) : null;
+
   const values: Record<string, number> = {};
   for (const [key, rawValue] of formData.entries()) {
     if (!key.startsWith("custom_target_value__")) continue;
@@ -248,6 +268,7 @@ function extractCustomTargetValues(formData: FormData): Record<string, number> {
     // user left untouched would silently be recorded as "0", contradicting
     // this function's whole purpose of skipping blanks.
     if (!targetId || trimmed === "") continue;
+    if (changedIds && !changedIds.has(targetId)) continue;
     const parsed = Number(trimmed);
     if (Number.isFinite(parsed)) {
       values[targetId] = parsed;
@@ -319,6 +340,37 @@ function buildGenericDangerousMessage(locale: AppLocale, context: "save" | "retr
     `⚠️ This entry describes something that isn't food or a beverage and can be dangerous to consume. ${notSaved} If you actually consumed this, please seek medical attention or contact a poison control center right away.`,
     `⚠️ הדיווח מתאר משהו שאינו מזון או משקה ועלול להיות מסוכן לצריכה. ${notSaved} אם אכן צרכת זאת, פנה/י מיד לעזרה רפואית או למרכז המידע לארס והרעלות.`,
   );
+}
+
+/**
+ * Strips the synthetic "Add my saved X" chat lines (daily-report-chat-
+ * panel.tsx's buildSavedItemChatText) out of the transcript before it's
+ * sent to the AI parser - these picks already reach the saved report
+ * through the separate, deterministic selectedDefaultIds merge below
+ * (exact cached per-unit nutrition scaled by the chosen quantity), which
+ * is the one and only source of truth for them. Left in the transcript,
+ * the AI independently re-estimated nutrition for the same line and
+ * added it on top, silently doubling food/liquid/activity quantities on
+ * save (ticket #26) - every other AI feature this transcript still needs
+ * to support (understanding "remove the coffee I just added" in a later
+ * message, say) only needs the surrounding conversation to make sense,
+ * not this specific line's own nutrition estimate, so removing just the
+ * numbers-producing line is enough; the item's name still appears
+ * earlier in the conversation naturally whenever the user themselves
+ * refers back to it.
+ * raw_report_text (what actually gets stored) intentionally keeps the
+ * ORIGINAL, unfiltered transcript - this filtering only ever applies to
+ * what's sent to the AI parse call itself.
+ */
+function stripSavedItemPickLines(reportText: string): string {
+  return reportText
+    .split("\n")
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("User:")) return true;
+      return !trimmed.includes('Add my saved "') && !trimmed.includes("מהרשימה השמורה שלי");
+    })
+    .join("\n");
 }
 
 async function parseReportTextByMode({
@@ -605,14 +657,14 @@ export async function saveDailyReportAction(
         imageBase64,
         mimeType: mealPhotoFile.type,
         weightKg: Number(profile.weight_kg),
-        noteText: reportText || undefined,
+        noteText: stripSavedItemPickLines(reportText) || undefined,
         locale,
       });
       modeUsedForReport = "ai_photo";
       parserVersionUsed = `daily-ai-photo-${aiConfig.provider}-v1`;
     } else {
       const parsedByMode = await parseReportTextByMode({
-        reportText,
+        reportText: stripSavedItemPickLines(reportText),
         weightKg: Number(profile.weight_kg),
         mode: requestedParseMode === "ai_photo" ? "heuristic" : requestedParseMode,
         locale,

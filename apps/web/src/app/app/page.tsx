@@ -38,7 +38,7 @@ export default async function AppHomePage({
 
   const { data: profile } = await supabase
     .from("user_profile")
-    .select("preferred_language, passkey_offer_dismissed, first_name, gender, biological_sex")
+    .select("preferred_language, passkey_offer_dismissed, first_name, gender, biological_sex, timezone")
     .eq("user_id", user.id)
     .maybeSingle();
 
@@ -66,6 +66,7 @@ export default async function AppHomePage({
     aiConfig,
     userGender,
     userFirstName: profile.first_name,
+    timeZone: profile.timezone ?? undefined,
   });
 
   return (

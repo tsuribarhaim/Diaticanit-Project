@@ -27,6 +27,7 @@ import { normalizeUserTargetsJson } from "@/lib/targets";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { formatDateForLocale, formatDefaultUnit, formatMeasurementUnit, formatNumberForLocale, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
+import { addDaysToDateString, DEFAULT_TIMEZONE, getLocalDateString, getLocalDayRangeUtc } from "@/lib/timezone";
 
 export const dynamic = "force-dynamic";
 
@@ -182,31 +183,32 @@ const extraMetricLabels: Record<DailyReportChartExtraMetric, { en: string; he: s
   cholesterol: { en: "Cholesterol", he: "כולסטרול" },
 };
 
-function getUtcDateStringToday(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-/** Parses a YYYY-MM-DD search param into a valid UTC calendar-day string,
- * falling back to today for anything missing or malformed (e.g. a stale/
- * tampered query string) rather than letting an invalid date reach the
- * query below. */
-function parseSelectedDateParam(value: string | undefined): string {
+/** Parses a YYYY-MM-DD search param into a valid local calendar-day string
+ * (see lib/timezone.ts - ticket #31), falling back to today in the user's
+ * own timezone for anything missing or malformed (e.g. a stale/tampered
+ * query string) rather than letting an invalid date reach the query below. */
+function parseSelectedDateParam(value: string | undefined, timeZone: string): string {
   if (value && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(new Date(`${value}T00:00:00Z`).getTime())) {
     return value;
   }
-  return getUtcDateStringToday();
+  return getLocalDateString(timeZone);
 }
 
 /** Sunday-start calendar week (matching the app's primary Hebrew/Israeli
- * locale convention) containing the given UTC date string - used for the
+ * locale convention) containing the given local date string - used for the
  * weekly exercise-adherence badge, which tracks the week around whichever
  * day the page is currently showing, consistent with everything else on
  * this page reacting to the selected date rather than always "right now". */
-function getWeekBoundsIso(dateString: string): { weekStartIso: string; weekEndIso: string } {
-  const dayStart = new Date(`${dateString}T00:00:00.000Z`);
-  const weekStart = new Date(dayStart.getTime() - dayStart.getUTCDay() * 24 * 60 * 60 * 1000);
-  const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
-  return { weekStartIso: weekStart.toISOString(), weekEndIso: weekEnd.toISOString() };
+function getWeekBoundsIso(dateString: string, timeZone: string): { weekStartIso: string; weekEndIso: string } {
+  // getUTCDay() on a date-only string is safe here - it's just reading
+  // which weekday the calendar date itself is, not a real local instant.
+  const dayOfWeek = new Date(`${dateString}T00:00:00.000Z`).getUTCDay();
+  const weekStartDateString = addDaysToDateString(dateString, -dayOfWeek);
+  const weekEndDateString = addDaysToDateString(weekStartDateString, 7);
+  return {
+    weekStartIso: getLocalDayRangeUtc(weekStartDateString, timeZone).startIso,
+    weekEndIso: getLocalDayRangeUtc(weekEndDateString, timeZone).startIso,
+  };
 }
 
 export default async function DailyReportPage({
@@ -215,18 +217,7 @@ export default async function DailyReportPage({
   searchParams: Promise<{ notice?: string; error?: string; date?: string; edit?: string }>;
 }) {
   const resolvedSearchParams = await searchParams;
-  const selectedDate = parseSelectedDateParam(resolvedSearchParams.date);
   const editReportId = resolvedSearchParams.edit || null;
-  const todayDateString = getUtcDateStringToday();
-  const previousDateString = new Date(new Date(`${selectedDate}T00:00:00.000Z`).getTime() - 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
-  const nextDateString = new Date(new Date(`${selectedDate}T00:00:00.000Z`).getTime() + 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
-  const isNextDayDisabled = selectedDate >= todayDateString;
-  const selectedDayStartIso = new Date(`${selectedDate}T00:00:00.000Z`).toISOString();
-  const selectedDayEndIso = new Date(new Date(`${selectedDate}T00:00:00.000Z`).getTime() + 24 * 60 * 60 * 1000).toISOString();
   const supabase = await createClient();
   const {
     data: { user },
@@ -236,9 +227,24 @@ export default async function DailyReportPage({
     redirect("/auth/sign-in");
   }
 
+  // Fetched separately, ahead of the main batch below - every date/range
+  // boundary that batch's queries filter against (selectedDayStartIso and
+  // friends) needs this first (ticket #31: these used to be computed in
+  // server/UTC time unconditionally, which is wrong for anyone not near
+  // UTC - see lib/timezone.ts).
+  const { data: timezoneRow } = await supabase.from("user_profile").select("timezone").eq("user_id", user.id).maybeSingle();
+  const timeZone = timezoneRow?.timezone ?? DEFAULT_TIMEZONE;
+
+  const selectedDate = parseSelectedDateParam(resolvedSearchParams.date, timeZone);
+  const todayDateString = getLocalDateString(timeZone);
+  const previousDateString = addDaysToDateString(selectedDate, -1);
+  const nextDateString = addDaysToDateString(selectedDate, 1);
+  const isNextDayDisabled = selectedDate >= todayDateString;
+  const { startIso: selectedDayStartIso, endIso: selectedDayEndIso } = getLocalDayRangeUtc(selectedDate, timeZone);
+
   const aiAvailable = Boolean(getAiExtractionConfig());
   const now = new Date();
-  const { weekStartIso, weekEndIso } = getWeekBoundsIso(selectedDate);
+  const { weekStartIso, weekEndIso } = getWeekBoundsIso(selectedDate, timeZone);
   const thirtyDaysAgoIso = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
   // Sentinel used to keep the "report being edited" lookup below in the same
   // Promise.all batch as everything else even when there's nothing to edit -
@@ -378,7 +384,7 @@ export default async function DailyReportPage({
     + otherActivitiesForWeek.reduce((sum, entry) => sum + (Number(entry?.days_per_week) || 0), 0),
   );
   const weeklyExerciseLoggedDays = new Set(
-    (weekExerciseRowsResult.data ?? []).map((row) => new Date(row.report_at).toISOString().slice(0, 10)),
+    (weekExerciseRowsResult.data ?? []).map((row) => getLocalDateString(timeZone, new Date(row.report_at))),
   ).size;
 
   // The weight field on the compose form should default to whatever the

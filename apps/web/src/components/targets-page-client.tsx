@@ -2,10 +2,10 @@
 
 import { useState } from "react";
 
-import { applyActiveTargetsAction, negotiateActiveTargetsAction } from "@/app/app/targets/plan-actions";
+import { applyActiveTargetsAction, clearTargetsReviewPendingAction, negotiateActiveTargetsAction } from "@/app/app/targets/plan-actions";
 import { TargetsPlanEditor } from "@/components/targets-plan-editor";
 import { tr, trGendered, type AppLocale } from "@/lib/locale";
-import type { TargetGenerationPayload } from "@/lib/targets";
+import type { ProfileDiffRow, TargetGenerationPayload } from "@/lib/targets";
 
 type PendingChange = {
   payload: TargetGenerationPayload;
@@ -18,6 +18,15 @@ type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   pendingChange?: PendingChange;
+  /** Ticket #10's chat-opened reminder (distinct from pendingChange, which
+   * previews an actual computed target change) - Daffy proactively
+   * surfacing that a profile change was flagged earlier, offering to
+   * check it now. "pending" shows the Yes/No buttons; "answered" shows a
+   * plain past-tense line once either has been clicked - mirrors
+   * pendingChange's own pending/applied/discarded shape for consistency,
+   * without reusing that type directly since a review prompt isn't a
+   * change to apply, just a yes/no to a check. */
+  reviewPrompt?: { changes: ProfileDiffRow[]; status: "pending" | "answered" };
 };
 
 function Spinner({ className }: { className: string }) {
@@ -48,12 +57,19 @@ export function TargetsPageClient({
   locale,
   firstName,
   userGender,
+  pendingReviewChanges,
 }: {
   initialPayload: TargetGenerationPayload;
   initialSource: "ai" | "heuristic";
   locale: AppLocale;
   firstName?: string | null;
   userGender?: "male" | "female" | null;
+  /** Set by TargetsStaleModal's OK button (ticket #10) after a profile
+   * change elsewhere in the app - null when nothing's pending. Surfaced
+   * as Daffy's own opening message the first time the chat is opened this
+   * session, rather than immediately on page load, matching "the next
+   * time you open chat with Daffy" from the approved design. */
+  pendingReviewChanges: ProfileDiffRow[] | null;
 }) {
   const [payload, setPayload] = useState(initialPayload);
   const [source, setSource] = useState(initialSource);
@@ -65,7 +81,12 @@ export function TargetsPageClient({
   // (the common case now that direct editing exists) shouldn't have to
   // scroll past a full chat panel to reach the plan below it.
   const [isChatOpen, setIsChatOpen] = useState(false);
-  const [hasUnread, setHasUnread] = useState(false);
+  const [hasUnread, setHasUnread] = useState(Boolean(pendingReviewChanges));
+  // Injects the reminder at most once per page load, the first time the
+  // chat is actually opened - reopening later in the same session (after
+  // answering, or just closing without answering) must not re-inject a
+  // second copy of it into the transcript.
+  const [hasShownReviewPrompt, setHasShownReviewPrompt] = useState(false);
 
   function pushAssistantMessage(message: ChatMessage) {
     setMessages((previous) => [...previous, message]);
@@ -115,6 +136,73 @@ export function TargetsPageClient({
    * the same (surface the explanation in chat even before Apply/Discard). */
   function handleDaffyMessageFromEditor(content: string) {
     pushAssistantMessage({ role: "assistant", content });
+  }
+
+  function updateReviewPromptStatus(index: number, status: "answered") {
+    setMessages((previous) =>
+      previous.map((message, i) => (i === index && message.reviewPrompt ? { ...message, reviewPrompt: { ...message.reviewPrompt, status } } : message)),
+    );
+  }
+
+  /** "Not right now" - declines without checking anything, matching a
+   * direct in-range edit needing no extra confirmation either. Clears the
+   * flag immediately since there's nothing further to wait on. Awaited
+   * (not fire-and-forget) so the clear reliably lands even if the user
+   * navigates away moments later - confirmed live that an un-awaited call
+   * here could lose the race against the page unloading and never
+   * actually clear the flag. */
+  async function handleReviewDecline(index: number) {
+    updateReviewPromptStatus(index, "answered");
+    pushAssistantMessage({
+      role: "assistant",
+      content: tr(locale, "No problem — just let me know whenever you'd like me to check.", "אין בעיה - פשוט תגיד/י לי מתי שתרצה/י שאבדוק."),
+    });
+    await clearTargetsReviewPendingAction();
+  }
+
+  /** "Yes, please check" - runs the exact same negotiate flow a typed
+   * message would (same Apply/Discard preview, same everything), just
+   * auto-sent with a goal_text summarizing what changed instead of the
+   * user retyping it themselves. The flag only clears once this actually
+   * comes back, not the instant Yes is clicked - a page reload mid-check
+   * should still find the reminder pending, not silently lost. */
+  async function handleReviewAccept(index: number, changes: ProfileDiffRow[]) {
+    updateReviewPromptStatus(index, "answered");
+    setIsSending(true);
+
+    const summary = changes.map((row) => `${tr(locale, row.labelEn, row.labelHe)}: ${row.before} → ${row.after}`).join("; ");
+    const goalText = tr(
+      locale,
+      `My profile changed (${summary}). Please review whether my targets still make sense and update anything that needs it.`,
+      `הפרופיל שלי השתנה (${summary}). בדוק/י בבקשה אם היעדים שלי עדיין הגיוניים ועדכן/י מה שצריך.`,
+    );
+
+    const result = await negotiateActiveTargetsAction({ message: goalText });
+    setIsSending(false);
+    // Awaited, not fire-and-forget - see handleReviewDecline's own comment
+    // on why an un-awaited call here previously lost the race against the
+    // page unloading and never actually cleared the flag.
+    await clearTargetsReviewPendingAction();
+
+    if ("error" in result) {
+      pushAssistantMessage({ role: "assistant", content: result.error });
+      return;
+    }
+
+    if (result.quickApplied) {
+      setPayload(result.payload);
+      setSource(result.source);
+      pushAssistantMessage({ role: "assistant", content: result.reply });
+      return;
+    }
+
+    pushAssistantMessage({
+      role: "assistant",
+      content: result.reply,
+      pendingChange: result.changed
+        ? { payload: result.payload, source: result.source, goalText, status: "pending" }
+        : undefined,
+    });
   }
 
   async function handleSendMessage() {
@@ -200,6 +288,24 @@ export function TargetsPageClient({
         onClick={() => {
           setIsChatOpen((open) => !open);
           setHasUnread(false);
+          if (!hasShownReviewPrompt && pendingReviewChanges && pendingReviewChanges.length > 0) {
+            setHasShownReviewPrompt(true);
+            const summary = pendingReviewChanges
+              .map((row) => `${tr(locale, row.labelEn, row.labelHe)} (${row.before} → ${row.after})`)
+              .join(", ");
+            setMessages((previous) => [
+              ...previous,
+              {
+                role: "assistant",
+                content: tr(
+                  locale,
+                  `Hi! Since we last talked, your ${summary} changed — want me to check whether your targets still make sense, and adjust anything that needs it?`,
+                  `היי! מאז שדיברנו לאחרונה, ${summary} השתנה - רוצה שאבדוק אם היעדים שלך עדיין הגיוניים, ואתאים מה שצריך?`,
+                ),
+                reviewPrompt: { changes: pendingReviewChanges, status: "pending" },
+              },
+            ]);
+          }
         }}
         aria-label={tr(locale, "Chat with Daffy", "צ'אט עם Daffy")}
         className="fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom)+0.75rem)] right-[calc(12.5vw_-_2rem)] z-50 flex h-14 w-14 items-center justify-center rounded-full bg-teal-700 text-white shadow-lg hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
@@ -273,6 +379,28 @@ export function TargetsPageClient({
                         : tr(locale, "Discarded", "בוטל")}
                     </p>
                   )}
+                </div>
+              ) : null}
+              {message.reviewPrompt ? (
+                <div className="mt-1.5 max-w-[85%]">
+                  {message.reviewPrompt.status === "pending" ? (
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleReviewAccept(index, message.reviewPrompt!.changes)}
+                        className="rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+                      >
+                        {tr(locale, "Yes, please check", "כן, בדוק/י בבקשה")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleReviewDecline(index)}
+                        className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                      >
+                        {tr(locale, "Not right now", "לא כרגע")}
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>

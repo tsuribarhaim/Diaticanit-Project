@@ -4,7 +4,7 @@ import { TargetsPageClient } from "@/components/targets-page-client";
 import { resolveUserGenderForAddressing } from "@/lib/ai/persona";
 import { normalizeLocale, tr } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
-import { mapTargetProfileRowToPayload, TARGET_PROFILE_COLUMNS } from "@/lib/targets";
+import { mapTargetProfileRowToPayload, TARGET_PROFILE_COLUMNS, type ProfileDiffRow } from "@/lib/targets";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +33,7 @@ export default async function TargetsPage() {
   const [{ data: profileRow }, { data: activeRow, error: activeError }] = await Promise.all([
     supabase
       .from("user_profile")
-      .select("first_name, gender, biological_sex, preferred_language")
+      .select("first_name, gender, biological_sex, preferred_language, targets_review_pending, targets_review_changes")
       .eq("user_id", user.id)
       .maybeSingle(),
     supabase.from("user_target_profiles").select(TARGET_PROFILE_COLUMNS).eq("user_id", user.id).eq("is_active", true).maybeSingle(),
@@ -51,6 +51,10 @@ export default async function TargetsPage() {
   const userGender = resolveUserGenderForAddressing(profileRow.gender, profileRow.biological_sex);
   const payload = mapTargetProfileRowToPayload(activeRow);
   const source: "ai" | "heuristic" = activeRow.analysis_source === "ai" ? "ai" : "heuristic";
+  const pendingReviewChanges: ProfileDiffRow[] | null =
+    profileRow.targets_review_pending && Array.isArray(profileRow.targets_review_changes)
+      ? (profileRow.targets_review_changes as unknown as ProfileDiffRow[])
+      : null;
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-10">
@@ -61,6 +65,7 @@ export default async function TargetsPage() {
           locale={locale}
           firstName={profileRow.first_name}
           userGender={userGender}
+          pendingReviewChanges={pendingReviewChanges}
         />
 
         <p className="mt-6 border-t border-slate-100 pt-4 text-xs text-slate-500 dark:border-slate-800">

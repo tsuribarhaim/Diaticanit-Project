@@ -368,5 +368,6 @@ export function formatTicketStatus(value: string, locale: AppLocale): string {
   if (token === "cancelled") return tr(locale, "Cancelled", "בוטלה");
   if (token === "duplicate") return tr(locale, "Duplicate", "כפולה");
   if (token === "reopened") return tr(locale, "Reopened", "נפתחה מחדש");
+  if (token === "deferred") return tr(locale, "Deferred", "נדחתה");
   return locale === "he" ? value : titleCase(value.replace(/_/g, " "));
 }

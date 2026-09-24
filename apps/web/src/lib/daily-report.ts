@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { createClient } from "@/lib/supabase/server";
+import { DEFAULT_TIMEZONE, getTodayLocalDayRangeUtc } from "@/lib/timezone";
 
 export const dailyReportInputSchema = z.object({
   reportText: z
@@ -157,19 +158,23 @@ const EMPTY_METRICS: DailyReportMetrics = {
 };
 
 /**
- * "Today" has no per-user timezone concept yet, so it's bucketed by UTC
- * calendar day (matching the only other day-bucketing precedent in this
- * codebase). For users far from UTC this "day" boundary won't line up with
- * local midnight - revisit once the Daily Reporting redesign needs a stored
- * per-user timezone plumbed through every day-bucketing site.
+ * "Today" is bucketed by the user's own local calendar day (see
+ * lib/timezone.ts - ticket #31), falling back to UTC when their timezone
+ * hasn't been captured yet (TimezoneSync hasn't run for this account/
+ * session yet), which matches this function's previous UTC-only behavior
+ * exactly - never worse than before, correct once captured.
  */
 export async function getTodaysDailyReportTotals({
   supabase,
   userId,
+  timeZone = DEFAULT_TIMEZONE,
   excludeReportId,
 }: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   userId: string;
+  /** The user's own IANA timezone (user_profile.timezone) - defaults to
+   * UTC when not yet known. */
+  timeZone?: string;
   /** Leaves this one report's own contribution out of the totals - used by
    * the Daily Report chat route while editing an existing entry, so
    * "everything already logged today" doesn't silently include the very
@@ -177,9 +182,7 @@ export async function getTodaysDailyReportTotals({
    * history sent alongside it). */
   excludeReportId?: string;
 }): Promise<DailyReportMetrics> {
-  const now = new Date();
-  const todayStartIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
-  const todayEndIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString();
+  const { startIso: todayStartIso, endIso: todayEndIso } = getTodayLocalDayRangeUtc(timeZone);
 
   return getDailyReportTotalsForRange({ supabase, userId, rangeStartIso: todayStartIso, rangeEndIso: todayEndIso, excludeReportId });
 }
@@ -261,17 +264,18 @@ export type TodaysLoggedItems = {
 export async function getTodaysLoggedItems({
   supabase,
   userId,
+  timeZone = DEFAULT_TIMEZONE,
   excludeReportId,
 }: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   userId: string;
+  /** See getTodaysDailyReportTotals' own comment on this same param. */
+  timeZone?: string;
   /** See getTodaysDailyReportTotals' own comment - leaves this one report
    * out of "today's already-logged items" while it's the one being edited. */
   excludeReportId?: string;
 }): Promise<TodaysLoggedItems> {
-  const now = new Date();
-  const todayStartIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
-  const todayEndIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString();
+  const { startIso: todayStartIso, endIso: todayEndIso } = getTodayLocalDayRangeUtc(timeZone);
 
   let itemsQuery = supabase
     .from("user_daily_reports")

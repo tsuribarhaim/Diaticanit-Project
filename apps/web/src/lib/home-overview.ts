@@ -11,6 +11,7 @@ import { tr, type AppLocale } from "@/lib/locale";
 import { getFlaggedFieldKeys } from "@/lib/notifications";
 import { normalizeUserTargetsJson } from "@/lib/targets";
 import type { createClient } from "@/lib/supabase/server";
+import { addDaysToDateString, DEFAULT_TIMEZONE, getLocalDateString, getLocalDayRangeUtc, getTodayLocalDayRangeUtc } from "@/lib/timezone";
 
 /** A short deterministic digest of exactly the rounded numbers
  * buildUserPrompt (lib/ai/home-coach.ts) actually turns into prompt text -
@@ -116,6 +117,7 @@ export async function getHomeOverviewData({
   aiConfig,
   userGender,
   userFirstName,
+  timeZone = DEFAULT_TIMEZONE,
 }: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   userId: string;
@@ -128,6 +130,10 @@ export async function getHomeOverviewData({
    * value, same as the Daily Report/Targets chats already compute. */
   userGender?: "male" | "female" | null;
   userFirstName?: string | null;
+  /** The user's own IANA timezone (user_profile.timezone) - see
+   * lib/timezone.ts (ticket #31). Defaults to UTC when not yet captured,
+   * matching this function's previous UTC-only "today" bucketing exactly. */
+  timeZone?: string;
 }): Promise<HomeOverviewData> {
   // Only entries with a full id/unit/targetMin/targetMax set are loggable -
   // see DailyReportForm's customTargets prop for the matching Daily Report
@@ -205,15 +211,13 @@ export async function getHomeOverviewData({
   let exerciseUnit: "min" | "days";
 
   if (range === "today") {
-    const now = new Date();
-    const todayStartIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
-    const todayEndIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString();
+    const { startIso: todayStartIso, endIso: todayEndIso } = getTodayLocalDayRangeUtc(timeZone);
 
     // Neither query depends on the other's result - both only need
     // userId/the date bounds - so they're fired together instead of paying
     // two sequential round trips.
     const [todaysTotals, todaysCustomTargetTotals] = await Promise.all([
-      getTodaysDailyReportTotals({ supabase, userId }),
+      getTodaysDailyReportTotals({ supabase, userId, timeZone }),
       loggableCustomTargets.length
         ? getCustomTargetValueTotals({ supabase, userId, rangeStartIso: todayStartIso, rangeEndIso: todayEndIso })
         : Promise.resolve({} as Record<string, number>),
@@ -234,10 +238,9 @@ export async function getHomeOverviewData({
     exerciseUnit = "min";
   } else {
     const rangeDays = Number(range);
-    const now = new Date();
-    const todayStartMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-    const rangeStartIso = new Date(todayStartMs - (rangeDays - 1) * 24 * 60 * 60 * 1000).toISOString();
-    const rangeEndIso = new Date(todayStartMs + 24 * 60 * 60 * 1000).toISOString();
+    const localToday = getLocalDateString(timeZone);
+    const rangeStartIso = getLocalDayRangeUtc(addDaysToDateString(localToday, -(rangeDays - 1)), timeZone).startIso;
+    const rangeEndIso = getTodayLocalDayRangeUtc(timeZone).endIso;
 
     // None of these four depend on each other's result - all four only
     // need userId/the date bounds - so they're fired together instead of

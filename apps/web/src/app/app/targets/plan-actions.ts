@@ -287,3 +287,30 @@ export async function applyActiveTargetsAction({
   revalidatePath("/app/daily-report");
   return {};
 }
+
+/**
+ * Ticket #10: turns off the pending-review flag flagTargetsReviewPendingAction
+ * set (see app/app/actions.ts) once Daffy's chat-opened reminder has been
+ * handled - either the user asked for the check (called right after that
+ * negotiation's own response comes back, not before, so a reload mid-check
+ * doesn't silently drop the reminder) or explicitly declined it. Either way
+ * this is a one-time nudge, not a recurring one - it never reappears once
+ * cleared, only when a NEW profile change flags a fresh one.
+ */
+export async function clearTargetsReviewPendingAction() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) return;
+
+  const { error } = await supabase
+    .from("user_profile")
+    .update({ targets_review_pending: false, targets_review_changes: null })
+    .eq("user_id", user.id);
+
+  if (error) {
+    logServerError("targets.clearReviewPending", "update_failed", { userId: user.id, error: error.message });
+  }
+}

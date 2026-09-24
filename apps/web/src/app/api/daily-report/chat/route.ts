@@ -12,6 +12,7 @@ import { getTodaysDailyReportTotals, getTodaysLoggedItems } from "@/lib/daily-re
 import { normalizeLocale, tr } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
+import { DEFAULT_TIMEZONE } from "@/lib/timezone";
 
 export const runtime = "nodejs";
 
@@ -69,7 +70,7 @@ export async function POST(request: NextRequest) {
   const { data: profileRow } = await supabase
     .from("user_profile")
     .select(
-      "preferred_language, dietary_preference, allergies, medical_conditions, medical_conditions_details, regular_medications_details, pregnancy_lactation_status, first_name, gender, biological_sex",
+      "preferred_language, dietary_preference, allergies, medical_conditions, medical_conditions_details, regular_medications_details, pregnancy_lactation_status, first_name, gender, biological_sex, timezone",
     )
     .eq("user_id", user.id)
     .maybeSingle();
@@ -97,8 +98,9 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
   const targets: DailyReportChatTargets = targetRow ?? null;
 
-  const todaysTotals = await getTodaysDailyReportTotals({ supabase, userId: user.id, excludeReportId: editingReportId });
-  const todaysLoggedItems = await getTodaysLoggedItems({ supabase, userId: user.id, excludeReportId: editingReportId });
+  const timeZone = profileRow?.timezone ?? DEFAULT_TIMEZONE;
+  const todaysTotals = await getTodaysDailyReportTotals({ supabase, userId: user.id, timeZone, excludeReportId: editingReportId });
+  const todaysLoggedItems = await getTodaysLoggedItems({ supabase, userId: user.id, timeZone, excludeReportId: editingReportId });
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {

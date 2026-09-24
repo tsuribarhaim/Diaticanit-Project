@@ -50,10 +50,16 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
 
   // Admins can open any ticket (RLS's own tickets_select_admin policy
   // already allows this); a plain user's query stays scoped to their own.
+  // technical_response is fetched here same as cancelled_reason/
+  // fix_description/deferred_reason - this whole route is a Server
+  // Component with no client-component prop passing of the raw `ticket`
+  // object, so gating its RENDER on isAdmin below is enough: a non-admin's
+  // response HTML never contains it, same privacy guarantee as those
+  // other admin/status-gated fields already get.
   let ticketQuery = supabase
     .from("tickets")
     .select(
-      "id, ticket_seq, subject, ticket_type, area, priority, description, status, created_at, created_by, cancelled_reason, cancelled_at, fix_description, resolved_at",
+      "id, ticket_seq, subject, ticket_type, area, priority, description, status, created_at, created_by, cancelled_reason, cancelled_at, fix_description, resolved_at, deferred_reason, technical_response",
     )
     .eq("id", id);
   if (!isAdmin) {
@@ -178,6 +184,29 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
           <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-800/60">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{tr(locale, "Cancellation reason", "סיבת הביטול")}</p>
             <p className="mt-1 text-sm text-slate-800 dark:text-slate-200">{ticket.cancelled_reason}</p>
+          </div>
+        ) : null}
+
+        {status === "deferred" && ticket.deferred_reason ? (
+          <div className="mt-5 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 dark:border-violet-800 dark:bg-violet-950/30">
+            <p className="text-xs font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-400">
+              {tr(locale, "Deferred reason", "סיבת הדחייה")}
+            </p>
+            <p className="mt-1 text-sm text-violet-900 dark:text-violet-300">{ticket.deferred_reason}</p>
+          </div>
+        ) : null}
+
+        {isAdmin && ticket.technical_response ? (
+          <div className="mt-5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 dark:border-indigo-800 dark:bg-indigo-950/30">
+            <div className="flex items-center gap-1.5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-400">
+                {tr(locale, "Technical response", "מענה טכני")}
+              </p>
+              <span className="rounded-full border border-indigo-200 bg-indigo-100 px-1.5 py-0 text-[10px] font-semibold text-indigo-700 dark:border-indigo-800 dark:bg-indigo-900/50 dark:text-indigo-300">
+                {tr(locale, "Admin only", "מנהלים בלבד")}
+              </span>
+            </div>
+            <p className="mt-1 text-sm text-indigo-900 dark:text-indigo-300">{ticket.technical_response}</p>
           </div>
         ) : null}
 
