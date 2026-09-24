@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import {
+  buildDefaultParseText,
   dailyReportInputSchema,
   detectDangerousSubstance,
   parseDailyReportText,
@@ -80,28 +81,6 @@ function toNumber(value: unknown, fallback = 0): number {
 function round(value: number, digits = 2): number {
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
-}
-
-function buildDefaultParseText({
-  name,
-  kind,
-  quantity,
-  unit,
-}: {
-  name: string;
-  kind: string;
-  quantity: number;
-  unit: string;
-}): string {
-  if (kind === "exercise") {
-    return `${name} ${quantity} minutes`;
-  }
-
-  if (kind === "hydration") {
-    return `${name} ${quantity} ${unit} water`;
-  }
-
-  return `${name} ${quantity} ${unit}`;
 }
 
 function emptyParseResult(): DailyParseResult {

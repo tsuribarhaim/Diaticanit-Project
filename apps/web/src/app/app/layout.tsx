@@ -3,14 +3,17 @@ import type { ReactNode } from "react";
 import { AppBottomNav } from "@/components/app-bottom-nav";
 import { AppNav } from "@/components/app-nav";
 import { AppUpdateBanner } from "@/components/app-update-banner";
+import { GlobalChatWidget } from "@/components/global-chat-widget";
 import { InstallAppPrompt } from "@/components/install-app-prompt";
 import { NavChromeRefresher } from "@/components/nav-chrome-refresher";
 import { ServiceWorkerRegister } from "@/components/service-worker-register";
 import { TimezoneSync } from "@/components/timezone-sync";
 import { UnsavedPreviewProvider } from "@/components/unsaved-preview-context";
+import { resolveUserGenderForAddressing } from "@/lib/ai/persona";
 import { directionForLocale, normalizeLocale } from "@/lib/locale";
 import { getNavChrome, type NavChromeData } from "@/lib/nav-chrome";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
+import type { ProfileDiffRow } from "@/lib/targets";
 import { normalizeTheme } from "@/lib/theme";
 
 // Was implied but never actually declared - every child page under /app is
@@ -45,13 +48,25 @@ export default async function ProtectedAppLayout({
   const profileRow = navChrome?.profile ?? null;
   // Deliberately its own small, uncached query rather than folded into
   // getNavChrome's cached shape above (name/avatar/theme/notification
-  // count) - this only needs to be read once per genuine mismatch, not
-  // worth adding to that performance-sensitive cache's payload.
+  // count) - covers everything GlobalChatWidget/TimezoneSync need that
+  // isn't already in that cached payload, none of which is worth adding
+  // to that performance-sensitive cache.
   let storedTimezone: string | null = null;
+  let userGender: "male" | "female" | null = null;
+  let pendingReviewChanges: ProfileDiffRow[] | null = null;
   if (user) {
     const supabase = await createClient();
-    const { data } = await supabase.from("user_profile").select("timezone").eq("user_id", user.id).maybeSingle();
+    const { data } = await supabase
+      .from("user_profile")
+      .select("timezone, gender, biological_sex, targets_review_pending, targets_review_changes")
+      .eq("user_id", user.id)
+      .maybeSingle();
     storedTimezone = data?.timezone ?? null;
+    userGender = resolveUserGenderForAddressing(data?.gender, data?.biological_sex);
+    pendingReviewChanges =
+      data?.targets_review_pending && Array.isArray(data.targets_review_changes)
+        ? (data.targets_review_changes as unknown as ProfileDiffRow[])
+        : null;
   }
   // Unresolved count for the nav badge (see AppNav) - resolved status, not
   // read status, since the whole point of that distinction (see the
@@ -76,6 +91,7 @@ export default async function ProtectedAppLayout({
       <InstallAppPrompt locale={locale} />
       {user ? <NavChromeRefresher /> : null}
       {user ? <TimezoneSync currentTimezone={storedTimezone} /> : null}
+      {user ? <GlobalChatWidget locale={locale} userGender={userGender} pendingReviewChanges={pendingReviewChanges} /> : null}
       <UnsavedPreviewProvider locale={locale}>
         {user ? (
           <AppNav

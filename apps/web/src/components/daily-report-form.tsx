@@ -713,15 +713,13 @@ export function DailyReportForm({
       {aiAvailable ? (
         <div className="block">
           {/* Hidden below `sm`, where the panel itself collapses behind a
-              floating bubble (see DailyReportChatPanel) - this label would
-              otherwise sit alone above nothing but a page-corner icon. The
-              bubble's own sheet header repeats the "Chat about your day"
-              title when opened; the char count is desktop-only since it's
-              only really useful while watching the thread build up inline. */}
-          <div className="mb-1 hidden items-center justify-between gap-2 sm:flex">
-            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
-              {tr(locale, "Chat about your day", "צ'אט על היום שלך")}
-            </span>
+              floating bubble (see DailyReportChatPanel) - the char count is
+              desktop-only since it's only really useful while watching the
+              thread build up inline. No title here anymore - the panel's
+              own header (restyled to match the app-wide global chat
+              widget's look) now carries "Chat about your day" itself, so a
+              second copy right above it would just duplicate it. */}
+          <div className="mb-1 hidden items-center justify-end gap-2 sm:flex">
             <span className="text-xs text-slate-500 dark:text-slate-400">
               {reportCharsLeft} {tr(locale, "characters left", "תווים נותרו")}
             </span>
