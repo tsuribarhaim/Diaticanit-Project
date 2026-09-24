@@ -60,6 +60,17 @@ export function TargetsPageClient({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [isSending, setIsSending] = useState(false);
+  // The chat starts collapsed to a floating bubble rather than permanently
+  // occupying page space - a user landing here mainly to tap-edit a value
+  // (the common case now that direct editing exists) shouldn't have to
+  // scroll past a full chat panel to reach the plan below it.
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [hasUnread, setHasUnread] = useState(false);
+
+  function pushAssistantMessage(message: ChatMessage) {
+    setMessages((previous) => [...previous, message]);
+    if (!isChatOpen) setHasUnread(true);
+  }
 
   function updateMessagePendingChange(index: number, status: PendingChange["status"]) {
     setMessages((previous) =>
@@ -76,7 +87,7 @@ export function TargetsPageClient({
 
     const result = await applyActiveTargetsAction({ payload: candidatePayload, source: candidateSource, goalText });
     if (result.error) {
-      setMessages((previous) => [...previous, { role: "assistant", content: result.error as string }]);
+      pushAssistantMessage({ role: "assistant", content: result.error as string });
       return;
     }
 
@@ -103,7 +114,7 @@ export function TargetsPageClient({
    * not just the inline per-field banner - matches the mockup, which did
    * the same (surface the explanation in chat even before Apply/Discard). */
   function handleDaffyMessageFromEditor(content: string) {
-    setMessages((previous) => [...previous, { role: "assistant", content }]);
+    pushAssistantMessage({ role: "assistant", content });
   }
 
   async function handleSendMessage() {
@@ -119,7 +130,7 @@ export function TargetsPageClient({
     setIsSending(false);
 
     if ("error" in result) {
-      setMessages((previous) => [...previous, { role: "assistant", content: result.error }]);
+      pushAssistantMessage({ role: "assistant", content: result.error });
       return;
     }
 
@@ -130,20 +141,17 @@ export function TargetsPageClient({
       // tap-to-edit doesn't need one either.
       setPayload(result.payload);
       setSource(result.source);
-      setMessages((previous) => [...previous, { role: "assistant", content: result.reply }]);
+      pushAssistantMessage({ role: "assistant", content: result.reply });
       return;
     }
 
-    setMessages((previous) => [
-      ...previous,
-      {
-        role: "assistant",
-        content: result.reply,
-        pendingChange: result.changed
-          ? { payload: result.payload, source: result.source, goalText: trimmed, status: "pending" }
-          : undefined,
-      },
-    ]);
+    pushAssistantMessage({
+      role: "assistant",
+      content: result.reply,
+      pendingChange: result.changed
+        ? { payload: result.payload, source: result.source, goalText: trimmed, status: "pending" }
+        : undefined,
+    });
   }
 
   return (
@@ -177,7 +185,37 @@ export function TargetsPageClient({
         onDaffyMessage={handleDaffyMessageFromEditor}
       />
 
-      <div className="flex flex-col overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
+      {/* A floating bubble (not a permanently-expanded block) so a user who
+         only came to tap-edit a value isn't forced to scroll past a full
+         chat panel - tapping it opens a panel anchored above the bubble;
+         the message history/input below is unchanged, just relocated.
+         Position matches the app's other floating chat bubble
+         (daily-report-chat-panel.tsx) exactly - same physical bottom-right
+         corner regardless of RTL, same safe-area-aware offset above
+         AppBottomNav - so the two look and behave consistently across
+         pages; see that file's own comment for why this specific calc()
+         (not a plain end-4) and its underscore-in-calc gotcha. */}
+      <button
+        type="button"
+        onClick={() => {
+          setIsChatOpen((open) => !open);
+          setHasUnread(false);
+        }}
+        aria-label={tr(locale, "Chat with Daffy", "צ'אט עם Daffy")}
+        className="fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom)+0.75rem)] right-[calc(12.5vw_-_2rem)] z-50 flex h-14 w-14 items-center justify-center rounded-full bg-teal-700 text-white shadow-lg hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+      >
+        {isChatOpen ? (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="M6 6l12 12" /></svg>
+        ) : (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" /></svg>
+        )}
+        {hasUnread && !isChatOpen ? (
+          <span className="absolute end-0 top-0 h-3.5 w-3.5 rounded-full border-2 border-white bg-rose-500 dark:border-slate-900" />
+        ) : null}
+      </button>
+
+      {isChatOpen ? (
+        <div className="fixed bottom-[calc(8rem+env(safe-area-inset-bottom))] right-[calc(12.5vw_-_2rem)] z-50 flex max-h-[70vh] w-[calc(100vw-2rem)] max-w-sm flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-800/60">
           <span className="flex h-6 w-6 items-center justify-center rounded-full bg-teal-700 text-white dark:bg-teal-600">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" /></svg>
@@ -186,7 +224,7 @@ export function TargetsPageClient({
             {tr(locale, "Chat with Daffy — your AI coach", "צ'אט עם Daffy - מאמן ה-AI שלך")}
           </p>
         </div>
-        <div className="max-h-96 min-h-[6rem] space-y-2.5 overflow-y-auto p-3">
+        <div className="min-h-[6rem] flex-1 space-y-2.5 overflow-y-auto p-3">
           {messages.length === 0 ? (
             <p className="text-sm text-slate-500 dark:text-slate-400">
               {trGendered(
@@ -269,7 +307,8 @@ export function TargetsPageClient({
             {tr(locale, "Send", "שליחה")}
           </button>
         </div>
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }

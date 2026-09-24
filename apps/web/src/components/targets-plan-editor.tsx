@@ -380,6 +380,17 @@ export function TargetsPlanEditor({
   const weightEntry = payload.userTargets.find((entry) => entry.id === "target_weight");
   const sleepEntry = payload.userTargets.find((entry) => entry.id === "sleep_hours");
   const stepsEntry = payload.userTargets.find((entry) => entry.id === "daily_steps");
+  // These three cards always render, even when the underlying plan (one
+  // generated before weight/sleep/steps became standing, always-included
+  // user_targets entries - see the AI prompt's own "STANDING and always
+  // required" rule) doesn't actually have the entry yet: weight falls back
+  // to the payload's own top-level targetWeightKg (a separate field,
+  // always present once any weight goal exists), and sleep/steps fall back
+  // to "Not set yet" - still tappable, which creates the entry for the
+  // first time via applyOrCheckFieldEdit's own fallback for a missing id.
+  const weightLabel = weightEntry?.label ?? tr(locale, "Target weight", "משקל יעד");
+  const sleepLabel = sleepEntry?.label ?? tr(locale, "Sleep duration", "משך שינה");
+  const stepsLabel = stepsEntry?.label ?? tr(locale, "Daily steps", "צעדים יומיים");
   const otherEntries = payload.userTargets.filter(
     (entry) => entry.id !== "target_weight" && entry.id !== "sleep_hours" && entry.id !== "daily_steps",
   );
@@ -418,9 +429,9 @@ export function TargetsPlanEditor({
   return (
     <div className="space-y-5">
       <div className="grid gap-2.5 sm:grid-cols-3">
-        {weightEntry ? standingCard("weight", { kind: "weight" }, weightEntry.label, payload.targetWeightKg ?? parseNumericOrNull(weightEntry.value), "kg", 1) : null}
-        {sleepEntry ? standingCard("sleep", { kind: "sleep" }, sleepEntry.label, parseNumericOrNull(sleepEntry.value), "h", 1) : null}
-        {stepsEntry ? standingCard("steps", { kind: "steps" }, stepsEntry.label, parseNumericOrNull(stepsEntry.value), "steps", 0) : null}
+        {standingCard("weight", { kind: "weight" }, weightLabel, payload.targetWeightKg ?? parseNumericOrNull(weightEntry?.value), "kg", 1)}
+        {standingCard("sleep", { kind: "sleep" }, sleepLabel, parseNumericOrNull(sleepEntry?.value), "h", 1)}
+        {standingCard("steps", { kind: "steps" }, stepsLabel, parseNumericOrNull(stepsEntry?.value), "steps", 0)}
       </div>
 
       <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">

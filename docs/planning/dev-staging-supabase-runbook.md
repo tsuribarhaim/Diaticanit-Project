@@ -53,6 +53,32 @@ From Project root:
 - Promote changes in order: dev first, then staging.
 - 2026-08-25: discovered supabase/migrations never existed (only db/migrations, which the CLI ignores), so `db push` had been a silent no-op in both dev and staging since inception. Backfilled supabase/migrations with timestamped copies of migrations 001-018 and ran `supabase migration repair --status applied` against both dev and staging after verifying (via `supabase db query --linked` against information_schema) that all 18 migrations' schema changes were already live in both databases. `db push` is now functional going forward.
 
+## Promoting Code (Real Pilot Testers)
+- The port-3000 `next start` server (`run-staging-1.0.ps1`) is LAN-only -
+  it's for testing on this laptop's own WiFi. It is NOT what pilot testers'
+  phones point at.
+- Real testers use the Vercel deployment (`daffy2/daffy-pilot`,
+  https://daffy-pilot.vercel.app). Vercel is NOT connected to GitHub for
+  auto-deploy (attempted once, blocked on a GitHub login connection - see
+  pilot-follow-up-todo.md), so pushing `release/1.0` to GitHub does
+  nothing on its own.
+- After merging `main` -> `release/1.0` and pushing, you MUST also run,
+  from `Project-staging-1.0/apps/web`:
+  - `npx vercel deploy --prod --yes`
+- `NEXT_PUBLIC_APP_VERSION` for Vercel is a separate Vercel-dashboard env
+  var, NOT read from this worktree's local `.env.local` (that file only
+  affects the port-3000 LAN server). To update it:
+  - `npx vercel env rm NEXT_PUBLIC_APP_VERSION production --yes`
+  - `printf '<new version>' | npx vercel env add NEXT_PUBLIC_APP_VERSION production`
+  - then redeploy (`vercel deploy --prod --yes` again) - a Vercel env var
+    change only takes effect on the next build, same as the local
+    `.env.local` rule below.
+- Forgetting the `vercel deploy --prod` step is silent and easy to miss:
+  the LAN server updates fine and looks like a successful promotion, while
+  every real tester keeps seeing the old build with no error anywhere.
+  Always verify with `curl https://daffy-pilot.vercel.app/api/version`
+  after promoting, not just the LAN server's own `/api/version`.
+
 ## Versioning
 - Tag stable tester release as v1.0.0.
 - Continue feature work on 1.1 from main.
