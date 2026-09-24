@@ -119,7 +119,7 @@ export function SubmitButton({
   // guards against a double-submit; `busy` only ever affects the spinner.
   const isDisabled = pending || disabled;
 
-  const idleLabel = isEditing ? tr(locale, "Save changes", "שמירת שינויים") : tr(locale, "Conclude & Report", "סיום ודיווח");
+  const idleLabel = isEditing ? tr(locale, "Save changes", "שמירת שינויים") : tr(locale, "Report", "דיווח");
   const pendingLabel = isEditing ? tr(locale, "Saving changes...", "שומר שינויים...") : tr(locale, "Saving...", "שומר...");
 
   if (variant === "icon") {

@@ -36,7 +36,7 @@ import {
 import { normalizeLocale, tr } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
-import { computeProfileDiff, parseProfileSnapshot, type ProfileForTargets } from "@/lib/targets";
+import { computeProfileDiff, parseProfileSnapshot, type ProfileDiffRow, type ProfileForTargets } from "@/lib/targets";
 
 export type ProfileUpdateActionState = {
   error?: string;
@@ -662,6 +662,15 @@ export type QuickEditState = {
    * targetsStale computation above), instead of a second parallel
    * notification mechanism. */
   targetsStale?: boolean;
+  /** Same signal as targetsStale, but the actual rows behind it - only
+   * populated when targetsStale is true. The Profile page's own form
+   * callers ignore this (they only redirect on the boolean), but the
+   * unified chat's profile-domain apply step (see
+   * app/app/profile/chat-actions.ts) uses it to flag ticket #10's
+   * "your profile changed, want me to check your targets?" reminder
+   * directly, since there's no page redirect/modal step in that flow to
+   * surface it through instead. */
+  targetsStaleChanges?: ProfileDiffRow[];
 };
 
 const PROFILE_FOR_TARGETS_COLUMNS =
@@ -706,7 +715,7 @@ async function loadProfileForTargetsDiff(
  * so a small single-field edit flags a stale Targets plan exactly as
  * reliably as the full form does.
  */
-async function applyProfilePatchAndFlagTargets({
+export async function applyProfilePatchAndFlagTargets({
   supabase,
   userId,
   locale,
@@ -744,17 +753,20 @@ async function applyProfilePatchAndFlagTargets({
     .maybeSingle();
 
   let targetsStale = false;
+  let targetsStaleChanges: ProfileDiffRow[] | undefined;
   if (activeTargetProfileForDiff) {
     const storedSnapshot = parseProfileSnapshot(activeTargetProfileForDiff.profile_snapshot);
     if (storedSnapshot) {
       const updatedProfile = await loadProfileForTargetsDiff(supabase, userId);
       if (updatedProfile) {
-        targetsStale = computeProfileDiff(storedSnapshot, updatedProfile, locale).length > 0;
+        const diffRows = computeProfileDiff(storedSnapshot, updatedProfile, locale);
+        targetsStale = diffRows.length > 0;
+        if (targetsStale) targetsStaleChanges = diffRows;
       }
     }
   }
 
-  return { success: true, targetsStale };
+  return { success: true, targetsStale, targetsStaleChanges };
 }
 
 /** First/last name + date of birth - the header "Edit Profile" button's own

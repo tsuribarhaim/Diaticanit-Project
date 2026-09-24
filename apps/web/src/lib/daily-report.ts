@@ -109,6 +109,37 @@ export type ParsedExerciseItem = {
   estimatedBurnKcal: number;
 };
 
+/** Synthesizes a plain-text description for a saved-list ("default") item
+ * that has no cached nutrition metrics of its own yet (parse_confidence
+ * 0), so it can go through the normal text parser exactly like a
+ * freeform-typed report - the same fallback saveDailyReportAction's own
+ * selected-defaults merge uses, and quick-log-actions.ts's single-item
+ * immediate-log flow. Lives here (not a "use server" actions file) since
+ * every export from a Server Actions file must itself be an async action -
+ * this is a plain sync string builder, not a Server Action, so it can't
+ * live there without breaking Next's Server Actions constraint. */
+export function buildDefaultParseText({
+  name,
+  kind,
+  quantity,
+  unit,
+}: {
+  name: string;
+  kind: string;
+  quantity: number;
+  unit: string;
+}): string {
+  if (kind === "exercise") {
+    return `${name} ${quantity} minutes`;
+  }
+
+  if (kind === "hydration") {
+    return `${name} ${quantity} ${unit} water`;
+  }
+
+  return `${name} ${quantity} ${unit}`;
+}
+
 export type DailyReportMetrics = {
   caloriesKcal: number;
   proteinG: number;

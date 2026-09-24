@@ -1,17 +1,30 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { createPortal, flushSync, useFormStatus } from "react-dom";
 
 import { deleteDailyReportAction } from "@/app/app/daily-report/actions";
-import { DailyReportDefaultsPicker, type DailyReportDefaultItem, type SelectedSavedListItem } from "@/components/daily-report-defaults-picker";
+import { logSavedItemFromChatAction } from "@/app/app/daily-report/quick-log-actions";
+import type { DailyReportDefaultItem } from "@/components/daily-report-defaults-picker";
 import { SubmitButton } from "@/components/daily-report-submit-button";
 import { directionForLocale, formatDefaultItemName, formatDefaultUnit, tr, trGendered, type AppLocale } from "@/lib/locale";
-import { useIsDesktopViewport, useVisualViewportHeight } from "@/lib/use-viewport";
 
 export type { DailyReportDefaultItem };
 
-type ChatMessage = { role: "user" | "assistant"; content: string; imagePreviewUrl?: string };
+type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+  imagePreviewUrl?: string;
+  /** Purely a UI confirmation (e.g. "✓ Added Coffee to today's log" after a
+   * saved-list quick-log) - shown in the thread like any other message,
+   * but excluded from the transcript this panel reports up to the parent
+   * (see the onTranscriptChange effect below), since a quick-logged item
+   * is already its own separate, already-saved report row - it must never
+   * also get folded into whatever this compose box's own Save/Conclude
+   * submits next, which would duplicate it or confuse the AI parser. */
+  localOnly?: boolean;
+};
 type SseEvent =
   | { type: "token"; text: string }
   | { type: "actionable"; value: boolean }
@@ -339,7 +352,12 @@ export function DailyReportChatPanel({
   const [retryAction, setRetryAction] = useState<(() => void) | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
-  const [selectedSavedListItems, setSelectedSavedListItems] = useState<SelectedSavedListItem[]>([]);
+  // The saved-list icon's popover (restyled to match the global chat
+  // widget's simple "tap the icon, tap an item, it's logged" flow - see
+  // handleLogSavedItem below) - no separate loading/fetch state needed
+  // since defaultItems already arrives as a prop from the page's own load.
+  const [isSavedListOpen, setIsSavedListOpen] = useState(false);
+  const router = useRouter();
   // Edit mode only - true once the model's latest reply confirmed the user
   // wants to delete this whole entry (see the "delete_intent" SSE event and
   // isEditingExistingEntry below), swapping Save for a delete action so
@@ -348,16 +366,15 @@ export function DailyReportChatPanel({
   // "New chat" - shown only while there's actually something to lose (see
   // hasChatContent below); otherwise the button clears immediately with no
   // prompt. Deliberately false-by-default and only ever flipped true from a
-  // real click handler, never during the initial render - a portal keyed on
-  // it further below (see pendingClearConfirm's own JSX) can therefore
-  // never fire during SSR/hydration, no separate "is this mounted yet" gate
-  // needed the way isDesktopViewport's portal requires one.
+  // real click handler, never during the initial render - the portal keyed
+  // on it further below (see pendingClearConfirm's own JSX) can therefore
+  // never fire during SSR/hydration.
   const [pendingClearConfirm, setPendingClearConfirm] = useState(false);
   // Which of the two clear-triggering buttons opened the confirm dialog -
   // "New chat" (stays open, see handleNewChatClick) or the discard-and-
   // close title-bar icon (also minimizes once confirmed, see
   // handleDiscardAndCloseClick) - so confirmClearChat knows whether to
-  // close the sheet afterward, and the dialog can show the right wording
+  // close the panel afterward, and the dialog can show the right wording
   // for which one the user actually asked for.
   const [closeAfterClear, setCloseAfterClear] = useState(false);
   // Tracks "a save was just triggered" independently of useFormStatus's own
@@ -365,17 +382,6 @@ export function DailyReportChatPanel({
   // (spinner + disabled) for the save buttons; it never gates what actually
   // gets submitted.
   const [isSaving, setIsSaving] = useState(false);
-  // Drives the desktop-inline-card vs. mobile-portal-cluster split near the
-  // bottom of this component - see subscribeToViewport/getViewportSnapshot
-  // above for why this needs a definite yes/no rather than relying on CSS
-  // breakpoints to hide one of two simultaneously-mounted copies (a
-  // portaled copy's form fields would otherwise double up with the desktop
-  // copy's on desktop - same `name` attributes, both actually mounted,
-  // both submitting).
-  const isDesktopViewport = useIsDesktopViewport();
-  // See useVisualViewportHeight's own comment - drives the mobile sheet's
-  // actual pixel height below instead of a CSS viewport-unit guess.
-  const visualViewportHeight = useVisualViewportHeight();
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const threadRef = useRef<HTMLDivElement | null>(null);
   const hasDoneInitialScrollRef = useRef(false);
@@ -392,48 +398,27 @@ export function DailyReportChatPanel({
   const photoGalleryInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const hasSentOnceRef = useRef(false);
+  // ProtectedAppLayout stamps data-theme="dark"/"light" on its own wrapper
+  // div (see app/app/layout.tsx), and every dark: utility class in this
+  // app is scoped to that attribute via a custom Tailwind variant (see
+  // globals.css: `@custom-variant dark (&:where([data-theme="dark"],
+  // [data-theme="dark"] *))`) - NOT the standard prefers-color-scheme
+  // media query. Since this panel is portaled straight to document.body
+  // (see the bottom of this file), it renders OUTSIDE that wrapper and
+  // never inherits the attribute, so every dark: class here would
+  // silently never apply, no matter the user's actual theme - confirmed
+  // live as "the chat isn't dark like the rest of the app." Mirroring the
+  // real value onto the portaled root below is the fix; read once on
+  // mount (before this panel's own data-theme is ever set, so the query
+  // can't accidentally match itself) rather than threading a new prop
+  // through page.tsx -> DailyReportForm -> here alongside locale.
+  const [mirroredTheme] = useState<string | null>(
+    () => document.querySelector("[data-theme]")?.getAttribute("data-theme") ?? null,
+  );
 
   useEffect(() => {
     return () => abortRef.current?.abort();
   }, []);
-
-  // Locks the page behind the sheet from scrolling while it's open - without
-  // this, a touch-scroll gesture that starts anywhere the sheet doesn't
-  // fully cover (or that the browser routes to the page underneath for its
-  // own reasons) scrolls the REPORT PAGE itself, not the sheet. Since the
-  // sheet is fixed in place, that made the page's own content (the goal
-  // bars, entries list) visibly slide up through/behind it while the sheet
-  // stayed put - confirmed as the cause of the weight/macro chart appearing
-  // to overlay the chat sheet on scroll.
-  //
-  // Plain `overflow: hidden` on body is NOT enough on iOS Safari - it's a
-  // well-known iOS quirk that background touch-scroll/rubber-banding still
-  // gets through regardless. The reliable cross-browser fix also pins the
-  // body in place via position:fixed (capturing the current scroll offset
-  // as a negative `top` so nothing visibly jumps) and restores the exact
-  // scroll position on close.
-  useEffect(() => {
-    if (!isOpen) return;
-    const scrollY = window.scrollY;
-    const body = document.body;
-    const previous = {
-      position: body.style.position,
-      top: body.style.top,
-      width: body.style.width,
-      overflow: body.style.overflow,
-    };
-    body.style.position = "fixed";
-    body.style.top = `-${scrollY}px`;
-    body.style.width = "100%";
-    body.style.overflow = "hidden";
-    return () => {
-      body.style.position = previous.position;
-      body.style.top = previous.top;
-      body.style.width = previous.width;
-      body.style.overflow = previous.overflow;
-      window.scrollTo(0, scrollY);
-    };
-  }, [isOpen]);
 
   // Last-resort safety net: the render-time reset below already clears
   // isSaving the moment saveError/saveSuccess/bmiWarning changes (i.e. the
@@ -559,7 +544,7 @@ export function DailyReportChatPanel({
     if (isPinnedToBottomRef.current) {
       container.scrollTop = container.scrollHeight;
     }
-  }, [messages, selectedSavedListItems]);
+  }, [messages]);
 
   /** Updates isPinnedToBottomRef from real scroll position - a generous
    * threshold (not 0px) since the user landing back within a few dozen
@@ -575,7 +560,10 @@ export function DailyReportChatPanel({
   }
 
   useEffect(() => {
-    const transcript = messages.map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`).join("\n");
+    const transcript = messages
+      .filter((message) => !message.localOnly)
+      .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`)
+      .join("\n");
     onTranscriptChange(transcript);
     // onTranscriptChange is a fresh closure each render (it wraps setState in the parent) -
     // depending only on messages keeps this from re-firing on unrelated renders.
@@ -599,7 +587,7 @@ export function DailyReportChatPanel({
     // bottom again - re-pins even if they'd scrolled up to read earlier
     // messages, same as any other chat app snapping back down on send.
     isPinnedToBottomRef.current = true;
-    const historyForRequest = messages;
+    const historyForRequest = messages.filter((message) => !message.localOnly);
     const userContent = trimmed || tr(locale, "(attached a photo)", "(תמונה מצורפת)");
     setMessages((previous) => [
       ...previous,
@@ -755,7 +743,10 @@ export function DailyReportChatPanel({
     if (!trimmed) return;
 
     const finalMessages: ChatMessage[] = [...messages, { role: "user", content: trimmed }];
-    const transcript = finalMessages.map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`).join("\n");
+    const transcript = finalMessages
+      .filter((message) => !message.localOnly)
+      .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`)
+      .join("\n");
 
     flushSync(() => {
       setMessages(finalMessages);
@@ -766,8 +757,7 @@ export function DailyReportChatPanel({
 
   // Whether "New chat" has anything to actually lose - a fresh, never-typed-
   // in panel just clears silently instead of prompting over nothing.
-  const hasChatContent =
-    messages.length > 0 || inputValue.trim().length > 0 || photoPreviewUrl !== null || selectedSavedListItems.length > 0;
+  const hasChatContent = messages.length > 0 || inputValue.trim().length > 0 || photoPreviewUrl !== null;
 
   function handleNewChatClick() {
     if (hasChatContent) {
@@ -815,7 +805,6 @@ export function DailyReportChatPanel({
     setInputValue("");
     setPhotoPreviewUrl(null);
     setPhotoError(null);
-    setSelectedSavedListItems([]);
     setPendingDeleteOnSave(false);
     setStreamError(null);
     setRetryAction(null);
@@ -827,71 +816,40 @@ export function DailyReportChatPanel({
     }
   }
 
-  /** Formats a picked saved-list item's full breakdown as chat text - same
-   * content the old decorative echo bubble showed, now actually sent as a
-   * real message so the AI (and any later edit request, e.g. "remove the
-   * coffee") can see and act on it, instead of the item only ever reaching
-   * the final report through the separate, AI-invisible selected_default_ids
-   * merge at save time (ticket #4, Aggregated Tickets). Wrapped in
-   * useCallback (deps: locale only) so it - and handleSavedListSelectionChange
-   * below, which depends on it - keep a stable identity across renders; see
-   * that function's own comment for why stability here specifically matters. */
-  const buildSavedItemChatText = useCallback(
-    (item: SelectedSavedListItem): string => {
-      const header = tr(locale, `Add my saved "${item.name}"`, `להוסיף את "${item.name}" מהרשימה השמורה שלי`);
-      if (item.ingredients && item.ingredients.length > 1) {
-        const breakdown = item.ingredients
-          .map((ingredient) => `${ingredient.quantity} ${formatDefaultUnit(ingredient.unit, locale)} ${formatDefaultItemName(ingredient.name, locale)}`)
-          .join(", ");
-        return `${header}: ${breakdown}`;
-      }
-      return `${header} (${item.quantity} ${formatDefaultUnit(item.unit, locale)})`;
-    },
-    [locale],
-  );
-
-  /** Injects a real chat message the instant an item is picked (per ticket
-   * #4's answer: "added automatically once selected"), rather than only
-   * updating the decorative selectedSavedListItems display - diffs by name
-   * (saved-list item names are already enforced unique per user) so only
-   * newly-checked items get a message, not the whole selection every time
-   * a box is (un)checked. Doesn't trigger an AI reply on its own - it just
-   * becomes part of the conversation history the next real Send/Conclude
-   * already includes, matching "only update and save once the user asks."
-   * Un-checking an item doesn't retract its message - same as anything
-   * else typed into this chat, correcting it is a normal follow-up message
-   * ("remove that"), not an undo.
-   *
-   * MUST stay referentially stable across renders (useCallback, no
-   * selectedSavedListItems in the closure - read via the functional
-   * setState updater instead) - this is passed as
-   * DailyReportDefaultsPicker's onSelectionChange prop, which that
-   * component's own internal useCallback/useEffect chain depends on
-   * (syncSelectionUi depends on [..., onSelectionChange], and an effect
-   * depends on syncSelectionUi and calls it immediately). A plain function
-   * recreated every render broke that chain into an infinite loop - passing
-   * a new prop reference re-ran the child's effect, which called this
-   * again, which re-rendered this component, which passed yet another new
-   * reference - seen live as React's "Maximum update depth exceeded" and,
-   * because it pegs the render cycle, everything else on the page (Save,
-   * other buttons) reads as hung or unresponsive while it's happening. */
-  const handleSavedListSelectionChange = useCallback(
-    (next: SelectedSavedListItem[]) => {
-      setSelectedSavedListItems((previousSelection) => {
-        const previousNames = new Set(previousSelection.map((item) => item.name));
-        const newlySelected = next.filter((item) => !previousNames.has(item.name));
-        if (newlySelected.length > 0) {
-          isPinnedToBottomRef.current = true;
-          setMessages((previousMessages) => [
-            ...previousMessages,
-            ...newlySelected.map((item) => ({ role: "user" as const, content: buildSavedItemChatText(item) })),
-          ]);
-        }
-        return next;
-      });
-    },
-    [buildSavedItemChatText],
-  );
+  /**
+   * Logs one saved item immediately at its default quantity - same
+   * action, same one-tap-and-done behavior as the global chat widget's
+   * own saved-list icon (see global-chat-widget.tsx's handleLogSavedItem
+   * for the identical pattern). Deliberately NOT folded into this panel's
+   * own compose/transcript flow the way the old checkbox picker's
+   * selections were - this creates its own separate report row right
+   * away, so the confirmation bubble below is marked localOnly (shown in
+   * the thread, excluded from what Send/Conclude or the AI ever sees).
+   */
+  async function handleLogSavedItem(item: DailyReportDefaultItem) {
+    setIsSavedListOpen(false);
+    const result = await logSavedItemFromChatAction(item.id);
+    isPinnedToBottomRef.current = true;
+    if (result.error) {
+      setMessages((previous) => [...previous, { role: "assistant", content: result.error!, localOnly: true }]);
+      return;
+    }
+    const name = formatDefaultItemName(item.name, locale);
+    const unit = formatDefaultUnit(item.default_unit, locale);
+    setMessages((previous) => [
+      ...previous,
+      {
+        role: "assistant",
+        content: tr(
+          locale,
+          `✓ Added ${name} (${item.default_quantity} ${unit}) to today's log.`,
+          `✓ נוסף ${name} (${item.default_quantity} ${unit}) ליומן היום.`,
+        ),
+        localOnly: true,
+      },
+    ]);
+    router.refresh();
+  }
 
   async function handlePhotoSelected(file: File | null) {
     setPhotoError(null);
@@ -937,73 +895,34 @@ export function DailyReportChatPanel({
     setPhotoPreviewUrl(null);
   }
 
-  const hasThreadContent = messages.length > 0 || isStreaming;
   // Whether there's actually anything to save right now - hasChanges covers
   // weight/custom-targets/already-sent chat text (tracked by the parent
   // form), extended here with this panel's own in-progress signals that the
   // parent can't see yet: text typed but not sent, a photo attached this
   // turn, or a saved-list item picked but not folded into a message.
-  const canSave = hasChanges || inputValue.trim().length > 0 || Boolean(photoPreviewUrl) || selectedSavedListItems.length > 0;
+  const canSave = hasChanges || inputValue.trim().length > 0 || Boolean(photoPreviewUrl);
 
-  // Reserved gap (flat px, not a CSS calc with env(safe-area-inset-bottom)
-  // like the button row below uses - this needs to already be baked into a
-  // plain JS-computed pixel offset) between the open sheet's bottom edge and
-  // the true viewport bottom, so the sheet stops above the floating
-  // save/close button row instead of running flush underneath it. Both used
-  // to be fixed to that same physical corner independently, which put the
-  // buttons visually on top of the sheet's own bottom content (the
-  // saved-list picker row) since the sheet's z-40 sits under the buttons'
-  // z-50 - reported as the buttons "blocking the list of saved items".
-  // Generous on purpose (comfortably covers the button row's own
-  // height/offset/safe-area on any real device) rather than trying to
-  // compute an exact fit. 144, not 128: the chat toggle button grew from
-  // h-14 (56px) to h-16 (64px), so 128 (offset ~64px + old 56px button, no
-  // spare margin) stopped leaving any real buffer above it.
-  const SHEET_BUTTON_CLEARANCE_PX = 144;
-  // 72% of the actually-measured visible height (see getVisualViewportHeight)
-  // for the mobile sheet - null until that measurement lands, in which case
-  // the sheet falls back to a fixed CSS height for that brief instant (see
-  // its own comment below). The sheet's own height is unchanged by
-  // SHEET_BUTTON_CLEARANCE_PX (shrinking it instead of shifting it up used
-  // to leave too little room for the thread, clipping the composer below a
-  // long AI reply instead of properly scrolling past it - see the min-h-0
-  // fix in chatBodyContent, which was the other half of that bug) - only
-  // sheetTopPx moves further up, opening the clearance gap below the sheet
-  // rather than eating into it.
-  const sheetHeightPx = visualViewportHeight !== null ? Math.round(visualViewportHeight * 0.72) : null;
-  const sheetTopPx =
-    visualViewportHeight !== null && sheetHeightPx !== null
-      ? Math.round(visualViewportHeight - sheetHeightPx - SHEET_BUTTON_CLEARANCE_PX)
-      : null;
-
-  // Shared between the desktop inline card and the mobile portaled sheet -
-  // same thread/banners/composer JSX either way (the sm: classes sprinkled
-  // through it already resolve correctly in both render modes, since
-  // whichever mode is active only ever renders at a viewport where those
-  // classes would resolve the same way CSS breakpoints already made them
-  // resolve). form="daily-report-form" on every form-associated control
-  // below (the saved-list picker's checkboxes, the submit button) is what
-  // keeps them working once the mobile copy is portaled out from under the
+  // The panel's own thread/banners/composer JSX - a fixed-size floating
+  // panel now (see the bottom of this file), not a desktop inline card
+  // plus a differently-shaped mobile sheet, so there's only ever one copy
+  // of this to render. form="daily-report-form" on every form-associated
+  // control below (the saved-list icon, the submit button) is what keeps
+  // them working since the whole panel is portaled out from under the
   // <form> in the DOM - native form submission is DOM-ancestry-based, so
   // without it a portaled control would silently stop submitting anything.
   const chatBodyContent = (
     <>
-      {/* Redesigned as a compact "title bar" - one window's worth of chrome
-          (icon, title, and the two controls that act on the window itself)
-          instead of a title/subtitle row plus a separately-floating
-          open/close circle competing for the same corner (see the mobile
-          floating-buttons portal further down, which no longer renders
-          that circle at all while open - minimizing now only happens from
-          here or by tapping the backdrop). Subtitle text dropped - it only
-          ever showed once anyway, and the extra row was part of what read
-          as bulky. */}
-      <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-2.5 dark:border-slate-800 sm:hidden">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-teal-700 text-white dark:bg-teal-600">
-            <ChatBubbleBadgeIcon className="h-3.5 w-3.5" />
-          </span>
-          <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Chat about your day", "צ'אט על היום שלך")}</p>
-        </div>
+      {/* Same header shape as the app-wide global chat widget (avatar +
+          title + action icons) - one window's worth of chrome, unified
+          across every screen size now that this panel is the same fixed
+          floating size everywhere (see the bottom of this file), not a
+          full-width desktop card plus a separately-shaped mobile sheet
+          that each needed their own header treatment. */}
+      <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-800/60">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-teal-700 text-white dark:bg-teal-600">
+          <ChatBubbleBadgeIcon className="h-3 w-3" />
+        </span>
+        <p className="flex-1 truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Chat about your day", "צ'אט על היום שלך")}</p>
         {/* gap-3.5: same "keep two adjacent icons comfortably apart"
             reasoning already applied to the entry-row quick actions -
             minimizing sits right next to a destructive-ish action (New
@@ -1015,7 +934,7 @@ export function DailyReportChatPanel({
             onClick={handleNewChatClick}
             aria-label={tr(locale, "Start a new chat", "התחלת צ'אט חדש")}
             title={tr(locale, "Start a new chat", "התחלת צ'אט חדש")}
-            className="flex h-8 w-8 items-center justify-center rounded-full text-teal-700 hover:bg-teal-50 dark:text-teal-400 dark:hover:bg-teal-950/40"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-teal-700 hover:bg-teal-50 dark:text-teal-400 dark:hover:bg-teal-950/40"
           >
             <NewChatIcon className="h-4 w-4" />
           </button>
@@ -1031,7 +950,7 @@ export function DailyReportChatPanel({
             onClick={handleDiscardAndCloseClick}
             aria-label={tr(locale, "Discard and close", "התעלמות וסגירה")}
             title={tr(locale, "Discard and close", "התעלמות וסגירה")}
-            className="flex h-8 w-8 items-center justify-center rounded-full text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/40"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/40"
           >
             <TrashIcon className="h-4 w-4" />
           </button>
@@ -1040,40 +959,22 @@ export function DailyReportChatPanel({
             onClick={() => setIsOpen(false)}
             aria-label={tr(locale, "Minimize chat", "מזעור הצ'אט")}
             title={tr(locale, "Minimize chat", "מזעור הצ'אט")}
-            className="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
           >
             <MinimizeIcon className="h-4 w-4" />
           </button>
         </div>
       </div>
 
-        {/* Desktop only - the mobile header above already carries this
-            button, but desktop's own "Chat about your day" title lives in
-            DailyReportForm (outside this shared JSX), so this thin bar is
-            the only place left for it there. */}
-        <div className="hidden items-center justify-end border-b border-slate-200 px-3 py-1.5 dark:border-slate-800 sm:flex">
-          <button
-            type="button"
-            onClick={handleNewChatClick}
-            aria-label={tr(locale, "Start a new chat", "התחלת צ'אט חדש")}
-            title={tr(locale, "Start a new chat", "התחלת צ'אט חדש")}
-            className="flex items-center gap-1 rounded-full border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
-          >
-            <NewChatIcon className="h-3.5 w-3.5" />
-            {tr(locale, "New chat", "צ'אט חדש")}
-          </button>
-        </div>
-
-        {/* min-h-0 on both this wrapper and threadRef below: without it, a
-            flex item defaults to a content-based auto min-height, so a long
-            AI reply grew this column taller than the sheet's own fixed
-            height (see sheetHeightPx above) instead of being constrained to
+        {/* min-h-0: without it, a flex item defaults to a content-based
+            auto min-height, so a long AI reply grew this column taller
+            than the panel's own max-height instead of being constrained to
             it - threadRef's own overflow-y-auto never got a chance to
-            scroll, and the composer/save-list row after it got pushed below
-            the sheet's visible bounds and clipped by its overflow-hidden,
-            reading as "the reply covers the compose area and nothing
-            scrolls". The classic flexbox-scroll-area fix. */}
-        <div className={`flex min-h-0 flex-1 flex-col sm:flex-none ${hasThreadContent ? "sm:h-[380px]" : ""}`}>
+            scroll, and the composer/save-list row after it got pushed
+            below the panel's visible bounds and clipped by its
+            overflow-hidden, reading as "the reply covers the compose area
+            and nothing scrolls". The classic flexbox-scroll-area fix. */}
+        <div className="flex min-h-0 flex-1 flex-col">
           <div ref={threadRef} onScroll={handleThreadScroll} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
           {messages.map((message, index) => (
             <div key={index} className={`flex flex-col ${message.role === "user" ? "items-end" : "items-start"}`}>
@@ -1154,37 +1055,14 @@ export function DailyReportChatPanel({
       </div>
 
       {/* No longer independently fixed/pinned - it's now just the bottom
-          portion of the sheet div above (which is itself fixed on mobile
-          when open, static at `sm` and up), so this only needs its own
+          portion of the floating panel below, so this only needs its own
           border/spacing, not its own positioning. The safe-area bottom
-          padding below is still needed even so: the sheet's own bottom edge
-          sits flush against the actual viewport edge on mobile, same as the
-          old pinned dock did, so this still needs to clear the home
+          padding below is still needed even so: the panel's own bottom
+          edge can sit close to the true viewport edge on a phone, same as
+          the old pinned dock did, so this still needs to clear the home
           indicator on notched phones. */}
-      <div className="border-t border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 sm:border-t-0 sm:bg-transparent">
-        <div className="space-y-2 px-3 pb-[calc(env(safe-area-inset-bottom)+10px)] pt-2 sm:space-y-0 sm:p-0">
-          <div className="flex items-center gap-1.5 overflow-x-auto sm:border-t sm:border-slate-200 dark:sm:border-slate-800 sm:px-3 sm:pt-3">
-            <DailyReportDefaultsPicker
-              locale={locale}
-              defaultItems={defaultItems}
-              onSelectionChange={handleSavedListSelectionChange}
-              dropDirection="up"
-              showQuickAdd
-              formId="daily-report-form"
-              // Only on mobile: the desktop inline card isn't nested inside
-              // any overflow-hidden/transform ancestor, so its own plain
-              // absolute-positioned popover already opens correctly there -
-              // portalPopover exists specifically for the mobile sheet's
-              // clipping problem (see that prop's own comment). Tied to
-              // isDesktopViewport (not a plain `true`) so this is `false`
-              // during SSR too (getServerViewportSnapshot assumes desktop),
-              // the same trick this file's own sheet portal below already
-              // relies on to avoid touching `document` before the client
-              // has actually mounted.
-              portalPopover={!isDesktopViewport}
-            />
-          </div>
-
+      <div className="border-t border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <div className="space-y-2 px-3 pb-[calc(env(safe-area-inset-bottom)+10px)] pt-2">
           {/* A plain div, not a <form>: this panel is always mounted inside the
               page's own report <form>, and a nested <form> is invalid HTML
               that Next.js silently repairs by moving/dropping it, breaking
@@ -1199,7 +1077,7 @@ export function DailyReportChatPanel({
               next to the composer it's actually describing) - shown only
               before the first message, same as before. */}
           {messages.length === 0 ? (
-            <p className="px-0 text-xs text-slate-500 dark:text-slate-400 sm:px-3">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
               {/* Singular, gender-correct Hebrew (את/אתה + matching verb
                   forms) - see buildInitialMessages' own comment on why the
                   original plural/formal conjugations were wrong here.
@@ -1215,130 +1093,141 @@ export function DailyReportChatPanel({
             </p>
           ) : null}
 
-          {/* On a narrow portrait phone, three 36px icon buttons plus the Send
-              button leave almost no width for the textarea itself. Below the
-              `sm` breakpoint (roughly: narrower than a phone turned
-              sideways), the icons wrap onto their own row via `sm:contents`
-              un-wrapping them back into this same flex row once there's
-              enough width - so landscape/tablet/desktop keep the original
-              single-row layout unchanged. */}
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:px-3">
-            <div className="flex items-center gap-2 sm:contents">
-              <label
-                htmlFor="daily-report-chat-photo-input"
-                aria-label={tr(locale, "Take a photo of your plate", "צילום תמונה של הצלחת")}
-                title={tr(locale, "Take a photo of your plate", "צילום תמונה של הצלחת")}
-                className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border border-teal-300 text-teal-700 hover:bg-teal-50 focus-within:outline-none focus-within:ring-2 focus-within:ring-teal-600 dark:border-teal-700 dark:text-teal-400 dark:hover:bg-teal-950/40"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
-                  <path d="M9 3h6l1.5 3H20a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h3.5L9 3Z" />
-                  <circle cx="12" cy="13" r="3.5" />
-                </svg>
-              </label>
-              <label
-                aria-label={tr(locale, "Choose an existing photo or file", "בחירת תמונה או קובץ קיים")}
-                title={tr(locale, "Choose an existing photo or file", "בחירת תמונה או קובץ קיים")}
-                className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border border-teal-300 text-teal-700 hover:bg-teal-50 focus-within:outline-none focus-within:ring-2 focus-within:ring-teal-600 dark:border-teal-700 dark:text-teal-400 dark:hover:bg-teal-950/40"
-                onClick={() => photoGalleryInputRef.current?.click()}
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
-                  <rect x="3" y="3" width="18" height="18" rx="2" />
-                  <circle cx="8.5" cy="8.5" r="1.5" />
-                  <path d="m21 15-5-5L5 21" />
-                </svg>
-              </label>
-              <button
-                type="button"
-                disabled
-                aria-disabled="true"
-                title={tr(locale, "Voice input (coming soon)", "קלט קולי (בקרוב)")}
-                className="flex h-9 w-9 shrink-0 cursor-not-allowed items-center justify-center rounded-full border border-slate-200 text-slate-300 dark:border-slate-800 dark:text-slate-600"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
-                  <rect x="9" y="3" width="6" height="11" rx="3" />
-                  <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
-                </svg>
-              </button>
-            </div>
+          {/* Icons sit on their own row above the compose box (not
+              alongside it) - three icon buttons plus Send crammed onto one
+              row next to the textarea left almost no room for typing on a
+              phone-width panel. This is now the ONE layout at every
+              width, matching the global chat widget's own input row
+              shape, rather than a row that only wrapped below a
+              breakpoint. */}
+          <div className="relative flex items-center gap-2">
+            {/* Same generic icon-button style as the global chat widget's
+                saved-list icon (rounded-lg, neutral border, teal only on
+                hover/active) - applied to all icons here too, per the
+                restyle to look "almost like the main one." */}
+            <button
+              type="button"
+              onClick={() => setIsSavedListOpen((open) => !open)}
+              aria-label={tr(locale, "Add from saved list", "הוספה מהרשימה השמורה")}
+              title={tr(locale, "Add from saved list", "הוספה מהרשימה השמורה")}
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${
+                isSavedListOpen
+                  ? "border-teal-300 bg-teal-50 text-teal-700 dark:border-teal-700 dark:bg-teal-950/30 dark:text-teal-400"
+                  : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800"
+              }`}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="7" height="7" rx="1.5" />
+                <rect x="14" y="3" width="7" height="7" rx="1.5" />
+                <rect x="3" y="14" width="7" height="7" rx="1.5" />
+                <rect x="14" y="14" width="7" height="7" rx="1.5" />
+              </svg>
+            </button>
+            <label
+              htmlFor="daily-report-chat-photo-input"
+              aria-label={tr(locale, "Take a photo of your plate", "צילום תמונה של הצלחת")}
+              title={tr(locale, "Take a photo of your plate", "צילום תמונה של הצלחת")}
+              className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 focus-within:outline-none focus-within:ring-2 focus-within:ring-teal-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
+                <path d="M9 3h6l1.5 3H20a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h3.5L9 3Z" />
+                <circle cx="12" cy="13" r="3.5" />
+              </svg>
+            </label>
+            <label
+              aria-label={tr(locale, "Choose an existing photo or file", "בחירת תמונה או קובץ קיים")}
+              title={tr(locale, "Choose an existing photo or file", "בחירת תמונה או קובץ קיים")}
+              className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 focus-within:outline-none focus-within:ring-2 focus-within:ring-teal-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800"
+              onClick={() => photoGalleryInputRef.current?.click()}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <path d="m21 15-5-5L5 21" />
+              </svg>
+            </label>
 
-            <div className="flex items-end gap-2 sm:contents">
-              <textarea
-                ref={textareaRef}
-                value={inputValue}
-                onChange={(event) => setInputValue(event.target.value)}
-                rows={2}
-                maxLength={500}
-                disabled={isStreaming}
-                // Singular, gender-correct Hebrew imperative (כתוב/כתבי) -
-                // see the subtitle above for why the original plural form
-                // ("כתבו") was wrong here too.
-                placeholder={trGendered(locale, userGender, "Type a message...", "כתוב הודעה...", "כתבי הודעה...")}
-                className="flex-1 resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 disabled:opacity-70 dark:border-slate-700"
-              />
-              <button
-                type="button"
-                disabled={isStreaming || !inputValue.trim()}
-                onClick={() => void sendMessage(inputValue)}
-                onMouseDown={(event) => event.preventDefault()}
-                className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
-              >
-                {isStreaming ? <Spinner className="h-4 w-4 animate-spin" /> : tr(locale, "Send", "שליחה")}
-              </button>
-            </div>
+            {isSavedListOpen ? (
+              <div className="absolute left-0 top-full z-10 mt-2 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
+                <p className="border-b border-slate-200 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:text-slate-500">
+                  {tr(locale, "Your saved list", "הרשימה השמורה שלך")}
+                </p>
+                {defaultItems.length > 0 ? (
+                  <div className="max-h-56 overflow-y-auto">
+                    {defaultItems.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => void handleLogSavedItem(item)}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800"
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate text-xs font-semibold text-slate-800 dark:text-slate-200">{formatDefaultItemName(item.name, locale)}</span>
+                          <span className="block text-[11px] text-slate-400 dark:text-slate-500">
+                            {item.default_quantity} {formatDefaultUnit(item.default_unit, locale)}
+                          </span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="px-3 py-3 text-xs text-slate-500 dark:text-slate-400">
+                    {tr(locale, "No saved items yet.", "אין עדיין פריטים שמורים.")}
+                  </p>
+                )}
+              </div>
+            ) : null}
           </div>
 
-          {/* Mobile only - narrower than the old fullWidth treatment on
-              purpose: fullWidth spans the same edge-to-edge px-3 the icon
-              row above sits in, which is WIDER than the textarea itself
-              (the textarea shares its row with Send, so it's really
-              "sheet width minus Send's width"). A fullWidth Save button
-              directly underneath therefore extended past the textarea's
-              own right edge into the same horizontal territory Send
-              occupies one row up - reported as "can confuse and
-              mis-press" between Save and Send. The invisible span mirrors
-              Send's own classes/label exactly (not a guessed pixel width,
-              which would drift with locale - "Send" vs "שליחה" aren't the
-              same width) - being present but invisible (not `hidden`,
-              which would remove it from layout) reserves precisely the
-              space Send takes above, so the real button beside it lands
-              at exactly the textarea's own width for any locale. */}
-          <div className="flex items-end gap-2 px-3 pb-3 sm:hidden">
-            <div className="flex-1">
-              {isEditing && pendingDeleteOnSave ? (
-                <DeleteEntrySubmitButton locale={locale} variant="text" />
-              ) : (
-                <SubmitButton
-                  locale={locale}
-                  onClick={handleQuickSave}
-                  isEditing={isEditing}
-                  fullWidth
-                  busy={isSaving}
-                  form="daily-report-form"
-                />
-              )}
-            </div>
-            <span aria-hidden="true" className="invisible inline-flex shrink-0 items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold">
-              {tr(locale, "Send", "שליחה")}
-            </span>
+          {/* Bigger than before (4 rows, not 2) now that it has the whole
+              row to itself instead of sharing one with three icon
+              buttons. */}
+          <div className="flex items-end gap-2">
+            <textarea
+              ref={textareaRef}
+              value={inputValue}
+              onChange={(event) => setInputValue(event.target.value)}
+              rows={4}
+              maxLength={500}
+              disabled={isStreaming}
+              // Singular, gender-correct Hebrew imperative (כתוב/כתבי) -
+              // see the subtitle above for why the original plural form
+              // ("כתבו") was wrong here too.
+              placeholder={trGendered(locale, userGender, "Type a message...", "כתוב הודעה...", "כתבי הודעה...")}
+              className="flex-1 resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 disabled:opacity-70 dark:border-slate-700"
+              // Inline style, not dark:bg-slate-900/dark:text-slate-100 -
+              // confirmed live (DevTools computed-style check) that this
+              // specific textarea keeps a plain white background under
+              // data-theme="dark" even with ONLY the dark: class applied
+              // and nothing competing for specificity, while an inline
+              // style on the exact same element takes effect immediately.
+              // Root cause not fully pinned down (a textarea/form-control-
+              // specific quirk with this Tailwind build, not the general
+              // theme-mirroring issue this panel already works around for
+              // being portaled - every other dark: class here, including
+              // this same textarea's own dark:border-slate-700, applies
+              // correctly) - inline style sidesteps it outright rather
+              // than leaving the compose box the one visibly broken
+              // element after everything else in the panel is already
+              // properly dark.
+              style={mirroredTheme === "dark" ? { backgroundColor: "#0f172a", color: "#f1f5f9" } : undefined}
+            />
+            <button
+              type="button"
+              disabled={isStreaming || !inputValue.trim()}
+              onClick={() => void sendMessage(inputValue)}
+              onMouseDown={(event) => event.preventDefault()}
+              className="inline-flex shrink-0 items-center justify-center rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+            >
+              {isStreaming ? <Spinner className="h-4 w-4 animate-spin" /> : tr(locale, "Send", "שליחה")}
+            </button>
           </div>
 
-          {/* Desktop only - icons/textarea/Send all share a single row
-              there (no wrapping), so Save spanning the same px-3 the whole
-              row sits in doesn't create the mobile-only mismatch above. */}
-          <div className="hidden sm:block sm:px-3 sm:pb-3">
-            {isEditing && pendingDeleteOnSave ? (
-              <DeleteEntrySubmitButton locale={locale} variant="text" />
-            ) : (
-              <SubmitButton
-                locale={locale}
-                onClick={handleQuickSave}
-                isEditing={isEditing}
-                fullWidth
-                busy={isSaving}
-                form="daily-report-form"
-              />
-            )}
-          </div>
+          {isEditing && pendingDeleteOnSave ? (
+            <DeleteEntrySubmitButton locale={locale} variant="text" />
+          ) : (
+            <SubmitButton locale={locale} onClick={handleQuickSave} isEditing={isEditing} fullWidth busy={isSaving} form="daily-report-form" />
+          )}
         </div>
       </div>
     </>
@@ -1364,189 +1253,113 @@ export function DailyReportChatPanel({
         className="sr-only"
       />
 
-      {/* Desktop: exactly the original always-visible inline card, rendered
-          in its normal place in the tree - never portaled, so its layout
-          inside the daily-report page's card is unaffected by any of this. */}
-      {isDesktopViewport ? (
-        <div className="flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">{chatBodyContent}</div>
-      ) : null}
+      {/* The floating trigger + bubble + panel, portaled straight to
+          document.body instead of rendering inline here, on every screen
+          size now (not mobile-only) - this used to be nested many levels
+          deep (page -> section -> form -> div -> this component), and on
+          at least one real device that nesting broke position:fixed
+          entirely - the bubble rendered wherever its calc() offset
+          happened to land within the page's own layout instead of pinned
+          to the true viewport. Portaling sidesteps the ancestry question
+          entirely: these elements become siblings of everything else at
+          the body level, the same place AppBottomNav already lives and
+          already positions correctly. The form-associated controls inside
+          (the save icon, and everything in chatBodyContent) reconnect to
+          the real form via form="daily-report-form" instead of DOM
+          nesting - see the inline notes on chatBodyContent and
+          DailyReportForm's <form id=...>.
 
-      {/* Mobile: the floating trigger + bubble + backdrop + sheet, portaled
-          straight to document.body instead of rendering inline here. They
-          used to be nested many levels deep (page -> section -> form ->
-          div -> this component), and on at least one real device that
-          nesting broke position:fixed entirely - the bubble rendered
-          wherever its calc() offset happened to land within the page's own
-          layout instead of pinned to the true viewport, the sheet inherited
-          the same problem (making its composer unreachable), and neither
-          behaved as a real fixed overlay (letting the page scroll behind
-          it). Portaling sidesteps the ancestry question entirely: these
-          elements become siblings of everything else at the body level,
-          the same place AppBottomNav already lives and already positions
-          correctly. The form-associated controls inside (the save icon,
-          and everything in chatBodyContent) reconnect to the real form via
-          form="daily-report-form" instead of DOM nesting - see the inline
-          notes on chatBodyContent and DailyReportForm's <form id=...>. */}
-      {!isDesktopViewport
-        ? createPortal(
-            // dir set explicitly here - the app only applies dir="rtl"/"ltr"
-            // on a wrapper <div> inside app/app/layout.tsx, not on
-            // <html>/<body> - portaling straight to document.body (see the
-            // big comment above) escapes that wrapper entirely, so without
-            // this the whole sheet/bubble silently fell back to the
-            // document's default LTR direction on mobile even in Hebrew,
-            // left-aligning Hebrew text instead of right-aligning it
-            // (confirmed: desktop, which renders chatBodyContent inline and
-            // stays inside that wrapper, never had this problem). The
-            // fixed-position buttons inside are unaffected either way -
-            // they're deliberately pinned with physical left-4/right-4
-            // classes, not logical ones (see their own comment).
-            <div dir={directionForLocale(locale)}>
-              {/* Moved from a floating bottom-left circle to a bare icon in
-                  the top corner - reported as "floating and bulky." end-4
-                  (a logical inset, not right-4/left-4) mirrors naturally
-                  with locale via the dir set on this whole portaled tree
-                  above, matching how the user described wanting this one
-                  positioned (unlike the physically-pinned corners
-                  elsewhere in this file, which are deliberately NOT
-                  locale-mirrored - see their own comments).
-                  Nudged down from the bare top edge (was 0.75rem) to read
-                  as sitting near the "today's summary" card's own top
-                  corner instead of floating in the empty strip above it.
-                  Only rendered while closed (once the sheet is open, Save
-                  lives inside it instead - see chatBodyContent's own
-                  full-width SubmitButton) AND only while there's actually
-                  something to save: canSave already reflects LIVE dirty
-                  state (weight/report text compared against their saved
-                  baselines, not a one-way "was this ever touched" flag),
-                  so undoing a change - e.g. typing a weight then deleting
-                  it back to empty - correctly makes this disappear again,
-                  not just gray out. */}
-              {!isOpen && (canSave || (isEditing && pendingDeleteOnSave)) ? (
-                <div className="fixed top-[calc(2rem+env(safe-area-inset-top))] end-4 z-50 transform-gpu">
-                  {isEditing && pendingDeleteOnSave ? (
-                    <DeleteEntrySubmitButton locale={locale} variant="icon" />
-                  ) : (
-                    <SubmitButton
-                      locale={locale}
-                      onClick={handleQuickSave}
-                      isEditing={isEditing}
-                      variant="bare-icon"
-                      busy={isSaving}
-                      form="daily-report-form"
-                    />
-                  )}
-                </div>
-              ) : null}
-
-              {/* Fixed at the screen's actual physical bottom-right
-                  regardless of RTL - a chat bubble's corner doesn't mirror
-                  with locale the way reading-direction content does
-                  (WhatsApp/Messenger/Intercom all keep theirs bottom-right
-                  in Hebrew/Arabic too) - and positioned above AppBottomNav
-                  using the same safe-area-aware offset established for the
-                  composer dock this replaced.
-                  right: calc(12.5vw - 2rem), not a flat right-4 - originally
-                  chosen to center this h-16 (2rem radius) button directly
-                  above AppBottomNav's then-rightmost tab (Home, back when it
-                  had 4 equal-width tabs). Home has since been removed from
-                  the nav (now 3 tabs, and their screen position - and even
-                  which one renders rightmost - shifts with locale, since
-                  AppBottomNav doesn't force LTR tab order), so this no
-                  longer lines up with any specific tab - it's now simply a
-                  fixed, deliberately-shared point used by BOTH this bubble
-                  and the Targets chat's own floating bubble (see
-                  targets-chat-workspace.tsx), so the two look consistent
-                  with each other across pages. Left as-is rather than
-                  reworked to track a specific tab again, since nothing
-                  reported the current position as actually wrong.
-                  The underscores in calc(12.5vw_-_2rem) are load-bearing,
-                  not stylistic - Tailwind needs them to represent the actual
-                  spaces around the `-`, and the browser's own CSS tokenizer
-                  needs THAT whitespace to parse "-" as subtraction: written
-                  without it, "12.5vw-2rem" tokenizes as two back-to-back
-                  values ("12.5vw" then a separate, sign-absorbed "-2rem")
-                  with no operator between them, which is invalid and makes
-                  the whole calc() (and therefore `right`) silently fail -
-                  exactly what happened here on a real device (the button
-                  rendered with no horizontal offset at all instead of
-                  dropping the intended centering). The `+`-only calc()s
-                  elsewhere in this file never hit this: a bare "+" can't be
-                  absorbed as a number's sign the way "-" can, so it stays
-                  unambiguous even without surrounding whitespace. */}
-              {/* Only rendered while closed now - minimizing moved into the
-                  sheet's own title bar (see chatBodyContent's header) once
-                  it's open, so there's no longer a second, floating way to
-                  do the same thing sitting on top of the sheet. This is
-                  purely the "open" trigger now, hence the simpler onClick
-                  (no more toggling both ways from one button) and the
-                  single bubble icon (no X to swap in). */}
-              {!isOpen ? (
-                <button
-                  type="button"
-                  onClick={() => setIsOpen(true)}
-                  aria-label={tr(locale, "Open chat", "פתיחת הצ'אט")}
-                  className="fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom)+0.75rem)] right-[calc(12.5vw_-_2rem)] z-50 flex h-16 w-16 transform-gpu items-center justify-center rounded-full bg-teal-700 text-white shadow-lg hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
-                >
-                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
-                  </svg>
-                </button>
-              ) : null}
-
-              {isOpen ? (
-                <div
-                  role="presentation"
-                  onClick={() => setIsOpen(false)}
-                  className="fixed inset-0 z-40 transform-gpu bg-slate-900/40"
+          Same fixed floating bubble + compact panel footprint as the
+          app-wide global chat widget everywhere else (see
+          global-chat-widget.tsx) - this is still Daily Report's own
+          separate chat instance underneath (photo parsing, editing an
+          existing entry, weight sync, Report), just presented through the
+          same small surface instead of an always-visible full-width
+          desktop card or a large percentage-of-viewport mobile sheet. No
+          dimming backdrop either, to match that widget - tap the bubble
+          again (or Minimize in the header) to close, rather than tapping
+          outside. */}
+      {createPortal(
+        // dir set explicitly here - the app only applies dir="rtl"/"ltr"
+        // on a wrapper <div> inside app/app/layout.tsx, not on
+        // <html>/<body> - portaling straight to document.body (see the
+        // big comment above) escapes that wrapper entirely, so without
+        // this the whole panel/bubble would fall back to the document's
+        // default LTR direction even in Hebrew, left-aligning Hebrew text
+        // instead of right-aligning it. The fixed-position buttons inside
+        // are unaffected either way - they're deliberately pinned with
+        // physical left-4/right-4 classes, not logical ones (see their
+        // own comment).
+        <div dir={directionForLocale(locale)} data-theme={mirroredTheme ?? undefined}>
+          {/* end-4 (a logical inset, not right-4/left-4) mirrors naturally
+              with locale via the dir set on this whole portaled tree
+              above (unlike the physically-pinned bubble/panel corner
+              below, which is deliberately NOT locale-mirrored - see its
+              own comment). Only rendered while closed (once the panel is
+              open, Report lives inside it instead - see chatBodyContent's
+              own full-width SubmitButton) AND only while there's actually
+              something to save: canSave already reflects LIVE dirty state
+              (weight/report text compared against their saved baselines,
+              not a one-way "was this ever touched" flag), so undoing a
+              change - e.g. typing a weight then deleting it back to empty
+              - correctly makes this disappear again, not just gray out. */}
+          {!isOpen && (canSave || (isEditing && pendingDeleteOnSave)) ? (
+            <div className="fixed top-[calc(2rem+env(safe-area-inset-top))] end-4 z-50 transform-gpu">
+              {isEditing && pendingDeleteOnSave ? (
+                <DeleteEntrySubmitButton locale={locale} variant="icon" />
+              ) : (
+                <SubmitButton
+                  locale={locale}
+                  onClick={handleQuickSave}
+                  isEditing={isEditing}
+                  variant="bare-icon"
+                  busy={isSaving}
+                  form="daily-report-form"
                 />
-              ) : null}
+              )}
+            </div>
+          ) : null}
 
-              {/* Positioned from `top` with a measured pixel height, not
-                  `bottom-0` with a CSS viewport-unit height - three rounds
-                  of viewport-unit adjustments (82dvh, 78dvh, 70svh) all
-                  still left the composer/Send button below the visible
-                  area on a real device, meaning `bottom: 0` on this browser
-                  isn't anchoring to the same edge visualViewport.height
-                  measures as "visible". `top: 0` is the more trustworthy
-                  anchor (the layout and visual viewports share the same top
-                  edge; they only diverge at the bottom, which is exactly
-                  the edge Safari's own toolbar eats into) - computing this
-                  sheet's top/height purely from the measured, always-
-                  correct visible height sidesteps the `bottom` ambiguity
-                  entirely instead of continuing to guess at it. Falls back
-                  to the old bottom-0/70svh CSS for the brief instant before
-                  the first measurement lands. */}
-              <div
-                style={
-                  sheetTopPx !== null && sheetHeightPx !== null
-                    ? { top: `${sheetTopPx}px`, height: `${sheetHeightPx}px` }
-                    : undefined
-                }
-                className={`${isOpen ? "flex" : "hidden"} fixed inset-x-0 z-40 ${
-                  sheetHeightPx === null ? "bottom-[calc(9rem+env(safe-area-inset-bottom))] h-[70svh]" : ""
-                } transform-gpu flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl dark:bg-slate-900`}
-              >
-                {chatBodyContent}
-              </div>
-            </div>,
-            document.body,
-          )
-        : null}
+          {/* Same physical bottom-right position, size, and safe-area
+              handling as the global chat widget's own bubble (see that
+              component's own comment for the calc()/underscore details) -
+              deliberately NOT locale-mirrored, matching every other
+              floating chat bubble in the app. */}
+          <button
+            type="button"
+            onClick={() => setIsOpen((open) => !open)}
+            aria-label={tr(locale, isOpen ? "Close chat" : "Open chat", isOpen ? "סגירת הצ'אט" : "פתיחת הצ'אט")}
+            className="fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom)+0.75rem)] right-[calc(12.5vw_-_2rem)] z-50 flex h-14 w-14 items-center justify-center rounded-full bg-teal-700 text-white shadow-lg hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+          >
+            {isOpen ? (
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 6 6 18" /><path d="M6 6l12 12" /></svg>
+            ) : (
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+              </svg>
+            )}
+          </button>
 
-      {/* Portaled to document.body regardless of desktop/mobile - even the
-          desktop inline card sits inside an overflow-hidden wrapper (see
-          DailyReportForm), the exact ancestor shape that already silently
-          clipped a fixed-positioned confirmation elsewhere in this form.
-          pendingClearConfirm only ever flips true from a real click, never
-          during the initial render, so this never runs during SSR/hydration
-          - no separate mounted-gate needed the way the sheet above needs
-          isDesktopViewport's. */}
+          {isOpen ? (
+            <div className="fixed bottom-[calc(8rem+env(safe-area-inset-bottom))] right-[calc(12.5vw_-_2rem)] z-50 flex max-h-[70vh] w-[calc(100vw-2rem)] max-w-sm flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+              {chatBodyContent}
+            </div>
+          ) : null}
+        </div>,
+        document.body,
+      )}
+
+      {/* Portaled to document.body - the panel itself sits inside an
+          overflow-hidden wrapper (see DailyReportForm), the exact ancestor
+          shape that already silently clipped a fixed-positioned
+          confirmation elsewhere in this form. pendingClearConfirm only
+          ever flips true from a real click, never during the initial
+          render, so this never runs during SSR/hydration. */}
       {pendingClearConfirm
         ? createPortal(
             // dir set explicitly - see the sheet portal's own comment above
             // on why a portal to document.body can't rely on inheriting it.
-            <div dir={directionForLocale(locale)} className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/40 p-4">
+            <div dir={directionForLocale(locale)} data-theme={mirroredTheme ?? undefined} className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/40 p-4">
               <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900">
                 <div className="px-5 py-4">
                   <p className="text-sm text-slate-700 dark:text-slate-300">
