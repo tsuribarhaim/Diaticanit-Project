@@ -53,7 +53,7 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
   let ticketQuery = supabase
     .from("tickets")
     .select(
-      "id, ticket_seq, subject, ticket_type, area, priority, description, status, created_at, created_by, attachment_storage_path, attachment_file_name, attachment_file_size_bytes, cancelled_reason, cancelled_at, fix_description, resolved_at",
+      "id, ticket_seq, subject, ticket_type, area, priority, description, status, created_at, created_by, cancelled_reason, cancelled_at, fix_description, resolved_at",
     )
     .eq("id", id);
   if (!isAdmin) {
@@ -67,6 +67,15 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
   if (!ticket) {
     notFound();
   }
+
+  // ticket_attachments_select's own RLS policy already scopes this to the
+  // same own-ticket-or-admin visibility the ticket query above just used -
+  // no need to repeat the isAdmin/created_by check here.
+  const { data: attachments } = await supabase
+    .from("ticket_attachments")
+    .select("id, file_name, mime_type, file_size_bytes")
+    .eq("ticket_id", ticket.id)
+    .order("created_at", { ascending: true });
 
   // Only fetched for admins viewing someone else's ticket - a plain user's
   // own tickets are all theirs, and an admin viewing their own doesn't
@@ -144,16 +153,24 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
           <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800 dark:text-slate-200">{ticket.description}</p>
         </div>
 
-        {ticket.attachment_storage_path ? (
+        {attachments && attachments.length > 0 ? (
           <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{tr(locale, "Attachment", "קובץ מצורף")}</p>
-            <form action={openTicketAttachmentAction} className="mt-1">
-              <input type="hidden" name="ticket_id" value={ticket.id} />
-              <button type="submit" className="text-sm font-semibold text-teal-700 hover:underline dark:text-teal-400">
-                {ticket.attachment_file_name ?? tr(locale, "Download", "הורדה")}
-                {ticket.attachment_file_size_bytes ? ` (${formatFileSize(ticket.attachment_file_size_bytes)})` : ""}
-              </button>
-            </form>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              {tr(locale, "Attachments", "קבצים מצורפים")}
+            </p>
+            <ul className="mt-1.5 space-y-1">
+              {attachments.map((attachment) => (
+                <li key={attachment.id}>
+                  <form action={openTicketAttachmentAction}>
+                    <input type="hidden" name="attachment_id" value={attachment.id} />
+                    <button type="submit" className="text-sm font-semibold text-teal-700 hover:underline dark:text-teal-400">
+                      {attachment.file_name}
+                      {attachment.file_size_bytes ? ` (${formatFileSize(attachment.file_size_bytes)})` : ""}
+                    </button>
+                  </form>
+                </li>
+              ))}
+            </ul>
           </div>
         ) : null}
 

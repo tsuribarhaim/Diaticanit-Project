@@ -68,7 +68,14 @@ export function ticketStatusBadgeClass(status: TicketStatus): string {
   return "border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300";
 }
 
+/** A ticket can have any number of these up to MAX_TICKET_ATTACHMENTS - a
+ * soft UX cap enforced in the client form and re-checked server-side in
+ * createTicketAction, not a database constraint (see db/migrations/
+ * 052_phase22_ticket_multi_attachments.sql's own comment on why). */
+export const MAX_TICKET_ATTACHMENTS = 5;
+
 export type TicketAttachment = {
+  id: string;
   storagePath: string;
   fileName: string;
   mimeType: string;
@@ -88,8 +95,6 @@ export type TicketDetail = TicketListRow & {
   area: TicketArea;
   priority: TicketPriority;
   description: string;
-  attachment_storage_path: string | null;
-  attachment_file_name: string | null;
   cancelled_reason: string | null;
   cancelled_at: string | null;
   fix_description: string | null;

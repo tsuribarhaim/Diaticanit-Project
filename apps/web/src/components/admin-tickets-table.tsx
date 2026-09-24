@@ -84,10 +84,23 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
             {tr(locale, "Every ticket, from every user.", "כל הפניות, מכל המשתמשים.")}
           </p>
         </div>
-        <p className="text-xs text-slate-500 dark:text-slate-400">
-          <span className="font-semibold text-slate-700 dark:text-slate-300">{filtered.length}</span>{" "}
-          {tr(locale, `of ${tickets.length} tickets`, `מתוך ${tickets.length} פניות`)}
-        </p>
+        <div className="flex items-center gap-3">
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            <span className="font-semibold text-slate-700 dark:text-slate-300">{filtered.length}</span>{" "}
+            {tr(locale, `of ${tickets.length} tickets`, `מתוך ${tickets.length} פניות`)}
+          </p>
+          {/* An admin still submits a ticket as themself, same createTicketAction
+              any user goes through - this button was simply missing from the
+              admin view (the non-admin branch of /app/tickets/page.tsx already
+              had one), which was the actual bug: nothing here needed a backend
+              change, just a way in. */}
+          <Link
+            href="/app/tickets/new"
+            className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+          >
+            {tr(locale, "+ New Ticket", "+ פנייה חדשה")}
+          </Link>
+        </div>
       </div>
 
       {notice ? (
