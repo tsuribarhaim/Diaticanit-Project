@@ -142,18 +142,38 @@ export async function applyOrCheckFieldEdit({
         attempted: newValue,
       };
     }
-    const userTargets = currentPayload.userTargets.map((entry) =>
-      entry.id === "target_weight" ? { ...entry, value: String(newValue), targetMin: newValue, targetMax: newValue } : entry,
-    );
+    const hasWeightEntry = currentPayload.userTargets.some((entry) => entry.id === "target_weight");
+    const userTargets = hasWeightEntry
+      ? currentPayload.userTargets.map((entry) =>
+          entry.id === "target_weight" ? { ...entry, value: String(newValue), targetMin: newValue, targetMax: newValue } : entry,
+        )
+      : [
+          ...currentPayload.userTargets,
+          {
+            id: "target_weight",
+            label: tr(locale, "Target weight", "משקל יעד"),
+            value: String(newValue),
+            unit: "kg",
+            targetMin: newValue,
+            targetMax: newValue,
+            higherIsBetter: true,
+          },
+        ];
     nextPayload = { ...currentPayload, targetWeightKg: newValue, userTargets };
     goalText = `Direct edit: target weight set to ${newValue} kg.`;
   } else {
     const entryId = field.kind === "sleep" ? "sleep_hours" : "daily_steps";
-    const entry = currentPayload.userTargets.find((e) => e.id === entryId);
-    if (!entry || entry.targetMin === undefined || entry.targetMax === undefined || !entry.unit) {
-      return { error: tr(locale, "This target isn't set up yet.", "היעד הזה עדיין לא מוגדר.") };
-    }
-    const rejection = evaluateCustomTargetQuickApplySafety({ unit: entry.unit, targetMin: newValue, targetMax: newValue }, locale);
+    const existing = currentPayload.userTargets.find((e) => e.id === entryId);
+    // A plan generated before weight/sleep/steps became standing, always-
+    // included user_targets entries (see the AI prompt's "STANDING and
+    // always required" rule) may not have this entry yet - rather than
+    // erroring, this is exactly a first-time set: fall back to the same
+    // label/unit/band-width defaults the heuristic generator itself uses
+    // for a fresh plan (lib/targets.ts), so the entry this creates is
+    // indistinguishable from one that had always been there.
+    const label = existing?.label ?? (field.kind === "sleep" ? tr(locale, "Sleep duration", "משך שינה") : tr(locale, "Daily steps", "צעדים יומיים"));
+    const unit = existing?.unit ?? (field.kind === "sleep" ? "hours" : "steps");
+    const rejection = evaluateCustomTargetQuickApplySafety({ unit, targetMin: newValue, targetMax: newValue }, locale);
     if (rejection) {
       const plausibleRange = field.kind === "sleep" ? { lo: 3, hi: 14 } : { lo: 500, hi: 40000 };
       return {
@@ -161,18 +181,22 @@ export async function applyOrCheckFieldEdit({
         outOfRange: true,
         lo: plausibleRange.lo,
         hi: plausibleRange.hi,
-        unit: entry.unit,
-        fieldLabelEn: entry.label,
-        fieldLabelHe: entry.label,
+        unit,
+        fieldLabelEn: label,
+        fieldLabelHe: label,
         attempted: newValue,
       };
     }
-    const { min, max } = recenterBand(entry.targetMin, entry.targetMax, newValue);
-    const userTargets = currentPayload.userTargets.map((e) =>
-      e.id === entryId ? { ...e, value: String(newValue), targetMin: min, targetMax: max } : e,
-    );
+    const defaultHalfWidth = field.kind === "sleep" ? 1 : 1500;
+    const { min, max } =
+      existing?.targetMin !== undefined && existing?.targetMax !== undefined
+        ? recenterBand(existing.targetMin, existing.targetMax, newValue)
+        : { min: Math.max(0, newValue - defaultHalfWidth), max: newValue + defaultHalfWidth };
+    const userTargets = existing
+      ? currentPayload.userTargets.map((e) => (e.id === entryId ? { ...e, value: String(newValue), targetMin: min, targetMax: max } : e))
+      : [...currentPayload.userTargets, { id: entryId, label, value: String(newValue), unit, targetMin: min, targetMax: max, higherIsBetter: true }];
     nextPayload = { ...currentPayload, userTargets };
-    goalText = `Direct edit: ${entry.label} set to ${newValue} ${entry.unit}.`;
+    goalText = `Direct edit: ${label} set to ${newValue} ${unit}.`;
   }
 
   const validated = targetGenerationPayloadSchema.safeParse(nextPayload);
