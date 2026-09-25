@@ -64,74 +64,95 @@ export function SignInForm({
   async function handlePasskeySignIn() {
     setPasskeyState({ status: "pending" });
 
-    // The whole chain - not just signInWithPasskey - is raced against one
-    // timeout, because nothing in it has one of its own: not
-    // signInWithPasskey's three internal steps (fetch challenge,
-    // navigator.credentials.get, verify with server), not its post-verify
-    // session save/notify inside the Supabase client itself, and not our
-    // own completePasskeySignInAction call after it.
-    const result = await Promise.race([
-      (async (): Promise<"ok" | { error: string }> => {
-        // No email needed here - unlike the password form, a passkey
-        // ceremony identifies the account from the credential the device's
-        // own authenticator already has stored for it.
-        const supabase = createClient();
-        const { data, error } = await supabase.auth.signInWithPasskey();
-        if (error) return { error: error.message };
-        if (!data.session) {
-          return {
-            error: tr(
-              locale,
-              "Sign-in succeeded but no session was returned. Please try again.",
-              "ההתחברות הצליחה אך לא התקבל סשן. נסו שוב.",
-            ),
-          };
-        }
+    // Everything below is wrapped in try/catch, not just raced against a
+    // timeout - confirmed live in production that the two failure modes are
+    // genuinely different and both need covering. A stall (nothing ever
+    // settles) is handled by racing the whole chain against one timeout,
+    // since nothing in it has one of its own. But an outright exception
+    // anywhere in that chain - a real throw, not the library's normal
+    // {error} return shape - settles Promise.race immediately via
+    // rejection, which without a catch here unwinds straight out of this
+    // function with nothing left running to ever clear the pending state.
+    // That reproduced exactly what was reported: stuck on the spinner
+    // forever, immune to waiting or to backgrounding/foregrounding the tab,
+    // because there was no code left to resume.
+    try {
+      const result = await Promise.race([
+        (async (): Promise<"ok" | { error: string }> => {
+          // No email needed here - unlike the password form, a passkey
+          // ceremony identifies the account from the credential the
+          // device's own authenticator already has stored for it.
+          const supabase = createClient();
+          const { data, error } = await supabase.auth.signInWithPasskey();
+          if (error) return { error: error.message };
+          if (!data.session) {
+            return {
+              error: tr(
+                locale,
+                "Sign-in succeeded but no session was returned. Please try again.",
+                "ההתחברות הצליחה אך לא התקבל סשן. נסו שוב.",
+              ),
+            };
+          }
 
-        // Establishes the session server-side (and starts this device's
-        // session-policy clocks the same way a password sign-in does - see
-        // markSuccessfulLogin's own comment) by handing the token pair the
-        // ceremony just returned to a server action, rather than relying on
-        // the client-side cookie write signInWithPasskey already did on its
-        // own. Confirmed live in production that skipping this and
-        // navigating straight off the client-side session is a real race:
-        // the immediate navigation to nextPath below can reach middleware
-        // before that cookie write is visible to it, bouncing the user
-        // straight back to sign-in - which looks exactly like a hang. Since
-        // this call is awaited before navigating, its Set-Cookie response
-        // has already landed by the time we do.
-        const { error: completeError } = await completePasskeySignInAction(
-          data.session.access_token,
-          data.session.refresh_token,
-        );
-        if (completeError) return { error: completeError };
-        return "ok";
-      })(),
-      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 20000)),
-    ]);
+          // Establishes the session server-side (and starts this device's
+          // session-policy clocks the same way a password sign-in does -
+          // see markSuccessfulLogin's own comment) by handing the token
+          // pair the ceremony just returned to a server action, rather
+          // than relying on the client-side cookie write signInWithPasskey
+          // already did on its own. Confirmed live in production that
+          // skipping this and navigating straight off the client-side
+          // session is a real race: the immediate navigation to nextPath
+          // below can reach middleware before that cookie write is visible
+          // to it, bouncing the user straight back to sign-in - which
+          // looks exactly like a hang. Since this call is awaited before
+          // navigating, its Set-Cookie response has already landed by the
+          // time we do.
+          const { error: completeError } = await completePasskeySignInAction(
+            data.session.access_token,
+            data.session.refresh_token,
+          );
+          if (completeError) return { error: completeError };
+          return "ok";
+        })(),
+        new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 20000)),
+      ]);
 
-    if (result === "timeout") {
+      if (result === "timeout") {
+        setPasskeyState({
+          status: "error",
+          error: tr(
+            locale,
+            "This is taking longer than expected. Please try again, or sign in with your password below.",
+            "זה לוקח יותר זמן מהצפוי. נסו שוב, או התחברו עם הסיסמה למטה.",
+          ),
+        });
+        return;
+      }
+
+      if (result !== "ok") {
+        setPasskeyState({ status: "error", error: result.error });
+        return;
+      }
+
+      // A full navigation (not router.push) so the server-rendered layout
+      // and middleware both see the session cookie signInWithPasskey just
+      // set, cleanly, on the very next request - the same reasoning
+      // already applied to every other post-auth redirect in this app.
+      window.location.href = nextPath;
+    } catch (err) {
       setPasskeyState({
         status: "error",
-        error: tr(
-          locale,
-          "This is taking longer than expected. Please try again, or sign in with your password below.",
-          "זה לוקח יותר זמן מהצפוי. נסו שוב, או התחברו עם הסיסמה למטה.",
-        ),
+        error:
+          err instanceof Error && err.message
+            ? err.message
+            : tr(
+                locale,
+                "Something went wrong. Please try again, or sign in with your password below.",
+                "משהו השתבש. נסו שוב, או התחברו עם הסיסמה למטה.",
+              ),
       });
-      return;
     }
-
-    if (result !== "ok") {
-      setPasskeyState({ status: "error", error: result.error });
-      return;
-    }
-
-    // A full navigation (not router.push) so the server-rendered layout and
-    // middleware both see the session cookie signInWithPasskey just set,
-    // cleanly, on the very next request - the same reasoning already
-    // applied to every other post-auth redirect in this app.
-    window.location.href = nextPath;
   }
 
   const normalizedEmail = email.trim().toLowerCase();
