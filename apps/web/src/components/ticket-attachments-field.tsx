@@ -201,8 +201,15 @@ export function TicketAttachmentsField({
  * source that can add a file - the field's own browse/drop, or a paste
  * event on the description textarea elsewhere in the form - shows the
  * same visible message on rejection instead of a paste failing silently.
+ *
+ * `baselineCount` lets the edit form (TicketEditForm) count already-
+ * uploaded attachments still staying on the ticket toward the same
+ * MAX_TICKET_ATTACHMENTS cap this hook enforces for newly-added files -
+ * the create form never has any (defaults to 0, its previous behavior
+ * unchanged); the caller is responsible for keeping it in sync with its
+ * own "how many existing attachments am I about to remove" state.
  */
-export function useTicketAttachments(locale: AppLocale) {
+export function useTicketAttachments(locale: AppLocale, baselineCount = 0) {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [flash, setFlash] = useState<string | null>(null);
 
@@ -228,7 +235,7 @@ export function useTicketAttachments(locale: AppLocale) {
     const accepted: Attachment[] = [];
 
     for (const file of files) {
-      if (attachments.length + accepted.length >= MAX_TICKET_ATTACHMENTS) {
+      if (baselineCount + attachments.length + accepted.length >= MAX_TICKET_ATTACHMENTS) {
         rejection = tr(
           locale,
           `Only ${MAX_TICKET_ATTACHMENTS} attachments allowed — remove one to add another.`,

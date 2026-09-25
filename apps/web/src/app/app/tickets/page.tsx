@@ -5,7 +5,7 @@ import { AdminTicketsTable } from "@/components/admin-tickets-table";
 import { CancelTicketDialog } from "@/components/cancel-ticket-dialog";
 import { formatDateForLocale, formatTicketStatus, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
-import { isCancellableTicketStatus, isCurrentUserAdmin, ticketStatusBadgeClass, type TicketStatus } from "@/lib/tickets";
+import { isCancellableTicketStatus, isCurrentUserAdmin, isEditableTicketStatus, isReopenableTicketStatus, ticketStatusBadgeClass, type TicketStatus } from "@/lib/tickets";
 
 export const dynamic = "force-dynamic";
 
@@ -133,6 +133,31 @@ export default async function TicketsPage({ searchParams }: { searchParams: Prom
                         <Link href={`/app/tickets/${ticket.id}`} className="text-sm font-semibold text-teal-700 hover:underline dark:text-teal-400">
                           {tr(locale, "View", "צפייה")}
                         </Link>
+                        {isEditableTicketStatus(ticket.status) ? (
+                          <Link
+                            href={`/app/tickets/${ticket.id}?edit=1`}
+                            aria-label={tr(locale, "Edit ticket", "עריכת הפנייה")}
+                            title={tr(locale, "Edit ticket", "עריכת הפנייה")}
+                            className="text-teal-700 hover:text-teal-800 dark:text-teal-400 dark:hover:text-teal-300"
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                            </svg>
+                          </Link>
+                        ) : null}
+                        {isReopenableTicketStatus(ticket.status) ? (
+                          <Link
+                            href={`/app/tickets/${ticket.id}?reopen=1`}
+                            aria-label={tr(locale, "Reopen ticket", "פתיחת הפנייה מחדש")}
+                            title={tr(locale, "Reopen ticket", "פתיחת הפנייה מחדש")}
+                            className="text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300"
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                              <path d="M21 3v6h-6" />
+                            </svg>
+                          </Link>
+                        ) : null}
                         {isCancellableTicketStatus(ticket.status) ? (
                           <CancelTicketDialog locale={locale} ticketId={ticket.id} ticketSeq={ticket.ticket_seq} />
                         ) : null}
