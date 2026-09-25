@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useState, useSyncExternalStore } from "react";
+import { useActionState, useRef, useState, useSyncExternalStore } from "react";
 
 import {
   completePasskeySignInAction,
@@ -60,8 +60,21 @@ export function SignInForm({
   const [passkeyState, setPasskeyState] = useState<{ status: "idle" | "pending" | "error"; error?: string }>({
     status: "idle",
   });
+  // Guards against a double-tap firing this handler twice before React has
+  // actually re-rendered the button's disabled={pending} state - that
+  // disable is real but only takes effect after a render, and a fast
+  // double-tap can beat it. A ref updates synchronously, so this closes the
+  // gap the disabled attribute alone can't: confirmed live in production
+  // that two concurrent passkey ceremonies really were being kicked off per
+  // "hang" (two POSTs to complete the sign-in per attempt in the logs,
+  // every time), and two credentials racing to establish a session is a
+  // plausible source of the malformed "unexpected response" error - not
+  // just cookie size.
+  const passkeyInFlightRef = useRef(false);
 
   async function handlePasskeySignIn() {
+    if (passkeyInFlightRef.current) return;
+    passkeyInFlightRef.current = true;
     setPasskeyState({ status: "pending" });
 
     // Everything below is wrapped in try/catch, not just raced against a
@@ -152,6 +165,8 @@ export function SignInForm({
                 "משהו השתבש. נסו שוב, או התחברו עם הסיסמה למטה.",
               ),
       });
+    } finally {
+      passkeyInFlightRef.current = false;
     }
   }
 
