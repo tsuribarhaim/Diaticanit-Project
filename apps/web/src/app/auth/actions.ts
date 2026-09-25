@@ -144,10 +144,44 @@ export async function completePasskeySignInAction(
   refreshToken: string,
 ): Promise<{ error?: string }> {
   const supabase = await createClient();
+
+  // Every passkey attempt investigated so far had a stale, already-broken
+  // session cookie present beforehand (see the recurring "Auth session
+  // missing" / "Invalid Refresh Token" errors logged by middleware right
+  // before each one). Clearing it first - rather than layering a fresh
+  // session's cookies on top of a stale one - keeps this action's own
+  // Set-Cookie response as small as a single clean session, in case cookie
+  // bloat is what's producing a response the client's Server Action parser
+  // can't recognize: confirmed live in production that the server-side
+  // work itself completes successfully (exact timestamp correlation with
+  // the credential's own verification), yet the client still reports "An
+  // unexpected response was received from the server."
+  await supabase.auth.signOut({ scope: "local" });
+
   const { data, error } = await supabase.auth.setSession({
     access_token: accessToken,
     refresh_token: refreshToken,
   });
+
+  // Diagnostic only, kept deliberately small and unconditional (not just on
+  // error) - if clearing the stale cookie above doesn't fully resolve this,
+  // these numbers are what tell us whether cookie size is really the
+  // culprit instead of guessing again.
+  const cookieList = (await cookies()).getAll();
+  console.log(
+    JSON.stringify({
+      level: "info",
+      scope: "auth.completePasskeySignIn",
+      message: "post_set_session",
+      meta: {
+        ok: !error && !!data.user,
+        error: error?.message,
+        cookieCount: cookieList.length,
+        cookieHeaderBytes: cookieList.reduce((sum, c) => sum + c.name.length + c.value.length, 0),
+      },
+      timestamp: new Date().toISOString(),
+    }),
+  );
 
   if (error || !data.user) {
     logServerError("auth.completePasskeySignIn", "set_session_failed", { error: error?.message });
