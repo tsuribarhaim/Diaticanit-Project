@@ -84,7 +84,24 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  if (pathname.startsWith("/auth") && user) {
+  // Skipped for Server Action requests (identified by the framework's own
+  // "next-action" header) - confirmed live in production that this rule
+  // firing on one is a real bug, not a theoretical one. Passkey sign-in
+  // establishes its session client-side (signInWithPasskey's own internal
+  // session save) before completePasskeySignInAction's POST ever reaches
+  // the server, so that POST already carries a now-valid session cookie by
+  // the time it gets here - this rule would then redirect it with a plain
+  // NextResponse.redirect(), but a Server Action call expects either a
+  // real RSC-formatted response or the framework's own "x-action-redirect"
+  // signal, not an ordinary HTTP redirect. Next's client can't parse the
+  // difference and surfaces it as "An unexpected response was received
+  // from the server" - reproduced directly via a real end-to-end passkey
+  // ceremony (virtual authenticator + full network capture) tracing back
+  // to exactly this response. A genuine page visit to /auth/* is always a
+  // GET, so restricting this rule to actual navigations - not action calls
+  // that merely happen to post to the same URL - loses nothing it was
+  // meant to do.
+  if (pathname.startsWith("/auth") && user && !request.headers.get("next-action")) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/app";
     redirectUrl.search = "";
