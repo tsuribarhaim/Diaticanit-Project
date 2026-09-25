@@ -4,7 +4,7 @@ import { Fragment, useState } from "react";
 
 import { negotiateActiveTargetsAction, applyActiveTargetsAction } from "@/app/app/targets/plan-actions";
 import { editTargetFieldAction, type EditableFieldRef } from "@/app/app/targets/edit-actions";
-import { formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
+import { formatMeasurementUnit, formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
 import type { TargetGenerationPayload } from "@/lib/targets";
 import { computeTargetsDiff, type MetricDiffRow } from "@/lib/targets-diff";
 import { ORDERED_NUTRIENT_FIELDS } from "@/components/targets-plan-view";
@@ -185,8 +185,10 @@ function BannerView({
           {tr(locale, "That's outside the usual range", "זה חורג מהטווח הרגיל")}
         </p>
         <p className="mt-1 text-amber-800 dark:text-amber-400">
-          {formatNumberForLocale(banner.attempted, locale)} {banner.unit} {tr(locale, "is outside", "חורג מ-")}{" "}
-          {formatNumberForLocale(banner.lo, locale)}–{formatNumberForLocale(banner.hi, locale)} {banner.unit}.{" "}
+          {formatNumberForLocale(banner.attempted, locale)} {formatMeasurementUnit(banner.unit, locale)}{" "}
+          {tr(locale, "is outside", "חורג מ-")}{" "}
+          {formatNumberForLocale(banner.lo, locale)}–{formatNumberForLocale(banner.hi, locale)}{" "}
+          {formatMeasurementUnit(banner.unit, locale)}.{" "}
           {tr(
             locale,
             "Want Daffy to check what this changes elsewhere in your plan?",
@@ -406,7 +408,7 @@ export function TargetsPlanEditor({
             state={state}
             locale={locale}
             value={value}
-            unit={unit}
+            unit={formatMeasurementUnit(unit, locale)}
             decimals={decimals}
             variant="card"
             onStartEdit={() => startEdit(key, value)}
@@ -465,7 +467,7 @@ export function TargetsPlanEditor({
                           state={state}
                           locale={locale}
                           value={singleValue}
-                          unit={field.unit}
+                          unit={formatMeasurementUnit(field.unit, locale)}
                           decimals={0}
                           variant="row"
                           onStartEdit={() => startEdit(fieldKey, singleValue)}
@@ -473,7 +475,7 @@ export function TargetsPlanEditor({
                           onConfirm={() => void confirmEdit(fieldKey, fieldRef, 0)}
                           onCancel={() => cancelEdit(fieldKey)}
                         />
-                        <span className="text-xs font-normal text-slate-500">{field.unit}</span>
+                        <span className="text-xs font-normal text-slate-500">{formatMeasurementUnit(field.unit, locale)}</span>
                       </span>
                     </td>
                   </tr>

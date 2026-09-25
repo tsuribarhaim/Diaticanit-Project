@@ -8,6 +8,7 @@ import {
   formatExerciseModality,
   formatGoalType,
   formatHabit,
+  formatMeasurementUnit,
   formatMedicalCondition,
   formatNumberForLocale,
   tr,
@@ -882,7 +883,7 @@ export function generateHeuristicTargetProfileFromAnalysis({
   const targetWeightForDisplay = targetWeightKg ?? round(profile.weight_kg);
   userTargets.push({
     label: tr(locale, "Target weight", "משקל יעד"),
-    value: `${formatNumberForLocale(targetWeightForDisplay, locale, { maximumFractionDigits: 1 })} kg`,
+    value: `${formatNumberForLocale(targetWeightForDisplay, locale, { maximumFractionDigits: 1 })} ${formatMeasurementUnit("kg", locale)}`,
     id: "target_weight",
     unit: "kg",
     targetMin: targetWeightForDisplay,
@@ -1258,8 +1259,8 @@ export function computeProfileDiff(before: ProfileForTargets, after: ProfileForT
     addIfChanged(
       "Weight",
       "משקל",
-      `${formatNumberForLocale(before.weight_kg, locale, { maximumFractionDigits: 1 })} kg`,
-      `${formatNumberForLocale(after.weight_kg, locale, { maximumFractionDigits: 1 })} kg`,
+      `${formatNumberForLocale(before.weight_kg, locale, { maximumFractionDigits: 1 })} ${formatMeasurementUnit("kg", locale)}`,
+      `${formatNumberForLocale(after.weight_kg, locale, { maximumFractionDigits: 1 })} ${formatMeasurementUnit("kg", locale)}`,
     );
   }
   addIfChanged(

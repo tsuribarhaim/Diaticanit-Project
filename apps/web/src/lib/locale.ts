@@ -227,7 +227,8 @@ export function formatMeasurementUnit(unit: string, locale: AppLocale): string {
   if (token === "mcg") return "מק\"ג";
   if (token === "kcal") return "קק\"ל";
   if (token === "days") return "ימים";
-  if (token === "hour" || token === "hours") return "שעות";
+  if (token === "hour" || token === "hours" || token === "h") return "שעות";
+  if (token === "steps") return "צעדים";
   return unit;
 }
 
