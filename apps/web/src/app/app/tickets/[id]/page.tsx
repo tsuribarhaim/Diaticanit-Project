@@ -5,7 +5,10 @@ import type { ReactNode } from "react";
 import { openTicketAttachmentAction } from "@/app/app/tickets/actions";
 import { AdminStatusDropdown } from "@/components/admin-status-dropdown";
 import { CancelTicketDialog } from "@/components/cancel-ticket-dialog";
+import { EditTicketDialog } from "@/components/edit-ticket-dialog";
 import { LocalDateTime } from "@/components/local-time";
+import { ReopenTicketDialog } from "@/components/reopen-ticket-dialog";
+import { TicketHistoryLog } from "@/components/ticket-history-log";
 import { formatFileSize } from "@/lib/documents";
 import { markNotificationRead } from "@/lib/notifications";
 import {
@@ -18,7 +21,17 @@ import {
   type AppLocale,
 } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
-import { isCancellableTicketStatus, isCurrentUserAdmin, type TicketStatus } from "@/lib/tickets";
+import {
+  isCancellableTicketStatus,
+  isCurrentUserAdmin,
+  isEditableTicketStatus,
+  isReopenableTicketStatus,
+  parseTicketDescriptionLog,
+  type TicketArea,
+  type TicketPriority,
+  type TicketStatus,
+  type TicketType,
+} from "@/lib/tickets";
 
 export const dynamic = "force-dynamic";
 
@@ -31,8 +44,15 @@ function DetailRow({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
-export default async function TicketDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function TicketDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ edit?: string; reopen?: string }>;
+}) {
   const { id } = await params;
+  const resolvedSearchParams = await searchParams;
   const supabase = await createClient();
   const {
     data: { user },
@@ -156,7 +176,9 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
 
         <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{tr(locale, "Description", "תיאור")}</p>
-          <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800 dark:text-slate-200">{ticket.description}</p>
+          <div className="mt-2">
+            <TicketHistoryLog locale={locale} entries={parseTicketDescriptionLog(ticket.description, ticket.created_at)} />
+          </div>
         </div>
 
         {attachments && attachments.length > 0 ? (
@@ -220,14 +242,41 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
         ) : null}
 
         {/* Close here just navigates back to the ticket list - not a
-            status change. Cancel Ticket (the only status change a plain
-            user can make themselves) sits opposite it, shown only while
-            still cancellable - admins already have full status control via
-            the dropdown above, so they don't get a second, narrower
-            control down here too. */}
+            status change. Reopen/Cancel are self-service-only (admins
+            already have full status control via the dropdown above, so
+            they don't get a second, narrower way to change status down
+            here too) - but Edit is available to BOTH: a user on their own
+            still-live ticket, or an admin on ANY ticket in any status
+            (mirrors tickets_update_admin's own unrestricted RLS grant -
+            the status dropdown already lets an admin move a ticket
+            anywhere freely, so gating content edits more tightly than
+            that would only be inconsistent, not actually safer). */}
         <div className="mt-6 flex items-center justify-between border-t border-slate-100 pt-4 dark:border-slate-800">
-          {!isAdmin && isCancellableTicketStatus(status) ? (
-            <CancelTicketDialog locale={locale} ticketId={ticket.id} ticketSeq={ticket.ticket_seq} />
+          {isAdmin || isEditableTicketStatus(status) || isReopenableTicketStatus(status) || isCancellableTicketStatus(status) ? (
+            <div className="flex flex-wrap items-center gap-4">
+              {isAdmin || isEditableTicketStatus(status) ? (
+                <EditTicketDialog
+                  locale={locale}
+                  ticketId={ticket.id}
+                  ticketSeq={ticket.ticket_seq}
+                  currentSubject={ticket.subject}
+                  currentType={ticket.ticket_type as TicketType}
+                  currentArea={ticket.area as TicketArea}
+                  currentPriority={ticket.priority as TicketPriority}
+                  currentAttachments={(attachments ?? []).map((attachment) => ({
+                    id: attachment.id,
+                    fileName: attachment.file_name,
+                    mimeType: attachment.mime_type,
+                    fileSizeBytes: attachment.file_size_bytes,
+                  }))}
+                  autoOpen={resolvedSearchParams.edit === "1"}
+                />
+              ) : null}
+              {!isAdmin && isReopenableTicketStatus(status) ? (
+                <ReopenTicketDialog locale={locale} ticketId={ticket.id} ticketSeq={ticket.ticket_seq} autoOpen={resolvedSearchParams.reopen === "1"} />
+              ) : null}
+              {!isAdmin && isCancellableTicketStatus(status) ? <CancelTicketDialog locale={locale} ticketId={ticket.id} ticketSeq={ticket.ticket_seq} /> : null}
+            </div>
           ) : (
             <span />
           )}
