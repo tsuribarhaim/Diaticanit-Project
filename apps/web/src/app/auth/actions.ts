@@ -104,11 +104,9 @@ function sanitizeNextPath(nextPath: string | null): string {
  * Starts both session-policy clocks fresh (see lib/auth-policy.ts) - called
  * for every kind of "the user just proved who they are" event: a password
  * sign-in, an auto-signed-in signup, and a passkey sign-in (see
- * recordLoginAction below, called client-side right after
- * supabase.auth.signInWithPasskey() succeeds, since that ceremony happens
- * entirely in the browser with no server action of its own to hook into
- * directly). A passkey ceremony is at least as strong a proof of identity
- * as a password, so it resets the absolute-session clock the same way.
+ * completePasskeySignInAction below). A passkey ceremony is at least as
+ * strong a proof of identity as a password, so it resets the
+ * absolute-session clock the same way.
  */
 async function markSuccessfulLogin(supabase: Awaited<ReturnType<typeof createClient>>, userId: string): Promise<void> {
   const now = new Date().toISOString();
@@ -123,18 +121,41 @@ async function markSuccessfulLogin(supabase: Awaited<ReturnType<typeof createCli
 }
 
 /**
- * Client-side passkey sign-in (supabase.auth.signInWithPasskey()) has no
- * form submission of its own to hang this on - the sign-in form calls this
- * right after that ceremony succeeds, using the session cookies it just
- * established to identify who to record the login for.
+ * Client-side passkey sign-in (supabase.auth.signInWithPasskey()) only ever
+ * establishes the session via a client-side cookie write - there's no
+ * server request/response cycle of its own for that to ride along with, the
+ * way the password flow below gets one for free. Confirmed live in
+ * production that this is a real race, not a theoretical one: the ceremony
+ * succeeds, but the client's own immediate follow-up navigation to /app can
+ * outrace that cookie write being visible to the very next request, and
+ * middleware bounces it straight back to sign-in since it sees no session
+ * yet - to the user this looks exactly like the sign-in hanging, when
+ * reloading the same page a moment later shows them already signed in.
+ *
+ * Passing the access/refresh token pair the client just received into a
+ * server action - and having setSession establish the session HERE, inside
+ * a real request/response cycle - closes that race: by the time this
+ * awaited call resolves on the client, the Set-Cookie header it carried has
+ * already been applied, so the navigation that follows can't outrace it
+ * anymore.
  */
-export async function recordLoginAction(): Promise<void> {
+export async function completePasskeySignInAction(
+  accessToken: string,
+  refreshToken: string,
+): Promise<{ error?: string }> {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return;
-  await markSuccessfulLogin(supabase, user.id);
+  const { data, error } = await supabase.auth.setSession({
+    access_token: accessToken,
+    refresh_token: refreshToken,
+  });
+
+  if (error || !data.user) {
+    logServerError("auth.completePasskeySignIn", "set_session_failed", { error: error?.message });
+    return { error: error?.message ?? "Could not complete sign-in." };
+  }
+
+  await markSuccessfulLogin(supabase, data.user.id);
+  return {};
 }
 
 export async function signInAction(

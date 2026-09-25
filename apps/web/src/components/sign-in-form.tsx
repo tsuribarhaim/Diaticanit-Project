@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useActionState, useState, useSyncExternalStore } from "react";
 
 import {
-  recordLoginAction,
+  completePasskeySignInAction,
   signInAction,
   type AuthActionState,
 } from "@/app/auth/actions";
@@ -69,28 +69,42 @@ export function SignInForm({
     // signInWithPasskey's three internal steps (fetch challenge,
     // navigator.credentials.get, verify with server), not its post-verify
     // session save/notify inside the Supabase client itself, and not our
-    // own recordLoginAction call after it. Confirmed live in production
-    // that a stall can happen AFTER the server has already verified the
-    // credential (its updated_at timestamp moved) - the UI still never
-    // advanced, because nothing downstream of that point ever times out
-    // either. The password form below stays usable the whole time either
-    // way, so timing out just surfaces that path instead of leaving the
-    // user staring at a dead spinner.
+    // own completePasskeySignInAction call after it.
     const result = await Promise.race([
       (async (): Promise<"ok" | { error: string }> => {
         // No email needed here - unlike the password form, a passkey
         // ceremony identifies the account from the credential the device's
         // own authenticator already has stored for it.
         const supabase = createClient();
-        const { error } = await supabase.auth.signInWithPasskey();
+        const { data, error } = await supabase.auth.signInWithPasskey();
         if (error) return { error: error.message };
+        if (!data.session) {
+          return {
+            error: tr(
+              locale,
+              "Sign-in succeeded but no session was returned. Please try again.",
+              "ההתחברות הצליחה אך לא התקבל סשן. נסו שוב.",
+            ),
+          };
+        }
 
-        // Starts this device's session-policy clocks the same way a
-        // password sign-in does (see markSuccessfulLogin's own comment) -
-        // there's no form submission here for the server to hook that into
-        // directly, so it's recorded explicitly right after the ceremony
-        // succeeds.
-        await recordLoginAction();
+        // Establishes the session server-side (and starts this device's
+        // session-policy clocks the same way a password sign-in does - see
+        // markSuccessfulLogin's own comment) by handing the token pair the
+        // ceremony just returned to a server action, rather than relying on
+        // the client-side cookie write signInWithPasskey already did on its
+        // own. Confirmed live in production that skipping this and
+        // navigating straight off the client-side session is a real race:
+        // the immediate navigation to nextPath below can reach middleware
+        // before that cookie write is visible to it, bouncing the user
+        // straight back to sign-in - which looks exactly like a hang. Since
+        // this call is awaited before navigating, its Set-Cookie response
+        // has already landed by the time we do.
+        const { error: completeError } = await completePasskeySignInAction(
+          data.session.access_token,
+          data.session.refresh_token,
+        );
+        if (completeError) return { error: completeError };
         return "ok";
       })(),
       new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 20000)),
