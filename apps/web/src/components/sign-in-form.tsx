@@ -63,22 +63,56 @@ export function SignInForm({
 
   async function handlePasskeySignIn() {
     setPasskeyState({ status: "pending" });
-    const supabase = createClient();
-    // No email needed here - unlike the password form, a passkey ceremony
-    // identifies the account from the credential the device's own
-    // authenticator already has stored for it.
-    const { error } = await supabase.auth.signInWithPasskey();
 
-    if (error) {
-      setPasskeyState({ status: "error", error: error.message });
+    // The whole chain - not just signInWithPasskey - is raced against one
+    // timeout, because nothing in it has one of its own: not
+    // signInWithPasskey's three internal steps (fetch challenge,
+    // navigator.credentials.get, verify with server), not its post-verify
+    // session save/notify inside the Supabase client itself, and not our
+    // own recordLoginAction call after it. Confirmed live in production
+    // that a stall can happen AFTER the server has already verified the
+    // credential (its updated_at timestamp moved) - the UI still never
+    // advanced, because nothing downstream of that point ever times out
+    // either. The password form below stays usable the whole time either
+    // way, so timing out just surfaces that path instead of leaving the
+    // user staring at a dead spinner.
+    const result = await Promise.race([
+      (async (): Promise<"ok" | { error: string }> => {
+        // No email needed here - unlike the password form, a passkey
+        // ceremony identifies the account from the credential the device's
+        // own authenticator already has stored for it.
+        const supabase = createClient();
+        const { error } = await supabase.auth.signInWithPasskey();
+        if (error) return { error: error.message };
+
+        // Starts this device's session-policy clocks the same way a
+        // password sign-in does (see markSuccessfulLogin's own comment) -
+        // there's no form submission here for the server to hook that into
+        // directly, so it's recorded explicitly right after the ceremony
+        // succeeds.
+        await recordLoginAction();
+        return "ok";
+      })(),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 20000)),
+    ]);
+
+    if (result === "timeout") {
+      setPasskeyState({
+        status: "error",
+        error: tr(
+          locale,
+          "This is taking longer than expected. Please try again, or sign in with your password below.",
+          "זה לוקח יותר זמן מהצפוי. נסו שוב, או התחברו עם הסיסמה למטה.",
+        ),
+      });
       return;
     }
 
-    // Starts this device's session-policy clocks the same way a password
-    // sign-in does (see markSuccessfulLogin's own comment) - there's no
-    // form submission here for the server to hook that into directly, so
-    // it's recorded explicitly right after the ceremony succeeds.
-    await recordLoginAction();
+    if (result !== "ok") {
+      setPasskeyState({ status: "error", error: result.error });
+      return;
+    }
+
     // A full navigation (not router.push) so the server-rendered layout and
     // middleware both see the session cookie signInWithPasskey just set,
     // cleanly, on the very next request - the same reasoning already
