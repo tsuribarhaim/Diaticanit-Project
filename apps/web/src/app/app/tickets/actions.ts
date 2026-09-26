@@ -633,6 +633,25 @@ export async function openTicketAttachmentAction(attachmentId: string): Promise<
 
 export type AdminStatusUpdateResult = { error?: string };
 
+/** Three statuses have their own required companion column, enforced by a
+ * DB check constraint (db/migrations/044 for cancelled/duplicate,
+ * db/migrations/054 for deferred) - this admin dropdown used to only ever
+ * write `{status}`, so picking any of these three always violated that
+ * constraint and failed with the generic "Could not update status" error,
+ * every single time, with no way to tell why (reported live: "some I can
+ * update, some I can't" - the pattern is exactly these three). Every
+ * other status has no such constraint and keeps writing just `{status}`. */
+const STATUSES_REQUIRING_REASON: readonly TicketStatus[] = ["cancelled", "deferred"];
+
+export type AdminStatusUpdateExtra = {
+  /** Required when status is "cancelled" or "deferred". */
+  reason?: string;
+  /** Required when status is "duplicate" - the OTHER ticket's TCK-<seq>
+   * number, resolved to its id below (an admin thinks in ticket numbers,
+   * not uuids). */
+  duplicateOfTicketSeq?: number;
+};
+
 /**
  * The one write an admin makes through this UI (see
  * docs/design/user-support-tickets-design.md and its own is_admin follow-
@@ -645,7 +664,11 @@ export type AdminStatusUpdateResult = { error?: string };
  * so a non-admin never even gets a real error to reverse-engineer
  * anything from.
  */
-export async function updateTicketStatusAdminAction(ticketId: string, status: TicketStatus): Promise<AdminStatusUpdateResult> {
+export async function updateTicketStatusAdminAction(
+  ticketId: string,
+  status: TicketStatus,
+  extra?: AdminStatusUpdateExtra,
+): Promise<AdminStatusUpdateResult> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -666,7 +689,35 @@ export async function updateTicketStatusAdminAction(ticketId: string, status: Ti
     return { error: tr(locale, "Not authorized.", "אין הרשאה.") };
   }
 
-  const { error: updateError } = await supabase.from("tickets").update({ status }).eq("id", ticketId);
+  const patch: Record<string, unknown> = { status };
+
+  if (STATUSES_REQUIRING_REASON.includes(status)) {
+    const reason = extra?.reason?.trim();
+    if (!reason) {
+      return { error: tr(locale, "A reason is required for this status.", "נדרשת סיבה עבור סטטוס זה.") };
+    }
+    if (status === "cancelled") {
+      patch.cancelled_reason = reason;
+      patch.cancelled_at = new Date().toISOString();
+    } else {
+      patch.deferred_reason = reason;
+    }
+  } else if (status === "duplicate") {
+    if (!extra?.duplicateOfTicketSeq) {
+      return { error: tr(locale, "Enter the ticket number this duplicates.", "יש להזין את מספר הפנייה שאליה זו כפולה.") };
+    }
+    const { data: originalTicket } = await supabase
+      .from("tickets")
+      .select("id")
+      .eq("ticket_seq", extra.duplicateOfTicketSeq)
+      .maybeSingle();
+    if (!originalTicket || originalTicket.id === ticketId) {
+      return { error: tr(locale, "That ticket number could not be found.", "מספר הפנייה לא נמצא.") };
+    }
+    patch.duplicate_of_ticket_id = originalTicket.id;
+  }
+
+  const { error: updateError } = await supabase.from("tickets").update(patch).eq("id", ticketId);
 
   if (updateError) {
     logServerError("tickets.adminUpdateStatus", "update_failed", { userId: user.id, ticketId, status, error: updateError.message });
