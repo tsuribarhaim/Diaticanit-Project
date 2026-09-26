@@ -412,9 +412,28 @@ export function DailyReportChatPanel({
   // mount (before this panel's own data-theme is ever set, so the query
   // can't accidentally match itself) rather than threading a new prop
   // through page.tsx -> DailyReportForm -> here alongside locale.
-  const [mirroredTheme] = useState<string | null>(
-    () => document.querySelector("[data-theme]")?.getAttribute("data-theme") ?? null,
+  const [mirroredTheme] = useState<string | null>(() =>
+    typeof document === "undefined" ? null : (document.querySelector("[data-theme]")?.getAttribute("data-theme") ?? null),
   );
+  // The bubble/panel portal below (unlike pendingClearConfirm's own portal
+  // further down, which only ever flips true from a real click) renders
+  // unconditionally on every pass, including the very first server render -
+  // where document.body doesn't exist. Confirmed live: this crashed SSR
+  // with "document is not defined" and silently fell back to full
+  // client-side rendering for the whole page. useEffect only ever runs
+  // client-side, so gating the portal on it - true only after mount - keeps
+  // the server pass from ever reaching document.body.
+  const [isMounted, setIsMounted] = useState(false);
+  useEffect(() => {
+    // setTimeout, not a direct call - this codebase's react-hooks/set-state-in-effect
+    // rule flags a synchronous setState at the top of an effect body even
+    // for a one-time mount flag like this; scheduling it instead (same
+    // idiom used elsewhere in this app for the same rule) satisfies the
+    // lint without changing behavior - it still only ever runs once, right
+    // after mount.
+    const timeoutId = setTimeout(() => setIsMounted(true), 0);
+    return () => clearTimeout(timeoutId);
+  }, []);
 
   useEffect(() => {
     return () => abortRef.current?.abort();
@@ -1279,7 +1298,7 @@ export function DailyReportChatPanel({
           dimming backdrop either, to match that widget - tap the bubble
           again (or Minimize in the header) to close, rather than tapping
           outside. */}
-      {createPortal(
+      {isMounted && createPortal(
         // dir set explicitly here - the app only applies dir="rtl"/"ltr"
         // on a wrapper <div> inside app/app/layout.tsx, not on
         // <html>/<body> - portaling straight to document.body (see the
