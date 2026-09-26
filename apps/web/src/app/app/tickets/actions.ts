@@ -577,8 +577,18 @@ export async function reopenTicketAction(_prevState: TicketFormState, formData: 
  * attachment row by id rather than "the" ticket's one attachment -
  * ticket_attachments_select's own RLS policy already enforces the same
  * own-ticket-or-admin visibility this used to check by hand here.
+ *
+ * Returns the signed URL instead of redirecting to it - confirmed live
+ * that a server-side redirect() here took over the current tab/window
+ * entirely, actually leaving the app's origin/PWA shell to show the raw
+ * file, with no in-app "Close" affordance and the browser back button
+ * sometimes exiting the app instead of returning to the ticket. The
+ * caller (TicketAttachmentViewer) opens this URL inside an in-app modal
+ * instead, so the user never actually navigates away.
  */
-export async function openTicketAttachmentAction(formData: FormData): Promise<void> {
+export type OpenTicketAttachmentResult = { signedUrl: string; mimeType: string; fileName: string } | { error: string };
+
+export async function openTicketAttachmentAction(attachmentId: string): Promise<OpenTicketAttachmentResult> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -588,12 +598,9 @@ export async function openTicketAttachmentAction(formData: FormData): Promise<vo
     redirect("/auth/sign-in");
   }
 
-  const attachmentId = formData.get("attachment_id")?.toString();
-  if (!attachmentId) return;
-
   const { data: row, error: rowError } = await supabase
     .from("ticket_attachments")
-    .select("storage_path")
+    .select("storage_path, mime_type, file_name")
     .eq("id", attachmentId)
     .maybeSingle();
 
@@ -603,7 +610,7 @@ export async function openTicketAttachmentAction(formData: FormData): Promise<vo
       attachmentId,
       error: rowError?.message,
     });
-    return;
+    return { error: tr(await resolveUserLocale(supabase, user.id), "Attachment not found.", "הקובץ המצורף לא נמצא.") };
   }
 
   const { data: signedData, error: signedError } = await supabase.storage
@@ -616,10 +623,12 @@ export async function openTicketAttachmentAction(formData: FormData): Promise<vo
       attachmentId,
       error: signedError?.message,
     });
-    return;
+    return {
+      error: tr(await resolveUserLocale(supabase, user.id), "Could not open this attachment. Please try again.", "לא ניתן היה לפתוח את הקובץ. יש לנסות שוב."),
+    };
   }
 
-  redirect(signedData.signedUrl);
+  return { signedUrl: signedData.signedUrl, mimeType: row.mime_type, fileName: row.file_name };
 }
 
 export type AdminStatusUpdateResult = { error?: string };

@@ -2,14 +2,13 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
-import { openTicketAttachmentAction } from "@/app/app/tickets/actions";
 import { AdminStatusDropdown } from "@/components/admin-status-dropdown";
 import { CancelTicketDialog } from "@/components/cancel-ticket-dialog";
 import { EditTicketDialog } from "@/components/edit-ticket-dialog";
 import { LocalDateTime } from "@/components/local-time";
 import { ReopenTicketDialog } from "@/components/reopen-ticket-dialog";
+import { TicketAttachmentViewer } from "@/components/ticket-attachment-viewer";
 import { TicketHistoryLog } from "@/components/ticket-history-log";
-import { formatFileSize } from "@/lib/documents";
 import { markNotificationRead } from "@/lib/notifications";
 import {
   formatTicketArea,
@@ -186,19 +185,7 @@ export default async function TicketDetailPage({
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
               {tr(locale, "Attachments", "קבצים מצורפים")}
             </p>
-            <ul className="mt-1.5 space-y-1">
-              {attachments.map((attachment) => (
-                <li key={attachment.id}>
-                  <form action={openTicketAttachmentAction}>
-                    <input type="hidden" name="attachment_id" value={attachment.id} />
-                    <button type="submit" className="text-sm font-semibold text-teal-700 hover:underline dark:text-teal-400">
-                      {attachment.file_name}
-                      {attachment.file_size_bytes ? ` (${formatFileSize(attachment.file_size_bytes)})` : ""}
-                    </button>
-                  </form>
-                </li>
-              ))}
-            </ul>
+            <TicketAttachmentViewer locale={locale} attachments={attachments} />
           </div>
         ) : null}
 
