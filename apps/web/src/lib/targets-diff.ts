@@ -9,6 +9,11 @@ export type NutrientFieldInfo = {
   minKey: keyof TargetGenerationPayload;
   maxKey: keyof TargetGenerationPayload;
   unit: string;
+  /** Matches an id in lib/nutrient-reference.ts, for callers that want to
+   * show that nutrient's own role/food-examples info popover (see
+   * targets-plan-editor.tsx) alongside its min/max range - not read by
+   * this file's own diffing logic. */
+  id: string;
 };
 
 /** Exported for the onboarding Targets step's own nutrient table
@@ -17,25 +22,25 @@ export type NutrientFieldInfo = {
  * own diff-only use. Order here doesn't matter for diffing; that
  * component re-sorts by the user's own chosen display order. */
 export const NUTRIENT_DIFF_FIELDS: NutrientFieldInfo[] = [
-  { labelEn: "Calories", labelHe: "קלוריות", minKey: "caloriesMin", maxKey: "caloriesMax", unit: "kcal" },
-  { labelEn: "Protein", labelHe: "חלבון", minKey: "proteinMinG", maxKey: "proteinMaxG", unit: "g" },
-  { labelEn: "Carbohydrates", labelHe: "פחמימות", minKey: "carbsMinG", maxKey: "carbsMaxG", unit: "g" },
-  { labelEn: "Fats", labelHe: "שומנים", minKey: "fatsMinG", maxKey: "fatsMaxG", unit: "g" },
-  { labelEn: "Dietary Fiber", labelHe: "סיבים תזונתיים", minKey: "fiberMinG", maxKey: "fiberMaxG", unit: "g" },
-  { labelEn: "Sodium", labelHe: "נתרן", minKey: "sodiumMinMg", maxKey: "sodiumMaxMg", unit: "mg" },
-  { labelEn: "Added Sugars", labelHe: "סוכרים מוספים", minKey: "addedSugarMinG", maxKey: "addedSugarMaxG", unit: "g" },
-  { labelEn: "Fluid / Water", labelHe: "נוזלים", minKey: "waterMinMl", maxKey: "waterMaxMl", unit: "ml" },
-  { labelEn: "Potassium", labelHe: "אשלגן", minKey: "potassiumMinMg", maxKey: "potassiumMaxMg", unit: "mg" },
-  { labelEn: "Magnesium", labelHe: "מגנזיום", minKey: "magnesiumMinMg", maxKey: "magnesiumMaxMg", unit: "mg" },
-  { labelEn: "Calcium", labelHe: "סידן", minKey: "calciumMinMg", maxKey: "calciumMaxMg", unit: "mg" },
-  { labelEn: "Iron", labelHe: "ברזל", minKey: "ironMinMg", maxKey: "ironMaxMg", unit: "mg" },
-  { labelEn: "Zinc", labelHe: "אבץ", minKey: "zincMinMg", maxKey: "zincMaxMg", unit: "mg" },
-  { labelEn: "Vitamin C", labelHe: "ויטמין C", minKey: "vitCMinMg", maxKey: "vitCMaxMg", unit: "mg" },
-  { labelEn: "Vitamin B12", labelHe: "ויטמין B12", minKey: "vitB12MinMcg", maxKey: "vitB12MaxMcg", unit: "mcg" },
-  { labelEn: "Vitamin D", labelHe: "ויטמין D", minKey: "vitDMinMcg", maxKey: "vitDMaxMcg", unit: "mcg" },
-  { labelEn: "Saturated Fat", labelHe: "שומן רווי", minKey: "satFatMinG", maxKey: "satFatMaxG", unit: "g" },
-  { labelEn: "Omega-3", labelHe: "אומגה 3", minKey: "omega3MinG", maxKey: "omega3MaxG", unit: "g" },
-  { labelEn: "Cholesterol", labelHe: "כולסטרול", minKey: "cholesterolMinMg", maxKey: "cholesterolMaxMg", unit: "mg" },
+  { id: "calories", labelEn: "Calories", labelHe: "קלוריות", minKey: "caloriesMin", maxKey: "caloriesMax", unit: "kcal" },
+  { id: "protein", labelEn: "Protein", labelHe: "חלבון", minKey: "proteinMinG", maxKey: "proteinMaxG", unit: "g" },
+  { id: "carbs", labelEn: "Carbohydrates", labelHe: "פחמימות", minKey: "carbsMinG", maxKey: "carbsMaxG", unit: "g" },
+  { id: "fats", labelEn: "Fats", labelHe: "שומנים", minKey: "fatsMinG", maxKey: "fatsMaxG", unit: "g" },
+  { id: "fiber", labelEn: "Dietary Fiber", labelHe: "סיבים תזונתיים", minKey: "fiberMinG", maxKey: "fiberMaxG", unit: "g" },
+  { id: "sodium", labelEn: "Sodium", labelHe: "נתרן", minKey: "sodiumMinMg", maxKey: "sodiumMaxMg", unit: "mg" },
+  { id: "added_sugar", labelEn: "Added Sugars", labelHe: "סוכרים מוספים", minKey: "addedSugarMinG", maxKey: "addedSugarMaxG", unit: "g" },
+  { id: "water", labelEn: "Fluid / Water", labelHe: "נוזלים", minKey: "waterMinMl", maxKey: "waterMaxMl", unit: "ml" },
+  { id: "potassium", labelEn: "Potassium", labelHe: "אשלגן", minKey: "potassiumMinMg", maxKey: "potassiumMaxMg", unit: "mg" },
+  { id: "magnesium", labelEn: "Magnesium", labelHe: "מגנזיום", minKey: "magnesiumMinMg", maxKey: "magnesiumMaxMg", unit: "mg" },
+  { id: "calcium", labelEn: "Calcium", labelHe: "סידן", minKey: "calciumMinMg", maxKey: "calciumMaxMg", unit: "mg" },
+  { id: "iron", labelEn: "Iron", labelHe: "ברזל", minKey: "ironMinMg", maxKey: "ironMaxMg", unit: "mg" },
+  { id: "zinc", labelEn: "Zinc", labelHe: "אבץ", minKey: "zincMinMg", maxKey: "zincMaxMg", unit: "mg" },
+  { id: "vit_c", labelEn: "Vitamin C", labelHe: "ויטמין C", minKey: "vitCMinMg", maxKey: "vitCMaxMg", unit: "mg" },
+  { id: "vit_b12", labelEn: "Vitamin B12", labelHe: "ויטמין B12", minKey: "vitB12MinMcg", maxKey: "vitB12MaxMcg", unit: "mcg" },
+  { id: "vit_d", labelEn: "Vitamin D", labelHe: "ויטמין D", minKey: "vitDMinMcg", maxKey: "vitDMaxMcg", unit: "mcg" },
+  { id: "sat_fat", labelEn: "Saturated Fat", labelHe: "שומן רווי", minKey: "satFatMinG", maxKey: "satFatMaxG", unit: "g" },
+  { id: "omega3", labelEn: "Omega-3", labelHe: "אומגה 3", minKey: "omega3MinG", maxKey: "omega3MaxG", unit: "g" },
+  { id: "cholesterol", labelEn: "Cholesterol", labelHe: "כולסטרול", minKey: "cholesterolMinMg", maxKey: "cholesterolMaxMg", unit: "mg" },
 ];
 
 function exerciseSummary(payload: TargetGenerationPayload): string {

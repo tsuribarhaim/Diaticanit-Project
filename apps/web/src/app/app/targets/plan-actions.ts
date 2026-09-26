@@ -289,13 +289,14 @@ export async function applyActiveTargetsAction({
 }
 
 /**
- * Ticket #10: turns off the pending-review flag flagTargetsReviewPendingAction
- * set (see app/app/actions.ts) once Daffy's chat-opened reminder has been
- * handled - either the user asked for the check (called right after that
+ * Ticket #10: turns off the pending-review flag applyProfilePatchAndFlagTargets
+ * sets (see app/app/profile/actions.ts) once Daffy's chat-opened reminder has
+ * been handled - either the user asked for the check (called right after that
  * negotiation's own response comes back, not before, so a reload mid-check
- * doesn't silently drop the reminder) or explicitly declined it. Either way
- * this is a one-time nudge, not a recurring one - it never reappears once
- * cleared, only when a NEW profile change flags a fresh one.
+ * doesn't silently drop the reminder) or explicitly declined it. Complements
+ * that function's own automatic resync (ticket #70): this clears the flag on
+ * explicit user interaction, that one keeps it in sync with reality
+ * (including clearing it) as the underlying profile changes.
  */
 export async function clearTargetsReviewPendingAction() {
   const supabase = await createClient();

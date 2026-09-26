@@ -8,7 +8,6 @@ import { z } from "zod";
 import { revalidateNavChrome } from "@/lib/nav-chrome";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
-import type { ProfileDiffRow } from "@/lib/targets";
 
 const LOCALE_COOKIE = "phc_locale";
 
@@ -76,37 +75,6 @@ export async function setUserTimezoneAction(timezone: string) {
   }
 
   revalidatePath("/app", "layout");
-}
-
-/**
- * Ticket #10's redesign of TargetsStaleModal ("Your targets may need an
- * update"): OK no longer promises an immediate automatic check (that
- * mechanism doesn't exist in the redesigned Targets page) - it just saves
- * what changed and flags it, so Daffy can raise it herself the next time
- * the Targets chat opens (see plan-actions.ts's own read of this flag).
- * Overwrites any still-pending change wholesale rather than merging - a
- * newer profile change is what's actually current, not an addition to
- * whatever was already pending.
- */
-export async function flagTargetsReviewPendingAction(changes: ProfileDiffRow[]) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user || changes.length === 0) return;
-
-  const { error } = await supabase
-    .from("user_profile")
-    .update({ targets_review_pending: true, targets_review_changes: changes, targets_review_flagged_at: new Date().toISOString() })
-    .eq("user_id", user.id);
-
-  if (error) {
-    logServerError("app.flagTargetsReviewPending", "update_failed", {
-      userId: user.id,
-      error: error.message,
-    });
-  }
 }
 
 // No cookie here unlike updateLocaleAction below - that cookie exists so the

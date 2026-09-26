@@ -458,7 +458,14 @@ export function GlobalChatWidget({
                 content: tr(
                   locale,
                   `Hi! Since we last talked, your ${summary} changed — want me to check whether your targets still make sense, and adjust anything that needs it?`,
-                  `היי! מאז שדיברנו לאחרונה, ${summary} השתנה - רוצה שאבדוק אם היעדים שלך עדיין הגיוניים, ואתאים מה שצריך?`,
+                  // "חל שינוי ב-X" rather than "X השתנה" - the latter needs
+                  // its verb to agree in gender/number with whatever field
+                  // name X happens to be (e.g. "רמת פעילות השתנה" is wrong,
+                  // needs the feminine "השתנתה"), but X can be any changed
+                  // field here, so no single fixed conjugation is ever
+                  // correct for all of them. This phrasing needs no
+                  // agreement at all, so it's correct for every field.
+                  `היי! חל שינוי ב${summary} מאז שדיברנו לאחרונה - רוצה שאבדוק אם היעדים שלך עדיין הגיוניים, ואתאים מה שצריך?`,
                 ),
                 reviewPrompt: { changes: pendingReviewChanges, status: "pending" },
               },
@@ -547,7 +554,20 @@ export function GlobalChatWidget({
                       {message.pendingProfileChange.diffRows.map((row, rowIndex) => (
                         <div key={rowIndex} className="flex flex-wrap items-baseline gap-x-1">
                           <span className="font-medium">{tr(locale, row.labelEn, row.labelHe)}:</span>
-                          <span>{row.before} → {row.after}</span>
+                          {/* Separate flex items, not one dir="ltr" text run mixing
+                              Hebrew words with the arrow - a single run reorders
+                              under the browser's own bidi algorithm regardless of
+                              dir (reported as "arrow direction reversed" - e.g.
+                              allergies going from None to Penicillin displayed
+                              backwards), the same bug already found and fixed this
+                              same way for the gained/burned calorie display. Flex
+                              item position is decided by DOM order, which bidi
+                              text reordering cannot touch. */}
+                          <div dir="ltr" className="flex flex-wrap items-baseline gap-x-1">
+                            <span>{row.before}</span>
+                            <span aria-hidden="true">→</span>
+                            <span>{row.after}</span>
+                          </div>
                         </div>
                       ))}
                     </div>

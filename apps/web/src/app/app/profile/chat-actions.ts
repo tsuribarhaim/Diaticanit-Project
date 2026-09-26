@@ -3,7 +3,6 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
-import { flagTargetsReviewPendingAction } from "@/app/app/actions";
 import { applyProfilePatchAndFlagTargets } from "@/app/app/profile/actions";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { negotiateProfileChange, type ProfileChatSnapshot } from "@/lib/ai/profile-chat";
@@ -369,9 +368,9 @@ export async function applyProfileChatChangeAction(rawPatch: Record<string, unkn
     return { error: result.error };
   }
 
-  if (result.targetsStaleChanges && result.targetsStaleChanges.length > 0) {
-    await flagTargetsReviewPendingAction(result.targetsStaleChanges);
-  }
+  // applyProfilePatchAndFlagTargets already writes the pending-review flag
+  // itself now (see its own comment on ticket #70) - no separate call
+  // needed here.
 
   return { success: true };
 }

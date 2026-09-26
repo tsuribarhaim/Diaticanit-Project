@@ -762,6 +762,29 @@ export async function applyProfilePatchAndFlagTargets({
         const diffRows = computeProfileDiff(storedSnapshot, updatedProfile, locale);
         targetsStale = diffRows.length > 0;
         if (targetsStale) targetsStaleChanges = diffRows;
+
+        // Always resync Daffy's "your profile changed" reminder (ticket #10)
+        // to this freshly-computed diff, on every save that touches a
+        // target-feeding field - not just when this specific save produced
+        // a new one. Confirmed live as a real bug (ticket #70): the
+        // previous design only ever SET this flag (from TargetsStaleModal's
+        // acknowledge, or the profile chat's own apply step) and never
+        // cleared it, so reverting a change back to the locked baseline
+        // (e.g. an out-of-range weight edit, then undoing it) left a
+        // stale, no-longer-true comparison sitting there indefinitely -
+        // Daffy kept citing a change that no longer exists. Since this
+        // diff is recomputed against the true baseline (the target
+        // profile's own locked-in snapshot) on every relevant save
+        // regardless of which field that save touched, writing it here
+        // unconditionally keeps the flag always in sync with reality.
+        await supabase
+          .from("user_profile")
+          .update({
+            targets_review_pending: targetsStale,
+            targets_review_changes: targetsStale ? diffRows : null,
+            targets_review_flagged_at: targetsStale ? new Date().toISOString() : null,
+          })
+          .eq("user_id", userId);
       }
     }
   }

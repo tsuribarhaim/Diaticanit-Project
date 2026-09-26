@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { TargetsPageClient } from "@/components/targets-page-client";
 import { normalizeLocale, tr } from "@/lib/locale";
+import { markNotificationRead } from "@/lib/notifications";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 import { mapTargetProfileRowToPayload, TARGET_PROFILE_COLUMNS } from "@/lib/targets";
 
@@ -22,8 +23,23 @@ export const dynamic = "force-dynamic";
  * this page too now, as part of the app-wide unified-chat redesign. This
  * page's own job is just the editable plan itself (TargetsPlanEditor,
  * via TargetsPageClient).
+ *
+ * concern/viewed search params (ticket #30): a Notifications entry links
+ * here as `?concern=<id>` (a concern) or `?viewed=<id>` (an info
+ * notification) - restored after being silently dropped by this page's
+ * own standalone-page redesign, which carried over the read-only plan
+ * view but not the old chat workspace's own markNotificationRead call for
+ * these params. The old version also seeded the removed inline chat with
+ * the notification's message; that part has no equivalent here since
+ * GlobalChatWidget replaced that chat entirely, and this page doesn't own
+ * a compose box to seed - only the "mark it read on arrival" behavior is
+ * restored.
  */
-export default async function TargetsPage() {
+export default async function TargetsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ concern?: string; viewed?: string }>;
+}) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -33,9 +49,15 @@ export default async function TargetsPage() {
     redirect("/auth/sign-in");
   }
 
+  const resolvedSearchParams = await searchParams;
+  const notificationIdToMarkRead = resolvedSearchParams.concern ?? resolvedSearchParams.viewed;
+
   const [{ data: profileRow }, { data: activeRow, error: activeError }] = await Promise.all([
     supabase.from("user_profile").select("first_name, preferred_language").eq("user_id", user.id).maybeSingle(),
     supabase.from("user_target_profiles").select(TARGET_PROFILE_COLUMNS).eq("user_id", user.id).eq("is_active", true).maybeSingle(),
+    notificationIdToMarkRead
+      ? markNotificationRead({ supabase, userId: user.id, notificationId: notificationIdToMarkRead })
+      : Promise.resolve(),
   ]);
 
   if (activeError) {
