@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { listQuickLogSavedItemsAction, logSavedItemFromChatAction, type QuickLogSavedItem } from "@/app/app/daily-report/quick-log-actions";
 import { applyProfileChatChangeAction } from "@/app/app/profile/chat-actions";
 import { applyActiveTargetsAction, clearTargetsReviewPendingAction, negotiateActiveTargetsAction } from "@/app/app/targets/plan-actions";
 import { routeChatMessageAction, type ChatRouterResult } from "@/app/app/chat/actions";
 import { submitTicketFromChatAction } from "@/app/app/tickets/chat-actions";
+import { SavedListQuickPicker } from "@/components/saved-list-quick-picker";
 import { formatDefaultItemName, formatDefaultUnit, formatTicketArea, formatTicketPriority, formatTicketType, tr, trGendered, type AppLocale } from "@/lib/locale";
 import type { ChatDomain } from "@/lib/ai/chat-router";
 import type { HelpTicketDraft } from "@/lib/ai/help-chat";
@@ -152,6 +153,7 @@ export function GlobalChatWidget({
   const [isSavedListOpen, setIsSavedListOpen] = useState(false);
   const [savedItems, setSavedItems] = useState<QuickLogSavedItem[] | null>(null);
   const [isSavedListLoading, setIsSavedListLoading] = useState(false);
+  const savedListTriggerRef = useRef<HTMLButtonElement | null>(null);
   // Injects the reminder at most once per session, the first time the
   // chat is actually opened - see targets-page-client.tsx's own former
   // comment on this (identical reasoning, just no longer Targets-specific).
@@ -192,28 +194,41 @@ export function GlobalChatWidget({
       `הפרופיל שלי השתנה (${summary}). בדוק/י בבקשה אם היעדים שלי עדיין הגיוניים ועדכן/י מה שצריך.`,
     );
 
-    const result = await negotiateActiveTargetsAction({ message: goalText });
-    setIsSending(false);
-    await clearTargetsReviewPendingAction();
+    // try/finally so a network failure or a request that outruns the
+    // platform's function timeout (a real risk here - a targets
+    // negotiation call routinely takes 30-90s) can never leave isSending
+    // stuck true, which would permanently disable the chat input until the
+    // user reloads the page.
+    try {
+      const result = await negotiateActiveTargetsAction({ message: goalText });
+      await clearTargetsReviewPendingAction();
 
-    if ("error" in result) {
-      pushMessage({ role: "assistant", content: result.error });
-      return;
+      if ("error" in result) {
+        pushMessage({ role: "assistant", content: result.error });
+        return;
+      }
+
+      if (result.quickApplied) {
+        pushMessage({ role: "assistant", content: result.reply, tone: "confirm" });
+        router.refresh();
+        return;
+      }
+
+      pushMessage({
+        role: "assistant",
+        content: result.reply,
+        pendingChange: result.changed
+          ? { payload: result.payload, source: result.source, goalText, status: "pending" }
+          : undefined,
+      });
+    } catch {
+      pushMessage({
+        role: "assistant",
+        content: tr(locale, "Something went wrong checking that. Please try again.", "משהו השתבש בבדיקה. יש לנסות שוב."),
+      });
+    } finally {
+      setIsSending(false);
     }
-
-    if (result.quickApplied) {
-      pushMessage({ role: "assistant", content: result.reply, tone: "confirm" });
-      router.refresh();
-      return;
-    }
-
-    pushMessage({
-      role: "assistant",
-      content: result.reply,
-      pendingChange: result.changed
-        ? { payload: result.payload, source: result.source, goalText, status: "pending" }
-        : undefined,
-    });
   }
 
   function updatePendingChangeStatus(index: number, status: PendingTargetsChange["status"]) {
@@ -353,58 +368,70 @@ export function GlobalChatWidget({
     setChatInput("");
     setIsSending(true);
 
-    const result: ChatRouterResult = await routeChatMessageAction({ message: trimmed, currentScreen });
+    // try/finally so a network failure or a request that outruns the
+    // platform's function timeout (a real risk here - a targets
+    // negotiation call routinely takes 30-90s) can never leave isSending
+    // stuck true, which would permanently disable the chat input until the
+    // user reloads the page.
+    try {
+      const result: ChatRouterResult = await routeChatMessageAction({ message: trimmed, currentScreen });
 
-    setIsSending(false);
+      if ("error" in result) {
+        pushMessage({ role: "assistant", content: result.error });
+        return;
+      }
 
-    if ("error" in result) {
-      pushMessage({ role: "assistant", content: result.error });
-      return;
-    }
+      if (result.domain === "daily_report") {
+        pushMessage({ role: "assistant", content: result.reply, tone: result.logged ? "confirm" : undefined });
+        if (result.logged) router.refresh();
+        return;
+      }
 
-    if (result.domain === "daily_report") {
-      pushMessage({ role: "assistant", content: result.reply, tone: result.logged ? "confirm" : undefined });
-      if (result.logged) router.refresh();
-      return;
-    }
+      if (result.domain === "profile") {
+        pushMessage({
+          role: "assistant",
+          content: result.reply,
+          pendingProfileChange:
+            result.changed && result.patch && result.diffRows && result.diffRows.length > 0
+              ? { patch: result.patch, diffRows: result.diffRows, status: "pending" }
+              : undefined,
+        });
+        return;
+      }
 
-    if (result.domain === "profile") {
+      if (result.domain === "help") {
+        pushMessage({
+          role: "assistant",
+          content: result.reply,
+          helpLink: result.link,
+          pendingTicketDraft: result.ticketDraft ? { draft: result.ticketDraft, status: "pending" } : undefined,
+        });
+        return;
+      }
+
+      // domain === "targets"
+      if (result.quickApplied) {
+        pushMessage({ role: "assistant", content: result.reply, tone: "confirm" });
+        router.refresh();
+        return;
+      }
+
       pushMessage({
         role: "assistant",
         content: result.reply,
-        pendingProfileChange:
-          result.changed && result.patch && result.diffRows && result.diffRows.length > 0
-            ? { patch: result.patch, diffRows: result.diffRows, status: "pending" }
+        pendingChange:
+          result.changed && result.payload && result.source && result.goalText
+            ? { payload: result.payload, source: result.source, goalText: result.goalText, status: "pending" }
             : undefined,
       });
-      return;
-    }
-
-    if (result.domain === "help") {
+    } catch {
       pushMessage({
         role: "assistant",
-        content: result.reply,
-        helpLink: result.link,
-        pendingTicketDraft: result.ticketDraft ? { draft: result.ticketDraft, status: "pending" } : undefined,
+        content: tr(locale, "Something went wrong sending that. Please try again.", "משהו השתבש בשליחה. יש לנסות שוב."),
       });
-      return;
+    } finally {
+      setIsSending(false);
     }
-
-    // domain === "targets"
-    if (result.quickApplied) {
-      pushMessage({ role: "assistant", content: result.reply, tone: "confirm" });
-      router.refresh();
-      return;
-    }
-
-    pushMessage({
-      role: "assistant",
-      content: result.reply,
-      pendingChange:
-        result.changed && result.payload && result.source && result.goalText
-          ? { payload: result.payload, source: result.source, goalText: result.goalText, status: "pending" }
-          : undefined,
-    });
   }
 
   return (
@@ -640,6 +667,7 @@ export function GlobalChatWidget({
           </div>
           <div className="relative flex min-w-0 items-end gap-2 border-t border-slate-200 p-3 dark:border-slate-800">
             <button
+              ref={savedListTriggerRef}
               type="button"
               onClick={() => void handleToggleSavedList()}
               aria-label={tr(locale, "Add from saved list", "הוספה מהרשימה השמורה")}
@@ -657,38 +685,18 @@ export function GlobalChatWidget({
               </svg>
             </button>
 
-            {isSavedListOpen ? (
-              <div className="absolute bottom-full left-3 z-10 mb-2 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
-                <p className="border-b border-slate-200 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:text-slate-500">
-                  {tr(locale, "Your saved list", "הרשימה השמורה שלך")}
-                </p>
-                {isSavedListLoading ? (
-                  <p className="px-3 py-3 text-xs text-slate-500 dark:text-slate-400">{tr(locale, "Loading…", "טוען…")}</p>
-                ) : savedItems && savedItems.length > 0 ? (
-                  <div className="max-h-56 overflow-y-auto">
-                    {savedItems.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => void handleLogSavedItem(item)}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800"
-                      >
-                        <span className="min-w-0">
-                          <span className="block truncate text-xs font-semibold text-slate-800 dark:text-slate-200">{formatDefaultItemName(item.name, locale)}</span>
-                          <span className="block text-[11px] text-slate-400 dark:text-slate-500">
-                            {item.quantity} {formatDefaultUnit(item.unit, locale)}
-                          </span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="px-3 py-3 text-xs text-slate-500 dark:text-slate-400">
-                    {tr(locale, "No saved items yet.", "אין עדיין פריטים שמורים.")}
-                  </p>
-                )}
-              </div>
-            ) : null}
+            <SavedListQuickPicker
+              isOpen={isSavedListOpen}
+              onClose={() => setIsSavedListOpen(false)}
+              items={savedItems ?? []}
+              isLoading={isSavedListLoading}
+              locale={locale}
+              onSelect={(id) => {
+                const item = savedItems?.find((entry) => entry.id === id);
+                if (item) void handleLogSavedItem(item);
+              }}
+              triggerRef={savedListTriggerRef}
+            />
 
             <input
               value={chatInput}

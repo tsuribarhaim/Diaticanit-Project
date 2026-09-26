@@ -6,7 +6,6 @@ import { negotiateActiveTargetsAction, applyActiveTargetsAction } from "@/app/ap
 import { editTargetFieldAction, type EditableFieldRef } from "@/app/app/targets/edit-actions";
 import { formatMeasurementUnit, formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
 import type { TargetGenerationPayload } from "@/lib/targets";
-import { computeTargetsDiff, type MetricDiffRow } from "@/lib/targets-diff";
 import { ORDERED_NUTRIENT_FIELDS } from "@/components/targets-plan-view";
 
 /** UserTargetEntry.value is free text (some entries are genuinely
@@ -37,7 +36,6 @@ type Banner =
   | {
       phase: "result";
       text: string;
-      diffRows: MetricDiffRow[];
       candidatePayload: TargetGenerationPayload;
       candidateSource: "ai" | "heuristic";
       goalText: string;
@@ -243,15 +241,6 @@ function BannerView({
   return (
     <div className="mt-2 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-xs dark:border-emerald-800 dark:bg-emerald-950/30">
       <p className="text-emerald-900 dark:text-emerald-300">{banner.text}</p>
-      {banner.diffRows.length > 0 ? (
-        <ul className="mt-1.5 space-y-0.5">
-          {banner.diffRows.slice(0, 6).map((row) => (
-            <li key={row.labelEn} className="text-slate-600 dark:text-slate-400">
-              {tr(locale, row.labelEn, row.labelHe)}: <b className="text-slate-800 dark:text-slate-200">{row.before} → {row.after}</b>
-            </li>
-          ))}
-        </ul>
-      ) : null}
       <div className="mt-2 flex gap-2">
         <button
           type="button"
@@ -362,10 +351,9 @@ export function TargetsPlanEditor({
       return;
     }
 
-    const diffRows = computeTargetsDiff(payload, result.payload, locale);
     onDaffyMessage(result.reply);
     patchState(key, {
-      banner: { phase: "result", text: result.reply, diffRows, candidatePayload: result.payload, candidateSource: result.source, goalText: message },
+      banner: { phase: "result", text: result.reply, candidatePayload: result.payload, candidateSource: result.source, goalText: message },
     });
   }
 
