@@ -173,6 +173,12 @@ export async function createTicketAction(_prevState: TicketFormState, formData: 
     });
   }
 
+  // Silent - not user-entered, just the app build they were on when they
+  // filed this (see new-ticket-form.tsx's hidden field), for an admin
+  // investigating a report to know without having to ask.
+  const currentVersionRaw = formData.get("current_version");
+  const currentVersion = typeof currentVersionRaw === "string" && currentVersionRaw.trim() ? currentVersionRaw.trim() : null;
+
   const { data: insertedTicket, error: insertError } = await supabase
     .from("tickets")
     .insert({
@@ -182,6 +188,7 @@ export async function createTicketAction(_prevState: TicketFormState, formData: 
       area: parsed.data.area,
       priority: parsed.data.priority,
       description: parsed.data.description,
+      current_version: currentVersion,
     })
     .select("id")
     .single();

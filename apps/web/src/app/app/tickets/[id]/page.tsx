@@ -79,7 +79,7 @@ export default async function TicketDetailPage({
   let ticketQuery = supabase
     .from("tickets")
     .select(
-      "id, ticket_seq, subject, ticket_type, area, priority, description, status, created_at, created_by, cancelled_reason, cancelled_at, fix_description, resolved_at, deferred_reason, technical_response",
+      "id, ticket_seq, subject, ticket_type, area, priority, description, status, created_at, created_by, cancelled_reason, cancelled_at, fix_description, resolved_at, deferred_reason, technical_response, current_version",
     )
     .eq("id", id);
   if (!isAdmin) {
@@ -215,6 +215,17 @@ export default async function TicketDetailPage({
               {tr(locale, "Deferred reason", "סיבת הדחייה")}
             </p>
             <p className="mt-1 text-sm text-violet-900 dark:text-violet-300">{ticket.deferred_reason}</p>
+          </div>
+        ) : null}
+
+        {isAdmin && ticket.current_version ? (
+          <div className="mt-5 flex items-center gap-1.5">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              {tr(locale, "Reported on app version", "דווח בגרסת אפליקציה")} {ticket.current_version}
+            </p>
+            <span className="rounded-full border border-indigo-200 bg-indigo-100 px-1.5 py-0 text-[10px] font-semibold text-indigo-700 dark:border-indigo-800 dark:bg-indigo-900/50 dark:text-indigo-300">
+              {tr(locale, "Admin only", "מנהלים בלבד")}
+            </span>
           </div>
         ) : null}
 

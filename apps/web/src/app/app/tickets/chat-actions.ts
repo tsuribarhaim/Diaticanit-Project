@@ -15,6 +15,10 @@ const ticketDraftSchema = z.object({
   area: z.enum(ticketAreaOptions),
   priority: z.enum(ticketPriorityOptions),
   description: z.string().trim().min(1).max(5000),
+  // Silent - not something the user drafted, just the app build they were
+  // on when they filed this (see the caller in global-chat-widget.tsx),
+  // for an admin investigating a report to know without having to ask.
+  current_version: z.string().trim().min(1).nullish(),
 });
 
 export type SubmitTicketFromChatResult = { error?: string; success?: boolean; ticketId?: string };
@@ -56,6 +60,7 @@ export async function submitTicketFromChatAction(rawDraft: Record<string, unknow
       area: parsed.data.area,
       priority: parsed.data.priority,
       description: parsed.data.description,
+      current_version: parsed.data.current_version ?? null,
     })
     .select("id")
     .single();

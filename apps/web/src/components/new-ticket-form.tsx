@@ -42,6 +42,11 @@ export function NewTicketForm({ locale }: { locale: AppLocale }) {
 
   return (
     <form action={formAction} className="space-y-4">
+      {/* Silent - not a form field the user fills in, just the app build
+          they're actually running, captured automatically so an admin
+          investigating a report doesn't have to ask "which version were
+          you on." */}
+      <input type="hidden" name="current_version" value={process.env.NEXT_PUBLIC_APP_VERSION ?? ""} />
       <label className="block">
         <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Subject", "נושא")}</span>
         <input type="text" name="subject" required maxLength={200} className={inputClassName} />
