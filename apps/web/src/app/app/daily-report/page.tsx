@@ -17,6 +17,7 @@ import { LocalTime } from "@/components/local-time";
 import {
   CHART_CORE_METRIC_IDS,
   CHART_EXTRA_METRIC_IDS,
+  DAILY_REPORT_METRIC_FIELD_INFO,
   normalizeDailyReportChartPreferences,
   type DailyReportChartCoreMetric,
   type DailyReportChartExtraMetric,
@@ -335,7 +336,7 @@ export default async function DailyReportPage({
     supabase
       .from("user_daily_reports")
       .select(
-        "id, raw_report_text, report_at, parse_confidence, requires_confirmation, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal, reported_weight_kg, parsed_items, parsed_exercises, custom_target_values, nutrient_overrides",
+        "id, raw_report_text, report_at, parse_confidence, requires_confirmation, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, sodium_mg, added_sugar_g, calcium_mg, vit_c_mg, vit_b12_mcg, vit_d_mcg, sat_fat_g, omega3_g, cholesterol_mg, exercise_minutes, estimated_burn_kcal, reported_weight_kg, parsed_items, parsed_exercises, custom_target_values, nutrient_overrides",
       )
       .eq("user_id", user.id)
       .gte("report_at", selectedDayStartIso)
@@ -700,6 +701,18 @@ export default async function DailyReportPage({
     (id) => extraMetricDefinitions[id],
   );
 
+  // Same filter-canonical-ids-by-selection pattern as
+  // coreDisplayMetrics/extraDisplayMetrics just above (core metrics first,
+  // in their fixed order, then selected extras) - this is what the
+  // per-entry detail grid and its Edit form below build their own field
+  // list from, so a report's breakdown reflects the same nutrients the
+  // user chose to track everywhere, instead of the fixed 8-field subset
+  // they used to hardcode independently of chartPreferences (TCK-44).
+  const selectedReportMetricIds: (DailyReportChartCoreMetric | DailyReportChartExtraMetric)[] = [
+    ...CHART_CORE_METRIC_IDS.filter((id) => chartPreferences.coreMetrics.includes(id)),
+    ...CHART_EXTRA_METRIC_IDS.filter((id) => chartPreferences.extraMetrics.includes(id)),
+  ];
+
   const weightHistory: WeightPoint[] = chartPreferences.showWeightTrend
     ? (weightHistoryRowsResult.data ?? [])
         .filter((row) => row.reported_weight_kg !== null)
@@ -718,11 +731,21 @@ export default async function DailyReportPage({
         protein_g: number | null;
         carbs_g: number | null;
         fat_g: number | null;
+        fiber_g: number | null;
         water_ml: number | null;
         magnesium_mg: number | null;
         potassium_mg: number | null;
         iron_mg: number | null;
         zinc_mg: number | null;
+        sodium_mg: number | null;
+        added_sugar_g: number | null;
+        calcium_mg: number | null;
+        vit_c_mg: number | null;
+        vit_b12_mcg: number | null;
+        vit_d_mcg: number | null;
+        sat_fat_g: number | null;
+        omega3_g: number | null;
+        cholesterol_mg: number | null;
         exercise_minutes: number | null;
         estimated_burn_kcal: number | null;
         reported_weight_kg: number | null;
@@ -737,7 +760,7 @@ export default async function DailyReportPage({
     const reportsWithoutWeight = await supabase
       .from("user_daily_reports")
       .select(
-        "id, raw_report_text, report_at, parse_confidence, requires_confirmation, calories_kcal, protein_g, carbs_g, fat_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, exercise_minutes, estimated_burn_kcal, parsed_items, parsed_exercises, custom_target_values, nutrient_overrides",
+        "id, raw_report_text, report_at, parse_confidence, requires_confirmation, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, sodium_mg, added_sugar_g, calcium_mg, vit_c_mg, vit_b12_mcg, vit_d_mcg, sat_fat_g, omega3_g, cholesterol_mg, exercise_minutes, estimated_burn_kcal, parsed_items, parsed_exercises, custom_target_values, nutrient_overrides",
       )
       .eq("user_id", user.id)
       .gte("report_at", selectedDayStartIso)
@@ -1058,33 +1081,21 @@ export default async function DailyReportPage({
                 && !Array.isArray(report.nutrient_overrides)
                   ? (report.nutrient_overrides as Record<string, boolean>)
                   : {};
+              const reportColumns = report as unknown as Record<string, number | null>;
               const nutrientFields =
                 hasFood || hasExercise
                   ? [
-                      {
-                        dbColumn: "calories_kcal",
-                        labelEn: "Calories",
-                        labelHe: "קלוריות",
-                        unit: "kcal",
-                        value: report.calories_kcal ?? 0,
-                        overridden: Boolean(reportNutrientOverrides.calories_kcal),
-                      },
-                      {
-                        dbColumn: "protein_g",
-                        labelEn: "Protein",
-                        labelHe: "חלבון",
-                        unit: "g",
-                        value: report.protein_g ?? 0,
-                        overridden: Boolean(reportNutrientOverrides.protein_g),
-                      },
-                      {
-                        dbColumn: "water_ml",
-                        labelEn: "Water",
-                        labelHe: "מים",
-                        unit: "ml",
-                        value: report.water_ml ?? 0,
-                        overridden: Boolean(reportNutrientOverrides.water_ml),
-                      },
+                      ...selectedReportMetricIds.map((id) => {
+                        const info = DAILY_REPORT_METRIC_FIELD_INFO[id];
+                        return {
+                          dbColumn: info.dbColumn,
+                          labelEn: info.labelEn,
+                          labelHe: info.labelHe,
+                          unit: info.unit,
+                          value: reportColumns[info.dbColumn] ?? 0,
+                          overridden: Boolean(reportNutrientOverrides[info.dbColumn]),
+                        };
+                      }),
                       ...(hasExercise
                         ? [
                             {
@@ -1097,38 +1108,6 @@ export default async function DailyReportPage({
                             },
                           ]
                         : []),
-                      {
-                        dbColumn: "magnesium_mg",
-                        labelEn: "Magnesium",
-                        labelHe: "מגנזיום",
-                        unit: "mg",
-                        value: report.magnesium_mg ?? 0,
-                        overridden: Boolean(reportNutrientOverrides.magnesium_mg),
-                      },
-                      {
-                        dbColumn: "potassium_mg",
-                        labelEn: "Potassium",
-                        labelHe: "אשלגן",
-                        unit: "mg",
-                        value: report.potassium_mg ?? 0,
-                        overridden: Boolean(reportNutrientOverrides.potassium_mg),
-                      },
-                      {
-                        dbColumn: "iron_mg",
-                        labelEn: "Iron",
-                        labelHe: "ברזל",
-                        unit: "mg",
-                        value: report.iron_mg ?? 0,
-                        overridden: Boolean(reportNutrientOverrides.iron_mg),
-                      },
-                      {
-                        dbColumn: "zinc_mg",
-                        labelEn: "Zinc",
-                        labelHe: "אבץ",
-                        unit: "mg",
-                        value: report.zinc_mg ?? 0,
-                        overridden: Boolean(reportNutrientOverrides.zinc_mg),
-                      },
                     ]
                   : [];
 
@@ -1332,17 +1311,28 @@ export default async function DailyReportPage({
                       {hasFood || hasExercise ? (
                         <div className="grid gap-2 text-xs text-slate-700 dark:text-slate-300 sm:grid-cols-2 lg:grid-cols-4">
                           <p>{tr(locale, "Reported weight", "משקל מדווח")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{report.reported_weight_kg === null ? tr(locale, "n/a", "לא זמין") : formatNumber(report.reported_weight_kg, locale, 2)}</span>{report.reported_weight_kg === null ? "" : ` ${formatMeasurementUnit("kg", locale)}`}</p>
-                          <p>{tr(locale, "Calories", "קלוריות")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatNumber(report.calories_kcal, locale, 0)}</span> {tr(locale, "kcal", 'קק"ל')}</p>
-                          <p>{tr(locale, "Protein", "חלבון")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatNumber(report.protein_g, locale, 1)}</span> {formatMeasurementUnit("g", locale)}</p>
-                          <p>{tr(locale, "Water", "מים")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatNumber(report.water_ml, locale, 0)}</span> {formatMeasurementUnit("ml", locale)}</p>
+                          {/* Same nutrients the user selected in "Customize
+                              charts", in the same order the bars above
+                              show them - see selectedReportMetricIds' own
+                              comment (TCK-44: this grid and its Edit form
+                              used to hardcode a fixed subset independent
+                              of that selection). */}
+                          {selectedReportMetricIds.map((id) => {
+                            const info = DAILY_REPORT_METRIC_FIELD_INFO[id];
+                            return (
+                              <p key={id}>
+                                {tr(locale, info.labelEn, info.labelHe)}:{" "}
+                                <span className="font-semibold text-slate-900 dark:text-slate-100">
+                                  {formatNumber(reportColumns[info.dbColumn], locale, info.decimals)}
+                                </span>{" "}
+                                {formatMeasurementUnit(info.unit, locale)}
+                              </p>
+                            );
+                          })}
                           <p>{tr(locale, "Exercise", "פעילות")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatNumber(report.exercise_minutes, locale, 0)}</span> {formatMeasurementUnit("min", locale)}</p>
                           {hasExercise ? (
                             <p>{tr(locale, "Calories burned", "קלוריות שנשרפו")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatNumber(report.estimated_burn_kcal, locale, 0)}</span> {tr(locale, "kcal", 'קק"ל')}</p>
                           ) : null}
-                          <p>{tr(locale, "Magnesium", "מגנזיום")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatNumber(report.magnesium_mg, locale, 1)}</span> {formatMeasurementUnit("mg", locale)}</p>
-                          <p>{tr(locale, "Potassium", "אשלגן")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatNumber(report.potassium_mg, locale, 1)}</span> {formatMeasurementUnit("mg", locale)}</p>
-                          <p>{tr(locale, "Iron", "ברזל")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatNumber(report.iron_mg, locale, 2)}</span> {formatMeasurementUnit("mg", locale)}</p>
-                          <p>{tr(locale, "Zinc", "אבץ")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatNumber(report.zinc_mg, locale, 2)}</span> {formatMeasurementUnit("mg", locale)}</p>
                         </div>
                       ) : hasWeight ? (
                         <p className="text-xs text-slate-700 dark:text-slate-300">
