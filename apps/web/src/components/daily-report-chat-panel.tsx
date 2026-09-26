@@ -7,6 +7,7 @@ import { createPortal, flushSync, useFormStatus } from "react-dom";
 import { deleteDailyReportAction } from "@/app/app/daily-report/actions";
 import { logSavedItemFromChatAction } from "@/app/app/daily-report/quick-log-actions";
 import type { DailyReportDefaultItem } from "@/components/daily-report-defaults-picker";
+import { SavedListQuickPicker } from "@/components/saved-list-quick-picker";
 import { SubmitButton } from "@/components/daily-report-submit-button";
 import { directionForLocale, formatDefaultItemName, formatDefaultUnit, tr, trGendered, type AppLocale } from "@/lib/locale";
 
@@ -357,6 +358,7 @@ export function DailyReportChatPanel({
   // handleLogSavedItem below) - no separate loading/fetch state needed
   // since defaultItems already arrives as a prop from the page's own load.
   const [isSavedListOpen, setIsSavedListOpen] = useState(false);
+  const savedListTriggerRef = useRef<HTMLButtonElement | null>(null);
   const router = useRouter();
   // Edit mode only - true once the model's latest reply confirmed the user
   // wants to delete this whole entry (see the "delete_intent" SSE event and
@@ -1125,6 +1127,7 @@ export function DailyReportChatPanel({
                 hover/active) - applied to all icons here too, per the
                 restyle to look "almost like the main one." */}
             <button
+              ref={savedListTriggerRef}
               type="button"
               onClick={() => setIsSavedListOpen((open) => !open)}
               aria-label={tr(locale, "Add from saved list", "הוספה מהרשימה השמורה")}
@@ -1166,36 +1169,17 @@ export function DailyReportChatPanel({
               </svg>
             </label>
 
-            {isSavedListOpen ? (
-              <div className="absolute left-0 top-full z-10 mt-2 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
-                <p className="border-b border-slate-200 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:text-slate-500">
-                  {tr(locale, "Your saved list", "הרשימה השמורה שלך")}
-                </p>
-                {defaultItems.length > 0 ? (
-                  <div className="max-h-56 overflow-y-auto">
-                    {defaultItems.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => void handleLogSavedItem(item)}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800"
-                      >
-                        <span className="min-w-0">
-                          <span className="block truncate text-xs font-semibold text-slate-800 dark:text-slate-200">{formatDefaultItemName(item.name, locale)}</span>
-                          <span className="block text-[11px] text-slate-400 dark:text-slate-500">
-                            {item.default_quantity} {formatDefaultUnit(item.default_unit, locale)}
-                          </span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="px-3 py-3 text-xs text-slate-500 dark:text-slate-400">
-                    {tr(locale, "No saved items yet.", "אין עדיין פריטים שמורים.")}
-                  </p>
-                )}
-              </div>
-            ) : null}
+            <SavedListQuickPicker
+              isOpen={isSavedListOpen}
+              onClose={() => setIsSavedListOpen(false)}
+              items={defaultItems.map((item) => ({ id: item.id, name: item.name, kind: item.kind, quantity: item.default_quantity, unit: item.default_unit }))}
+              locale={locale}
+              onSelect={(id) => {
+                const item = defaultItems.find((entry) => entry.id === id);
+                if (item) void handleLogSavedItem(item);
+              }}
+              triggerRef={savedListTriggerRef}
+            />
           </div>
 
           {/* Bigger than before (4 rows, not 2) now that it has the whole
