@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { markNotificationRead } from "@/lib/notifications";
+import { markAllNotificationsRead, markNotificationRead } from "@/lib/notifications";
 import { revalidateNavChrome } from "@/lib/nav-chrome";
 import { createClient } from "@/lib/supabase/server";
 
@@ -32,6 +32,24 @@ export async function markNotificationReadAction(formData: FormData): Promise<vo
   if (!notificationId) return;
 
   await markNotificationRead({ supabase, userId: user.id, notificationId });
+
+  revalidateNavChrome();
+  revalidatePath("/app/notifications");
+}
+
+/** Ticket #77's "mark all as read" bulk action - one tap instead of
+ * dismissing every info notification one at a time. */
+export async function markAllNotificationsReadAction(): Promise<void> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/sign-in");
+  }
+
+  await markAllNotificationsRead({ supabase, userId: user.id });
 
   revalidateNavChrome();
   revalidatePath("/app/notifications");

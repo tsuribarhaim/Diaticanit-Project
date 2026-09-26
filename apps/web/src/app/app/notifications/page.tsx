@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { LocalDateTime } from "@/components/local-time";
+import { MarkAllNotificationsReadButton } from "@/components/mark-all-notifications-read-button";
 import { MarkNotificationReadButton } from "@/components/mark-notification-read-button";
 import { listNotifications } from "@/lib/notifications";
 import { normalizeLocale, tr } from "@/lib/locale";
@@ -14,9 +15,16 @@ export const dynamic = "force-dynamic";
  * notifications (see docs/design/targets-save-performance-redesign.md) - a
  * plain reverse-chronological list, resolved and unresolved together, since
  * there's no real volume yet to justify tabs/filters. Each unresolved
- * concern links back into the Targets chat with itself seeded as the
- * opening context (see targets/page.tsx's own ?concern= handling), so it's
- * worked through with the AI rather than dead-ending here.
+ * concern links back into the Targets page with itself marked read on
+ * arrival (see targets/page.tsx's own ?concern=/?viewed= handling).
+ *
+ * Ticket #77: added a back link (this page has no natural "parent" list
+ * the way e.g. a ticket detail page does, so it goes to Home rather than
+ * a specific section) and a "mark all as read" bulk action, and reworded
+ * the intro below - this list already carries more than AI-flagged
+ * concerns (ticket status updates too), and is expected to carry periodic
+ * report insights soon, so "concerns your AI coach flagged" undersold what
+ * actually shows up here.
  */
 export default async function NotificationsPage() {
   const supabase = await createClient();
@@ -32,15 +40,25 @@ export default async function NotificationsPage() {
   const locale = normalizeLocale(profileRow?.preferred_language);
 
   const notifications = await listNotifications({ supabase, userId: user.id });
+  const hasUnread = notifications.some((notification) => !notification.read_at);
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-10">
-      <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">{tr(locale, "Notifications", "התראות")}</h1>
+      <div className="mb-4">
+        <Link href="/app" className="text-sm font-semibold text-teal-700 dark:text-teal-400">
+          {tr(locale, "← Home", "← בית")}
+        </Link>
+      </div>
+
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">{tr(locale, "Notifications", "התראות")}</h1>
+        {hasUnread ? <MarkAllNotificationsReadButton locale={locale} /> : null}
+      </div>
       <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
         {tr(
           locale,
-          "Concerns your AI coach flagged on your targets, and updates on tickets you've submitted to support.",
-          "חששות שמאמן ה-AI שלך סימן ביעדים שלך, ועדכונים על פניות ששלחתם לתמיכה.",
+          "Daffy wants to share insights, recommendations, and updates from your tracking - plus updates on tickets you've submitted.",
+          "דפי רוצה לשתף איתך תובנות, המלצות ועדכונים מהמעקב שלך - ועדכונים על פניות שהגשת.",
         )}
       </p>
 

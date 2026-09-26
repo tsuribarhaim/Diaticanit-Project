@@ -127,6 +127,26 @@ export async function markNotificationRead({
  * other source of info notifications) never sets one, so this can't
  * accidentally sweep up an unrelated ticket notification.
  */
+/**
+ * Ticket #77's "mark all as read" bulk action on the Notifications page
+ * itself - every unread row for this user, both severities, not just the
+ * targets-scoped subset markAllTargetsNotificationsRead below clears.
+ * Concern rows still show "Needs attention" until a later background
+ * check sets resolved_at (see this file's own getFlaggedFieldKeys comment
+ * on why read state and resolved state are deliberately independent) -
+ * this only ever touches read_at, same as every other read-marking path
+ * here.
+ */
+export async function markAllNotificationsRead({
+  supabase,
+  userId,
+}: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  userId: string;
+}): Promise<void> {
+  await supabase.from("user_notifications").update({ read_at: new Date().toISOString() }).eq("user_id", userId).is("read_at", null);
+}
+
 export async function markAllTargetsNotificationsRead({
   supabase,
   userId,

@@ -4,7 +4,9 @@ import { Fragment, useState } from "react";
 
 import { negotiateActiveTargetsAction, applyActiveTargetsAction } from "@/app/app/targets/plan-actions";
 import { editTargetFieldAction, type EditableFieldRef } from "@/app/app/targets/edit-actions";
+import { InfoPopoverButton } from "@/components/info-popover";
 import { formatMeasurementUnit, formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
+import { getNutrientReference } from "@/lib/nutrient-reference";
 import type { TargetGenerationPayload } from "@/lib/targets";
 import { ORDERED_NUTRIENT_FIELDS } from "@/components/targets-plan-view";
 
@@ -445,10 +447,43 @@ export function TargetsPlanEditor({
               const fieldKey = field.labelEn;
               const state = getState(fieldKey);
               const fieldRef: EditableFieldRef = { kind: "nutrient", labelEn: field.labelEn };
+              const reference = getNutrientReference(field.id);
               return (
                 <Fragment key={fieldKey}>
                   <tr className="border-t border-slate-100 dark:border-slate-800">
-                    <td className="px-4 py-2 font-medium text-slate-800 dark:text-slate-200">{tr(locale, field.labelEn, field.labelHe)}</td>
+                    <td className="px-4 py-2 font-medium text-slate-800 dark:text-slate-200">
+                      <span className="inline-flex items-center gap-1.5">
+                        {tr(locale, field.labelEn, field.labelHe)}
+                        {reference ? (
+                          <InfoPopoverButton
+                            ariaLabel={tr(locale, "More information", "מידע נוסף")}
+                            title={reference.nameLabel[locale]}
+                            triggerClassName="flex h-5 w-5 shrink-0 cursor-help items-center justify-center rounded-full border border-slate-300 text-[10px] font-bold text-slate-500 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+                            panelWidthClassName="sm:w-64"
+                          >
+                            <p className="font-semibold text-amber-900 dark:text-amber-400">{tr(locale, "Full daily range", "טווח יומי מלא")}</p>
+                            {/* Separate flex items, not one dir="ltr" text run
+                                mixing a unit word with two numbers - a single
+                                run reorders under the browser's own bidi
+                                algorithm regardless of dir (confirmed live: a
+                                2,200-2,500 range displayed as 2,500-2,200),
+                                the same bug already fixed this same way for
+                                the profile-change diff card and the gained/
+                                burned calorie display. */}
+                            <div dir="ltr" className="mt-1 flex flex-wrap items-baseline gap-x-1">
+                              <span>{formatNumberForLocale(min, locale, { maximumFractionDigits: 1 })}</span>
+                              <span aria-hidden="true">–</span>
+                              <span>{formatNumberForLocale(max, locale, { maximumFractionDigits: 1 })}</span>
+                              <span>{formatMeasurementUnit(field.unit, locale)}</span>
+                            </div>
+                            <p className="mt-2 font-semibold text-amber-900 dark:text-amber-400">{tr(locale, "Role", "תפקיד")}</p>
+                            <p className="mt-1">{reference.roleDescription[locale]}</p>
+                            <p className="mt-2 font-semibold text-amber-900 dark:text-amber-400">{tr(locale, "Food examples", "דוגמאות מזון")}</p>
+                            <p className="mt-1">{reference.foodExamples[locale]}</p>
+                          </InfoPopoverButton>
+                        ) : null}
+                      </span>
+                    </td>
                     <td className="px-4 py-2 text-end font-bold text-teal-800 dark:text-teal-300">
                       <span className="inline-flex items-center gap-1">
                         <EditableValue

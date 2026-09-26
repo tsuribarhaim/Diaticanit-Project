@@ -3,7 +3,6 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { flagTargetsReviewPendingAction } from "@/app/app/actions";
 import { tr, type AppLocale } from "@/lib/locale";
 import type { ProfileDiffRow } from "@/lib/targets";
 
@@ -20,10 +19,13 @@ import type { ProfileDiffRow } from "@/lib/targets";
  * OK doesn't navigate anywhere (ticket #10) - an earlier version offered
  * "Go to Targets", which used to kick off an automatic background review
  * that no longer exists in the redesigned Targets page, making that button
- * a promise the app didn't keep. OK now just flags the change
- * (flagTargetsReviewPendingAction) so Daffy raises it herself the next
- * time the Targets chat opens (see plan-actions.ts) - a single
- * acknowledgement instead of an unkept "go check now."
+ * a promise the app didn't keep. OK now just closes this modal - the save
+ * action that triggered it (applyProfilePatchAndFlagTargets) has already
+ * written the pending-review flag itself (see that function's own comment
+ * on ticket #70: the flag now always resyncs to the true current diff on
+ * every relevant save, rather than only ever being set here and never
+ * cleared), so there's nothing left for this acknowledgement to do beyond
+ * dismissing the modal.
  *
  * Stays open until the user explicitly dismisses it, never automatically -
  * see the note on the Profile Edit page's use of onDismiss for a bug this
@@ -53,7 +55,6 @@ export function TargetsStaleModal({
 
   function acknowledge() {
     setIsOpen(false);
-    void flagTargetsReviewPendingAction(changes);
     if (dismissHref) {
       router.replace(dismissHref, { scroll: false });
     }
