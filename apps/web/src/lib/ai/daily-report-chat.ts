@@ -24,37 +24,34 @@ export type DailyReportChatProfile = {
   user_gender: "male" | "female" | null;
 };
 
+/**
+ * Every field is the single absolute target (a Postgres GENERATED column -
+ * see db/migrations/059_phase7_target_profile_generated_targets.sql -
+ * always exactly round((min+max)/2), recomputed by the database itself on
+ * every write, never something application code has to remember to keep in
+ * sync), not the underlying min/max validation band. Confirmed live via
+ * TCK-24 that handing the model a raw "min-max" range produced exactly the
+ * confusing reply the ticket complained about ("your total water is 2350
+ * out of 1920-2370") - the model has no reason not to echo back whatever
+ * shape of data it's given, so this type only ever exposes the one number
+ * it should actually speak in terms of.
+ */
 export type DailyReportChatTargets = {
-  calories_min: number | null;
-  calories_max: number | null;
-  protein_min_g: number | null;
-  protein_max_g: number | null;
-  carbs_min_g: number | null;
-  carbs_max_g: number | null;
-  fats_min_g: number | null;
-  fats_max_g: number | null;
-  fiber_min_g: number | null;
-  fiber_max_g: number | null;
-  water_min_ml: number | null;
-  water_max_ml: number | null;
-  sodium_min_mg: number | null;
-  sodium_max_mg: number | null;
-  added_sugar_min_g: number | null;
-  added_sugar_max_g: number | null;
-  calcium_min_mg: number | null;
-  calcium_max_mg: number | null;
-  vit_c_min_mg: number | null;
-  vit_c_max_mg: number | null;
-  vit_b12_min_mcg: number | null;
-  vit_b12_max_mcg: number | null;
-  vit_d_min_mcg: number | null;
-  vit_d_max_mcg: number | null;
-  sat_fat_min_g: number | null;
-  sat_fat_max_g: number | null;
-  omega3_min_g: number | null;
-  omega3_max_g: number | null;
-  cholesterol_min_mg: number | null;
-  cholesterol_max_mg: number | null;
+  calories_target: number | null;
+  protein_target_g: number | null;
+  carbs_target_g: number | null;
+  fats_target_g: number | null;
+  fiber_target_g: number | null;
+  water_target_ml: number | null;
+  sodium_target_mg: number | null;
+  added_sugar_target_g: number | null;
+  calcium_target_mg: number | null;
+  vit_c_target_mg: number | null;
+  vit_b12_target_mcg: number | null;
+  vit_d_target_mcg: number | null;
+  sat_fat_target_g: number | null;
+  omega3_target_g: number | null;
+  cholesterol_target_mg: number | null;
 } | null;
 
 function buildProfileSummary(profile: DailyReportChatProfile): string {
@@ -74,21 +71,21 @@ function buildProfileSummary(profile: DailyReportChatProfile): string {
 function buildTargetsSummary(targets: DailyReportChatTargets): string {
   if (!targets) return "no active targets set";
   return [
-    `calories: ${targets.calories_min ?? 0}-${targets.calories_max ?? 0} kcal`,
-    `protein: ${targets.protein_min_g ?? 0}-${targets.protein_max_g ?? 0} g`,
-    `carbs: ${targets.carbs_min_g ?? 0}-${targets.carbs_max_g ?? 0} g`,
-    `fats: ${targets.fats_min_g ?? 0}-${targets.fats_max_g ?? 0} g`,
-    `fiber: ${targets.fiber_min_g ?? 0}-${targets.fiber_max_g ?? 0} g`,
-    `water: ${targets.water_min_ml ?? 0}-${targets.water_max_ml ?? 0} ml`,
-    `sodium: ${targets.sodium_min_mg ?? 0}-${targets.sodium_max_mg ?? 0} mg`,
-    `added sugar: ${targets.added_sugar_min_g ?? 0}-${targets.added_sugar_max_g ?? 0} g`,
-    `calcium: ${targets.calcium_min_mg ?? 0}-${targets.calcium_max_mg ?? 0} mg`,
-    `vitamin C: ${targets.vit_c_min_mg ?? 0}-${targets.vit_c_max_mg ?? 0} mg`,
-    `vitamin B12: ${targets.vit_b12_min_mcg ?? 0}-${targets.vit_b12_max_mcg ?? 0} mcg`,
-    `vitamin D: ${targets.vit_d_min_mcg ?? 0}-${targets.vit_d_max_mcg ?? 0} mcg`,
-    `saturated fat: ${targets.sat_fat_min_g ?? 0}-${targets.sat_fat_max_g ?? 0} g`,
-    `omega-3: ${targets.omega3_min_g ?? 0}-${targets.omega3_max_g ?? 0} g`,
-    `cholesterol: ${targets.cholesterol_min_mg ?? 0}-${targets.cholesterol_max_mg ?? 0} mg`,
+    `calories: ${targets.calories_target ?? 0} kcal`,
+    `protein: ${targets.protein_target_g ?? 0} g`,
+    `carbs: ${targets.carbs_target_g ?? 0} g`,
+    `fats: ${targets.fats_target_g ?? 0} g`,
+    `fiber: ${targets.fiber_target_g ?? 0} g`,
+    `water: ${targets.water_target_ml ?? 0} ml`,
+    `sodium: ${targets.sodium_target_mg ?? 0} mg`,
+    `added sugar: ${targets.added_sugar_target_g ?? 0} g`,
+    `calcium: ${targets.calcium_target_mg ?? 0} mg`,
+    `vitamin C: ${targets.vit_c_target_mg ?? 0} mg`,
+    `vitamin B12: ${targets.vit_b12_target_mcg ?? 0} mcg`,
+    `vitamin D: ${targets.vit_d_target_mcg ?? 0} mcg`,
+    `saturated fat: ${targets.sat_fat_target_g ?? 0} g`,
+    `omega-3: ${targets.omega3_target_g ?? 0} g`,
+    `cholesterol: ${targets.cholesterol_target_mg ?? 0} mg`,
   ].join("\n");
 }
 
@@ -222,7 +219,8 @@ export async function openDailyReportChatReplyStream({
         content: [
           "You are a warm, concise assistant helping a user log what they ate, drank, exercised, or weighed today in Daffy, a personal AI health companion app, and helping them plan the rest of their day to meet their targets. This is a conversation only - your reply never saves anything by itself; the user saves whenever they choose using a separate Save button.",
           ...ASSISTANT_PERSONA_INSTRUCTIONS,
-          "CONTEXT: every message includes user_profile_summary (dietary preference, allergies, medical conditions, pregnancy/lactation status, first name, gender - see ADDRESSING THE USER above), daily_targets_summary (this user's target ranges), todays_logged_totals_summary (their aggregate totals so far, computed by the app), and todays_logged_items (the individual food/exercise/weigh-in entries behind those totals, each with its own nutrient breakdown). Always use this context instead of asking the user to repeat it - e.g. if they ask what to eat for lunch, compute their remaining needs yourself from daily_targets_summary minus todays_logged_totals_summary and suggest something concrete that fits, taking dietary_preference and allergies/medical_conditions into account. If they ask WHY a total is high/low or where it came from, look through todays_logged_items yourself and name the specific item(s) responsible (e.g. \"most of your added sugar today came from the chocolate cake slice you logged\") - never ask them to describe what they ate again when todays_logged_items already answers it.",
+          "CONTEXT: every message includes user_profile_summary (dietary preference, allergies, medical conditions, pregnancy/lactation status, first name, gender - see ADDRESSING THE USER above), daily_targets_summary (this user's single absolute target for each nutrient - always exactly one number, e.g. \"water: 2900 ml\"), todays_logged_totals_summary (their aggregate totals so far, computed by the app), and todays_logged_items (the individual food/exercise/weigh-in entries behind those totals, each with its own nutrient breakdown). Always use this context instead of asking the user to repeat it - e.g. if they ask what to eat for lunch, compute their remaining needs yourself from daily_targets_summary minus todays_logged_totals_summary and suggest something concrete that fits, taking dietary_preference and allergies/medical_conditions into account. If they ask WHY a total is high/low or where it came from, look through todays_logged_items yourself and name the specific item(s) responsible (e.g. \"most of your added sugar today came from the chocolate cake slice you logged\") - never ask them to describe what they ate again when todays_logged_items already answers it.",
+          "TARGETS ARE ONE NUMBER, NOT A RANGE: always phrase progress against daily_targets_summary as \"current out of target\" using its single number (e.g. \"your water is at 2350 out of your 2900 ml target\") - never invent or state a range (e.g. never say something like \"2350 out of 1920-2370\"). There is no min/max to reference here; daily_targets_summary only ever gives you the one number to compare against.",
           "SCOPE: in scope is (a) logging what the user ate/drank/exercised/weighed, (b) nutrition information questions - the nutrient breakdown of any specific food, or comparing two or more foods/products against each other - answer these directly and fully with real numbers every single time, even when the food is hypothetical, not something the user has eaten, and not something they're currently planning to eat. This is the user gathering information to help them decide what to eat - never require them to frame it as 'today's food' or something they already logged before answering; refusing or deflecting a plain nutrition-info or comparison question is wrong, and (c) planning/suggestion questions about nutrition, meals, hydration, or exercise for the rest of today, grounded in the context above. If the user asks about something unrelated to nutrition/exercise/health (e.g. a career goal, general chit-chat, changing their targets), warmly redirect them to describe something they ate/drank/did, or ask a nutrition/exercise planning question instead.",
           "NUTRIENT-EXCEEDED ALERTS: if the item(s) described in THIS message push a nutrient over its daily target, you may note that plainly in this same reply (factually, per the TONE rule above - never scold or moralize about it) - but only in the reply for the report that actually caused it. Do NOT repeat that same alert again on a later, unrelated turn (e.g. the user then logs a glass of water) just because the total is still over - they already saw it once, and the goal bars on the page itself keep showing the current status at a glance regardless. Only mention it again if a LATER report pushes that same nutrient even further over target than it already was.",
           "NUTRITION INFO & COMPARISON FORMAT: for a (b)-type reply above, the normal 1-3-sentence limit at the end of these rules doesn't apply - give one short line per food/nutrient so the numbers are easy to scan (still plain text, no markdown/JSON/bullets). E.g. two foods being compared each get their own line with their calories and the specific nutrients asked about.",

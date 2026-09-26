@@ -2,14 +2,13 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
-import { openTicketAttachmentAction } from "@/app/app/tickets/actions";
 import { AdminStatusDropdown } from "@/components/admin-status-dropdown";
 import { CancelTicketDialog } from "@/components/cancel-ticket-dialog";
 import { EditTicketDialog } from "@/components/edit-ticket-dialog";
 import { LocalDateTime } from "@/components/local-time";
 import { ReopenTicketDialog } from "@/components/reopen-ticket-dialog";
+import { TicketAttachmentViewer } from "@/components/ticket-attachment-viewer";
 import { TicketHistoryLog } from "@/components/ticket-history-log";
-import { formatFileSize } from "@/lib/documents";
 import { markNotificationRead } from "@/lib/notifications";
 import {
   formatTicketArea,
@@ -79,7 +78,7 @@ export default async function TicketDetailPage({
   let ticketQuery = supabase
     .from("tickets")
     .select(
-      "id, ticket_seq, subject, ticket_type, area, priority, description, status, created_at, created_by, cancelled_reason, cancelled_at, fix_description, resolved_at, deferred_reason, technical_response",
+      "id, ticket_seq, subject, ticket_type, area, priority, description, status, created_at, created_by, cancelled_reason, cancelled_at, fix_description, resolved_at, deferred_reason, technical_response, current_version",
     )
     .eq("id", id);
   if (!isAdmin) {
@@ -186,19 +185,7 @@ export default async function TicketDetailPage({
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
               {tr(locale, "Attachments", "קבצים מצורפים")}
             </p>
-            <ul className="mt-1.5 space-y-1">
-              {attachments.map((attachment) => (
-                <li key={attachment.id}>
-                  <form action={openTicketAttachmentAction}>
-                    <input type="hidden" name="attachment_id" value={attachment.id} />
-                    <button type="submit" className="text-sm font-semibold text-teal-700 hover:underline dark:text-teal-400">
-                      {attachment.file_name}
-                      {attachment.file_size_bytes ? ` (${formatFileSize(attachment.file_size_bytes)})` : ""}
-                    </button>
-                  </form>
-                </li>
-              ))}
-            </ul>
+            <TicketAttachmentViewer locale={locale} attachments={attachments} />
           </div>
         ) : null}
 
@@ -215,6 +202,17 @@ export default async function TicketDetailPage({
               {tr(locale, "Deferred reason", "סיבת הדחייה")}
             </p>
             <p className="mt-1 text-sm text-violet-900 dark:text-violet-300">{ticket.deferred_reason}</p>
+          </div>
+        ) : null}
+
+        {isAdmin && ticket.current_version ? (
+          <div className="mt-5 flex items-center gap-1.5">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              {tr(locale, "Reported on app version", "דווח בגרסת אפליקציה")} {ticket.current_version}
+            </p>
+            <span className="rounded-full border border-indigo-200 bg-indigo-100 px-1.5 py-0 text-[10px] font-semibold text-indigo-700 dark:border-indigo-800 dark:bg-indigo-900/50 dark:text-indigo-300">
+              {tr(locale, "Admin only", "מנהלים בלבד")}
+            </span>
           </div>
         ) : null}
 

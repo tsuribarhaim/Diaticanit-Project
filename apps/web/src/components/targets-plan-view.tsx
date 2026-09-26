@@ -1,4 +1,4 @@
-import { formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
+import { formatMeasurementUnit, formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
 import type { TargetGenerationPayload } from "@/lib/targets";
 import { NUTRIENT_DIFF_FIELDS } from "@/lib/targets-diff";
 
@@ -88,7 +88,8 @@ export function TargetsPlanView({ payload, locale }: { payload: TargetGeneration
                 <tr key={field.labelEn} className="border-t border-slate-100 dark:border-slate-800">
                   <td className="px-4 py-2 font-medium text-slate-800 dark:text-slate-200">{tr(locale, field.labelEn, field.labelHe)}</td>
                   <td className="px-4 py-2 text-end font-bold text-teal-800 dark:text-teal-300">
-                    {formatNumberForLocale(singleValue, locale)} <span className="text-xs font-normal text-slate-500">{field.unit}</span>
+                    {formatNumberForLocale(singleValue, locale)}{" "}
+                    <span className="text-xs font-normal text-slate-500">{formatMeasurementUnit(field.unit, locale)}</span>
                   </td>
                 </tr>
               );

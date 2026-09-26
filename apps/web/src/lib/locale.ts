@@ -227,7 +227,8 @@ export function formatMeasurementUnit(unit: string, locale: AppLocale): string {
   if (token === "mcg") return "מק\"ג";
   if (token === "kcal") return "קק\"ל";
   if (token === "days") return "ימים";
-  if (token === "hour" || token === "hours") return "שעות";
+  if (token === "hour" || token === "hours" || token === "h") return "שעות";
+  if (token === "steps") return "צעדים";
   return unit;
 }
 
@@ -245,6 +246,8 @@ export function formatDietaryPreference(value: string, locale: AppLocale): strin
   if (token === "vegetarian") return tr(locale, "Vegetarian", "צמחוני");
   if (token === "vegan") return tr(locale, "Vegan", "טבעוני");
   if (token === "low_carb_keto") return tr(locale, "Low-Carb / Keto", "דל פחמימה / קטו");
+  if (token === "kosher") return tr(locale, "Kosher", "כשר");
+  if (token === "gluten_free") return tr(locale, "Gluten-Free", "ללא גלוטן");
   return locale === "he" ? value : titleCase(value.replace(/_/g, " "));
 }
 

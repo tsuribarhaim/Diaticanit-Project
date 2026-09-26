@@ -1,4 +1,4 @@
-import { formatGoalType, formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
+import { formatGoalType, formatMeasurementUnit, formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
 import type { TargetGenerationPayload } from "@/lib/targets";
 
 export type MetricDiffRow = { labelEn: string; labelHe: string; before: string; after: string };
@@ -71,7 +71,7 @@ function userTargetsDiffRows(before: TargetGenerationPayload, after: TargetGener
   const allKeys = new Set([...beforeByKey.keys(), ...afterByKey.keys()]);
 
   const display = (entry: TargetGenerationPayload["userTargets"][number] | undefined) =>
-    entry ? `${entry.value}${entry.unit ? ` ${entry.unit}` : ""}` : tr(locale, "Not set", "לא מוגדר");
+    entry ? `${entry.value}${entry.unit ? ` ${formatMeasurementUnit(entry.unit, locale)}` : ""}` : tr(locale, "Not set", "לא מוגדר");
 
   for (const entryKey of allKeys) {
     const beforeEntry = beforeByKey.get(entryKey);
@@ -103,8 +103,8 @@ export function computeTargetsDiff(before: TargetGenerationPayload, after: Targe
     rows.push({
       labelEn: field.labelEn,
       labelHe: field.labelHe,
-      before: `${n(beforeMin)}–${n(beforeMax)} ${field.unit}`,
-      after: `${n(afterMin)}–${n(afterMax)} ${field.unit}`,
+      before: `${n(beforeMin)}–${n(beforeMax)} ${formatMeasurementUnit(field.unit, locale)}`,
+      after: `${n(afterMin)}–${n(afterMax)} ${formatMeasurementUnit(field.unit, locale)}`,
     });
   }
 

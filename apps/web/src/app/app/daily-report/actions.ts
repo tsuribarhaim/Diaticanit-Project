@@ -16,6 +16,7 @@ import {
 import {
   CHART_CORE_METRIC_IDS,
   CHART_EXTRA_METRIC_IDS,
+  DAILY_REPORT_METRIC_FIELD_INFO,
   type DailyReportChartCoreMetric,
   type DailyReportChartExtraMetric,
   type DailyReportChartPreferences,
@@ -1392,18 +1393,24 @@ function sumExerciseTotals(items: Array<Record<string, unknown>>): { exerciseMin
  * estimated) - each maps its DB column (also this field's form input name,
  * `nutrient_value__<dbColumn>`) to where its *automatically calculated*
  * value lives on the same-shaped objects sumFoodTotals/sumExerciseTotals
- * already return. Deliberately a subset, not every nutrient tracked - only
- * the ones actually shown (and therefore editable) in the page's own
- * per-entry detail grid.
+ * already return. Every nutrient chartPreferences can track, derived from
+ * DAILY_REPORT_METRIC_FIELD_INFO (the same source of truth the page's own
+ * per-entry detail grid/Edit form build their field list from) rather than
+ * a second independent hardcoded subset - see that file's own comment for
+ * why (TCK-44: those two used to drift apart). Safe to include every
+ * metric here even though the Edit form only ever renders the ones the
+ * user actually selected to track: a field only reaches nextOverrides
+ * below when its own `__touched` hidden input is present, which the form
+ * only ever sets for fields it actually rendered. estimated_burn_kcal
+ * stays a separate, always-present entry - it isn't a chartPreferences
+ * metric at all, just this report's exercise calories burned.
  */
 const OVERRIDABLE_NUTRIENT_FIELDS: Array<{ dbColumn: string; autoKey: string; source: "food" | "exercise" }> = [
-  { dbColumn: "calories_kcal", autoKey: "caloriesKcal", source: "food" },
-  { dbColumn: "protein_g", autoKey: "proteinG", source: "food" },
-  { dbColumn: "water_ml", autoKey: "waterMl", source: "food" },
-  { dbColumn: "magnesium_mg", autoKey: "magnesiumMg", source: "food" },
-  { dbColumn: "potassium_mg", autoKey: "potassiumMg", source: "food" },
-  { dbColumn: "iron_mg", autoKey: "ironMg", source: "food" },
-  { dbColumn: "zinc_mg", autoKey: "zincMg", source: "food" },
+  ...Object.values(DAILY_REPORT_METRIC_FIELD_INFO).map((info) => ({
+    dbColumn: info.dbColumn,
+    autoKey: info.autoKey,
+    source: "food" as const,
+  })),
   { dbColumn: "estimated_burn_kcal", autoKey: "estimatedBurnKcal", source: "exercise" },
 ];
 
@@ -1740,23 +1747,23 @@ export async function adjustDailyReportItemQuantitiesAction(formData: FormData):
       nutrient_overrides: nextOverrides,
       calories_kcal: nutrientColumnValues.calories_kcal,
       protein_g: nutrientColumnValues.protein_g,
-      carbs_g: round(foodTotals.carbsG),
-      fat_g: round(foodTotals.fatG),
-      fiber_g: round(foodTotals.fiberG),
+      carbs_g: nutrientColumnValues.carbs_g,
+      fat_g: nutrientColumnValues.fat_g,
+      fiber_g: nutrientColumnValues.fiber_g,
       water_ml: nutrientColumnValues.water_ml,
       magnesium_mg: nutrientColumnValues.magnesium_mg,
       potassium_mg: nutrientColumnValues.potassium_mg,
       iron_mg: nutrientColumnValues.iron_mg,
       zinc_mg: nutrientColumnValues.zinc_mg,
-      sodium_mg: round(foodTotals.sodiumMg),
-      added_sugar_g: round(foodTotals.addedSugarG),
-      calcium_mg: round(foodTotals.calciumMg),
-      vit_c_mg: round(foodTotals.vitCMg),
-      vit_b12_mcg: round(foodTotals.vitB12Mcg),
-      vit_d_mcg: round(foodTotals.vitDMcg),
-      sat_fat_g: round(foodTotals.satFatG),
-      omega3_g: round(foodTotals.omega3G),
-      cholesterol_mg: round(foodTotals.cholesterolMg),
+      sodium_mg: nutrientColumnValues.sodium_mg,
+      added_sugar_g: nutrientColumnValues.added_sugar_g,
+      calcium_mg: nutrientColumnValues.calcium_mg,
+      vit_c_mg: nutrientColumnValues.vit_c_mg,
+      vit_b12_mcg: nutrientColumnValues.vit_b12_mcg,
+      vit_d_mcg: nutrientColumnValues.vit_d_mcg,
+      sat_fat_g: nutrientColumnValues.sat_fat_g,
+      omega3_g: nutrientColumnValues.omega3_g,
+      cholesterol_mg: nutrientColumnValues.cholesterol_mg,
       exercise_minutes: exerciseTotals.exerciseMinutes,
       estimated_burn_kcal: nutrientColumnValues.estimated_burn_kcal,
     })

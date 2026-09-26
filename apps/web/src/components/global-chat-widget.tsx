@@ -289,7 +289,14 @@ export function GlobalChatWidget({
     const target = messages[index];
     if (!target?.pendingTicketDraft || target.pendingTicketDraft.status !== "pending") return;
 
-    const result = await submitTicketFromChatAction(target.pendingTicketDraft.draft);
+    // Silent - not something the user drafted, just the app build they were
+    // on when they filed this, same as the plain ticket form's own hidden
+    // field (new-ticket-form.tsx) - for an admin investigating a report to
+    // know without having to ask.
+    const result = await submitTicketFromChatAction({
+      ...target.pendingTicketDraft.draft,
+      current_version: process.env.NEXT_PUBLIC_APP_VERSION ?? null,
+    });
     if (result.error) {
       pushMessage({ role: "assistant", content: result.error });
       return;
