@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { NavLink as Link } from "@/components/nav-link";
 import { useEffect, useRef, useState } from "react";
 
 import { tr, type AppLocale } from "@/lib/locale";

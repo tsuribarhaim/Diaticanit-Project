@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { NavLink as Link } from "@/components/nav-link";
 
 export default function Home() {
   return (

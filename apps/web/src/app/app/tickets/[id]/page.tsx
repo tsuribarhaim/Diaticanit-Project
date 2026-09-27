@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { NavLink as Link } from "@/components/nav-link";
 import { notFound, redirect } from "next/navigation";
 import type { ReactNode } from "react";
 

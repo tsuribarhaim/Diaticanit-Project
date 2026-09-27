@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { NavLink as Link } from "@/components/nav-link";
 import { useActionState } from "react";
 
 import { forgotPasswordAction, type AuthActionState } from "@/app/auth/actions";
