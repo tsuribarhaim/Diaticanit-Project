@@ -38,12 +38,21 @@ import { createPortal } from "react-dom";
 export function InfoPopoverButton({
   ariaLabel,
   title,
+  triggerContent = "?",
   triggerClassName,
   panelWidthClassName,
   panelSide = "end",
   children,
 }: {
   ariaLabel: string;
+  /** What the trigger itself displays - the bare "?" glyph every existing
+   * call site still wants (so this defaults to it and none of them need to
+   * change), or real content like a label's own text when the trigger IS
+   * that text (see targets-plan-editor.tsx's nutrient names, TCK-64
+   * follow-up: a separate "?" per row didn't align consistently against
+   * labels of very different lengths - the label itself becoming the
+   * trigger removes the extra element rather than trying to align it). */
+  triggerContent?: ReactNode;
   /** Shown centered at the top of the panel, in its own row above
    * everything else, set off with a divider - lets a popover reused once
    * per row (e.g. one per nutrient) say plainly which row it belongs to.
@@ -81,6 +90,23 @@ export function InfoPopoverButton({
       const rect = trigger.getBoundingClientRect();
       const isRtl = getComputedStyle(trigger).direction === "rtl";
       setDir(isRtl ? "rtl" : "ltr");
+      // Reported live: the panel came out "narrow and stretched tall" on an
+      // ordinary phone (390px) - the inline style below is what actually
+      // positions/sizes the desktop dropdown, and unlike the sm: classes
+      // it's meant to pair with, it was never gated behind an actual
+      // viewport check, so it fired (and silently overrode the mobile
+      // centered-overlay classes on the panel below, which lose to any
+      // inline style regardless of the sm: breakpoint) on every screen
+      // size, not just sm: and up. window.innerWidth is read fresh here
+      // rather than cached in state, matching the sm: breakpoint (640px)
+      // this pairs with - a resize while the popover happens to be open is
+      // a rare enough edge case not to need its own resize listener. dir
+      // is still set above regardless - that's needed on mobile too, only
+      // the anchored top/left/right position is desktop-only.
+      if (window.innerWidth < 640) {
+        setDesktopAnchor(null);
+        return;
+      }
       const anchorToPhysicalRight = (panelSide === "end") !== isRtl;
       setDesktopAnchor(
         anchorToPhysicalRight
@@ -101,7 +127,7 @@ export function InfoPopoverButton({
         onClick={() => setIsOpen((prev) => !prev)}
         className={triggerClassName}
       >
-        ?
+        {triggerContent}
       </button>
       {isOpen
         ? createPortal(
