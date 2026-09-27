@@ -59,6 +59,7 @@ function isMultiFilterState(value: unknown): value is MultiFilterState {
  * EditableValue/BannerView in targets-plan-editor.tsx.
  */
 function MultiSelectFilter({
+  locale,
   label,
   options,
   selected,
@@ -66,6 +67,7 @@ function MultiSelectFilter({
   isOpen,
   onToggle,
 }: {
+  locale: AppLocale;
   label: string;
   options: { value: string; label: string }[];
   selected: string[];
@@ -74,6 +76,17 @@ function MultiSelectFilter({
   onToggle: () => void;
 }) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
+  // TCK-83: the only bulk action used to be the page's single "Clear
+  // filters" button, which resets every filter at once - there was no way
+  // to quickly select or clear just THIS category. A native checkbox's
+  // indeterminate state can't be set via a prop (only imperatively), hence
+  // the ref + effect below.
+  const allSelectRef = useRef<HTMLInputElement | null>(null);
+  const allSelected = options.length > 0 && selected.length === options.length;
+  const someSelected = selected.length > 0 && !allSelected;
+  useEffect(() => {
+    if (allSelectRef.current) allSelectRef.current.indeterminate = someSelected;
+  }, [someSelected]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -115,6 +128,16 @@ function MultiSelectFilter({
       </button>
       {isOpen ? (
         <div className="absolute z-30 mt-1 max-h-64 w-full min-w-[180px] overflow-y-auto rounded-lg border border-slate-300 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+          <label className="flex cursor-pointer items-center gap-2 rounded-md border-b border-slate-200 px-2 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800">
+            <input
+              ref={allSelectRef}
+              type="checkbox"
+              checked={allSelected}
+              onChange={() => onChange(allSelected ? [] : options.map((option) => option.value))}
+              className="h-3.5 w-3.5 accent-teal-700"
+            />
+            {tr(locale, "Select all", "בחירת הכל")}
+          </label>
           {options.map((option) => (
             <label
               key={option.value}
@@ -170,6 +193,25 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
   // SSR, where localStorage doesn't exist, the same class of bug just
   // fixed in daily-report-chat-panel.tsx's document access).
   const [isHydrated, setIsHydrated] = useState(false);
+
+  // TCK-83: the User filter is a native <select>, and this codebase has a
+  // confirmed, narrow quirk (already found and fixed once before, for a
+  // <textarea> in the daily-report chat panel) where a native form
+  // control's dark:bg-*/dark:text-* Tailwind classes silently don't apply,
+  // even though every OTHER dark: class on the same element (its border)
+  // works fine, and even though the ancestor's data-theme is correctly
+  // "dark" - confirmed live via computed-style check, not theorized. An
+  // inline style is the same proven workaround, so this reads the
+  // ancestor's data-theme (set once, server-side, in app/app/layout.tsx -
+  // see normalizeTheme) directly rather than guessing from the OS's
+  // prefers-color-scheme, which this app deliberately doesn't use.
+  const [isDarkTheme, setIsDarkTheme] = useState(false);
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      setIsDarkTheme(document.querySelector("[data-theme]")?.getAttribute("data-theme") === "dark");
+    }, 0);
+    return () => clearTimeout(timeoutId);
+  }, []);
 
   useEffect(() => {
     // setTimeout, not a direct call - this codebase's react-hooks/set-state-in-effect
@@ -335,7 +377,12 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
             <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
               {tr(locale, "User", "משתמש")}
             </span>
-            <select value={userFilter} onChange={(event) => setUserFilter(event.target.value)} className={selectClassName}>
+            <select
+              value={userFilter}
+              onChange={(event) => setUserFilter(event.target.value)}
+              className={selectClassName}
+              style={isDarkTheme ? { backgroundColor: "#020617", color: "#f1f5f9" } : undefined}
+            >
               <option value="">{tr(locale, "All users", "כל המשתמשים")}</option>
               {users.map(([id, name]) => (
                 <option key={id} value={id}>
@@ -349,7 +396,8 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
               {tr(locale, "Status", "סטטוס")}
             </span>
             <MultiSelectFilter
-              label={tr(locale, "All statuses", "כל הסטטוסים")}
+              locale={locale}
+              label={tr(locale, "Status", "סטטוס")}
               options={ticketStatusOptions.map((option) => ({ value: option, label: formatTicketStatus(option, locale) }))}
               selected={multiFilters.status}
               onChange={(next) => setMultiFilters((current) => ({ ...current, status: next }))}
@@ -362,7 +410,8 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
               {tr(locale, "Priority", "עדיפות")}
             </span>
             <MultiSelectFilter
-              label={tr(locale, "All priorities", "כל העדיפויות")}
+              locale={locale}
+              label={tr(locale, "Priority", "עדיפות")}
               options={ticketPriorityOptions.map((option) => ({ value: option, label: formatTicketPriority(option, locale) }))}
               selected={multiFilters.priority}
               onChange={(next) => setMultiFilters((current) => ({ ...current, priority: next }))}
@@ -375,7 +424,8 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
               {tr(locale, "Type", "סוג")}
             </span>
             <MultiSelectFilter
-              label={tr(locale, "All types", "כל הסוגים")}
+              locale={locale}
+              label={tr(locale, "Type", "סוג")}
               options={ticketTypeOptions.map((option) => ({ value: option, label: formatTicketType(option, locale) }))}
               selected={multiFilters.type}
               onChange={(next) => setMultiFilters((current) => ({ ...current, type: next }))}
@@ -388,7 +438,8 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
               {tr(locale, "Area", "אזור")}
             </span>
             <MultiSelectFilter
-              label={tr(locale, "All areas", "כל האזורים")}
+              locale={locale}
+              label={tr(locale, "Area", "אזור")}
               options={ticketAreaOptions.map((option) => ({ value: option, label: formatTicketArea(option, locale) }))}
               selected={multiFilters.area}
               onChange={(next) => setMultiFilters((current) => ({ ...current, area: next }))}

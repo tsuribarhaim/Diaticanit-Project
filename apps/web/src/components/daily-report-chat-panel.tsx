@@ -339,9 +339,9 @@ export function DailyReportChatPanel({
     const introLine = trGendered(
       locale,
       userGender,
-      `${namePrefix}you're editing this saved entry.${includesEn}Tell me what to add, change, or remove, and I'll update it - you can save once you're happy with it.`,
-      `${namePrefix}אתה עורך את הרשומה השמורה הזו.${includesHe}ספר לי מה להוסיף, לשנות או להסיר, ואעדכן אותה - תוכל לשמור ברגע שתהיה מרוצה מהתוצאה.`,
-      `${namePrefix}את עורכת את הרשומה השמורה הזו.${includesHe}ספרי לי מה להוסיף, לשנות או להסיר, ואעדכן אותה - תוכלי לשמור ברגע שתהיי מרוצה מהתוצאה.`,
+      `${namePrefix}you're editing this saved entry.${includesEn}Tell me what to add, change, or remove, and I'll update it - tap the save icon once you're happy with it.`,
+      `${namePrefix}אתה עורך את הרשומה השמורה הזו.${includesHe}ספר לי מה להוסיף, לשנות או להסיר, ואעדכן אותה - לחץ על סמל השמירה ברגע שתהיה מרוצה מהתוצאה.`,
+      `${namePrefix}את עורכת את הרשומה השמורה הזו.${includesHe}ספרי לי מה להוסיף, לשנות או להסיר, ואעדכן אותה - לחצי על סמל השמירה ברגע שתהיי מרוצה מהתוצאה.`,
     );
     return isEditing
       ? [
@@ -922,10 +922,20 @@ export function DailyReportChatPanel({
       ...previous,
       {
         role: "assistant",
+        // "was reported", not "added" - this already created its own
+        // report row via logSavedItemFromChatAction above, so the Report
+        // icon in the composer stays correctly disabled right after this
+        // (nothing pending from the compose flow itself) - wording it as
+        // "added" read like an in-progress draft still waiting on that
+        // icon, reported as confusing once the icon visibly wasn't
+        // clickable right after. Hebrew keeps "הדיווח" (the report, always
+        // masculine) as the sentence's own subject rather than conjugating
+        // a verb to agree with the item name's own gender, which this
+        // component has no way to know for an arbitrary saved-list entry.
         content: tr(
           locale,
-          `✓ Added ${name} (${item.default_quantity} ${unit}) to today's log.`,
-          `✓ נוסף ${name} (${item.default_quantity} ${unit}) ליומן היום.`,
+          `✓ ${name} (${item.default_quantity} ${unit}) was reported to today's log.`,
+          `✓ הדיווח על ${name} (${item.default_quantity} ${unit}) נשלח ליומן היום.`,
         ),
         localOnly: true,
       },
@@ -1135,6 +1145,15 @@ export function DailyReportChatPanel({
               before the first message, same as before. */}
           {messages.length === 0 ? (
             <p className="text-xs text-slate-500 dark:text-slate-400">
+              {/* TCK-38: the disclaimer sentence up front, every time a
+                  fresh conversation starts (this whole block resets on New
+                  chat - see confirmClearChat) - not gendered like the rest
+                  of this sentence since it's about Daffy, not the user. */}
+              {tr(
+                locale,
+                "Daffy is an AI companion, not a substitute for professional medical or nutrition advice. ",
+                "דפי היא מלווה מבוססת AI ואינה תחליף לייעוץ רפואי או תזונתי מקצועי. ",
+              )}
               {/* Singular, gender-correct Hebrew (את/אתה + matching verb
                   forms) - see buildInitialMessages' own comment on why the
                   original plural/formal conjugations were wrong here.
@@ -1143,9 +1162,9 @@ export function DailyReportChatPanel({
               {trGendered(
                 locale,
                 userGender,
-                `${userFirstName ? `Hi ${userFirstName}, tell` : "Tell"} me what you ate, drank, or did for exercise today (or attach a photo), and I'll help fill in the details. When you're ready, save to add it to today's log.`,
-                `${userFirstName ? `היי ${userFirstName}, ` : ""}ספר לי מה אכלת, שתית או עשית מבחינת פעילות גופנית היום (או צרף תמונה), ואעזור להשלים את הפרטים. כשתהיה מוכן, שמור כדי להוסיף זאת ליומן של היום.`,
-                `${userFirstName ? `היי ${userFirstName}, ` : ""}ספרי לי מה אכלת, שתית או עשית מבחינת פעילות גופנית היום (או צרפי תמונה), ואעזור להשלים את הפרטים. כשתהיי מוכנה, שמרי כדי להוסיף זאת ליומן של היום.`,
+                `${userFirstName ? `Hi ${userFirstName}, tell` : "Tell"} me what you ate, drank, or did for exercise today (or attach a photo), and I'll help fill in the details. When you're ready, tap the report icon to add it to today's log.`,
+                `${userFirstName ? `היי ${userFirstName}, ` : ""}ספר לי מה אכלת, שתית או עשית מבחינת פעילות גופנית היום (או צרף תמונה), ואעזור להשלים את הפרטים. כשתהיה מוכן, לחץ על סמל הדיווח כדי להוסיף זאת ליומן של היום.`,
+                `${userFirstName ? `היי ${userFirstName}, ` : ""}ספרי לי מה אכלת, שתית או עשית מבחינת פעילות גופנית היום (או צרפי תמונה), ואעזור להשלים את הפרטים. כשתהיי מוכנה, לחצי על סמל הדיווח כדי להוסיף זאת ליומן של היום.`,
               )}
             </p>
           ) : null}
@@ -1216,57 +1235,120 @@ export function DailyReportChatPanel({
               }}
               triggerRef={savedListTriggerRef}
             />
+
+            {/* Report, moved here from a full-width button under Send
+                (reported as "too big, wrongly placed, keeps getting hit
+                instead of Send" - a full-width action right under Send,
+                tapped on every message, is exactly backwards: the rare,
+                session-ending action had the easiest-to-hit spot on the
+                whole panel). A small, permanently filled circle at the far
+                end of this row - opposite the neutral attach icons, so it
+                doesn't blend in - puts real distance between it and
+                wherever a thumb lands to hit Send. Skipped entirely during
+                the delete-entry-confirmation state below, which keeps its
+                own full-width warning treatment - that one's a deliberate,
+                already-confirmed destructive action, not a routine save,
+                so it doesn't carry the same "too easy to hit by accident"
+                risk this change is fixing. */}
+            {isEditing && pendingDeleteOnSave ? null : (
+              <>
+                <span className="flex-1" />
+                {/* disabled={!canSave}: this icon is always visible now (a
+                    fixed, learnable spot - unlike the floating quick-save
+                    trigger elsewhere in this file, which instead skips
+                    rendering entirely while canSave is false), so it needs
+                    its own guard against the same case that trigger
+                    already avoids by not existing yet. Without this, a tap
+                    with nothing typed/attached fired a real save attempt
+                    that correctly failed validation ("add free text, a
+                    photo, ...") - live and reproducible - and that error
+                    banner then sat there stale through whatever the user
+                    did next (e.g. a saved-list quick-add), reading as if
+                    THAT had failed. Disabling it here prevents the
+                    avoidable failure outright instead of just explaining
+                    it after the fact. */}
+                <SubmitButton
+                  locale={locale}
+                  onClick={handleQuickSave}
+                  isEditing={isEditing}
+                  variant="icon"
+                  size="sm"
+                  disabled={!canSave}
+                  busy={isSaving}
+                  form="daily-report-form"
+                />
+              </>
+            )}
           </div>
 
           {/* Bigger than before (4 rows, not 2) now that it has the whole
               row to itself instead of sharing one with three icon
               buttons. */}
-          <div className="flex items-end gap-2">
-            <textarea
-              ref={textareaRef}
-              value={inputValue}
-              onChange={(event) => setInputValue(event.target.value)}
-              rows={4}
-              maxLength={500}
-              disabled={isStreaming}
-              // Singular, gender-correct Hebrew imperative (כתוב/כתבי) -
-              // see the subtitle above for why the original plural form
-              // ("כתבו") was wrong here too.
-              placeholder={trGendered(locale, userGender, "Type a message...", "כתוב הודעה...", "כתבי הודעה...")}
-              className="flex-1 resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 disabled:opacity-70 dark:border-slate-700"
-              // Inline style, not dark:bg-slate-900/dark:text-slate-100 -
-              // confirmed live (DevTools computed-style check) that this
-              // specific textarea keeps a plain white background under
-              // data-theme="dark" even with ONLY the dark: class applied
-              // and nothing competing for specificity, while an inline
-              // style on the exact same element takes effect immediately.
-              // Root cause not fully pinned down (a textarea/form-control-
-              // specific quirk with this Tailwind build, not the general
-              // theme-mirroring issue this panel already works around for
-              // being portaled - every other dark: class here, including
-              // this same textarea's own dark:border-slate-700, applies
-              // correctly) - inline style sidesteps it outright rather
-              // than leaving the compose box the one visibly broken
-              // element after everything else in the panel is already
-              // properly dark.
-              style={mirroredTheme === "dark" ? { backgroundColor: "#0f172a", color: "#f1f5f9" } : undefined}
-            />
-            <button
-              type="button"
-              disabled={isStreaming || !inputValue.trim()}
-              onClick={() => void sendMessage(inputValue)}
-              onMouseDown={(event) => event.preventDefault()}
-              className="inline-flex shrink-0 items-center justify-center rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
-            >
-              {isStreaming ? <Spinner className="h-4 w-4 animate-spin" /> : tr(locale, "Send", "שליחה")}
-            </button>
-          </div>
+          <textarea
+            ref={textareaRef}
+            value={inputValue}
+            onChange={(event) => setInputValue(event.target.value)}
+            rows={4}
+            maxLength={500}
+            disabled={isStreaming}
+            // Singular, gender-correct Hebrew imperative (כתוב/כתבי) -
+            // see the subtitle above for why the original plural form
+            // ("כתבו") was wrong here too.
+            placeholder={trGendered(locale, userGender, "Type a message...", "כתוב הודעה...", "כתבי הודעה...")}
+            className="w-full resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 disabled:opacity-70 dark:border-slate-700"
+            // Inline style, not dark:bg-slate-900/dark:text-slate-100 -
+            // confirmed live (DevTools computed-style check) that this
+            // specific textarea keeps a plain white background under
+            // data-theme="dark" even with ONLY the dark: class applied
+            // and nothing competing for specificity, while an inline
+            // style on the exact same element takes effect immediately.
+            // Root cause not fully pinned down (a textarea/form-control-
+            // specific quirk with this Tailwind build, not the general
+            // theme-mirroring issue this panel already works around for
+            // being portaled - every other dark: class here, including
+            // this same textarea's own dark:border-slate-700, applies
+            // correctly) - inline style sidesteps it outright rather
+            // than leaving the compose box the one visibly broken
+            // element after everything else in the panel is already
+            // properly dark.
+            style={mirroredTheme === "dark" ? { backgroundColor: "#0f172a", color: "#f1f5f9" } : undefined}
+          />
+          {/* Send is now the composer's own full-width primary action - the
+              one actually tapped on every single message - instead of
+              sharing a cramped row with the textarea next to a big Report
+              button right below it. Report itself moved up into the
+              attach-icon row above (see its own comment there). */}
+          <button
+            type="button"
+            disabled={isStreaming || !inputValue.trim()}
+            onClick={() => void sendMessage(inputValue)}
+            onMouseDown={(event) => event.preventDefault()}
+            className="flex w-full items-center justify-center rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+          >
+            {isStreaming ? <Spinner className="h-4 w-4 animate-spin" /> : tr(locale, "Send", "שליחה")}
+          </button>
 
-          {isEditing && pendingDeleteOnSave ? (
-            <DeleteEntrySubmitButton locale={locale} variant="text" />
-          ) : (
-            <SubmitButton locale={locale} onClick={handleQuickSave} isEditing={isEditing} fullWidth busy={isSaving} form="daily-report-form" />
-          )}
+          {/* TCK-38's standing disclaimer, now also the short save reminder
+              for every turn after the first (see buildInitialMessages'
+              own comment above, in the same vein, for the fuller one-time
+              version shown before any message exists). Deliberately no
+              directional wording ("above"/"below") - which spot in the
+              text this reads next to isn't fixed relative to the icon
+              once the thread scrolls, so a direction would sometimes be
+              wrong. isEditing branches the icon's own name - SubmitButton's
+              idleLabel is "Report" for a new entry but "Save changes" once
+              editing an existing one (see its own definition), so this
+              stays accurate in both modes instead of picking one label and
+              being wrong in the other. */}
+          <p className="text-center text-[11px] text-slate-400 dark:text-slate-500">
+            {tr(
+              locale,
+              `Daffy is an AI companion, not a substitute for professional medical or nutrition advice. Tap the ${isEditing ? "save" : "report"} icon to save.`,
+              `דפי היא מלווה מבוססת AI ואינה תחליף לייעוץ רפואי או תזונתי מקצועי. לחצו על סמל ה${isEditing ? "שמירה" : "דיווח"} כדי לשמור.`,
+            )}
+          </p>
+
+          {isEditing && pendingDeleteOnSave ? <DeleteEntrySubmitButton locale={locale} variant="text" /> : null}
         </div>
       </div>
     </>

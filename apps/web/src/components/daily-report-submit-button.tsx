@@ -56,6 +56,7 @@ export function SubmitButton({
   isEditing = false,
   fullWidth = false,
   variant = "text",
+  size = "lg",
   disabled = false,
   busy = false,
   form,
@@ -83,6 +84,13 @@ export function SubmitButton({
    * this variant is never actually rendered in a disabled state in
    * practice). Submits the exact same form/action either way. */
   variant?: "text" | "icon" | "bare-icon";
+  /** Only meaningful for variant="icon". "lg" (h-14 w-14) is the existing
+   * floating quick-save trigger shown while the chat panel is minimized.
+   * "sm" (h-9 w-9) matches the composer's own attach-icon row, for the
+   * inline Report trigger that now lives there instead of a full-width
+   * button under Send (see that row's own comment on why - the old
+   * full-width button sat close enough under Send to get hit by mistake). */
+  size?: "lg" | "sm";
   /** Lets a caller disable this independently of the form's own pending
    * state - e.g. the floating save icon should read as inactive until
    * something has actually changed, not just while a submit is in flight. */
@@ -123,6 +131,7 @@ export function SubmitButton({
   const pendingLabel = isEditing ? tr(locale, "Saving changes...", "שומר שינויים...") : tr(locale, "Saving...", "שומר...");
 
   if (variant === "icon") {
+    const isSmall = size === "sm";
     return (
       <button
         type="submit"
@@ -131,13 +140,17 @@ export function SubmitButton({
         onClick={onClick}
         aria-label={isBusy ? pendingLabel : idleLabel}
         title={isBusy ? pendingLabel : idleLabel}
-        className={`flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-colors ${
+        className={`flex ${isSmall ? "h-9 w-9 shadow-none" : "h-14 w-14 shadow-lg"} items-center justify-center rounded-full transition-colors ${
           isDisabled
-            ? "cursor-not-allowed bg-slate-200 text-slate-400 shadow-none dark:bg-slate-800 dark:text-slate-600"
+            ? `cursor-not-allowed bg-slate-200 text-slate-400 dark:bg-slate-800 dark:text-slate-600${isSmall ? "" : " shadow-none"}`
             : "bg-teal-700 text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
         }`}
       >
-        {isBusy ? <Spinner className="h-5 w-5 animate-spin" /> : <SaveIcon className="h-6 w-6" />}
+        {isBusy ? (
+          <Spinner className={isSmall ? "h-4 w-4 animate-spin" : "h-5 w-5 animate-spin"} />
+        ) : (
+          <SaveIcon className={isSmall ? "h-4 w-4" : "h-6 w-6"} />
+        )}
       </button>
     );
   }
