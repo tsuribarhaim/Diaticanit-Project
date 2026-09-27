@@ -387,59 +387,97 @@ export function TargetsPlanEditor({
     (entry) => entry.id !== "target_weight" && entry.id !== "sleep_hours" && entry.id !== "daily_steps",
   );
 
-  function standingCard(key: string, field: EditableFieldRef, label: string, value: number | null, unit: string, decimals: number) {
+  /** Weight/Sleep/Steps, as a table row matching the nutrient rows exactly
+   * (name cell + right-aligned EditableValue) - these used to be their own
+   * teal card row above a separate nutrients table; merged into one table
+   * with two sections (this one under "Personal Targets", nutrients under
+   * "Daily nutrition targets" right after) per the approved mockup. Same
+   * underlying edit mechanism as before (EditableValue + confirmEdit/
+   * cancelEdit), same out-of-range banner row beneath - only the visual
+   * container changed, not the interaction. No InfoPopoverButton here (no
+   * reference.roleDescription/foodExamples exists for these three), so the
+   * name is always the same plain, non-interactive span the nutrient rows
+   * themselves fall back to when they have no reference info either. */
+  function standingRow(key: string, field: EditableFieldRef, label: string, value: number | null, unit: string, decimals: number) {
     const state = getState(key);
-    const banner = state.banner;
     return (
-      <div key={key} className="rounded-xl border border-teal-200 bg-teal-50 p-3 dark:border-teal-800 dark:bg-teal-950/30">
-        <p className="text-xs font-semibold uppercase tracking-wide text-teal-800 dark:text-teal-300">{label}</p>
-        <div className="mt-1 text-lg font-bold text-teal-900 dark:text-teal-200">
-          <EditableValue
-            state={state}
-            locale={locale}
-            value={value}
-            unit={formatMeasurementUnit(unit, locale)}
-            decimals={decimals}
-            variant="card"
-            onStartEdit={() => startEdit(key, value)}
-            onDraftChange={(draft) => patchState(key, { draft })}
-            onConfirm={() => void confirmEdit(key, field, decimals)}
-            onCancel={() => cancelEdit(key)}
-          />
-        </div>
-        <BannerView
-          banner={banner}
-          locale={locale}
-          onAskDaffy={() => banner?.phase === "outOfRange" && void askDaffy(key, banner)}
-          onDismiss={() => dismissBanner(key)}
-          onApply={() => banner?.phase === "result" && void applyBanner(key, banner)}
-        />
-      </div>
+      <Fragment key={key}>
+        <tr className="border-t border-slate-100 dark:border-slate-800">
+          <td className="px-4 py-2 font-medium text-slate-800 dark:text-slate-200">
+            <span className="inline-flex items-center gap-1.5">{label}</span>
+          </td>
+          <td className="px-4 py-2 text-end font-bold text-teal-800 dark:text-teal-300">
+            <span className="flex w-full items-center justify-end gap-1">
+              <EditableValue
+                state={state}
+                locale={locale}
+                value={value}
+                unit={formatMeasurementUnit(unit, locale)}
+                decimals={decimals}
+                variant="row"
+                onStartEdit={() => startEdit(key, value)}
+                onDraftChange={(draft) => patchState(key, { draft })}
+                onConfirm={() => void confirmEdit(key, field, decimals)}
+                onCancel={() => cancelEdit(key)}
+              />
+              <span className="text-xs font-normal text-slate-500">{formatMeasurementUnit(unit, locale)}</span>
+            </span>
+          </td>
+        </tr>
+        {state.banner ? (
+          <tr>
+            <td colSpan={2} className="px-4 pb-3">
+              <BannerView
+                banner={state.banner}
+                locale={locale}
+                onAskDaffy={() => state.banner?.phase === "outOfRange" && void askDaffy(key, state.banner)}
+                onDismiss={() => dismissBanner(key)}
+                onApply={() => state.banner?.phase === "result" && void applyBanner(key, state.banner)}
+              />
+            </td>
+          </tr>
+        ) : null}
+      </Fragment>
     );
   }
 
+  /** Shared styling for both section dividers below (Personal Targets,
+   * Daily nutrition targets) - one continuous table now, not a card row
+   * plus a separately-headed table, per the approved mockup. */
+  const sectionRowClassName =
+    "border-t border-slate-200 bg-slate-50 px-4 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-400";
+
   return (
     <div className="space-y-5">
-      <div className="grid gap-2.5 sm:grid-cols-3">
-        {standingCard("weight", { kind: "weight" }, weightLabel, payload.targetWeightKg ?? parseNumericOrNull(weightEntry?.value), "kg", 1)}
-        {standingCard("sleep", { kind: "sleep" }, sleepLabel, parseNumericOrNull(sleepEntry?.value), "h", 1)}
-        {standingCard("steps", { kind: "steps" }, stepsLabel, parseNumericOrNull(stepsEntry?.value), "steps", 0)}
-      </div>
-
       <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
-        <div className="border-b border-slate-200 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-800/60">
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-            {tr(locale, "Daily nutrition targets", "יעדי תזונה יומיים")}
-          </p>
-        </div>
         <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              <th className="px-4 py-2">{tr(locale, "Nutrient", "רכיב תזונתי")}</th>
-              <th className="px-4 py-2 text-end">{tr(locale, "Target", "יעד")}</th>
-            </tr>
-          </thead>
           <tbody>
+            <tr>
+              <td colSpan={2} className={`${sectionRowClassName} border-t-0`}>
+                {tr(locale, "Personal targets", "יעדים אישיים")}
+              </td>
+            </tr>
+            {standingRow("weight", { kind: "weight" }, weightLabel, payload.targetWeightKg ?? parseNumericOrNull(weightEntry?.value), "kg", 1)}
+            {standingRow("sleep", { kind: "sleep" }, sleepLabel, parseNumericOrNull(sleepEntry?.value), "h", 1)}
+            {standingRow("steps", { kind: "steps" }, stepsLabel, parseNumericOrNull(stepsEntry?.value), "steps", 0)}
+
+            <tr>
+              <td colSpan={2} className={sectionRowClassName}>
+                {tr(locale, "Daily nutrition targets", "יעדי תזונה יומיים")}
+              </td>
+            </tr>
+            {/* text-start, not the old thead's literal text-left carried
+                over from before this became a plain in-table row (reported
+                live: "Nutrient" sat at the left edge of its own column
+                while every actual nutrient name below it - plain start-
+                aligned text, no override - sits at that column's right
+                edge instead, so the header visibly didn't line up with its
+                own data). "Target" already used the matching logical
+                text-end and needed no change. */}
+            <tr className="text-start text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              <td className="px-4 py-2">{tr(locale, "Nutrient", "רכיב תזונתי")}</td>
+              <td className="px-4 py-2 text-end">{tr(locale, "Target", "יעד")}</td>
+            </tr>
             {ORDERED_NUTRIENT_FIELDS.map((field) => {
               const min = payload[field.minKey] as number;
               const max = payload[field.maxKey] as number;
@@ -452,37 +490,46 @@ export function TargetsPlanEditor({
                 <Fragment key={fieldKey}>
                   <tr className="border-t border-slate-100 dark:border-slate-800">
                     <td className="px-4 py-2 font-medium text-slate-800 dark:text-slate-200">
-                      <span className="inline-flex items-center gap-1.5">
-                        {tr(locale, field.labelEn, field.labelHe)}
-                        {reference ? (
-                          <InfoPopoverButton
-                            ariaLabel={tr(locale, "More information", "מידע נוסף")}
-                            title={reference.nameLabel[locale]}
-                            triggerClassName="flex h-5 w-5 shrink-0 cursor-help items-center justify-center rounded-full border border-slate-300 text-[10px] font-bold text-slate-500 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
-                            panelWidthClassName="sm:w-64"
-                          >
-                            <p className="font-semibold text-amber-900 dark:text-amber-400">{tr(locale, "Full daily range", "טווח יומי מלא")}</p>
-                            {/* Separate flex items, not one dir="ltr" text run
-                                mixing a unit word with two numbers - a single
-                                run reorders under the browser's own bidi
-                                algorithm regardless of dir (confirmed live: a
-                                2,200-2,500 range displayed as 2,500-2,200),
-                                the same bug already fixed this same way for
-                                the profile-change diff card and the gained/
-                                burned calorie display. */}
-                            <div dir="ltr" className="mt-1 flex flex-wrap items-baseline gap-x-1">
-                              <span>{formatNumberForLocale(min, locale, { maximumFractionDigits: 1 })}</span>
-                              <span aria-hidden="true">–</span>
-                              <span>{formatNumberForLocale(max, locale, { maximumFractionDigits: 1 })}</span>
-                              <span>{formatMeasurementUnit(field.unit, locale)}</span>
-                            </div>
-                            <p className="mt-2 font-semibold text-amber-900 dark:text-amber-400">{tr(locale, "Role", "תפקיד")}</p>
-                            <p className="mt-1">{reference.roleDescription[locale]}</p>
-                            <p className="mt-2 font-semibold text-amber-900 dark:text-amber-400">{tr(locale, "Food examples", "דוגמאות מזון")}</p>
-                            <p className="mt-1">{reference.foodExamples[locale]}</p>
-                          </InfoPopoverButton>
-                        ) : null}
-                      </span>
+                      {/* TCK-64 follow-up: was the label plus a separate "?"
+                          trigger next to it - with labels ranging from
+                          "אבץ" to "סיבים תזונתיים", that second element
+                          never lined up consistently row to row (reported
+                          as "all over the place"). Removed here rather than
+                          moved elsewhere - the label itself is now the
+                          trigger, one fewer element in the row and nothing
+                          left to misalign. Falls back to plain (non-
+                          interactive) text when a row has no reference info
+                          to show (reference is null) - see the fallback
+                          span's own comment on why it still needs the same
+                          gap-1.5 layout treatment as the InfoPopoverButton. */}
+                      {reference ? (
+                        <InfoPopoverButton
+                          ariaLabel={tr(locale, "More information", "מידע נוסף")}
+                          title={reference.nameLabel[locale]}
+                          triggerContent={
+                            <span className="inline-flex items-center gap-1.5 underline decoration-dotted decoration-slate-400 underline-offset-4 dark:decoration-slate-500">
+                              {tr(locale, field.labelEn, field.labelHe)}
+                            </span>
+                          }
+                          triggerClassName="inline-block border-0 bg-transparent p-0 m-0 cursor-help text-start font-medium text-slate-800 hover:text-teal-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 dark:text-slate-200 dark:hover:text-teal-400"
+                          panelWidthClassName="sm:w-64"
+                        >
+                          {/* TCK-64 follow-up: the "Full daily range" section
+                              that used to open this panel is gone - min/max
+                              is already the exact same range the row's own
+                              target number (min+max)/2 was built from, and
+                              todays_logged_totals/the goal bar already show
+                              the number that matters against it, so
+                              repeating a second, different-looking number
+                              here read as conflicting rather than useful. */}
+                          <p className="font-semibold text-amber-900 dark:text-amber-400">{tr(locale, "Role", "תפקיד")}</p>
+                          <p className="mt-1">{reference.roleDescription[locale]}</p>
+                          <p className="mt-2 font-semibold text-amber-900 dark:text-amber-400">{tr(locale, "Food examples", "דוגמאות מזון")}</p>
+                          <p className="mt-1">{reference.foodExamples[locale]}</p>
+                        </InfoPopoverButton>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5">{tr(locale, field.labelEn, field.labelHe)}</span>
+                      )}
                     </td>
                     <td className="px-4 py-2 text-end font-bold text-teal-800 dark:text-teal-300">
                       {/* TCK-64: block-level flex with an explicit
