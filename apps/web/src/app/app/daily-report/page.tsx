@@ -11,7 +11,7 @@ import { DailyReportEditPencilIcon, DailyReportEntryEditForm } from "@/component
 import { DailyReportEntryQuickActions } from "@/components/daily-report-entry-quick-actions";
 import { DailyReportForm } from "@/components/daily-report-form";
 import { DailyReportPageNotice } from "@/components/daily-report-page-notice";
-import { DailyReportGoalBars, type RingMetric } from "@/components/daily-report-goal-bars";
+import type { RingMetric } from "@/components/daily-report-goal-bars";
 import { DailyReportWeightTrend, type WeightPoint } from "@/components/daily-report-weight-trend";
 import { LocalTime } from "@/components/local-time";
 import {
@@ -925,9 +925,13 @@ export default async function DailyReportPage({
         {activeTargetProfile ? (
           <>
             {coreDisplayMetrics.length || extraDisplayMetrics.length ? (
-              <div className="mt-4">
-                <DailyReportGoalBars locale={locale} coreMetrics={coreDisplayMetrics} extraMetrics={extraDisplayMetrics} />
-              </div>
+              // Portal target, not a direct render (TCK-41) - DailyReportForm
+              // portals the real, clickable <DailyReportGoalBars> in here
+              // (same technique it already uses for #daily-report-quick-metrics
+              // below) so a bar tap can reach DailyReportChatPanel, which
+              // lives in that client component's own tree, not this server
+              // component's.
+              <div id="daily-report-goal-bars" className="mt-4" />
             ) : (
               <p className="mt-4 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600 dark:border-slate-700 dark:text-slate-400">
                 {tr(
@@ -1487,6 +1491,8 @@ export default async function DailyReportPage({
           defaultItems={defaultItems ?? []}
           aiAvailable={aiAvailable}
           locale={locale}
+          coreDisplayMetrics={coreDisplayMetrics}
+          extraDisplayMetrics={extraDisplayMetrics}
           customTargets={loggableCustomTargets}
           currentWeightKg={
             lastRecordedWeightKg !== null

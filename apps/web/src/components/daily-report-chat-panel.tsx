@@ -223,6 +223,7 @@ export function DailyReportChatPanel({
   saveSuccess,
   bmiWarning,
   menuPhotoReply,
+  goalBarRequest,
   initialTranscriptText,
   isEditing = false,
   editingReportId,
@@ -248,6 +249,16 @@ export function DailyReportChatPanel({
    * since nothing went wrong and the point is to keep the conversation
    * going. */
   menuPhotoReply?: string;
+  /** TCK-41: set by DailyReportForm each time a goal bar is tapped - nonce
+   * always increments (even on the same bar/value twice in a row, where the
+   * text alone wouldn't change) so the effect below reliably fires again.
+   * `askedText` is always shown as the "asked" bubble, so the exchange
+   * always reads as question-and-answer. `question` is sent to the AI
+   * exactly like a typed message, for a metric with something logged;
+   * `notice` is a pre-built, already-localized sentence pushed directly
+   * with no AI call, for an empty metric - there's nothing for the AI to
+   * explain about zero logged items. */
+  goalBarRequest?: { nonce: number; askedText: string; question?: string; notice?: string } | null;
   /** The "User: ...\nAssistant: ..." transcript of a previously saved
    * report, when arriving via "Edit entry" - parsed back into chat bubbles
    * so a correction reads as a continuation of that same conversation
@@ -520,6 +531,39 @@ export function DailyReportChatPanel({
     setPrevSaveBlockedSignal(saveBlockedSignal);
     setIsSaving(false);
   }
+
+  /** TCK-41: react to a goal-bar tap (see goalBarRequest's own comment). A
+   * real useEffect, not the render-time-reset pattern used elsewhere in
+   * this file - the `question` branch calls sendMessage, which fetches the
+   * streaming endpoint, and a genuine side effect like that must not run
+   * directly in the render body (React may call render more than once
+   * before committing). setTimeout(..., 0) is this codebase's established
+   * way to still satisfy the react-hooks/set-state-in-effect lint rule
+   * (see isMounted's own effect above) despite the setState calls below. */
+  const [prevGoalBarNonce, setPrevGoalBarNonce] = useState(goalBarRequest?.nonce ?? 0);
+  useEffect(() => {
+    if (!goalBarRequest || goalBarRequest.nonce === prevGoalBarNonce) return;
+    const timeoutId = setTimeout(() => {
+      setPrevGoalBarNonce(goalBarRequest.nonce);
+      setIsOpen(true);
+      if (goalBarRequest.notice) {
+        setMessages((previous) => [
+          ...previous,
+          { role: "user", content: goalBarRequest.askedText, localOnly: true },
+          { role: "assistant", content: goalBarRequest.notice!, localOnly: true },
+        ]);
+      } else if (goalBarRequest.question) {
+        void sendMessage(goalBarRequest.question);
+      }
+    }, 0);
+    return () => clearTimeout(timeoutId);
+    // sendMessage is a fresh closure every render (same as onTranscriptChange
+    // below) - including it would refire this effect on every unrelated
+    // render. The condition above only ever actually calls it once per
+    // distinct nonce, milliseconds after that render, so the closure it
+    // captures is never meaningfully stale.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goalBarRequest, prevGoalBarNonce]);
 
   /** Once the assistant's reply finishes streaming, the textarea re-enables
    * (it's disabled while streaming) - focus needs to wait for that same
@@ -927,12 +971,6 @@ export function DailyReportChatPanel({
     void handlePhotoSelected(file);
   }
 
-  function clearAttachedPhoto() {
-    if (photoInputRef.current) photoInputRef.current.value = "";
-    if (photoGalleryInputRef.current) photoGalleryInputRef.current.value = "";
-    setPhotoPreviewUrl(null);
-  }
-
   // Whether there's actually anything to save right now - hasChanges covers
   // weight/custom-targets/already-sent chat text (tracked by the parent
   // form), extended here with this panel's own in-progress signals that the
@@ -1049,25 +1087,6 @@ export function DailyReportChatPanel({
               {tr(locale, "Retry", "ניסיון חוזר")}
             </button>
           ) : null}
-        </div>
-      ) : null}
-
-      {photoPreviewUrl ? (
-        <div className="flex items-center justify-between gap-2 border-t border-teal-200 bg-teal-50 px-3 py-2 text-xs text-teal-800 dark:border-teal-800 dark:bg-teal-950/30 dark:text-teal-300">
-          <span>
-            {tr(
-              locale,
-              "A photo is attached and will be analyzed by AI when you save.",
-              "תמונה מצורפת ותנותח על ידי AI בעת השמירה.",
-            )}
-          </span>
-          <button
-            type="button"
-            onClick={clearAttachedPhoto}
-            className="shrink-0 rounded-full border border-teal-300 bg-white px-2 py-1 font-semibold text-teal-700 hover:bg-teal-100 dark:border-teal-700 dark:bg-slate-900 dark:text-teal-400 dark:hover:bg-teal-950/50"
-          >
-            {tr(locale, "Remove", "הסרה")}
-          </button>
         </div>
       ) : null}
 

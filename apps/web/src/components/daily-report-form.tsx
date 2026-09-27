@@ -10,6 +10,7 @@ import {
 } from "@/app/app/daily-report/actions";
 import { DailyReportChatPanel, type DailyReportDefaultItem } from "@/components/daily-report-chat-panel";
 import { DailyReportDefaultsPicker, type SelectedSavedListItem } from "@/components/daily-report-defaults-picker";
+import { DailyReportGoalBars, type RingMetric } from "@/components/daily-report-goal-bars";
 import { DailyReportSuccessToast } from "@/components/daily-report-success-toast";
 import { SubmitButton } from "@/components/daily-report-submit-button";
 import { TargetsStaleModal } from "@/components/targets-stale-modal";
@@ -105,6 +106,8 @@ export function DailyReportForm({
   aiAvailable,
   locale,
   currentWeightKg,
+  coreDisplayMetrics = [],
+  extraDisplayMetrics = [],
   customTargets = [],
   todaysCustomTargetValues = {},
   editingReport = null,
@@ -116,6 +119,11 @@ export function DailyReportForm({
   aiAvailable: boolean;
   locale: AppLocale;
   currentWeightKg?: number | null;
+  /** The goal bars shown on the daily-report page - portaled in below (see
+   * goalBarsTarget) rather than rendered by the page itself, so tapping one
+   * (TCK-41) can reach the chat panel this component owns. */
+  coreDisplayMetrics?: RingMetric[];
+  extraDisplayMetrics?: RingMetric[];
   /** Custom targets from the user's locked plan (e.g. "Sleep duration") that
    * carry a unit/range and are therefore loggable here - see
    * apps/app/targets: UserTargetEntry.id/unit/targetMin/targetMax. */
@@ -342,6 +350,44 @@ export function DailyReportForm({
     }, 0);
     return () => clearTimeout(timeoutId);
   }, []);
+
+  // Same portal-target-lookup pattern as quickMetricsTarget just above, and
+  // for the same reason (TCK-41) - the goal bars need to live in this
+  // component's tree so a tap can reach the chat panel below, but their
+  // visible spot on the page is #daily-report-goal-bars, rendered by the
+  // server component.
+  const [goalBarsTarget, setGoalBarsTarget] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      setGoalBarsTarget(document.getElementById("daily-report-goal-bars"));
+    }, 0);
+    return () => clearTimeout(timeoutId);
+  }, []);
+
+  // TCK-41: tapping a goal bar asks Daffy where today's value for that
+  // metric comes from, as if the user had typed the question themselves -
+  // nonce forces DailyReportChatPanel's render-time reset to fire again
+  // even when the same bar is tapped twice in a row with an unchanged
+  // askedText/notice pair. `askedText` is shown as the "asked" bubble every
+  // time, empty metric included, so the exchange always reads as a real
+  // question-and-answer regardless of which branch answers it. An empty
+  // metric (nothing logged yet) skips the AI entirely - there's nothing for
+  // it to explain - so `notice` is a plain, deterministic, already-localized
+  // sentence pushed directly instead of a real `question` sent to the AI.
+  const [goalBarRequest, setGoalBarRequest] = useState<{ nonce: number; askedText: string; question?: string; notice?: string } | null>(
+    null,
+  );
+  function handleGoalBarSelect(metric: RingMetric) {
+    const label = tr(locale, metric.labelEn, metric.labelHe);
+    const askedText = tr(locale, `Where does today's ${label} total come from?`, `מאיפה מגיע היום הערך של ${label}?`);
+    setGoalBarRequest((previous) => ({
+      nonce: (previous?.nonce ?? 0) + 1,
+      askedText,
+      ...(metric.total > 0
+        ? { question: askedText }
+        : { notice: tr(locale, `You haven't logged anything with ${label} today.`, `לא נרשם היום כלום עם ${label}.`) }),
+    }));
+  }
 
   const formRef = useRef<HTMLFormElement>(null);
   // Set right before programmatically re-submitting after the user confirms
@@ -710,6 +756,22 @@ export function DailyReportForm({
           )
         : null}
 
+      {/* Portaled to <div id="daily-report-goal-bars"> for the same reason
+          as quickMetricsTarget just above (TCK-41): the bars need to be a
+          tap target that reaches this component's own state/chat panel, but
+          their visible spot on the page is owned by the server component. */}
+      {goalBarsTarget
+        ? createPortal(
+            <DailyReportGoalBars
+              locale={locale}
+              coreMetrics={coreDisplayMetrics}
+              extraMetrics={extraDisplayMetrics}
+              onSelect={handleGoalBarSelect}
+            />,
+            goalBarsTarget,
+          )
+        : null}
+
       {aiAvailable ? (
         <div className="block">
           {/* Hidden below `sm`, where the panel itself collapses behind a
@@ -733,6 +795,7 @@ export function DailyReportForm({
             saveSuccess={state.success}
             bmiWarning={state.bmiWarning}
             menuPhotoReply={state.menuPhotoReply}
+            goalBarRequest={goalBarRequest}
             initialTranscriptText={editingReport?.rawReportText}
             isEditing={Boolean(liveEditReportId)}
             editingReportId={liveEditReportId ?? undefined}
