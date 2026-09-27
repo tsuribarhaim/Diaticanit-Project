@@ -5,6 +5,7 @@ import { AdminTicketsTable } from "@/components/admin-tickets-table";
 import { CancelTicketDialog } from "@/components/cancel-ticket-dialog";
 import { LocalDate } from "@/components/local-time";
 import { formatTicketStatus, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 import { isCancellableTicketStatus, isCurrentUserAdmin, isEditableTicketStatus, isReopenableTicketStatus, ticketStatusBadgeClass, type TicketStatus } from "@/lib/tickets";
 
@@ -54,8 +55,29 @@ export default async function TicketsPage({ searchParams }: { searchParams: Prom
     const creatorIds = [...new Set(tickets.map((ticket) => ticket.created_by))];
     const { data: creators } = await supabase.from("user_profile").select("user_id, first_name, last_name").in("user_id", creatorIds);
     userNamesById = new Map(
-      (creators ?? []).map((row) => [row.user_id, [row.first_name, row.last_name].filter(Boolean).join(" ") || row.user_id]),
+      (creators ?? []).map((row) => [row.user_id, [row.first_name, row.last_name].filter(Boolean).join(" ")]),
     );
+    // TCK-83 follow-up: most tickets in this pilot were filed by one
+    // account whose profile never got a first/last name, so the raw id
+    // (falling back here previously) was showing up in the User column for
+    // nearly every row. Email is a far more recognizable fallback for an
+    // admin trying to identify who filed something - user_profile has no
+    // email column (it lives on the auth user, not this table), so this
+    // needs the service-role admin client, fetched only for the ids that
+    // actually need it rather than every creator.
+    const missingNameIds = creatorIds.filter((id) => !userNamesById.get(id));
+    if (missingNameIds.length > 0) {
+      const adminClient = createAdminClient();
+      const emailById = await Promise.all(
+        missingNameIds.map(async (id) => {
+          const { data } = await adminClient.auth.admin.getUserById(id);
+          return [id, data.user?.email ?? id] as const;
+        }),
+      );
+      for (const [id, email] of emailById) {
+        userNamesById.set(id, email);
+      }
+    }
   }
 
   if (isAdmin) {

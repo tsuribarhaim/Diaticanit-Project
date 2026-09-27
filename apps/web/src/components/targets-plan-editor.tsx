@@ -485,7 +485,19 @@ export function TargetsPlanEditor({
                       </span>
                     </td>
                     <td className="px-4 py-2 text-end font-bold text-teal-800 dark:text-teal-300">
-                      <span className="inline-flex items-center gap-1">
+                      {/* TCK-64: block-level flex with an explicit
+                          justify-end, not inline-flex relying on the td's
+                          own text-end - an inline-flex box here sat flush
+                          against the cell's LEFT edge regardless of content
+                          width (confirmed live via getBoundingClientRect:
+                          every row's left edge landed at the same x, while
+                          the right edge - where the actual digits are -
+                          drifted per row's own digit count), so numbers
+                          across rows never lined up into a real column.
+                          w-full + justify-end pins the whole cluster to the
+                          cell's right edge explicitly, independent of
+                          whatever text-align inside a table cell was doing. */}
+                      <span className="flex w-full items-center justify-end gap-1">
                         <EditableValue
                           state={state}
                           locale={locale}
