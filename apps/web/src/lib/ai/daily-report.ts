@@ -81,6 +81,10 @@ const aiDailyReportSchema = z.object({
   metrics: aiMetricsSchema.optional(),
   isDangerous: z.boolean().optional(),
   dangerReason: z.string().trim().max(300).optional(),
+  // Photo parsing only (ticket #4) - always optional here since the
+  // text-report prompt never asks for these and omits them entirely.
+  isMenuPhoto: z.boolean().optional(),
+  menuHighlights: z.array(z.string().trim().min(1).max(60)).max(8).optional(),
 });
 
 function round(value: number, digits = 2): number {
@@ -298,6 +302,8 @@ async function callDailyReportChatCompletion({
     exerciseItems,
     isDangerous: parsed.isDangerous ?? false,
     dangerReason: parsed.dangerReason ?? "",
+    isMenuPhoto: parsed.isMenuPhoto ?? false,
+    menuHighlights: parsed.menuHighlights ?? [],
   };
 }
 
@@ -386,10 +392,12 @@ export async function parseDailyReportPhotoWithAi({
           {
             type: "text",
             text: [
-              "Look at the attached photo and identify each distinct food or drink item visible.",
+              "Look at the attached photo and identify each distinct food or drink item visible - unless it's a menu (see the MENU CHECK rule below), in which case skip straight to that instead.",
               "Return strict JSON with this shape:",
-              `{"foodItems":[${FOOD_ITEM_JSON_SHAPE}],"exerciseItems":[],"metrics":${METRICS_JSON_SHAPE},"isDangerous":boolean,"dangerReason":"string"}`,
+              `{"foodItems":[${FOOD_ITEM_JSON_SHAPE}],"exerciseItems":[],"metrics":${METRICS_JSON_SHAPE},"isDangerous":boolean,"dangerReason":"string","isMenuPhoto":boolean,"menuHighlights":["string"]}`,
               "Rules:",
+              "- MENU CHECK (do this first): set isMenuPhoto to true when the photo shows a printed or displayed restaurant/cafe menu - dish names, descriptions, and/or prices - rather than actual prepared food on a plate or in a container. When true: leave foodItems, exerciseItems, and metrics empty/zeroed (nothing was actually eaten yet, so nothing gets logged), and set menuHighlights to up to 6 short dish or category names you can read off it (e.g. \"Salads\", \"Grilled chicken\", \"Pasta\", \"Tiramisu\") so the app can mention them back to the user - do not attempt to estimate nutrition for menu items, and do not set isMenuPhoto for a real plate of food just because it looks like a restaurant dish. When isMenuPhoto is true, isDangerous must be false.",
+              `- Write every menuHighlights[] entry entirely in ${languageName}.`,
               "- Estimate realistic portion sizes from visual cues (plate size, utensils, packaging).",
               "- Use only non-negative numbers.",
               "- Include reasonable estimates for every nutrient field, including the less common ones (sodiumMg, addedSugarG, calciumMg, vitCMg, vitB12Mcg, vitDMcg, satFatG, omega3G, cholesterolMg) - never leave them at 0 unless the food genuinely has none.",

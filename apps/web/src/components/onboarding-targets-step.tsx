@@ -223,7 +223,7 @@ export function OnboardingTargetsStep({
           {isSending ? (
             <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
               <Spinner className="h-3.5 w-3.5 animate-spin" />
-              {tr(locale, "Checking that for you…", "בודק/ת את זה בשבילך…")}
+              {tr(locale, "Checking that for you…", "בודקת את זה בשבילך…")}
             </div>
           ) : null}
         </div>
