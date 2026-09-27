@@ -2,8 +2,10 @@
 
 import Link, { type LinkProps } from "next/link";
 import { useRouter } from "next/navigation";
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, useTransition, type ReactNode } from "react";
 
+import { PendingOverlay } from "@/components/nav-link";
+import { Spinner } from "@/components/spinner";
 import { tr, type AppLocale } from "@/lib/locale";
 
 type PendingNavigation = { href: string; confirmMessage: string };
@@ -38,6 +40,11 @@ export function UnsavedPreviewProvider({ children, locale }: { children: ReactNo
   const [hasUnsavedPreview, setHasUnsavedPreview] = useState(false);
   const [pendingNavigation, setPendingNavigation] = useState<PendingNavigation | null>(null);
   const router = useRouter();
+  // "Leave anyway" navigates via router.push, not a <Link> - useLinkStatus
+  // only works for actual Link transitions, so this imperative one needs
+  // its own pending signal for the same "give every tap visible feedback"
+  // reason as PendingOverlay elsewhere in this app.
+  const [isLeaving, startLeaveTransition] = useTransition();
 
   useEffect(() => {
     if (!hasUnsavedPreview) return;
@@ -50,6 +57,16 @@ export function UnsavedPreviewProvider({ children, locale }: { children: ReactNo
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [hasUnsavedPreview]);
+
+  // Closes the modal once "Leave anyway"'s router.push transition actually
+  // finishes (isLeaving flips back to false) - deferred a tick to satisfy
+  // this codebase's react-hooks/set-state-in-effect rule, same idiom used
+  // elsewhere in this app for the same rule.
+  useEffect(() => {
+    if (isLeaving) return;
+    const timeoutId = setTimeout(() => setPendingNavigation(null), 0);
+    return () => clearTimeout(timeoutId);
+  }, [isLeaving]);
 
   return (
     <UnsavedPreviewContext.Provider
@@ -70,7 +87,8 @@ export function UnsavedPreviewProvider({ children, locale }: { children: ReactNo
               <button
                 type="button"
                 onClick={() => setPendingNavigation(null)}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                disabled={isLeaving}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
               >
                 {tr(locale, "Stay on this page", "השארות בדף")}
               </button>
@@ -78,11 +96,18 @@ export function UnsavedPreviewProvider({ children, locale }: { children: ReactNo
                 type="button"
                 onClick={() => {
                   const href = pendingNavigation.href;
-                  setPendingNavigation(null);
-                  router.push(href);
+                  // Modal stays open (button spinning) for the duration of
+                  // the transition, closed by the effect below once it
+                  // actually completes - closing it immediately here would
+                  // unmount the spinner before anyone could see it.
+                  startLeaveTransition(() => {
+                    router.push(href);
+                  });
                 }}
-                className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+                disabled={isLeaving}
+                className="flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 disabled:cursor-wait disabled:opacity-80 dark:bg-teal-600 dark:hover:bg-teal-500"
               >
+                {isLeaving ? <Spinner className="h-3.5 w-3.5 animate-spin" /> : null}
                 {tr(locale, "Leave anyway", "עזיבה בכל זאת")}
               </button>
             </div>
@@ -102,11 +127,16 @@ export function useUnsavedPreview(): UnsavedPreviewContextValue {
 }
 
 /** A normal in-app `Link` that confirms (via the in-app modal above, not a
- * native confirm()) before navigating away from unsaved work. */
+ * native confirm()) before navigating away from unsaved work - also shows
+ * PendingOverlay's own spinner while its (unguarded) transition is in
+ * flight, same as NavLink, since this is what the app's own top nav uses
+ * for every link. */
 export function GuardedLink({
   confirmMessage,
   onClick,
   href,
+  children,
+  className,
   ...linkProps
 }: LinkProps & { confirmMessage: string; children: ReactNode; className?: string }) {
   const { hasUnsavedPreview, requestNavigation } = useUnsavedPreview();
@@ -115,6 +145,7 @@ export function GuardedLink({
     <Link
       {...linkProps}
       href={href}
+      className={`relative ${className ?? ""}`}
       onClick={(event) => {
         if (hasUnsavedPreview) {
           event.preventDefault();
@@ -123,6 +154,8 @@ export function GuardedLink({
         }
         onClick?.(event);
       }}
-    />
+    >
+      <PendingOverlay>{children}</PendingOverlay>
+    </Link>
   );
 }

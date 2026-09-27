@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { NavLink as Link } from "@/components/nav-link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";

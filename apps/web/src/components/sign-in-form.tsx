@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { NavLink as Link } from "@/components/nav-link";
 import { useActionState, useRef, useState, useSyncExternalStore } from "react";
 
 import {

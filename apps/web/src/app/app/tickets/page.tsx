@@ -1,9 +1,10 @@
-import Link from "next/link";
+import { NavLink as Link } from "@/components/nav-link";
 import { redirect } from "next/navigation";
 
 import { AdminTicketsTable } from "@/components/admin-tickets-table";
 import { CancelTicketDialog } from "@/components/cancel-ticket-dialog";
-import { formatDateForLocale, formatTicketStatus, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
+import { LocalDate } from "@/components/local-time";
+import { formatTicketStatus, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 import { isCancellableTicketStatus, isCurrentUserAdmin, isEditableTicketStatus, isReopenableTicketStatus, ticketStatusBadgeClass, type TicketStatus } from "@/lib/tickets";
 
@@ -122,7 +123,9 @@ export default async function TicketsPage({ searchParams }: { searchParams: Prom
                         {ticket.subject}
                       </Link>
                     </td>
-                    <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">{formatDateForLocale(ticket.created_at, locale)}</td>
+                    <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">
+                      <LocalDate value={ticket.created_at} locale={locale} />
+                    </td>
                     <td className="py-3 pe-3">
                       <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${ticketStatusBadgeClass(ticket.status as TicketStatus)}`}>
                         {formatTicketStatus(ticket.status, locale)}

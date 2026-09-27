@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { NavLink as Link } from "@/components/nav-link";
 import { redirect } from "next/navigation";
 
 import { signOutAction } from "@/app/app/actions";

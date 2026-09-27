@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { NavLink as Link } from "@/components/nav-link";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { useActionState, useEffect, useState, useTransition, type ReactNode } from "react";

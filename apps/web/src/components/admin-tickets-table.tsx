@@ -1,10 +1,11 @@
 "use client";
 
-import Link from "next/link";
+import { NavLink as Link } from "@/components/nav-link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AdminStatusDropdown } from "@/components/admin-status-dropdown";
-import { formatDateForLocale, formatTicketArea, formatTicketPriority, formatTicketStatus, formatTicketType, tr, type AppLocale } from "@/lib/locale";
+import { LocalDate } from "@/components/local-time";
+import { formatTicketArea, formatTicketPriority, formatTicketStatus, formatTicketType, tr, type AppLocale } from "@/lib/locale";
 import { ticketAreaOptions, ticketPriorityOptions, ticketStatusOptions, ticketTypeOptions, type TicketArea, type TicketPriority, type TicketStatus, type TicketType } from "@/lib/tickets";
 
 type AdminTicketRow = {
@@ -456,7 +457,9 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
                     <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">{formatTicketType(ticket.ticket_type, locale)}</td>
                     <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">{formatTicketArea(ticket.area, locale)}</td>
                     <td className={`py-3 pe-3 ${priorityTextClass[ticket.priority]}`}>{formatTicketPriority(ticket.priority, locale)}</td>
-                    <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">{formatDateForLocale(ticket.created_at, locale)}</td>
+                    <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">
+                      <LocalDate value={ticket.created_at} locale={locale} />
+                    </td>
                     <td className="py-3 pe-3">
                       <AdminStatusDropdown locale={locale} ticketId={ticket.id} status={ticket.status} />
                     </td>
