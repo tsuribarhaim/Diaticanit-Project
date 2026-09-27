@@ -732,6 +732,7 @@ export function DailyReportForm({
             saveError={state.error}
             saveSuccess={state.success}
             bmiWarning={state.bmiWarning}
+            menuPhotoReply={state.menuPhotoReply}
             initialTranscriptText={editingReport?.rawReportText}
             isEditing={Boolean(liveEditReportId)}
             editingReportId={liveEditReportId ?? undefined}

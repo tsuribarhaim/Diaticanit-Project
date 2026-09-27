@@ -54,6 +54,12 @@ export type DailyReportActionState = {
    * this tells it to do so, via a scroll-preserving client-side URL update
    * rather than a real navigation. */
   wasEditing?: boolean;
+  /** Ticket #4: set instead of saving anything when a photo turned out to
+   * be a menu rather than a plate of food - a conversational reply (see
+   * buildMenuPhotoReply), shown as a normal assistant chat bubble by the
+   * caller rather than the red-banner treatment `error` gets, since
+   * nothing actually went wrong here. */
+  menuPhotoReply?: string;
 };
 
 type DailyReportParseMode = "heuristic" | "ai" | "ai_photo";
@@ -319,6 +325,35 @@ function buildGenericDangerousMessage(locale: AppLocale, context: "save" | "retr
     locale,
     `⚠️ This entry describes something that isn't food or a beverage and can be dangerous to consume. ${notSaved} If you actually consumed this, please seek medical attention or contact a poison control center right away.`,
     `⚠️ הדיווח מתאר משהו שאינו מזון או משקה ועלול להיות מסוכן לצריכה. ${notSaved} אם אכן צרכת זאת, פנה/י מיד לעזרה רפואית או למרכז המידע לארס והרעלות.`,
+  );
+}
+
+/**
+ * Ticket #4: a menu photo isn't something to log (nothing was actually
+ * eaten yet) or reject like a dangerous item - it's an opening for a
+ * conversation. Deliberately doesn't attempt a recommendation itself here
+ * (see parseDailyReportPhotoWithAi's own MENU CHECK comment on why) - just
+ * names what it saw and asks which direction the user wants, so the reply
+ * both reads naturally and gives the follow-up AI turn real context to
+ * work with even though the photo itself isn't kept in the transcript.
+ */
+function buildMenuPhotoReply(highlights: string[], locale: AppLocale): string {
+  const cleanHighlights = highlights.map((item) => item.trim()).filter(Boolean).slice(0, 6);
+
+  if (cleanHighlights.length === 0) {
+    return tr(
+      locale,
+      "This looks like a menu, not a plate of food, so I haven't logged anything. Want a suggestion based on your goals, or is there something specific you're curious about?",
+      "זה נראה כמו תפריט ולא כמו צלחת אוכל, אז לא רשמתי כלום. רוצה המלצה שמתאימה למטרות שלך, או שיש משהו ספציפי שמעניין אותך בו?",
+    );
+  }
+
+  const highlightsText = cleanHighlights.join(", ");
+
+  return tr(
+    locale,
+    `This looks like a menu, not a plate of food, so I haven't logged anything. I can see options like ${highlightsText} - want a suggestion based on your goals, or does something specific catch your eye?`,
+    `זה נראה כמו תפריט ולא כמו צלחת אוכל, אז לא רשמתי כלום. אני רואה בו אפשרויות כמו ${highlightsText} - רוצה המלצה שמתאימה למטרות שלך, או שמשהו ספציפי תפס את עינך?`,
   );
 }
 
@@ -667,6 +702,12 @@ export async function saveDailyReportAction(
   if (parsedResult.isDangerous) {
     return {
       error: parsedResult.dangerReason || buildGenericDangerousMessage(locale, "save"),
+    };
+  }
+
+  if (parsedResult.isMenuPhoto) {
+    return {
+      menuPhotoReply: buildMenuPhotoReply(parsedResult.menuHighlights ?? [], locale),
     };
   }
 
@@ -1857,5 +1898,5 @@ export async function updateDailyReportChartPreferencesAction(formData: FormData
 
   revalidatePath("/app/daily-report");
 
-  redirect(buildDailyReportRedirectPath({ notice: tr(locale, "Chart preferences saved.", "העדפות התרשים נשמרו.") }));
+  redirect(buildDailyReportRedirectPath({ notice: tr(locale, "Values-to-track preferences saved.", "העדפות ערכים למעקב נשמרו.") }));
 }

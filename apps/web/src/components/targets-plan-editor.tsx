@@ -219,7 +219,7 @@ function BannerView({
     return (
       <div className="mt-2 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-400">
         <Spinner className="h-3.5 w-3.5 animate-spin" />
-        {tr(locale, "Daffy is checking the impact…", "Daffy בודק/ת את ההשפעה…")}
+        {tr(locale, "Daffy is checking the impact…", "Daffy בודקת את ההשפעה…")}
       </div>
     );
   }

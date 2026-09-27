@@ -641,6 +641,16 @@ export type DailyReportParseResult = {
    * described isn't actually food/drink and would be dangerous to consume. */
   isDangerous?: boolean;
   dangerReason?: string;
+  /** AI-judged, photo parsing only (ticket #4): true when the photo shows a
+   * printed/displayed menu - dish names, descriptions, prices - rather than
+   * actual prepared food on a plate. Nothing gets logged in this case (see
+   * saveDailyReportAction's own handling); menuHighlights is a short list of
+   * what the model could read off it (e.g. dish/category names), baked into
+   * the conversational reply that redirects the user into chat instead of
+   * guessing what they want - deliberately NOT a full recommendation
+   * generated here, see that function's own comment on why. */
+  isMenuPhoto?: boolean;
+  menuHighlights?: string[];
 };
 
 type FoodProfile = {

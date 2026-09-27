@@ -222,6 +222,7 @@ export function DailyReportChatPanel({
   saveError,
   saveSuccess,
   bmiWarning,
+  menuPhotoReply,
   initialTranscriptText,
   isEditing = false,
   editingReportId,
@@ -241,6 +242,12 @@ export function DailyReportChatPanel({
    * plain-text fallback below it) is the primary Daily Report path and
    * previously never received this prop at all. */
   bmiWarning?: string;
+  /** Ticket #4: set instead of saveSuccess when a submitted photo turned
+   * out to be a menu, not a plate of food - shown as a real assistant chat
+   * bubble (see its own push below), not the saveError banner treatment,
+   * since nothing went wrong and the point is to keep the conversation
+   * going. */
+  menuPhotoReply?: string;
   /** The "User: ...\nAssistant: ..." transcript of a previously saved
    * report, when arriving via "Edit entry" - parsed back into chat bubbles
    * so a correction reads as a continuation of that same conversation
@@ -463,7 +470,7 @@ export function DailyReportChatPanel({
   // effect, since setState directly inside an effect body is a lint error
   // here (react-hooks/set-state-in-effect) and would trigger an extra,
   // avoidable render pass anyway.
-  const feedbackKey = `${saveError ?? ""}|${saveSuccess ?? ""}|${bmiWarning ?? ""}`;
+  const feedbackKey = `${saveError ?? ""}|${saveSuccess ?? ""}|${bmiWarning ?? ""}|${menuPhotoReply ?? ""}`;
   const [prevFeedbackKey, setPrevFeedbackKey] = useState(feedbackKey);
   // Whether the error/success/BMI banner below is still worth showing -
   // see its own read at the bottom of this component and setShowFeedback(false)
@@ -480,6 +487,16 @@ export function DailyReportChatPanel({
     setPrevFeedbackKey(feedbackKey);
     setShowFeedback(true);
     if (saveError || saveSuccess || bmiWarning) {
+      setIsOpen(true);
+    }
+    // Ticket #4 fallback: the live chat reply (see MENU CHECK in
+    // lib/ai/daily-report-chat.ts) is the normal way a menu photo gets
+    // caught, before the user ever saves - this only fires if they saved
+    // anyway (e.g. ignored that reply, or it failed to stream). Pushed as a
+    // real, non-localOnly bubble so a follow-up question in this same panel
+    // has it in context, same as any other assistant turn.
+    if (menuPhotoReply) {
+      setMessages((previous) => [...previous, { role: "assistant", content: menuPhotoReply }]);
       setIsOpen(true);
     }
     // The save actually finished (however it resolved) - clear the "saving"

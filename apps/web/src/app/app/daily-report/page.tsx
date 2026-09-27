@@ -932,8 +932,8 @@ export default async function DailyReportPage({
               <p className="mt-4 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600 dark:border-slate-700 dark:text-slate-400">
                 {tr(
                   locale,
-                  "No charts selected. Choose what to show under \"Customize charts\" below.",
-                  "לא נבחרו תרשימים. יש לבחור מה להציג תחת \"התאמת התרשימים\" למטה.",
+                  "No values selected. Choose what to show under \"Customize values to track\" below.",
+                  "לא נבחרו ערכים. יש לבחור מה להציג תחת \"התאמת ערכים למעקב\" למטה.",
                 )}
               </p>
             )}
@@ -961,7 +961,7 @@ export default async function DailyReportPage({
 
             <details className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/60">
               <summary className="cursor-pointer text-sm font-semibold text-teal-700 dark:text-teal-400">
-                {tr(locale, "Customize charts", "התאמת התרשימים")}
+                {tr(locale, "Customize values to track", "התאמת ערכים למעקב")}
               </summary>
               <form action={updateDailyReportChartPreferencesAction} className="mt-3 space-y-4">
                 <div>
@@ -1015,7 +1015,7 @@ export default async function DailyReportPage({
                   type="submit"
                   className="rounded-lg bg-teal-700 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
                 >
-                  {tr(locale, "Save chart preferences", "שמירת העדפות תרשימים")}
+                  {tr(locale, "Save values-to-track preferences", "שמירת העדפות ערכים למעקב")}
                 </button>
               </form>
             </details>
