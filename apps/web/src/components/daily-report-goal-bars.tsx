@@ -46,13 +46,25 @@ function clampPercent(value: number): number {
   return Math.min(100, Math.max(0, value));
 }
 
-function GoalBarRow({ locale, metric }: { locale: AppLocale; metric: RingMetric }) {
+function GoalBarRow({
+  locale,
+  metric,
+  onSelect,
+}: {
+  locale: AppLocale;
+  metric: RingMetric;
+  onSelect?: (metric: RingMetric) => void;
+}) {
   const percent = metric.max > 0 ? clampPercent((metric.total / metric.max) * 100) : 0;
   const burnedAmount =
     metric.grossTotal !== undefined && metric.grossTotal !== metric.total ? metric.grossTotal - metric.total : null;
 
-  return (
-    <div>
+  // TCK-41: tapping a bar asks Daffy (in the floating chat) where today's
+  // value for that metric comes from - inert markup when there's nowhere to
+  // route that (onSelect not provided) so this component still works
+  // standalone, a real button once DailyReportForm wires it up.
+  const rowContent = (
+    <>
       <div className="flex items-center gap-2">
         <span className={`flex-1 text-[13px] font-medium ${isOverLimit(metric) ? "text-rose-700 dark:text-rose-400" : "text-slate-800 dark:text-slate-200"}`}>
           {tr(locale, metric.labelEn, metric.labelHe)}
@@ -99,7 +111,22 @@ function GoalBarRow({ locale, metric }: { locale: AppLocale; metric: RingMetric 
           </span>
         </div>
       ) : null}
-    </div>
+    </>
+  );
+
+  if (!onSelect) {
+    return <div>{rowContent}</div>;
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(metric)}
+      className="block w-full rounded-lg text-start hover:bg-slate-50 dark:hover:bg-slate-800/60"
+      aria-label={tr(locale, `Ask Daffy about ${metric.labelEn}`, `לשאול את דפי לגבי ${metric.labelHe}`)}
+    >
+      {rowContent}
+    </button>
   );
 }
 
@@ -107,10 +134,16 @@ export function DailyReportGoalBars({
   locale,
   coreMetrics,
   extraMetrics,
+  onSelect,
 }: {
   locale: AppLocale;
   coreMetrics: RingMetric[];
   extraMetrics: RingMetric[];
+  /** TCK-41: tapping a bar asks Daffy where today's value came from - wired
+   * up by DailyReportForm (it owns the chat panel this routes into), so
+   * this stays optional and the bars are inert wherever this component is
+   * used without it. */
+  onSelect?: (metric: RingMetric) => void;
 }) {
   const overLimit = [...coreMetrics, ...extraMetrics].filter(isOverLimit);
 
@@ -136,7 +169,7 @@ export function DailyReportGoalBars({
       {coreMetrics.length ? (
         <div className="space-y-3">
           {coreMetrics.map((metric) => (
-            <GoalBarRow key={metric.id} locale={locale} metric={metric} />
+            <GoalBarRow key={metric.id} locale={locale} metric={metric} onSelect={onSelect} />
           ))}
         </div>
       ) : null}
@@ -151,7 +184,7 @@ export function DailyReportGoalBars({
           </summary>
           <div className="mt-3 space-y-3">
             {extraMetrics.map((metric) => (
-              <GoalBarRow key={metric.id} locale={locale} metric={metric} />
+              <GoalBarRow key={metric.id} locale={locale} metric={metric} onSelect={onSelect} />
             ))}
           </div>
         </details>
