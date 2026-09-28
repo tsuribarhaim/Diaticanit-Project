@@ -116,7 +116,9 @@ rather than opaque code.
 
 ### B. Three-stage pipeline
 
-1. **Intent extraction** (Haiku 4.5 or similar small/fast model):
+1. **Intent extraction** (originally proposed as Haiku 4.5 or similar
+   small/fast model; confirmed as Sonnet 5 per decision #5 below, based on
+   the empirical test's quality/latency tradeoff):
    `goal_text` + profile in, a tiny structured diff out — e.g.
    `{sodium: "decrease_slightly", diet_pref: "vegetarian", discrepancy:
    "diet_pref"}`. ~1–1.5s.
@@ -287,6 +289,21 @@ piecemeal.
    that extra structure isn't worth the investment right now.
 4. **Backfill all existing users' Hebrew-only stored plan text to
    English** rather than leaving mixed old/new records.
+5. **Use Sonnet 5, not Haiku 4.5, for pipeline stages (a) and (c).**
+   Per the empirical test (`targets-pipeline-empirical-test-results.md`),
+   Sonnet fixed both minor defects found in Haiku's output (a misspelled
+   JSON key, one stray non-Hebrew character) for only ~1.9s more total
+   latency, while still running ~4.4x faster than the single-call
+   baseline. Haiku may be worth revisiting later once structured outputs
+   and a Hebrew-fluency validation pass are in place.
+6. **Keep the existing single-call path available as a fallback,
+   potentially run in the background even when the fast path serves the
+   user** — not just as the "rules engine doesn't have coverage" escape
+   hatch already described in the rollout plan, but as an ongoing option
+   to get a full, independently-generated response for comparison/audit
+   purposes after the fact. Exact mechanism (always-on shadow run vs.
+   sampled vs. only during the initial rollout window) is not decided
+   yet — to be settled when rollout is actually implemented, not before.
 
 ## Empirical validation (done, before any implementation code)
 
@@ -338,12 +355,12 @@ data contract for anything the new path handles.** Concretely:
   calls.
 - `lib/ai/targets-intent-extraction.ts` — stage (a): builds the trimmed
   prompt (profile + goal_text + the specific current-target fields the
-  request could plausibly touch, not the full blob), calls Haiku 4.5 with
-  **structured outputs / tool use** (closing empirical defect #1 above by
-  construction), returns the typed intent-diff.
+  request could plausibly touch, not the full blob), calls **Sonnet 5**
+  (per decision #5 above) with **structured outputs / tool use** (closing
+  empirical defect #1 above by construction), returns the typed
+  intent-diff.
 - `lib/ai/targets-explanation.ts` — stage (c): given the rules engine's
-  computed facts, calls Haiku 4.5 (or a slightly larger fallback model,
-  see validation below) for the localized free-text fields
+  computed facts, calls **Sonnet 5** for the localized free-text fields
   (`global_coaching_explanation`, `profile_discrepancy_message`, and — for
   habit/exercise entries touched by the diff — either a template-plus-
   connector sentence per the user's own suggestion, or a short LLM pass;
