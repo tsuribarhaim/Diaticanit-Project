@@ -3,6 +3,8 @@ import { extractTargetsIntent } from "@/lib/ai/targets-intent-extraction";
 import { writeTargetsExplanation } from "@/lib/ai/targets-explanation";
 import { applyDeterministicAdjustment, type DecidedFact } from "@/lib/ai/targets-rules-engine";
 import type { AppLocale } from "@/lib/locale";
+import { computeTargetsDiff } from "@/lib/targets-diff";
+import { logServerError } from "@/lib/server-log";
 import type { ProfileForTargets, TargetGenerationPayload } from "@/lib/targets";
 
 /**
@@ -64,4 +66,70 @@ export async function tryFastPathTargetsAdjustment({
   };
 
   return { outcome: "applied", payload, decidedFacts: rulesResult.decidedFacts };
+}
+
+/**
+ * Controls whether runFastPathShadowComparison actually does anything -
+ * defaults OFF (unset/anything other than "true"), so this entire feature
+ * is inert unless a developer deliberately opts in for local shadow-mode
+ * data collection. See docs/design/targets-generation-latency-and-hebrew-redesign.md's
+ * rollout plan §5 - this is step 1 (shadow mode) before any regression
+ * corpus or real traffic exposure.
+ */
+export function isTargetsFastPathShadowEnabled(): boolean {
+  return process.env.TARGETS_FAST_PATH_SHADOW?.toLowerCase() === "true";
+}
+
+/**
+ * Runs the fast path purely for comparison against an already-completed,
+ * already-served full-call result - never affects what any real user sees.
+ * Intended to be invoked via Next's after() at the call site so it adds
+ * zero latency to the real request and can never fail it: every error is
+ * caught and logged, never rethrown. Every outcome (applied-and-matching,
+ * applied-and-different, declined, no_actionable_change, or errored) is
+ * logged via logServerError under the "targets.fast_path_shadow" scope so
+ * real-world coverage/accuracy can be reviewed from Vercel logs before any
+ * decision to actually serve the fast path to real users.
+ */
+export async function runFastPathShadowComparison({
+  config,
+  goalText,
+  profile,
+  locale,
+  currentTargets,
+  fullPathPayload,
+}: {
+  config: AiExtractionConfig;
+  goalText: string;
+  profile: ProfileForTargets;
+  locale: AppLocale;
+  currentTargets: TargetGenerationPayload;
+  /** The real, already-served result from the existing full-call path -
+   * the shadow run's answer is compared against this, never against the
+   * pre-request currentTargets. */
+  fullPathPayload: TargetGenerationPayload;
+}): Promise<void> {
+  const start = Date.now();
+  try {
+    const shadowResult = await tryFastPathTargetsAdjustment({ config, goalText, profile, locale, currentTargets });
+    const elapsedMs = Date.now() - start;
+
+    if (shadowResult.outcome !== "applied") {
+      logServerError("targets.fast_path_shadow", "declined", { outcome: shadowResult.outcome, reason: shadowResult.reason, elapsedMs });
+      return;
+    }
+
+    const diffRows = computeTargetsDiff(fullPathPayload, shadowResult.payload, locale);
+    logServerError("targets.fast_path_shadow", diffRows.length === 0 ? "applied_matching" : "applied_diverged", {
+      elapsedMs,
+      decidedFacts: shadowResult.decidedFacts,
+      diffRowCount: diffRows.length,
+      diffRows,
+    });
+  } catch (error) {
+    logServerError("targets.fast_path_shadow", "errored", {
+      elapsedMs: Date.now() - start,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }

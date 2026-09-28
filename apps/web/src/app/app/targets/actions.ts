@@ -1,11 +1,13 @@
 "use server";
 
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { prepareMedicalContextForTargets } from "@/app/app/documents/actions";
 import { generateTargetsWithAi, NoActionableChangeError } from "@/lib/ai/targets";
 import { getAiExtractionConfig } from "@/lib/ai/env";
+import { isTargetsFastPathShadowEnabled, runFastPathShadowComparison } from "@/lib/ai/targets-fast-path";
 import { getRecentCustomTargetLogs } from "@/lib/daily-report";
 import { normalizeLocale, tr } from "@/lib/locale";
 import { createNotification, markAllTargetsNotificationsRead, markNotificationRead } from "@/lib/notifications";
@@ -143,6 +145,27 @@ export async function generateTargetsPayload({
         onProgress,
       });
       source = "ai";
+
+      // Shadow-mode only (see targets-generation-latency-and-hebrew-redesign.md's
+      // rollout plan) - runs the new fast path purely for comparison
+      // logging against the real, already-served result above. Inert
+      // unless TARGETS_FAST_PATH_SHADOW=true; never affects `payload` or
+      // what the user sees, and never blocks this response (after() runs
+      // once the response has been sent).
+      if (currentTargets && isTargetsFastPathShadowEnabled()) {
+        const shadowPayload = payload;
+        const shadowCurrentTargets = currentTargets;
+        after(() =>
+          runFastPathShadowComparison({
+            config: aiConfig,
+            goalText,
+            profile,
+            locale,
+            currentTargets: shadowCurrentTargets,
+            fullPathPayload: shadowPayload,
+          }),
+        );
+      }
     } catch (error) {
       if (error instanceof NoActionableChangeError) {
         return {
