@@ -549,14 +549,44 @@ route, deleted immediately after)
 All four match the intended v1 scope exactly. `tsc --noEmit` and `eslint`
 are clean across the whole app.
 
+### Shadow mode wired in (2026-09-28, follow-up)
+
+Per the rollout plan's step 1, `generateTargetsPayload` (`targets/actions.ts`
+— the one chokepoint every real caller, both the explicit generate/
+regenerate action and the background profile-change check, already goes
+through) now optionally runs the fast path in the background purely for
+comparison after a real full-call request completes:
+
+- Gated behind `TARGETS_FAST_PATH_SHADOW=true`, unset (off) in every
+  environment today — this is genuinely inert until a developer
+  deliberately turns it on for local data collection.
+- Runs via Next's `after()`, so it adds zero latency to the real request
+  and can never affect the response — the real, full-call result is
+  already decided and sent before the shadow run even starts.
+- Every outcome (a match, a divergence, a decline, a no-op, or an error)
+  is logged via `logServerError` under the `targets.fast_path_shadow`
+  scope, with a full field-by-field diff (reusing the existing
+  `computeTargetsDiff` util) when the fast path applied something.
+- Live-verified end to end: the real response was confirmed unaffected
+  (same source/value/timing) with the flag on, and a correctly-shaped
+  comparison log appeared afterward. The one divergence surfaced in that
+  test was traced to unrealistic synthetic test data (empty exercise/
+  habits arrays), not a real fast-path defect — worth remembering when
+  reading early shadow-mode data: don't trust a single run, and sanity-
+  check any surprising divergence against how realistic the compared
+  plan actually is.
+
+To start collecting real shadow-mode data locally: set
+`TARGETS_FAST_PATH_SHADOW=true` in `.env.local` and use the app normally
+(any Targets adjustment) — comparisons will accumulate in the dev server's
+console output under the `targets.fast_path_shadow` scope. Nothing about
+this requires code changes or redeploying; it's a pure env-var flip.
+
 ### Not done yet
 
-- **Not wired into `generateTargetsWithAi`'s live call path** — no real
-  request (onboarding, the Targets chat, the background check) can reach
-  any of this code today. Wiring it in is the next real step, and per the
-  rollout plan (§5 in "Implementation plan" above) should go through
-  shadow mode and a regression corpus first, not straight to serving real
-  users.
+- **A real regression corpus** — the design's own bar for moving beyond
+  shadow-mode data collection toward actually serving real users (per the
+  rollout plan's step 2). Not started.
 - Canonical-English storage, the backfill script, and the DB schema
   change (`canonical_facts_en`) — not started.
 - `search_keywords` → English — not started (independent, could land
@@ -564,3 +594,6 @@ are clean across the whole app.
 - BMI safety review coverage in the rules engine — explicitly out of
   scope for v1 (see the scope-correction section above); would need its
   own dedicated design/verification pass before being added.
+- Actually flipping the fast path on for any real traffic (even a small
+  percentage) — deliberately not done; per the rollout plan this needs
+  real shadow-mode data plus the regression corpus reviewed first.
