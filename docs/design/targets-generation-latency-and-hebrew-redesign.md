@@ -1,6 +1,11 @@
 # Targets Generation — Latency, Rules Engine & Hebrew Redesign
 
-Status: gathering ideas, design not yet agreed, no implementation started.
+Status: implementation started (2026-09-28). The rules engine, stage (a)
+intent-extraction, and stage (c) explanation modules exist and are
+live-verified end to end against real Sonnet 5 calls, but are NOT wired
+into `generateTargetsWithAi`'s live call path yet - see "Implementation
+progress" near the end of this document for exactly what's built, what
+was deliberately narrowed from the original plan, and what's still ahead.
 
 Related: `docs/design/targets-save-performance-redesign.md` (the earlier
 redesign — quick-apply for literal asks, background full regeneration via
@@ -461,3 +466,101 @@ still be read as context on some paths), populate `canonical_facts_en`:
   independent change to the output-language rule for that one field —
   worth landing early, standalone, since it needs none of the pipeline
   work above.
+
+## Implementation progress (2026-09-28)
+
+Built so far, all additive and none of it wired into any live request path
+yet (see "Not done yet" below):
+
+- `lib/ai/targets-rules-engine.ts` — the deterministic engine (§A/step 2).
+- `lib/ai/targets-intent-extraction.ts` — stage (a), using Sonnet 5 with
+  Anthropic tool-use for a schema-conformant structured diff.
+- `lib/ai/targets-explanation.ts` — stage (c), same model/mechanism.
+- `lib/ai/targets-fast-path.ts` — ties the three together
+  (`tryFastPathTargetsAdjustment`).
+- `lib/ai/provider-client.ts` — gained Anthropic tool-use support (a
+  `tool` param forcing a single required tool call instead of free-form
+  JSON-in-text), closing the misspelled-JSON-key defect found during the
+  empirical test.
+- `lib/targets.ts` — refactored (no behavior change) to export
+  `CONDITION_TIGHTENING`, `DEFAULT_SODIUM_RANGE`,
+  `DEFAULT_ADDED_SUGAR_MAX_G`, and `computeStandingUserTargets`, so the
+  existing heuristic generator and the new rules engine share one source
+  of truth for these numbers instead of duplicating them.
+
+### A real scope correction found while building
+
+While extracting the deterministic pieces, a discrepancy turned up between
+this document's earlier framing and what the app actually does: **there is
+no vegetarian iron ×1.8 / zinc ×1.5 rule anywhere in this codebase** —
+not in the AI prompt (checked directly), not in the existing heuristic
+generator (`lib/targets.ts`, which does have DRI-style iron/zinc logic,
+but only adjusts for sex/pregnancy, never diet). That multiplier was
+introduced by this document's own earlier empirical test as a hand-picked,
+plausible-sounding stand-in fact fed to stage (c) to validate the
+*pipeline's* latency and numeric-fidelity properties — it was never a
+verified existing rule, and the test's writeup didn't flag that
+distinction clearly enough at the time.
+
+Given the "zero impact on business logic" constraint decision-makers
+agreed to, **v1's rules engine does not add this or any other new medical/
+nutrition rule.** It only claims coverage for requests that already have a
+real, existing, verifiable deterministic rule:
+
+1. Hypertension → sodium 1,200–1,500mg, diabetes → added sugar ≤15g (both
+   already existed in the heuristic generator, now shared code).
+2. The three standing `user_targets` defaults (weight/sleep/steps).
+3. A literal, explicit numeric ask (an exact min/max, or a stated
+   weight-loss/gain amount with a duration) — reusing the app's own
+   existing `evaluateTargetWeightSafety` check.
+
+Everything else — vague/qualitative asks ("lower it a bit"), a bare
+"profile changed, please recalculate" note, a new stated medical
+condition/allergy/dietary-preference change, the AI prompt's MANDATORY BMI
+SAFETY REVIEW (raising/lowering calories for an out-of-healthy-range
+current BMI — no deterministic version of this exists yet anywhere), or
+low intent-extraction confidence — **declines coverage and falls back to
+the existing full-call path**, unchanged from today's behavior. This is a
+real, deliberate narrowing of what the fast path covers in v1 versus the
+document's earlier framing, not a reduction in ambition — a wrong
+"covered: true" on medical-adjacent data would be a real regression, not
+just a missed optimization, so the boundary defaults to caution.
+
+A found-and-fixed bug during this same smoke-testing pass, worth recording
+since it's the kind of thing the later regression corpus should guard
+against: the first version of stage (a)'s prompt set `no_actionable_change
+= true` for both a bare "recalculate" note and a vague qualitative ask —
+conflating "no literal number for the fast path" with "genuinely nothing
+to act on." Fixed by narrowing `no_actionable_change` to true off-topic/
+small-talk cases only, and routing every other under-specified case
+through a low confidence score instead, which correctly falls back to the
+full path via the existing confidence gate.
+
+### Live verification (real Sonnet 5 calls, via a temporary diagnostic
+route, deleted immediately after)
+
+| Scenario | Outcome | Time |
+|---|---|---|
+| "Set my sodium max target to 1800mg" | applied, sodium 1500→1800 (min carried forward), explanation numerically exact | ~5–8s |
+| "I want to lose 4kg over the next 60 days" | applied, target weight 63.5→59.5kg, calories 2200-2500→1737-1937 (exact deficit-formula match) | ~5–7s |
+| "profile changed, please recalculate" (bare) | correctly declined (low confidence) → falls back to full path | ~2s to decline |
+| "אני רוצה להוריד קצת את יעד הנתרן שלי" (vague) | correctly declined (low confidence) → falls back to full path | ~2s to decline |
+
+All four match the intended v1 scope exactly. `tsc --noEmit` and `eslint`
+are clean across the whole app.
+
+### Not done yet
+
+- **Not wired into `generateTargetsWithAi`'s live call path** — no real
+  request (onboarding, the Targets chat, the background check) can reach
+  any of this code today. Wiring it in is the next real step, and per the
+  rollout plan (§5 in "Implementation plan" above) should go through
+  shadow mode and a regression corpus first, not straight to serving real
+  users.
+- Canonical-English storage, the backfill script, and the DB schema
+  change (`canonical_facts_en`) — not started.
+- `search_keywords` → English — not started (independent, could land
+  separately at any time).
+- BMI safety review coverage in the rules engine — explicitly out of
+  scope for v1 (see the scope-correction section above); would need its
+  own dedicated design/verification pass before being added.
