@@ -213,6 +213,24 @@ export function applyDeterministicAdjustment({
     if (intent.type === "nutrient_set_value") {
       const keys = NUTRIENT_FIELD_KEYS[intent.field];
       if (!keys) return { covered: false, reason: `Unknown nutrient field: ${intent.field}` };
+
+      // Safety guard, found via real testing against a real diabetic
+      // account: an explicit literal ask must never silently override an
+      // active condition-tightening cap in the unsafe direction (e.g.
+      // "set my added sugar max to 20g" for a diabetic user, whose safe
+      // cap is 15g). There's a genuine, unresolved tension between
+      // "respect the user's literal ask" and "the mandatory safety review
+      // applies even when it isn't the explicit subject of the request" -
+      // this engine has no principled way to arbitrate that, so it
+      // declines and defers to the full AI path's judgment rather than
+      // silently picking a side.
+      if (intent.field === "sodium_mg" && diff.hasHypertension && intent.max !== undefined && intent.max > CONDITION_TIGHTENING.hypertension.sodiumMaxMg) {
+        return { covered: false, reason: "Explicit sodium ask exceeds the active hypertension safety cap - needs full review." };
+      }
+      if (intent.field === "added_sugar_g" && diff.hasDiabetes && intent.max !== undefined && intent.max > CONDITION_TIGHTENING.diabetes.addedSugarMaxG) {
+        return { covered: false, reason: "Explicit added-sugar ask exceeds the active diabetes safety cap - needs full review." };
+      }
+
       const fromMin = next[keys.minKey] as number;
       const fromMax = next[keys.maxKey] as number;
       const clamped = clampRangeSimple(intent.min ?? fromMin, intent.max ?? fromMax);
