@@ -582,6 +582,62 @@ To start collecting real shadow-mode data locally: set
 console output under the `targets.fast_path_shadow` scope. Nothing about
 this requires code changes or redeploying; it's a pure env-var flip.
 
+### Real testing round + a real safety fix (2026-09-28, follow-up)
+
+Two real bugs surfaced from the user's own live phone testing against
+shadow mode (both fixed, both verified):
+
+1. `computeTargetsDiff`'s user-target display doubled the unit suffix
+   (e.g. "62 ק״ג ק״ג") whenever `value` already included it - which both
+   the AI prompt's own convention and `computeStandingUserTargets`'s
+   output do by design. Pre-existing bug (not introduced by this work),
+   only surfaced once a fast-path-generated standing target flowed
+   through this shared diff util. Fixed: only append the unit when it
+   isn't already present in `value`.
+2. A literal calorie-only ask ("set my calories to 2000") was silently
+   applied as a zero-width min=max range with no cascading adjustment to
+   carbs/fats, diverging from the full AI path (which proactively
+   rebalances dependent macros). Fixed by excluding "calories" from the
+   fast path's covered fields entirely - it now correctly declines and
+   falls back to the full path.
+
+Added a second flag, `TARGETS_FAST_PATH_SERVE` (separate from
+`TARGETS_FAST_PATH_SHADOW`), so the fast path can actually be *served*
+(not just logged) for dev-only end-to-end testing - see
+`isTargetsFastPathServeEnabled`/the new block at the top of
+`generateTargetsPayload`'s AI branch in `targets/actions.ts`. Falls
+straight through to the exact same full-call code, unchanged, for
+anything not covered or that errors.
+
+With both flags on, ran a 13-scenario battery directly against the real
+dev-testing account's real profile and real active target plan (read-only
+- `tryFastPathTargetsAdjustment` called directly, nothing persisted),
+covering literal asks across 6 different nutrients in both English and
+Hebrew, weight-loss/gain asks, and the vague/bare-recalculate/off-topic/
+multi-ask decline cases. All 13 behaved correctly (7 applied with
+independently-verified-correct math, 5 declined appropriately, 1 correctly
+flagged no_actionable_change) - **except one, a real, important safety
+gap**: this account has diabetes on file, and "set my added sugar max to
+20g" was silently applied, overriding the diabetes safety tightening
+(15g cap) with zero review - condition tightening ran first in the
+engine, then the explicit-intent loop unconditionally overwrote it.
+
+**Fix:** there's a genuine, unresolved tension between "respect the
+user's literal ask" (the rule `target_weight_kg` explicitly gets) and
+"the safety review applies even when it isn't the explicit subject of the
+request." The rules engine has no principled way to arbitrate that
+itself, so it now **declines coverage** (falls back to the full AI path's
+judgment) whenever an explicit sodium or added-sugar ask would loosen the
+value past the hypertension/diabetes safety cap, rather than silently
+picking a side. Applies symmetrically to both conditions. Re-verified:
+the exact scenario now declines with a clear reason, and a full re-run of
+all 13 scenarios shows no regressions.
+
+This is exactly the category of finding the shadow-mode/serve-mode
+testing infrastructure exists to catch before any real user could be
+affected - worth remembering as a concrete argument for not skipping the
+regression-corpus step before wider exposure, even in dev.
+
 ### Not done yet
 
 - **A real regression corpus** — the design's own bar for moving beyond
