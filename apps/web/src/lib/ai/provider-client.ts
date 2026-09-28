@@ -14,6 +14,21 @@ export type AiChatMessage = {
   content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
 };
 
+/** Forces a structured, schema-conformant JSON response via Claude's tool-
+ * use mechanism (a single tool the model is required to call) instead of
+ * asking for "strict JSON only" in plain text and hoping the model's
+ * free-form text happens to parse and match. Closes a real defect found
+ * during the targets-pipeline empirical test: a small model occasionally
+ * misspelled a JSON key in a free-text response, silently losing that
+ * field to a plain JSON.parse + lookup. Anthropic-only for now - no other
+ * provider configured in this app is exercised against a real account
+ * (see AiChatCompletionProgressParams' own note on this). */
+export type AiToolSchema = {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+};
+
 export type AiChatCompletionParams = {
   config: AiExtractionConfig;
   messages: AiChatMessage[];
@@ -23,6 +38,10 @@ export type AiChatCompletionParams = {
    * existing prompts already ask for "strict JSON only" in plain text,
    * which is sufficient, so this is a no-op for the anthropic provider. */
   jsonMode?: boolean;
+  /** When set (anthropic provider only), forces the response through a
+   * single required tool call matching this schema instead of free-form
+   * text - see AiToolSchema's own doc comment. */
+  tool?: AiToolSchema;
   /** Forwarded to the underlying fetch() for callers that need a
    * request-level timeout (via AbortController). */
   signal?: AbortSignal;
@@ -154,7 +173,7 @@ async function callOpenAiCompatibleChatCompletion({
   return extractOpenAiContentText(payload);
 }
 
-async function callAnthropicChatCompletion({ config, messages, signal }: AiChatCompletionParams): Promise<string> {
+async function callAnthropicChatCompletion({ config, messages, signal, tool }: AiChatCompletionParams): Promise<string> {
   const { system, messages: anthropicMessages } = toAnthropicRequestParts(messages);
 
   const response = await fetch(`${(config.baseUrl || ANTHROPIC_DEFAULT_BASE_URL).replace(/\/+$/, "")}/messages`, {
@@ -182,6 +201,12 @@ async function callAnthropicChatCompletion({ config, messages, signal }: AiChatC
       thinking: { type: "disabled" },
       system,
       messages: anthropicMessages,
+      ...(tool
+        ? {
+            tools: [{ name: tool.name, description: tool.description, input_schema: tool.inputSchema }],
+            tool_choice: { type: "tool", name: tool.name },
+          }
+        : {}),
     }),
     signal,
   });
@@ -191,7 +216,18 @@ async function callAnthropicChatCompletion({ config, messages, signal }: AiChatC
     throw new Error(summarizeTransportError("anthropic", body, response.status));
   }
 
-  const payload = (await response.json()) as { content?: Array<{ type?: string; text?: string }> };
+  const payload = (await response.json()) as {
+    content?: Array<{ type?: string; text?: string; name?: string; input?: unknown }>;
+  };
+
+  if (tool) {
+    const toolUseBlock = (payload.content ?? []).find((block) => block.type === "tool_use" && block.name === tool.name);
+    if (!toolUseBlock) {
+      throw new Error(summarizeTransportError("anthropic", "No matching tool_use block in response", 200));
+    }
+    return JSON.stringify(toolUseBlock.input ?? {});
+  }
+
   return (payload.content ?? [])
     .filter((block) => block.type === "text" && typeof block.text === "string")
     .map((block) => block.text)
