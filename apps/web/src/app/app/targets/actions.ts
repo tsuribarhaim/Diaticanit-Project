@@ -7,7 +7,12 @@ import { redirect } from "next/navigation";
 import { prepareMedicalContextForTargets } from "@/app/app/documents/actions";
 import { generateTargetsWithAi, NoActionableChangeError } from "@/lib/ai/targets";
 import { getAiExtractionConfig } from "@/lib/ai/env";
-import { isTargetsFastPathShadowEnabled, runFastPathShadowComparison } from "@/lib/ai/targets-fast-path";
+import {
+  isTargetsFastPathServeEnabled,
+  isTargetsFastPathShadowEnabled,
+  runFastPathShadowComparison,
+  tryFastPathTargetsAdjustment,
+} from "@/lib/ai/targets-fast-path";
 import { getRecentCustomTargetLogs } from "@/lib/daily-report";
 import { normalizeLocale, tr } from "@/lib/locale";
 import { createNotification, markAllTargetsNotificationsRead, markNotificationRead } from "@/lib/notifications";
@@ -109,6 +114,34 @@ export async function generateTargetsPayload({
 
   if (aiConfig && hasConsent) {
     try {
+      // Fast path first (serve mode only - see
+      // targets-generation-latency-and-hebrew-redesign.md). Only attempted
+      // for an adjustment against an already-locked plan (currentTargets
+      // present); a fresh from-scratch generation always uses the full
+      // call. TARGETS_FAST_PATH_SERVE only ever changes *how* a covered
+      // request is answered - anything it doesn't cover, or that errors,
+      // falls straight through to the exact same full-call code below,
+      // unchanged. Dev-only opt-in flag, off by default everywhere.
+      if (currentTargets && isTargetsFastPathServeEnabled()) {
+        try {
+          const fastResult = await tryFastPathTargetsAdjustment({ config: aiConfig, goalText, profile, locale, currentTargets });
+          if (fastResult.outcome === "applied") {
+            logServerError("targets.fast_path_serve", "applied", { decidedFacts: fastResult.decidedFacts });
+            const safetyRejectionMessage = evaluateTargetWeightSafety(fastResult.payload, profile, locale) ?? undefined;
+            return { payload: fastResult.payload, source: "ai", heuristicReason: null, safetyRejectionMessage };
+          }
+          if (fastResult.outcome === "no_actionable_change") {
+            throw new NoActionableChangeError(fastResult.reason);
+          }
+          logServerError("targets.fast_path_serve", "declined_fallback_to_full", { reason: fastResult.reason });
+        } catch (fastPathError) {
+          if (fastPathError instanceof NoActionableChangeError) throw fastPathError;
+          logServerError("targets.fast_path_serve", "errored_fallback_to_full", {
+            error: fastPathError instanceof Error ? fastPathError.message : String(fastPathError),
+          });
+        }
+      }
+
       const medicalDocumentsContext =
         supabase && userId
           ? await prepareMedicalContextForTargets({ supabase, userId }).catch((error) => {
