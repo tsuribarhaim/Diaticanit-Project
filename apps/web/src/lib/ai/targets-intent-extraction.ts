@@ -15,8 +15,24 @@ import type { ProfileForTargets, TargetGenerationPayload } from "@/lib/targets";
  * fallback for anything it doesn't.
  */
 
+/**
+ * Deliberately EXCLUDES "calories" - found via real shadow-mode data (see
+ * docs/design/targets-generation-latency-and-hebrew-redesign.md's
+ * implementation-progress section): a literal "set my calories to 2000"
+ * ask diverged from the full AI path, which doesn't just patch the one
+ * field - it proactively rebalances carbs/fats to stay coherent with the
+ * new calorie target (matching the full prompt's own "proactively adjust
+ * the DEPENDENT values... to keep the plan coherent" rule), something v1's
+ * rules engine has no macro-cascading logic for. Rather than guess at that
+ * cascade, calorie-specific asks are excluded here entirely so stage (a)
+ * never emits an intent for one, naturally scoring low confidence and
+ * falling back to the full path instead of silently under-adjusting.
+ * protein_g/carbs_g/fats_g remain covered for now (no divergence evidence
+ * against them yet) but are worth continuing to watch in shadow-mode data
+ * for the same kind of cross-field coupling.
+ */
 const NUTRIENT_FIELD_TOKENS = [
-  "calories", "protein_g", "carbs_g", "fats_g", "fiber_g", "sodium_mg", "added_sugar_g", "water_ml",
+  "protein_g", "carbs_g", "fats_g", "fiber_g", "sodium_mg", "added_sugar_g", "water_ml",
   "potassium_mg", "magnesium_mg", "calcium_mg", "iron_mg", "zinc_mg", "vit_c_mg", "vit_b12_mcg", "vit_d_mcg",
   "sat_fat_g", "omega3_g", "cholesterol_mg",
 ] as const satisfies readonly NutrientRangeField[];
@@ -103,6 +119,7 @@ export async function extractTargetsIntent({
       content: [
         "Rules:",
         "- Only emit a nutrient_set_value intent when goal_text states a literal number for that field (a target value, or an explicit min/max) - e.g. \"set my sodium max to 1800mg\" or \"I want at least 30g of fiber\". Never emit one for a vague direction with no number (\"lower my sodium a bit\", \"more protein\"). min and max are each optional - only include the side(s) goal_text actually states a number for (e.g. \"set my sodium max to 1800mg\" only states max; leave min out entirely rather than guessing one).",
+        "- \"calories\" is NOT a valid field for nutrient_set_value (it's deliberately excluded from the allowed list) - a calorie change has real knock-on effects on other macros that this fast classifier cannot safely resolve on its own. If goal_text is literally, only about a calorie number (\"set my calories to 2000\"), do not emit any intent for it and score confidence LOW so it falls back to a full review instead.",
         "- Only emit a weight_goal intent when goal_text states a literal weight change with at least a rough amount or explicit target (e.g. \"lose 5kg\", \"get down to 70kg\", \"gain some muscle mass over 3 months\" - amount can be approximate but must be stated). A bare \"I want to lose weight\" with no amount at all does not qualify - leave it out.",
         "- Set no_actionable_change true ONLY when goal_text describes nothing concrete and in-scope for a health/nutrition/exercise/sleep/hydration/weight plan AT ALL (off-topic like a career/financial goal, pure small talk, or a question already answered in conversation). This is a narrow flag for \"there is nothing here to act on, not even vaguely\" - it is NOT for a real health-related ask that merely lacks a literal number, and it is NOT for a bare \"profile changed\"/\"recalculate\" note (that always has an implicit safety review to run, even with no explicit number - it is real, in-scope work, just not work this fast classifier can itself resolve). When goal_text is genuinely healthcare-relevant but vague/qualitative/lacks a literal number, leave no_actionable_change false, leave intents empty or partial, and instead express that uncertainty through a LOW confidence score (see below) - that is the correct way to signal \"this needs full review\", not no_actionable_change.",
         "- profile_discrepancy: one short English sentence naming both values, only when goal_text clearly states something that factually contradicts a specific user_profile field (age, pregnancy status, a medical condition/medication, dietary preference). Empty string otherwise.",
