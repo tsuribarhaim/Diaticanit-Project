@@ -19,11 +19,12 @@ export type ChatRouterResult =
   | {
       domain: "targets";
       reply: string;
-      changed: boolean;
-      quickApplied?: boolean;
+      /** True when `payload` was already written (a literal, in-range
+       * quick-apply edit). False means the full review is running in the
+       * background and will auto-apply + notify once it's done - there's
+       * nothing left for the caller to apply itself either way. */
+      quickApplied: boolean;
       payload?: TargetGenerationPayload;
-      source?: "ai" | "heuristic";
-      goalText?: string;
     }
   | {
       domain: "daily_report";
@@ -109,11 +110,8 @@ export async function routeChatMessageAction({
     return {
       domain: "targets",
       reply: result.reply,
-      changed: result.changed,
       quickApplied: result.quickApplied,
-      payload: result.payload,
-      source: result.source,
-      goalText: trimmed,
+      payload: result.quickApplied ? result.payload : undefined,
     };
   }
 

@@ -140,8 +140,7 @@ export const targetGenerationPayloadSchema = z
     // targets.ts) - the two were out of sync (2000 here vs. 2500 there)
     // until a real AI response landed right in that gap and failed this
     // schema the first time anything actually validated an AI-generated
-    // payload against it (see runBackgroundTargetsCheck/
-    // approveTargetsDraftAction).
+    // payload against it.
     aiRationaleExplanation: z.string().max(2500),
     confidence: z.number().min(0).max(1),
     assumptions: z.array(z.string().max(500)).max(20),

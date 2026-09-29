@@ -1,11 +1,20 @@
 # Targets Generation — Latency, Rules Engine & Hebrew Redesign
 
-Status: implementation started (2026-09-28). The rules engine, stage (a)
-intent-extraction, and stage (c) explanation modules exist and are
-live-verified end to end against real Sonnet 5 calls, but are NOT wired
-into `generateTargetsWithAi`'s live call path yet - see "Implementation
-progress" near the end of this document for exactly what's built, what
-was deliberately narrowed from the original plan, and what's still ahead.
+**Status: SUPERSEDED (2026-09-29).** After this design's rules engine was
+wired in and tested (see "Implementation progress" below), the user asked
+for a broader rethink of the whole targets-update UX - async background
+processing with auto-apply, no approval step. That investigation found
+the background-check system this doc's rules engine was meant to speed
+up was itself dead code with no live caller (see the new doc for details).
+The user explicitly chose to drop this document's rules engine/mode-
+switch/shadow-mode work rather than carry it into the new design, given
+the async model removes the latency problem's UX urgency regardless of
+which generation path answers a request. See
+`docs/design/targets-background-auto-apply.md` for what was actually
+built. This document is kept as a historical record of the investigation,
+the real empirical findings (the Hebrew/English latency data in
+particular is still accurate and may be useful again later), and the
+reasoning that led to the rules engine before it was superseded.
 
 Related: `docs/design/targets-save-performance-redesign.md` (the earlier
 redesign — quick-apply for literal asks, background full regeneration via
