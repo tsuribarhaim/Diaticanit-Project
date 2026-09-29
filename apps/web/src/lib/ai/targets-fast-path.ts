@@ -81,21 +81,6 @@ export function isTargetsFastPathShadowEnabled(): boolean {
 }
 
 /**
- * Controls whether generateTargetsPayload actually SERVES the fast path's
- * result (when covered) instead of the full call - a real behavior change,
- * unlike shadow mode. Deliberately a separate flag from
- * TARGETS_FAST_PATH_SHADOW so the two can be toggled independently: shadow
- * mode alone for pure comparison logging with zero risk, serve mode for
- * actually experiencing/driving the fast path end to end. Intended for
- * local dev-only testing against a real account before any regression
- * corpus or staging/production exposure - see the rollout plan in
- * targets-generation-latency-and-hebrew-redesign.md.
- */
-export function isTargetsFastPathServeEnabled(): boolean {
-  return process.env.TARGETS_FAST_PATH_SERVE?.toLowerCase() === "true";
-}
-
-/**
  * Runs the fast path purely for comparison against an already-completed,
  * already-served full-call result - never affects what any real user sees.
  * Intended to be invoked via Next's after() at the call site so it adds

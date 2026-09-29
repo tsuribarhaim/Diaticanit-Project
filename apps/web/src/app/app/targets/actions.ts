@@ -8,11 +8,12 @@ import { prepareMedicalContextForTargets } from "@/app/app/documents/actions";
 import { generateTargetsWithAi, NoActionableChangeError } from "@/lib/ai/targets";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import {
-  isTargetsFastPathServeEnabled,
   isTargetsFastPathShadowEnabled,
   runFastPathShadowComparison,
   tryFastPathTargetsAdjustment,
 } from "@/lib/ai/targets-fast-path";
+import { translateTargetsPayload } from "@/lib/ai/targets-translate";
+import { getTargetsUpdateMode } from "@/lib/ai/targets-update-mode";
 import { getRecentCustomTargetLogs } from "@/lib/daily-report";
 import { normalizeLocale, tr } from "@/lib/locale";
 import { createNotification, markAllTargetsNotificationsRead, markNotificationRead } from "@/lib/notifications";
@@ -112,17 +113,20 @@ export async function generateTargetsPayload({
   let payload: TargetGenerationPayload | null = null;
   let source: "ai" | "heuristic" = "heuristic";
 
+  const targetsUpdateMode = getTargetsUpdateMode();
+
   if (aiConfig && hasConsent) {
     try {
-      // Fast path first (serve mode only - see
-      // targets-generation-latency-and-hebrew-redesign.md). Only attempted
-      // for an adjustment against an already-locked plan (currentTargets
-      // present); a fresh from-scratch generation always uses the full
-      // call. TARGETS_FAST_PATH_SERVE only ever changes *how* a covered
-      // request is answered - anything it doesn't cover, or that errors,
-      // falls straight through to the exact same full-call code below,
-      // unchanged. Dev-only opt-in flag, off by default everywhere.
-      if (currentTargets && isTargetsFastPathServeEnabled()) {
+      // "full_change" mode: try the fast path first (see
+      // targets-generation-latency-and-hebrew-redesign.md and
+      // targets-update-mode.ts for the 3-way switch this belongs to).
+      // Only attempted for an adjustment against an already-locked plan
+      // (currentTargets present); a fresh from-scratch generation always
+      // uses the full call. Anything the fast path doesn't cover, or that
+      // errors, falls straight through to the exact same full-call code
+      // below, unchanged - "full_change" can only ever change *how* a
+      // covered request is answered, never add a new failure mode.
+      if (currentTargets && targetsUpdateMode === "full_change") {
         try {
           const fastResult = await tryFastPathTargetsAdjustment({ config: aiConfig, goalText, profile, locale, currentTargets });
           if (fastResult.outcome === "applied") {
@@ -168,16 +172,26 @@ export async function generateTargetsPayload({
             })
           : undefined;
 
+      // "lang_only" mode: generate in English regardless of the user's
+      // real locale (isolates just the Hebrew-generation-latency fix -
+      // see targets-update-mode.ts), then render the free-text fields
+      // into the real locale via a second, smaller call. "full_ai" (and
+      // "full_change"'s fallback) generate directly in the real locale,
+      // exactly as today.
+      const generationLocale = targetsUpdateMode === "lang_only" ? "en" : locale;
       payload = await generateTargetsWithAi({
         config: aiConfig,
         goalText,
         profile,
-        locale,
+        locale: generationLocale,
         currentTargets,
         medicalDocumentsContext: medicalDocumentsContext ?? undefined,
         recentCustomTargetLogs,
         onProgress,
       });
+      if (targetsUpdateMode === "lang_only" && locale !== "en") {
+        payload = await translateTargetsPayload({ config: aiConfig, payload, targetLocale: locale });
+      }
       source = "ai";
 
       // Shadow-mode only (see targets-generation-latency-and-hebrew-redesign.md's
