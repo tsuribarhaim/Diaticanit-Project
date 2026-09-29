@@ -289,7 +289,7 @@ export async function performTargetsLock({
   goalText: string;
   source: "ai" | "heuristic";
   payload: TargetGenerationPayload;
-}): Promise<{ error: string } | { success: true }> {
+}): Promise<{ error: string } | { success: true; version: number; updatedAt: string }> {
   const user = { id: userId };
   // Snapshot the target-relevant profile fields as of right now, so a future
   // visit can detect drift (e.g. a newly recorded medical condition) and
@@ -303,11 +303,19 @@ export async function performTargetsLock({
     .maybeSingle();
   const profileSnapshot = profileRowForSnapshot ? toProfileForTargets(profileRowForSnapshot) : {};
 
-  const { error: deactivateError } = await supabase
+  // .select() after .update() returns the just-deactivated row(s) in the
+  // same round trip - used here only to read the outgoing row's version,
+  // so the new one can increment it (see the version column's own
+  // migration comment - a simple, user-facing counter for "which plan is
+  // this", shown in the header and quoted in review notifications).
+  // Starts at 1 when there's no previous active row (a user's very first
+  // plan, e.g. onboarding).
+  const { data: deactivatedRows, error: deactivateError } = await supabase
     .from("user_target_profiles")
     .update({ is_active: false, sys_end_date: new Date().toISOString() })
     .eq("user_id", user.id)
-    .eq("is_active", true);
+    .eq("is_active", true)
+    .select("version");
 
   if (deactivateError) {
     logServerError("targets.lock", "deactivate_active_profile_failed", {
@@ -317,9 +325,14 @@ export async function performTargetsLock({
     return { error: deactivateError.message };
   }
 
-  const { error: insertError } = await supabase.from("user_target_profiles").insert({
+  const newVersion = (deactivatedRows?.[0]?.version ?? 0) + 1;
+
+  const { data: insertedRows, error: insertError } = await supabase
+    .from("user_target_profiles")
+    .insert({
     user_id: user.id,
     is_active: true,
+    version: newVersion,
     raw_goal_text: goalText,
     goal_type: parsedPayload.goalType,
     target_weight_kg: parsedPayload.targetWeightKg,
@@ -404,7 +417,9 @@ export async function performTargetsLock({
     analysis_source: source,
     generator_version: "targets-v1",
     profile_snapshot: profileSnapshot,
-  });
+  })
+    .select("sys_start_date")
+    .single();
 
   if (insertError) {
     logServerError("targets.lock", "insert_failed", {
@@ -417,7 +432,7 @@ export async function performTargetsLock({
   revalidatePath("/app");
   revalidatePath("/app/targets");
 
-  return { success: true };
+  return { success: true, version: newVersion, updatedAt: insertedRows.sys_start_date };
 }
 
 export async function lockTargetsAction(

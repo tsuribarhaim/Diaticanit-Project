@@ -242,7 +242,10 @@ export async function applyOrCheckFieldEdit({
     }),
   );
 
-  return { applied: true, payload: validated.data };
+  // Attach the just-committed version/timestamp so the caller's optimistic
+  // UI update (onPayloadUpdated) can reflect the new header info instantly,
+  // without waiting for a full page reload to re-fetch it from the DB.
+  return { applied: true, payload: { ...validated.data, version: result.version, updatedAt: result.updatedAt } };
 }
 
 /**

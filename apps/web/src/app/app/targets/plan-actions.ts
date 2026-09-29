@@ -311,7 +311,7 @@ async function runTargetsBackgroundReview({
     // already saw applied.
     const { data: currentActiveRow } = await supabase
       .from("user_target_profiles")
-      .select("id")
+      .select("id, version")
       .eq("user_id", userId)
       .eq("is_active", true)
       .maybeSingle();
@@ -323,8 +323,8 @@ async function runTargetsBackgroundReview({
         severity: "info",
         message: tr(
           locale,
-          "I finished reviewing this, but your plan changed while I was thinking it over, so I didn't want to risk overwriting your update. Ask me to take another look if you'd still like a full review.",
-          "סיימתי לבדוק את זה, אך התוכנית שלך השתנתה בזמן שחשבתי על כך, ולכן לא רציתי לסכן דריסה של העדכון שלך. אפשר לבקש ממני לבדוק שוב אם עדיין תרצה/י סקירה מלאה.",
+          `I reviewed version ${currentTargets.version ?? "?"}, but your plan is now at version ${currentActiveRow?.version ?? "?"} - it changed while I was thinking this over, so I didn't want to risk overwriting your update. Ask me to take another look if you'd still like a full review.`,
+          `בדקתי את גרסה ${currentTargets.version ?? "?"}, אך התוכנית שלך נמצאת כעת בגרסה ${currentActiveRow?.version ?? "?"} - היא השתנתה בזמן שחשבתי על כך, ולכן לא רציתי לסכן דריסה של העדכון שלך. אפשר לבקש ממני לבדוק שוב אם עדיין תרצה/י סקירה מלאה.`,
         ),
         fieldKeys: [],
       });
@@ -371,8 +371,8 @@ async function runTargetsBackgroundReview({
         severity: "info",
         message: tr(
           locale,
-          "I reviewed this and your targets are still accurate as-is - no changes needed.",
-          "בדקתי את זה והיעדים שלך עדיין מדויקים כפי שהם - אין צורך בשינויים.",
+          `I reviewed version ${currentTargets.version ?? "?"} and your targets are still accurate as-is - no changes needed.`,
+          `בדקתי את גרסה ${currentTargets.version ?? "?"} והיעדים שלך עדיין מדויקים כפי שהם - אין צורך בשינויים.`,
         ),
         fieldKeys: [],
       });
@@ -394,7 +394,11 @@ async function runTargetsBackgroundReview({
       .slice(0, 6)
       .map((row) => `${tr(locale, row.labelEn, row.labelHe)}: ${row.before} → ${row.after}`)
       .join("\n");
-    const updatedLabel = tr(locale, "Updated:", "עודכן:");
+    const updatedLabel = tr(
+      locale,
+      `Updated (version ${currentTargets.version ?? "?"} → ${lockResult.version}):`,
+      `עודכן (גרסה ${currentTargets.version ?? "?"} → ${lockResult.version}):`,
+    );
     const message = payload.aiRationaleExplanation
       ? `${payload.aiRationaleExplanation}\n\n${updatedLabel}\n${changeSummary}`
       : tr(locale, `Here's what I updated:\n${changeSummary}`, `הנה מה שעודכן:\n${changeSummary}`);
