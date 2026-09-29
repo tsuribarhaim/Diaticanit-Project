@@ -6,7 +6,7 @@ import type { AppLocale } from "@/lib/locale";
 import type { TargetGenerationPayload } from "@/lib/targets";
 import { NUTRIENT_DIFF_FIELDS } from "@/lib/targets-diff";
 
-function parseJson(text: string): unknown {
+export function parseJson(text: string): unknown {
   const trimmed = text.trim();
   try {
     return JSON.parse(trimmed);
