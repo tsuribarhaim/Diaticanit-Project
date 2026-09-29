@@ -1,5 +1,6 @@
 "use server";
 
+import { after } from "next/server";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
@@ -7,7 +8,8 @@ import { generateTargetsPayload, hasAiTargetsConsent, performTargetsLock } from 
 import { applyOrCheckFieldEdit, type EditableFieldRef } from "@/app/app/targets/edit-actions";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { classifyTargetsFieldEdit } from "@/lib/ai/targets-quick-apply";
-import { formatNumberForLocale, normalizeLocale, tr } from "@/lib/locale";
+import { formatNumberForLocale, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
+import { createNotification, markAllTargetsNotificationsRead } from "@/lib/notifications";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -15,6 +17,7 @@ import {
   targetGenerationPayloadSchema,
   toProfileForTargets,
   TARGET_PROFILE_COLUMNS,
+  type ProfileForTargets,
   type TargetGenerationPayload,
 } from "@/lib/targets";
 import { computeTargetsDiff, NUTRIENT_DIFF_FIELDS } from "@/lib/targets-diff";
@@ -49,30 +52,35 @@ const PROFILE_COLUMNS_FOR_TARGETS =
 export type NegotiateActiveTargetsResult =
   | { error: string }
   | {
-      payload: TargetGenerationPayload;
-      source: "ai" | "heuristic";
-      reply: string;
-      changed: boolean;
       /** True when `payload` has ALREADY been written (the chat quick-
        * apply path below) - the caller should update its own displayed
-       * state immediately rather than showing an Apply/Discard step, the
-       * same way a direct in-range edit doesn't need one either. */
-      quickApplied?: boolean;
+       * state immediately. */
+      quickApplied: true;
+      payload: TargetGenerationPayload;
+      reply: string;
+    }
+  | {
+      /** Nothing beyond quick-apply's narrow scope resolves synchronously
+       * anymore (see this function's own doc comment) - the full review
+       * runs in the background and reports back via a notification once
+       * it's done, auto-applying anything it decides to change. */
+      quickApplied: false;
+      queued: true;
+      reply: string;
     };
 
 /**
- * The standalone Targets page's own chat/negotiation - deliberately the
- * same simple, synchronous shape as the onboarding Targets step's
- * negotiateOnboardingTargetsAction (see that file's own comment on why:
- * no quick-apply/queued distinction, no background job, no notification),
- * rather than the old, more complex SSE-based /api/targets/chat route this
- * page is replacing. The one real difference: this negotiates against the
- * user's CURRENTLY ACTIVE (already locked-in) plan, read fresh from the
- * database rather than held in not-yet-persisted client state, since
- * there's no "finish onboarding" step here - every value on this page is
- * already live. Never writes anything itself; the result is only applied
- * if the caller then calls applyActiveTargetsAction, so a chat message
- * always previews before it changes anything real.
+ * The standalone Targets page's own chat/negotiation. Quick-apply (a
+ * literal, in-range single-field ask) still resolves synchronously and
+ * writes immediately, same as before. Anything beyond that used to make
+ * the user wait synchronously for the full ~50-90s AI call and then
+ * required a second explicit tap to actually save it - both replaced
+ * (per the async-review redesign) by: acknowledge immediately, run the
+ * full review in the background (runTargetsBackgroundReview below), and
+ * auto-apply whatever it decides, reporting back via a notification. No
+ * approval step - the earlier draft/approve design this superseded was
+ * itself already dead code with no live caller by the time this was
+ * built (see docs/design/targets-background-auto-apply.md).
  */
 export async function negotiateActiveTargetsAction({
   message,
@@ -156,7 +164,7 @@ export async function negotiateActiveTargetsAction({
               `Done - ${info.labelEn} is now ${valueText}.`,
               `בוצע - ${info.labelHe} עודכן ל-${valueText}.`,
             );
-            return { payload: editResult.payload, source: "heuristic", reply: doneReply, changed: true, quickApplied: true };
+            return { quickApplied: true, payload: editResult.payload, reply: doneReply };
           }
           // Out of range - fall through to the full negotiate flow below.
           // No separate "want Daffy to check this?" confirmation needed
@@ -172,66 +180,254 @@ export async function negotiateActiveTargetsAction({
     }
   }
 
-  const { payload, source, safetyRejectionMessage, notActionableMessage } = await generateTargetsPayload({
-    goalText: trimmedMessage,
-    profile,
-    locale,
-    aiConfig,
-    hasConsent,
-    currentTargets: currentPayload,
-    supabase,
-    userId: user.id,
-  });
+  // Quick-apply didn't resolve this - queue the full review in the
+  // background instead of making the user wait synchronously for it
+  // (previously ~50-90s, then a second explicit tap to save). Mark this
+  // as the CURRENT request for this user before dispatching, so
+  // runTargetsBackgroundReview can tell whether it's still the latest
+  // one by the time it finishes - see user_target_update_requests' own
+  // migration comment on why this matters (an older, slower request
+  // finishing after a newer one otherwise silently wins).
+  const requestId = crypto.randomUUID();
+  const { error: requestMarkerError } = await supabase
+    .from("user_target_update_requests")
+    .upsert(
+      { user_id: user.id, request_id: requestId, goal_text: trimmedMessage, status: "pending", completed_at: null },
+      { onConflict: "user_id" },
+    );
 
-  if (safetyRejectionMessage) {
-    return { error: safetyRejectionMessage };
+  if (requestMarkerError) {
+    logServerError("targets.negotiateActive", "request_marker_failed", { userId: user.id, error: requestMarkerError.message });
+    return { error: tr(locale, "Something went wrong starting that review. Please try again.", "משהו השתבש בהתחלת הבדיקה. יש לנסות שוב.") };
   }
 
-  if (notActionableMessage) {
-    return { payload: currentPayload, source, reply: notActionableMessage, changed: false };
-  }
-
-  const validated = targetGenerationPayloadSchema.safeParse(payload);
-  if (!validated.success) {
-    logServerError("targets.negotiateActive", "invalid_payload", {
+  after(() =>
+    runTargetsBackgroundReview({
+      supabase,
       userId: user.id,
-      error: validated.error.message,
+      requestId,
+      goalText: trimmedMessage,
+      profile,
+      locale,
+      aiConfig,
+      hasConsent,
+    }),
+  );
+
+  return {
+    quickApplied: false,
+    queued: true,
+    reply: tr(
+      locale,
+      "Got it - let me think this through carefully and make sure your targets are properly tuned. I'll let you know once it's done.",
+      "קיבלתי - תני לי לחשוב על זה כמו שצריך ולוודא שהיעדים שלך מכוונים נכון. אעדכן אותך ברגע שאסיים.",
+    ),
+  };
+}
+
+/**
+ * The slow, thorough half of the async redesign - runs the full AI review
+ * and, if it decides on a real change, applies it automatically (no
+ * approval step - see negotiateActiveTargetsAction's own doc comment) and
+ * notifies the user what changed. Called via Next's after() so it keeps
+ * running once the "I'll think it over" acknowledgment has already gone
+ * out. Every exit path is intentionally silent-on-failure (logged, not
+ * thrown) - there's no request left to fail back to by the time this
+ * runs.
+ */
+async function runTargetsBackgroundReview({
+  supabase,
+  userId,
+  requestId,
+  goalText,
+  profile,
+  locale,
+  aiConfig,
+  hasConsent,
+}: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  userId: string;
+  requestId: string;
+  goalText: string;
+  profile: ProfileForTargets;
+  locale: AppLocale;
+  aiConfig: ReturnType<typeof getAiExtractionConfig>;
+  hasConsent: boolean;
+}): Promise<void> {
+  try {
+    const { data: activeRow } = await supabase
+      .from("user_target_profiles")
+      .select(TARGET_PROFILE_COLUMNS)
+      .eq("user_id", userId)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (!activeRow) return;
+
+    const currentTargets = mapTargetProfileRowToPayload(activeRow);
+
+    const { payload: rawPayload, source, safetyRejectionMessage, notActionableMessage } = await generateTargetsPayload({
+      goalText,
+      profile,
+      locale,
+      aiConfig,
+      hasConsent,
+      currentTargets,
+      supabase,
+      userId,
     });
-    return { error: tr(locale, "Something went wrong checking that change. Please try again.", "משהו השתבש בבדיקת השינוי. יש לנסות שוב.") };
+
+    // Supersession check: if a newer FULL-REVIEW request has replaced this
+    // one while the AI call was running, discard silently - that newer
+    // request's own background review will report back once IT finishes.
+    const { data: latestRequest } = await supabase
+      .from("user_target_update_requests")
+      .select("request_id")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (latestRequest?.request_id !== requestId) return;
+
+    const markComplete = (status: "complete" | "failed") =>
+      supabase
+        .from("user_target_update_requests")
+        .update({ status, completed_at: new Date().toISOString() })
+        .eq("user_id", userId)
+        .eq("request_id", requestId);
+
+    // Staleness check: the supersession check above only catches another
+    // QUEUED request racing this one - it says nothing about a quick-apply
+    // (a direct edit, or a chat ask that resolved to one field) written
+    // in the meantime, since quick-apply never touches
+    // user_target_update_requests at all. Confirmed live as a real bug:
+    // a quick-apply protein change was silently overwritten by a slower,
+    // already-in-flight full review completing afterward, with the
+    // review's own notification not even mentioning protein, since its
+    // snapshot (activeRow, captured at the very start of this function)
+    // predated the quick-apply. The fix: re-check the active row's id
+    // right before acting on anything computed from that now-possibly-
+    // stale snapshot - if it moved, something else was written while this
+    // review was thinking, and applying our stale result now would
+    // silently discard it. Never silently overwrite something the user
+    // already saw applied.
+    const { data: currentActiveRow } = await supabase
+      .from("user_target_profiles")
+      .select("id, version")
+      .eq("user_id", userId)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (currentActiveRow?.id !== activeRow.id) {
+      await createNotification({
+        supabase,
+        userId,
+        targetProfileId: currentActiveRow?.id ?? activeRow.id,
+        severity: "info",
+        message: tr(
+          locale,
+          `I reviewed version ${currentTargets.version ?? "?"}, but your plan is now at version ${currentActiveRow?.version ?? "?"} - it changed while I was thinking this over, so I didn't want to risk overwriting your update. Ask me to take another look if you'd still like a full review.`,
+          `בדקתי את גרסה ${currentTargets.version ?? "?"}, אך התוכנית שלך נמצאת כעת בגרסה ${currentActiveRow?.version ?? "?"} - היא השתנתה בזמן שחשבתי על כך, ולכן לא רציתי לסכן דריסה של העדכון שלך. אפשר לבקש ממני לבדוק שוב אם עדיין תרצה/י סקירה מלאה.`,
+        ),
+        fieldKeys: [],
+      });
+      await markComplete("failed");
+      return;
+    }
+
+    if (safetyRejectionMessage) {
+      await createNotification({
+        supabase,
+        userId,
+        targetProfileId: activeRow.id,
+        severity: "concern",
+        message: safetyRejectionMessage,
+        fieldKeys: [],
+      });
+      await markComplete("failed");
+      return;
+    }
+
+    if (notActionableMessage) {
+      // Nothing concrete was actually asked for - the user already got
+      // the "let me look into this" acknowledgment, and there's genuinely
+      // nothing to report back now.
+      await markComplete("complete");
+      return;
+    }
+
+    const validatedPayload = targetGenerationPayloadSchema.safeParse(rawPayload);
+    if (!validatedPayload.success) {
+      logServerError("targets.backgroundReview", "invalid_generated_payload", { userId, error: validatedPayload.error.message });
+      await markComplete("failed");
+      return;
+    }
+    const payload = validatedPayload.data;
+
+    const diffRows = computeTargetsDiff(currentTargets, payload, locale);
+
+    if (diffRows.length === 0) {
+      await createNotification({
+        supabase,
+        userId,
+        targetProfileId: activeRow.id,
+        severity: "info",
+        message: tr(
+          locale,
+          `I reviewed version ${currentTargets.version ?? "?"} and your targets are still accurate as-is - no changes needed.`,
+          `בדקתי את גרסה ${currentTargets.version ?? "?"} והיעדים שלך עדיין מדויקים כפי שהם - אין צורך בשינויים.`,
+        ),
+        fieldKeys: [],
+      });
+      await markComplete("complete");
+      return;
+    }
+
+    const lockResult = await performTargetsLock({ supabase, userId, goalText, source, payload });
+    if ("error" in lockResult) {
+      logServerError("targets.backgroundReview", "lock_failed", { userId, error: lockResult.error });
+      await markComplete("failed");
+      return;
+    }
+
+    // Same "explanation leads, diff supports" reasoning as the old
+    // synchronous preview reply used - see the git history on this file
+    // for the original comment this was ported from.
+    const changeSummary = diffRows
+      .slice(0, 6)
+      .map((row) => `${tr(locale, row.labelEn, row.labelHe)}: ${row.before} → ${row.after}`)
+      .join("\n");
+    const updatedLabel = tr(
+      locale,
+      `Updated (version ${currentTargets.version ?? "?"} → ${lockResult.version}):`,
+      `עודכן (גרסה ${currentTargets.version ?? "?"} → ${lockResult.version}):`,
+    );
+    const message = payload.aiRationaleExplanation
+      ? `${payload.aiRationaleExplanation}\n\n${updatedLabel}\n${changeSummary}`
+      : tr(locale, `Here's what I updated:\n${changeSummary}`, `הנה מה שעודכן:\n${changeSummary}`);
+
+    // Clear any earlier still-unread targets notifications first (a stale
+    // "still accurate" confirmation, an old profile-discrepancy note) - a
+    // fresh successful save makes them all moot regardless of what they
+    // said. See markAllTargetsNotificationsRead's own comment.
+    await markAllTargetsNotificationsRead({ supabase, userId });
+    await createNotification({
+      supabase,
+      userId,
+      targetProfileId: activeRow.id,
+      severity: "info",
+      message,
+      fieldKeys: [],
+    });
+    await markComplete("complete");
+  } catch (error) {
+    logServerError("targets.backgroundReview", "unhandled_error", {
+      userId,
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+    await supabase
+      .from("user_target_update_requests")
+      .update({ status: "failed", completed_at: new Date().toISOString() })
+      .eq("user_id", userId)
+      .eq("request_id", requestId);
   }
-
-  const diffRows = computeTargetsDiff(currentPayload, validated.data, locale);
-
-  if (diffRows.length === 0) {
-    return {
-      payload: currentPayload,
-      source,
-      reply:
-        validated.data.aiRationaleExplanation ||
-        tr(locale, "I reviewed this and nothing needs to change.", "בדקתי את זה ואין צורך בשינוי."),
-      changed: false,
-    };
-  }
-
-  // The AI's own explanation leads - it's the actual answer to whatever
-  // was asked (including *why* the specific thing asked for didn't
-  // happen, e.g. a declined unsafe calorie jump), which a mechanical diff
-  // list can't convey on its own. Confirmed live as a real gap: a user
-  // asked to raise calories to an unsafe level, the model correctly left
-  // calories untouched but reworded a couple of unrelated fields in the
-  // process, and this used to show ONLY the mechanical "Here's what I'd
-  // update" diff for those incidental changes - with no explanation of
-  // calories at all, reading as if the request had just been ignored.
-  const changeSummary = diffRows
-    .slice(0, 6)
-    .map((row) => `${tr(locale, row.labelEn, row.labelHe)}: ${row.before} → ${row.after}`)
-    .join("\n");
-  const updatedLabel = tr(locale, "Updated:", "עודכן:");
-  const reply = validated.data.aiRationaleExplanation
-    ? `${validated.data.aiRationaleExplanation}\n\n${updatedLabel}\n${changeSummary}`
-    : tr(locale, `Here's what I'd update:\n${changeSummary}`, `הנה מה שהייתי מעדכן:\n${changeSummary}`);
-
-  return { payload: validated.data, source, reply, changed: true };
 }
 
 export type ApplyActiveTargetsState = { error?: string };

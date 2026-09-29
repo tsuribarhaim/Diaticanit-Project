@@ -1,16 +1,21 @@
 "use server";
 
+import { after } from "next/server";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
-import { performTargetsLock } from "@/app/app/targets/actions";
+import { getAiExtractionConfig } from "@/lib/ai/env";
+import { hasAiTargetsConsent, performTargetsLock } from "@/app/app/targets/actions";
+import { verifyQuickAppliedFieldSafety } from "@/lib/ai/targets-quick-apply-verify";
 import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
+import { createNotification } from "@/lib/notifications";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
 import {
   evaluateCustomTargetQuickApplySafety,
   mapTargetProfileRowToPayload,
   targetGenerationPayloadSchema,
+  toProfileForTargets,
   TARGET_PROFILE_COLUMNS,
   type TargetGenerationPayload,
 } from "@/lib/targets";
@@ -222,7 +227,110 @@ export async function applyOrCheckFieldEdit({
   revalidatePath("/app");
   revalidatePath("/app/targets");
   revalidatePath("/app/daily-report");
-  return { applied: true, payload: validated.data };
+
+  // Quiet safety net, entirely non-blocking - see
+  // verifyQuickAppliedChangeInBackground's own comment. Never affects
+  // this response; only ever produces a notification, and only when
+  // something is actually wrong.
+  after(() =>
+    verifyQuickAppliedChangeInBackground({
+      supabase,
+      userId,
+      locale,
+      field,
+      newValue,
+    }),
+  );
+
+  // Attach the just-committed version/timestamp so the caller's optimistic
+  // UI update (onPayloadUpdated) can reflect the new header info instantly,
+  // without waiting for a full page reload to re-fetch it from the DB.
+  return { applied: true, payload: { ...validated.data, version: result.version, updatedAt: result.updatedAt } };
+}
+
+/**
+ * The quiet safety net behind every quick-apply write (both this file's
+ * own direct tap-to-edit and plan-actions.ts's chat quick-apply, which
+ * both funnel through applyOrCheckFieldEdit above). Runs entirely after
+ * the response has already gone out - never blocks or delays the instant
+ * apply. Per the user's explicit requirement: completely silent when
+ * nothing is wrong (no notification, nothing visible at all); a single
+ * "concern" notification only when the targeted safety check
+ * (verifyQuickAppliedFieldSafety) finds something real.
+ */
+async function verifyQuickAppliedChangeInBackground({
+  supabase,
+  userId,
+  locale,
+  field,
+  newValue,
+}: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  userId: string;
+  locale: AppLocale;
+  field: EditableFieldRef;
+  newValue: number;
+}): Promise<void> {
+  try {
+    const aiConfig = getAiExtractionConfig();
+    if (!aiConfig) return;
+    const hasConsent = await hasAiTargetsConsent({ supabase, userId });
+    if (!hasConsent) return;
+
+    const [{ data: profileRow }, { data: activeRow }] = await Promise.all([
+      supabase
+        .from("user_profile")
+        .select(
+          "age, gender, biological_sex, height_cm, weight_kg, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, habits, pregnancy_lactation_status, hot_climate_or_heavy_sweating",
+        )
+        .eq("user_id", userId)
+        .maybeSingle(),
+      supabase.from("user_target_profiles").select("id").eq("user_id", userId).eq("is_active", true).maybeSingle(),
+    ]);
+    if (!profileRow || !activeRow) return;
+
+    const { labelEn, labelHe, unit } = describeEditableField(field);
+    const profile = toProfileForTargets(profileRow);
+
+    const verifyResult = await verifyQuickAppliedFieldSafety({
+      config: aiConfig,
+      profile,
+      fieldLabelEn: labelEn,
+      fieldLabelHe: labelHe,
+      newValue,
+      unit,
+      locale,
+    });
+
+    if (!verifyResult.hasConcern) return;
+
+    await createNotification({
+      supabase,
+      userId,
+      targetProfileId: activeRow.id,
+      severity: "concern",
+      message: verifyResult.concernMessage,
+      fieldKeys: [],
+    });
+  } catch (error) {
+    logServerError("targets.quickApplyVerify", "unhandled_error", {
+      userId,
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+}
+
+/** Plain-language label + unit for a quick-applied field - same display
+ * names used elsewhere (the nutrient table's own labels, or the standing
+ * weight/sleep/steps names). */
+function describeEditableField(field: EditableFieldRef): { labelEn: string; labelHe: string; unit: string } {
+  if (field.kind === "nutrient") {
+    const info = NUTRIENT_DIFF_FIELDS.find((f) => f.labelEn === field.labelEn);
+    return { labelEn: field.labelEn, labelHe: info?.labelHe ?? field.labelEn, unit: info?.unit ?? "" };
+  }
+  if (field.kind === "weight") return { labelEn: "Target Weight", labelHe: "משקל יעד", unit: "kg" };
+  if (field.kind === "sleep") return { labelEn: "Sleep Duration", labelHe: "משך שינה", unit: "h" };
+  return { labelEn: "Daily Steps", labelHe: "צעדים יומיים", unit: "steps" };
 }
 
 /**

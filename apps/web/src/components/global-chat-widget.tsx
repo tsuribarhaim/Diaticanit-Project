@@ -214,13 +214,9 @@ export function GlobalChatWidget({
         return;
       }
 
-      pushMessage({
-        role: "assistant",
-        content: result.reply,
-        pendingChange: result.changed
-          ? { payload: result.payload, source: result.source, goalText, status: "pending" }
-          : undefined,
-      });
+      // Queued for background review - it auto-applies and notifies once
+      // done, so there's nothing pending for the user to approve here.
+      pushMessage({ role: "assistant", content: result.reply });
     } catch {
       pushMessage({
         role: "assistant",
@@ -426,14 +422,9 @@ export function GlobalChatWidget({
         return;
       }
 
-      pushMessage({
-        role: "assistant",
-        content: result.reply,
-        pendingChange:
-          result.changed && result.payload && result.source && result.goalText
-            ? { payload: result.payload, source: result.source, goalText: result.goalText, status: "pending" }
-            : undefined,
-      });
+      // Queued for background review - it auto-applies and notifies once
+      // done, so there's nothing pending for the user to approve here.
+      pushMessage({ role: "assistant", content: result.reply });
     } catch {
       pushMessage({
         role: "assistant",

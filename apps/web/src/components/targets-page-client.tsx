@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import { TargetsPlanEditor } from "@/components/targets-plan-editor";
-import { tr, type AppLocale } from "@/lib/locale";
+import { formatDateTimeForLocale, tr, type AppLocale } from "@/lib/locale";
 import type { TargetGenerationPayload } from "@/lib/targets";
 
 /**
@@ -31,12 +31,42 @@ export function TargetsPageClient({
 }) {
   const [payload, setPayload] = useState(initialPayload);
 
+  // useState(initialPayload) only reads the prop on first mount - a chat-
+  // driven change (GlobalChatWidget, a separate component with no direct
+  // reference to this one's state) has no way to update it other than
+  // router.refresh(), which re-fetches this page's server data but does
+  // NOT by itself reset an already-mounted client component's own state.
+  // Confirmed live as a real gap while adding the version/updated-at
+  // header below: the DB and a full page reload were always correct, but
+  // the on-page header silently kept showing the pre-edit version until
+  // the user manually reloaded - exactly the "hard to tell if it updated"
+  // problem this feature exists to fix. Pure state sync during render
+  // (not a useEffect - see react-hooks/set-state-in-effect), same
+  // prev-value-tracking pattern already used elsewhere in this app. Safe
+  // against racing an optimistic local update: every quick-apply write
+  // already finishes before its caller calls router.refresh(), so by the
+  // time Next.js re-renders with a new initialPayload, it's already
+  // fresher than or equal to whatever's currently in state.
+  const [prevInitialPayload, setPrevInitialPayload] = useState(initialPayload);
+  if (initialPayload !== prevInitialPayload) {
+    setPrevInitialPayload(initialPayload);
+    setPayload(initialPayload);
+  }
+
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-          {firstName ? tr(locale, `${firstName}'s targets`, `היעדים של ${firstName}`) : tr(locale, "Your targets", "היעדים שלך")}
-        </h2>
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+            {firstName ? tr(locale, `${firstName}'s targets`, `היעדים של ${firstName}`) : tr(locale, "Your targets", "היעדים שלך")}
+          </h2>
+          {payload.version !== undefined ? (
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              {tr(locale, `Version ${payload.version}`, `גרסה ${payload.version}`)}
+              {payload.updatedAt ? ` · ${tr(locale, "Updated", "עודכן")} ${formatDateTimeForLocale(payload.updatedAt, locale)}` : ""}
+            </span>
+          ) : null}
+        </div>
         {source === "heuristic" ? (
           <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">
             {tr(
@@ -49,8 +79,8 @@ export function TargetsPageClient({
         <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
           {tr(
             locale,
-            "These are locked in and in effect. Ask Daffy for a change from the chat bubble to preview it before it's applied.",
-            "אלה נעולים ובתוקף. בקשו שינוי מ-Daffy דרך בועת הצ'אט כדי לצפות בו לפני שהוא מוחל.",
+            "These are locked in and in effect. A small edit applies instantly; ask Daffy for anything bigger from the chat bubble and she'll review it and update automatically, then let you know.",
+            "אלה נעולים ובתוקף. שינוי קטן חל באופן מיידי; בקשו מ-Daffy שינוי גדול יותר דרך בועת הצ'אט - היא תבדוק ותעדכן אוטומטית, ותודיע לכם.",
           )}
         </p>
       </div>

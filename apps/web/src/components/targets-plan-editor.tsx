@@ -2,7 +2,7 @@
 
 import { Fragment, useState } from "react";
 
-import { negotiateActiveTargetsAction, applyActiveTargetsAction } from "@/app/app/targets/plan-actions";
+import { negotiateActiveTargetsAction } from "@/app/app/targets/plan-actions";
 import { editTargetFieldAction, type EditableFieldRef } from "@/app/app/targets/edit-actions";
 import { InfoPopoverButton } from "@/components/info-popover";
 import { formatMeasurementUnit, formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
@@ -35,13 +35,9 @@ type Banner =
   | { phase: "outOfRange"; lo: number; hi: number; unit: string; attempted: number; fieldLabelEn: string; fieldLabelHe: string }
   | { phase: "checking" }
   | { phase: "error"; text: string }
-  | {
-      phase: "result";
-      text: string;
-      candidatePayload: TargetGenerationPayload;
-      candidateSource: "ai" | "heuristic";
-      goalText: string;
-    };
+  /** Daffy's full review is running in the background and will auto-apply
+   * + notify once done - nothing left to approve here, just acknowledge. */
+  | { phase: "queued"; text: string };
 
 type FieldState = {
   editing: boolean;
@@ -168,13 +164,11 @@ function BannerView({
   locale,
   onAskDaffy,
   onDismiss,
-  onApply,
 }: {
   banner: Banner | null;
   locale: AppLocale;
   onAskDaffy: () => void;
   onDismiss: () => void;
-  onApply: () => void;
 }) {
   if (!banner) return null;
 
@@ -239,24 +233,18 @@ function BannerView({
     );
   }
 
-  // "result" phase - a real AI response with a change to review.
+  // "queued" phase - the full review is running in the background; it
+  // auto-applies and notifies once done, so this just acknowledges.
   return (
     <div className="mt-2 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-xs dark:border-emerald-800 dark:bg-emerald-950/30">
       <p className="text-emerald-900 dark:text-emerald-300">{banner.text}</p>
-      <div className="mt-2 flex gap-2">
-        <button
-          type="button"
-          onClick={onApply}
-          className="rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
-        >
-          {tr(locale, "Apply this change", "החל שינוי זה")}
-        </button>
+      <div className="mt-2">
         <button
           type="button"
           onClick={onDismiss}
-          className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          className="rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
         >
-          {tr(locale, "Keep as before", "השאר כפי שהיה")}
+          {tr(locale, "OK", "אישור")}
         </button>
       </div>
     </div>
@@ -354,19 +342,14 @@ export function TargetsPlanEditor({
     }
 
     onDaffyMessage(result.reply);
-    patchState(key, {
-      banner: { phase: "result", text: result.reply, candidatePayload: result.payload, candidateSource: result.source, goalText: message },
-    });
-  }
 
-  async function applyBanner(key: string, banner: { candidatePayload: TargetGenerationPayload; candidateSource: "ai" | "heuristic"; goalText: string }) {
-    const result = await applyActiveTargetsAction({ payload: banner.candidatePayload, source: banner.candidateSource, goalText: banner.goalText });
-    if (result.error) {
-      patchState(key, { banner: { phase: "error", text: result.error } });
+    if (result.quickApplied) {
+      onPayloadUpdated(result.payload);
+      patchState(key, { banner: null });
       return;
     }
-    onPayloadUpdated(banner.candidatePayload);
-    patchState(key, { banner: null });
+
+    patchState(key, { banner: { phase: "queued", text: result.reply } });
   }
 
   const weightEntry = payload.userTargets.find((entry) => entry.id === "target_weight");
@@ -432,7 +415,6 @@ export function TargetsPlanEditor({
                 locale={locale}
                 onAskDaffy={() => state.banner?.phase === "outOfRange" && void askDaffy(key, state.banner)}
                 onDismiss={() => dismissBanner(key)}
-                onApply={() => state.banner?.phase === "result" && void applyBanner(key, state.banner)}
               />
             </td>
           </tr>
@@ -569,7 +551,6 @@ export function TargetsPlanEditor({
                           locale={locale}
                           onAskDaffy={() => state.banner?.phase === "outOfRange" && void askDaffy(fieldKey, state.banner)}
                           onDismiss={() => dismissBanner(fieldKey)}
-                          onApply={() => state.banner?.phase === "result" && void applyBanner(fieldKey, state.banner)}
                         />
                       </td>
                     </tr>

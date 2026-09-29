@@ -18,7 +18,7 @@ import { activityLevelOptions } from "@/lib/profile";
 /** Column list for selecting a full `user_target_profiles` row, shared by
  * every query site so `mapTargetProfileRowToPayload` always gets what it needs. */
 export const TARGET_PROFILE_COLUMNS =
-  "id, raw_goal_text, goal_type, target_weight_kg, duration_days, blood_balance_focus, sleep_focus, calories_min, calories_max, protein_min_g, protein_max_g, carbs_min_g, carbs_max_g, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, sodium_min_mg, sodium_max_mg, added_sugar_min_g, added_sugar_max_g, water_min_ml, water_max_ml, potassium_min_mg, potassium_max_mg, magnesium_min_mg, magnesium_max_mg, calcium_min_mg, calcium_max_mg, iron_min_mg, iron_max_mg, zinc_min_mg, zinc_max_mg, vit_c_min_mg, vit_c_max_mg, vit_b12_min_mcg, vit_b12_max_mcg, vit_d_min_mcg, vit_d_max_mcg, sat_fat_min_g, sat_fat_max_g, omega3_min_g, omega3_max_g, cholesterol_min_mg, cholesterol_max_mg, exercise_targets, habits_do, habits_dont, user_targets, ai_rationale_explanation, translation_confidence, analysis_source, sys_start_date, profile_snapshot";
+  "id, version, raw_goal_text, goal_type, target_weight_kg, duration_days, blood_balance_focus, sleep_focus, calories_min, calories_max, protein_min_g, protein_max_g, carbs_min_g, carbs_max_g, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, sodium_min_mg, sodium_max_mg, added_sugar_min_g, added_sugar_max_g, water_min_ml, water_max_ml, potassium_min_mg, potassium_max_mg, magnesium_min_mg, magnesium_max_mg, calcium_min_mg, calcium_max_mg, iron_min_mg, iron_max_mg, zinc_min_mg, zinc_max_mg, vit_c_min_mg, vit_c_max_mg, vit_b12_min_mcg, vit_b12_max_mcg, vit_d_min_mcg, vit_d_max_mcg, sat_fat_min_g, sat_fat_max_g, omega3_min_g, omega3_max_g, cholesterol_min_mg, cholesterol_max_mg, exercise_targets, habits_do, habits_dont, user_targets, ai_rationale_explanation, translation_confidence, analysis_source, sys_start_date, profile_snapshot";
 
 export const targetGoalTypes = ["weight_loss", "weight_gain", "maintain", "general"] as const;
 export type TargetGoalType = (typeof targetGoalTypes)[number];
@@ -140,8 +140,7 @@ export const targetGenerationPayloadSchema = z
     // targets.ts) - the two were out of sync (2000 here vs. 2500 there)
     // until a real AI response landed right in that gap and failed this
     // schema the first time anything actually validated an AI-generated
-    // payload against it (see runBackgroundTargetsCheck/
-    // approveTargetsDraftAction).
+    // payload against it.
     aiRationaleExplanation: z.string().max(2500),
     confidence: z.number().min(0).max(1),
     assumptions: z.array(z.string().max(500)).max(20),
@@ -267,6 +266,18 @@ export type TargetGenerationPayload = {
    * Empty string when there's no detected discrepancy, or for
    * heuristic-sourced payloads (no AI judgment available). */
   profileDiscrepancyMessage: string;
+
+  /** Both undefined for a freshly-generated payload that hasn't been
+   * locked in yet (a preview, or the heuristic generator's own output) -
+   * only meaningful once a plan is actually the active row, populated by
+   * mapTargetProfileRowToPayload from real DB columns. `version` is a
+   * simple counter incremented on every lock-in (see performTargetsLock),
+   * shown in the Targets page header and quoted in background-review
+   * notifications so "which plan did Daffy actually check/commit" has a
+   * concrete answer instead of only a vague timestamp. `updatedAt` is the
+   * row's own sys_start_date. */
+  version?: number;
+  updatedAt?: string;
 };
 
 export type ProfileForTargets = {
@@ -718,6 +729,89 @@ function buildHabits(
   return { habitsDo, habitsDont };
 }
 
+/** Generic (non-condition-adjusted) sodium/added-sugar defaults - the
+ * starting point before CONDITION_TIGHTENING below is applied. Exported so
+ * a deterministic adjustment engine (see lib/ai/targets-rules-engine.ts)
+ * can start from the same baseline this heuristic generator uses, rather
+ * than re-declaring the same numbers a second time. */
+export const DEFAULT_SODIUM_RANGE = { min: 1500, max: 2300 } as const;
+export const DEFAULT_ADDED_SUGAR_MAX_G = 25;
+
+/** The exact numeric tightening this app applies for the two medical
+ * conditions it currently has a stated, deterministic rule for (mirrored
+ * in the AI prompt's own "MANDATORY SAFETY REVIEW" text in
+ * lib/ai/targets.ts - kept in sync manually since one is a prompt string
+ * and the other is code, but the numbers themselves live here as the
+ * single source of truth for anything in code that needs them, including
+ * the deterministic adjustment engine). Only these two conditions have an
+ * actual encoded rule today - anything else the AI prompt asks the model
+ * to judge case-by-case ("apply comparable, clinically-reasonable
+ * tightening for any other stated condition") has no deterministic
+ * equivalent here and must stay on the full AI-judgment path. */
+export const CONDITION_TIGHTENING = {
+  hypertension: { sodiumMinMg: 1200, sodiumMaxMg: 1500 },
+  diabetes: { addedSugarMaxG: 15 },
+} as const;
+
+/** The three standing, always-present user_targets entries (target weight,
+ * sleep, daily steps) and their default values/bands - shared between the
+ * heuristic full-generation path below and the deterministic adjustment
+ * engine (lib/ai/targets-rules-engine.ts), so both apply the exact same
+ * formulas instead of maintaining two copies that could silently drift
+ * apart. Mirrors the AI prompt's own stated defaults in lib/ai/targets.ts
+ * ("user_targets: 3 to 6 entries...") - kept in sync manually for the same
+ * reason as CONDITION_TIGHTENING above. */
+export function computeStandingUserTargets({
+  profile,
+  targetWeightKg,
+  locale,
+}: {
+  profile: ProfileForTargets;
+  /** The plan's own computed/carried target weight, when known - falls
+   * back to the profile's current weight (unchanged) when null, matching
+   * "unchanged for maintain/general" in the AI prompt's own wording. */
+  targetWeightKg: number | null;
+  locale: AppLocale;
+}): UserTargetEntry[] {
+  const userTargets: UserTargetEntry[] = [];
+
+  const targetWeightForDisplay = targetWeightKg ?? round(profile.weight_kg);
+  userTargets.push({
+    label: tr(locale, "Target weight", "משקל יעד"),
+    value: `${formatNumberForLocale(targetWeightForDisplay, locale, { maximumFractionDigits: 1 })} ${formatMeasurementUnit("kg", locale)}`,
+    id: "target_weight",
+    unit: "kg",
+    targetMin: targetWeightForDisplay,
+    targetMax: targetWeightForDisplay,
+    higherIsBetter: true,
+  });
+
+  const sleepHoursTarget = 8;
+  userTargets.push({
+    label: tr(locale, "Sleep duration", "משך שינה"),
+    value: `${sleepHoursTarget} ${tr(locale, "hours", "שעות")}`,
+    id: "sleep_hours",
+    unit: "hours",
+    targetMin: 7,
+    targetMax: 9,
+    higherIsBetter: true,
+  });
+
+  const dailyStepsTarget =
+    profile.activity_level === "sedentary" ? 7000 : profile.activity_level === "active" ? 10000 : 8500;
+  userTargets.push({
+    label: tr(locale, "Daily steps", "צעדים יומיים"),
+    value: `${formatNumberForLocale(dailyStepsTarget, locale)} ${tr(locale, "steps", "צעדים")}`,
+    id: "daily_steps",
+    unit: "steps",
+    targetMin: dailyStepsTarget,
+    targetMax: dailyStepsTarget + 3000,
+    higherIsBetter: true,
+  });
+
+  return userTargets;
+}
+
 export function generateHeuristicTargetProfile({
   freeText,
   profile,
@@ -839,14 +933,14 @@ export function generateHeuristicTargetProfileFromAnalysis({
   const { habitsDo, habitsDont } = buildHabits(profile, goalType, locale);
   const exerciseTargets = buildExerciseTargets(profile, goalType, locale);
 
-  let sodiumMinMg = 1500;
-  let sodiumMaxMg = 2300;
+  let sodiumMinMg: number = DEFAULT_SODIUM_RANGE.min;
+  let sodiumMaxMg: number = DEFAULT_SODIUM_RANGE.max;
   const addedSugarMinG = 0;
-  let addedSugarMaxG = 25;
+  let addedSugarMaxG: number = DEFAULT_ADDED_SUGAR_MAX_G;
 
   if (profile.medical_conditions.includes("hypertension")) {
-    sodiumMinMg = 1200;
-    sodiumMaxMg = 1500;
+    sodiumMinMg = CONDITION_TIGHTENING.hypertension.sodiumMinMg;
+    sodiumMaxMg = CONDITION_TIGHTENING.hypertension.sodiumMaxMg;
     assumptions.push(tr(
       locale,
       "Hypertension noted: sodium range tightened to a lower-sodium target (1,200-1,500 mg).",
@@ -855,7 +949,7 @@ export function generateHeuristicTargetProfileFromAnalysis({
   }
 
   if (profile.medical_conditions.includes("diabetes")) {
-    addedSugarMaxG = 15;
+    addedSugarMaxG = CONDITION_TIGHTENING.diabetes.addedSugarMaxG;
     assumptions.push(tr(
       locale,
       "Diabetes noted: added sugar ceiling lowered to support blood sugar stability.",
@@ -873,45 +967,12 @@ export function generateHeuristicTargetProfileFromAnalysis({
   // Three standing, always-generated targets (see the matching AI prompt
   // rule in lib/ai/targets.ts) - weight, sleep, and steps are suggested
   // for every user by default now, not only when a free-text goal
-  // happens to mention them. targetMin/targetMax are set for the
-  // loggable shape (a numeric input in Daily Report, a ring on Home)
-  // rather than as a meaningful range to display - weight in particular
-  // has no real stored range at all (its future update-validation range
-  // is a live ±10% of whatever the user's latest known weight is, not a
-  // number kept here - see docs/design/onboarding-redesign.md §4).
-  const userTargets: UserTargetEntry[] = [];
-  const targetWeightForDisplay = targetWeightKg ?? round(profile.weight_kg);
-  userTargets.push({
-    label: tr(locale, "Target weight", "משקל יעד"),
-    value: `${formatNumberForLocale(targetWeightForDisplay, locale, { maximumFractionDigits: 1 })} ${formatMeasurementUnit("kg", locale)}`,
-    id: "target_weight",
-    unit: "kg",
-    targetMin: targetWeightForDisplay,
-    targetMax: targetWeightForDisplay,
-    higherIsBetter: true,
-  });
-
-  const sleepHoursTarget = 8;
-  userTargets.push({
-    label: tr(locale, "Sleep duration", "משך שינה"),
-    value: `${sleepHoursTarget} ${tr(locale, "hours", "שעות")}`,
-    id: "sleep_hours",
-    unit: "hours",
-    targetMin: 7,
-    targetMax: 9,
-    higherIsBetter: true,
-  });
-
-  const dailyStepsTarget =
-    profile.activity_level === "sedentary" ? 7000 : profile.activity_level === "active" ? 10000 : 8500;
-  userTargets.push({
-    label: tr(locale, "Daily steps", "צעדים יומיים"),
-    value: `${formatNumberForLocale(dailyStepsTarget, locale)} ${tr(locale, "steps", "צעדים")}`,
-    id: "daily_steps",
-    unit: "steps",
-    targetMin: dailyStepsTarget,
-    targetMax: dailyStepsTarget + 3000,
-    higherIsBetter: true,
+  // happens to mention them. See computeStandingUserTargets for why these
+  // are a shared, exported function rather than inlined here.
+  const userTargets: UserTargetEntry[] = computeStandingUserTargets({
+    profile,
+    targetWeightKg,
+    locale,
   });
 
   if (durationDays !== null) {
@@ -1009,6 +1070,8 @@ type TargetProfileDbRow = {
   user_targets?: unknown;
   ai_rationale_explanation: string | null;
   translation_confidence: number | string | null;
+  version?: number | string | null;
+  sys_start_date?: string | null;
 };
 
 function toNum(value: number | string | null | undefined, fallback = 0): number {
@@ -1137,6 +1200,9 @@ export function mapTargetProfileRowToPayload(row: TargetProfileDbRow): TargetGen
     confidence: toNum(row.translation_confidence, 0.5),
     assumptions: [],
     profileDiscrepancyMessage: "",
+
+    version: row.version === undefined || row.version === null ? undefined : Math.round(toNum(row.version, 1)),
+    updatedAt: row.sys_start_date ?? undefined,
   };
 }
 

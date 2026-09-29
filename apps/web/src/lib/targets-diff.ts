@@ -75,8 +75,17 @@ function userTargetsDiffRows(before: TargetGenerationPayload, after: TargetGener
   const afterByKey = new Map(after.userTargets.map((entry) => [key(entry), entry]));
   const allKeys = new Set([...beforeByKey.keys(), ...afterByKey.keys()]);
 
-  const display = (entry: TargetGenerationPayload["userTargets"][number] | undefined) =>
-    entry ? `${entry.value}${entry.unit ? ` ${formatMeasurementUnit(entry.unit, locale)}` : ""}` : tr(locale, "Not set", "לא מוגדר");
+  const display = (entry: TargetGenerationPayload["userTargets"][number] | undefined) => {
+    if (!entry) return tr(locale, "Not set", "לא מוגדר");
+    if (!entry.unit) return entry.value;
+    // `value` is meant to already be a complete, human-readable string
+    // (both the AI prompt and the heuristic/rules-engine generators write
+    // e.g. "8 hours"/"63.5 ק"ג", not a bare "8") - only append the unit
+    // when it isn't already there, otherwise this doubles it (confirmed
+    // live: "62 ק"ג ק"ג" for a fast-path-generated standing target row).
+    const unitText = formatMeasurementUnit(entry.unit, locale);
+    return entry.value.includes(unitText) ? entry.value : `${entry.value} ${unitText}`;
+  };
 
   for (const entryKey of allKeys) {
     const beforeEntry = beforeByKey.get(entryKey);
