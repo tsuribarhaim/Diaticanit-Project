@@ -205,3 +205,37 @@ heuristic generator.
   of an in-flight call when it's superseded. Not fixed here - flagged as
   a real, known cost tradeoff of the "simple, no in-flight cancellation"
   design.
+
+## Follow-up: quiet safety net for quick-applied changes (2026-09-29)
+
+A gap in the first version of this design, found via the user's own
+direct question: a quick-applied change (instant, in-range) got no
+follow-up review at all, unlike the old dead design's "always run a full
+background check regardless." The real risk: quick-apply only checks a
+new value against the CURRENT min/max band, itself the product of an
+earlier full safety review - if the profile changed since (a new
+condition, a new medication) but no full review has happened yet, that
+band could be stale.
+
+**Fixed**, per the user's explicit requirement (silent when healthy, a
+single notification only when something's genuinely wrong): added
+`verifyQuickAppliedFieldSafety` (`lib/ai/targets-quick-apply-verify.ts`),
+a small, targeted, single-purpose AI call - deliberately NOT a full plan
+regeneration (which would risk flagging harmless run-to-run AI variance
+as a false alarm) - that only asks whether the one just-changed value
+raises a real, specific concern given the user's actual profile. Wired
+once, in `applyOrCheckFieldEdit` (`edit-actions.ts`), via `after()`, so
+both quick-apply entry points (direct tap-to-edit and chat) get it
+automatically, with zero added latency to the instant apply itself.
+
+Verified two ways:
+- A direct call with a contrived diabetic-on-insulin + "added sugar just
+  set to 45g" case correctly flagged a specific, well-written concern
+  ("We noticed your recent change to Added Sugar might be worth
+  reconsidering - 45g is fairly high for someone managing insulin-
+  dependent type 2 diabetes..."); a normal fiber value on the same
+  profile correctly did not.
+- A real quick-apply through the live UI (potassium, a genuinely safe
+  in-range value) produced zero new notifications - confirmed by
+  comparing the notification count and latest id before and after,
+  proving the common case really does stay silent.
