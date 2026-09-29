@@ -152,3 +152,156 @@ export async function translateTargetsPayload({
     }),
   };
 }
+
+/**
+ * EXPERIMENTAL - built to measure option 2 from the design doc's open
+ * question on "lang_only", not yet the production implementation. Same
+ * idea as translateTargetsPayload, but only translates entries that
+ * actually differ from the prior plan (previousPayload) - matched by
+ * modality (exercise) or id (habits/user_targets) - and reuses the prior
+ * plan's own already-localized text for everything unchanged, instead of
+ * translating the full payload regardless of what changed.
+ */
+export async function translateTargetsPayloadScoped({
+  config,
+  payload,
+  previousPayload,
+  targetLocale,
+}: {
+  config: AiExtractionConfig;
+  payload: TargetGenerationPayload;
+  /** The prior, already-localized plan (currentTargets) - unchanged
+   * entries reuse THIS text, never the untranslated English from
+   * `payload`. */
+  previousPayload: TargetGenerationPayload;
+  targetLocale: AppLocale;
+}): Promise<{ result: TargetGenerationPayload; translatedCount: number; skippedCount: number }> {
+  const languageName = targetLocale === "he" ? "Hebrew" : "English";
+
+  const prevExerciseByModality = new Map(previousPayload.exerciseTargets.map((entry) => [entry.modality, entry]));
+  const prevHabitsDoById = new Map(previousPayload.habitsDo.map((entry) => [entry.id, entry]));
+  const prevHabitsDontById = new Map(previousPayload.habitsDont.map((entry) => [entry.id, entry]));
+  const prevUserTargetsById = new Map(previousPayload.userTargets.filter((e) => e.id).map((entry) => [entry.id, entry]));
+
+  const exerciseChanged = payload.exerciseTargets.map((entry) => {
+    const prev = prevExerciseByModality.get(entry.modality);
+    return !prev || prev.frequencyPerWeek !== entry.frequencyPerWeek || prev.durationMinutesPerSession !== entry.durationMinutesPerSession;
+  });
+  const habitsDoChanged = payload.habitsDo.map((entry) => !prevHabitsDoById.has(entry.id));
+  const habitsDontChanged = payload.habitsDont.map((entry) => !prevHabitsDontById.has(entry.id));
+  const userTargetsChanged = payload.userTargets.map((entry) => {
+    const prev = entry.id ? prevUserTargetsById.get(entry.id) : undefined;
+    return !prev || prev.targetMin !== entry.targetMin || prev.targetMax !== entry.targetMax || prev.unit !== entry.unit;
+  });
+
+  const changedFlags = [...exerciseChanged, ...habitsDoChanged, ...habitsDontChanged, ...userTargetsChanged];
+  // +1 for global_coaching_explanation, which is always translated fresh
+  // every call (it's per-request content, not something to carry forward).
+  const translatedCount = changedFlags.filter(Boolean).length + 1;
+  const skippedCount = changedFlags.filter((c) => !c).length;
+
+  const messages = [
+    {
+      role: "system" as const,
+      content:
+        "You are a precise translation step in a nutrition coaching pipeline. All content was already generated and safety-reviewed in English - your ONLY job is to render the given free-text fields into the target language, preserving meaning and tone exactly. Never change a number, add or remove information, or alter any recommendation. Call the translate_targets_text tool exactly once with your answer.",
+    },
+    {
+      role: "user" as const,
+      content: [
+        `Translate every field below into ${languageName}. Address the user directly in second person ("you"/"your"). Never third person.`,
+        targetLocale === "he"
+          ? 'In Hebrew specifically, prefer gender-neutral or mixed-form second-person phrasing (e.g. "שלך", "את/ה") over a gendered third-person construction.'
+          : "",
+        "Echo back the same `index` values given below unchanged, so each translation maps back to the right entry. Only entries that changed from the prior plan are included below - there is nothing else to translate.",
+        "",
+        `global_coaching_explanation:\n${payload.aiRationaleExplanation}`,
+        `profile_discrepancy_message:\n${payload.profileDiscrepancyMessage || "(empty)"}`,
+        "",
+        "exercise_notes (JSON, changed entries only):",
+        JSON.stringify(
+          payload.exerciseTargets
+            .map((entry, index) => ({ index, ai_adjustment_note: entry.aiAdjustmentNote, changed: exerciseChanged[index] }))
+            .filter((e) => e.changed)
+            .map(({ index, ai_adjustment_note }) => ({ index, ai_adjustment_note })),
+        ),
+        "habits_do (JSON, changed entries only):",
+        JSON.stringify(
+          payload.habitsDo
+            .map((entry, index) => ({ index, habit_instruction: entry.habitInstruction, rationale: entry.rationale, changed: habitsDoChanged[index] }))
+            .filter((e) => e.changed)
+            .map(({ index, habit_instruction, rationale }) => ({ index, habit_instruction, rationale })),
+        ),
+        "habits_dont (JSON, changed entries only):",
+        JSON.stringify(
+          payload.habitsDont
+            .map((entry, index) => ({ index, habit_instruction: entry.habitInstruction, rationale: entry.rationale, changed: habitsDontChanged[index] }))
+            .filter((e) => e.changed)
+            .map(({ index, habit_instruction, rationale }) => ({ index, habit_instruction, rationale })),
+        ),
+        "user_targets (JSON, changed entries only) - label/value only, never touch id/unit/targetMin/targetMax:",
+        JSON.stringify(
+          payload.userTargets
+            .map((entry, index) => ({ index, label: entry.label, value: entry.value, changed: userTargetsChanged[index] }))
+            .filter((e) => e.changed)
+            .map(({ index, label, value }) => ({ index, label, value })),
+        ),
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    },
+  ];
+
+  const contentText = await callAiChatCompletion({
+    config,
+    messages,
+    tool: { name: TOOL_NAME, description: "Translate only the changed free-text fields of an already-decided targets plan.", inputSchema: TOOL_INPUT_SCHEMA },
+    timeoutMs: 60_000,
+  });
+
+  const raw = translationOutputSchema.parse(JSON.parse(contentText));
+
+  const exerciseNoteByIndex = new Map(raw.exercise_notes.map((entry) => [entry.index, entry.ai_adjustment_note]));
+  const habitsDoByIndex = new Map(raw.habits_do.map((entry) => [entry.index, entry]));
+  const habitsDontByIndex = new Map(raw.habits_dont.map((entry) => [entry.index, entry]));
+  const userTargetsByIndex = new Map(raw.user_targets.map((entry) => [entry.index, entry]));
+
+  const result: TargetGenerationPayload = {
+    ...payload,
+    aiRationaleExplanation: raw.global_coaching_explanation,
+    profileDiscrepancyMessage: raw.profile_discrepancy_message,
+    exerciseTargets: payload.exerciseTargets.map((entry, index) => {
+      if (!exerciseChanged[index]) {
+        const prev = prevExerciseByModality.get(entry.modality);
+        return prev ? { ...entry, aiAdjustmentNote: prev.aiAdjustmentNote } : entry;
+      }
+      return { ...entry, aiAdjustmentNote: exerciseNoteByIndex.get(index) ?? entry.aiAdjustmentNote };
+    }),
+    habitsDo: payload.habitsDo.map((entry, index) => {
+      if (!habitsDoChanged[index]) {
+        const prev = prevHabitsDoById.get(entry.id);
+        return prev ? { ...entry, habitInstruction: prev.habitInstruction, rationale: prev.rationale } : entry;
+      }
+      const translated = habitsDoByIndex.get(index);
+      return translated ? { ...entry, habitInstruction: translated.habit_instruction, rationale: translated.rationale } : entry;
+    }),
+    habitsDont: payload.habitsDont.map((entry, index) => {
+      if (!habitsDontChanged[index]) {
+        const prev = prevHabitsDontById.get(entry.id);
+        return prev ? { ...entry, habitInstruction: prev.habitInstruction, rationale: prev.rationale } : entry;
+      }
+      const translated = habitsDontByIndex.get(index);
+      return translated ? { ...entry, habitInstruction: translated.habit_instruction, rationale: translated.rationale } : entry;
+    }),
+    userTargets: payload.userTargets.map((entry, index) => {
+      if (!userTargetsChanged[index]) {
+        const prev = entry.id ? prevUserTargetsById.get(entry.id) : undefined;
+        return prev ? { ...entry, label: prev.label, value: prev.value } : entry;
+      }
+      const translated = userTargetsByIndex.get(index);
+      return translated ? { ...entry, label: translated.label, value: translated.value } : entry;
+    }),
+  };
+
+  return { result, translatedCount, skippedCount };
+}
