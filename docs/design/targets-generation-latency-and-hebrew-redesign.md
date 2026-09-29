@@ -638,6 +638,63 @@ testing infrastructure exists to catch before any real user could be
 affected - worth remembering as a concrete argument for not skipping the
 regression-corpus step before wider exposure, even in dev.
 
+### 3-way production rollback switch (2026-09-29, follow-up)
+
+Per the user's request, added `TARGETS_UPDATE_MODE` (defaults to
+`full_ai` for any unset/unrecognized value) so production can be dialed
+back a step at a time instead of an all-or-nothing switch:
+
+- `full_ai` — today's exact behavior, unchanged. The safety net.
+- `lang_only` — the same full call/schema/safety-review as `full_ai`,
+  forced to generate in English, then a second call
+  (`targets-translate.ts`) renders the free-text fields into the user's
+  real locale. Intended to isolate just the Hebrew-generation-latency fix
+  from the rules-engine changes.
+- `full_change` — the complete pipeline already built and tested
+  (`targets-fast-path.ts`), falling back to `full_ai` for anything it
+  doesn't cover.
+
+This replaces the earlier boolean `TARGETS_FAST_PATH_SERVE` flag
+entirely (`full_change` mode supersedes it). `TARGETS_FAST_PATH_SHADOW`
+stays as a separate, still-useful dev-testing tool, orthogonal to which
+mode is actually serving.
+
+**A real, somewhat disappointing finding from live-testing all three
+modes against the same real request on the real dev-testing account:**
+`lang_only` was NOT faster than `full_ai` for this real, content-rich
+payload — **65.8s vs 25.1s**, the opposite of its intended purpose.
+`full_change` stayed clearly fast (9.7s). All three produced the
+identical, correct result (a literal potassium range change), so this is
+purely a speed finding, not a correctness one.
+
+**Why:** translating a full payload's worth of free text (multiple
+exercise notes, up to 8 habits with instruction+rationale each, the
+global explanation, user-target labels/values) turns out to require
+producing nearly as much Hebrew output as the original generation would
+have — the translation step pays close to the same Hebrew-output-
+throughput cost the design's own earlier measurement found, *in addition
+to* paying the English generation's own cost up front. The original
+Hebrew-vs-English measurement this mode was built on measured a single
+call's total output; it didn't account for translation-of-verbose-content
+turning out to cost nearly as much as generation-of-that-same-content in
+the target language.
+
+**Open product question, not yet decided:** what to do with `lang_only`
+given this. Options, not yet chosen between:
+1. Keep it anyway as a middle rollback rung, accepting it isn't actually
+   faster - it would still isolate "is the rules engine specifically the
+   problem" from "is something about the language handling the problem,"
+   which has diagnostic value independent of speed.
+2. Shrink what `lang_only` translates - e.g. only translate fields that
+   actually differ from `current_active_targets` (mirroring how the
+   `full_change` pipeline's own stage (c) only explains a small decided
+   diff) rather than the full payload's every free-text field regardless
+   of whether it changed. This would meaningfully change the mode's
+   design, moving it closer to `full_change`'s approach.
+3. Drop `lang_only` and keep only the two proven rungs (`full_ai` safety
+   net, `full_change` the real win) - simpler, but loses the "isolate the
+   language fix from the rules-engine change" diagnostic value entirely.
+
 ### Not done yet
 
 - **A real regression corpus** — the design's own bar for moving beyond
