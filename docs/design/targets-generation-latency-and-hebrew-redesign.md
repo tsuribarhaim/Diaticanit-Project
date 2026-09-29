@@ -695,6 +695,48 @@ given this. Options, not yet chosen between:
    net, `full_change` the real win) - simpler, but loses the "isolate the
    language fix from the rules-engine change" diagnostic value entirely.
 
+### Option 2 measured (2026-09-29, follow-up)
+
+Built `translateTargetsPayloadScoped` (`targets-translate.ts`) - same idea
+as the full translation, but only translates entries that actually
+changed vs. the prior plan (matched by modality for exercise, id for
+habits/user_targets), reusing the prior plan's own already-localized text
+for everything unchanged, instead of translating the full payload
+regardless. Measured against the identical real request used for the
+`full_ai`/`lang_only`/`full_change` comparison above:
+
+| Approach | Time | Notes |
+|---|---|---|
+| `full_ai` (baseline) | 25.1s | Today's exact behavior |
+| `lang_only`, naive full translation | 65.8s | Translates every free-text field regardless of change |
+| `lang_only`, scoped translation | **33.3s** (18.6s English generation + 14.6s translation) | Only 1 of 14 translatable entries had actually changed (the explanation); the other 13 were correctly detected as unchanged and reused verbatim from the prior plan |
+| `full_change` (for reference) | 9.7–10.0s | |
+
+**Scoped translation roughly halves the naive approach's time (65.8s →
+33.3s)**, confirming option 2's core idea works as intended - most of a
+real adjustment genuinely only touches a small part of the plan, and not
+re-translating the untouched 13/14 entries is real, measured savings.
+
+**But it's still slower than just doing `full_ai` in Hebrew directly**
+(33.3s vs 25.1s), because the English generation call itself (18.6s) is
+now the dominant remaining cost, and that call is not meaningfully faster
+than generating the same request directly in Hebrew was in this same test
+(25.1s) - the earlier ~2x Hebrew/English penalty measurement doesn't
+reproduce as reliably on every real request as the original controlled
+test suggested; real-world run-to-run variance is substantial. Scoped
+translation removes the *translation* overhead almost entirely, but
+`lang_only`'s ceiling is fundamentally bounded by the cost of the
+English-language full-schema call itself, which this option does nothing
+to reduce - only `full_change`'s fundamentally smaller calls (a tiny
+intent diff in, a short explanation out) address that.
+
+**Implication for the three options above:** option 2 is real and roughly
+doubles `lang_only`'s speed, but does not make `lang_only` reliably faster
+than `full_ai` on real requests - so it improves `lang_only` without
+fully solving the original problem it was meant to solve. This is
+useful, real data for deciding between the three options, but doesn't
+obviously settle the question on its own.
+
 ### Not done yet
 
 - **A real regression corpus** — the design's own bar for moving beyond
