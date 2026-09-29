@@ -737,6 +737,51 @@ fully solving the original problem it was meant to solve. This is
 useful, real data for deciding between the three options, but doesn't
 obviously settle the question on its own.
 
+### `lang_only` dropped; full_ai-vs-full_change re-measured directly (2026-09-29, follow-up)
+
+Given the above, the user decided to drop `lang_only` and asked what the
+real timing impact looks like keeping only `full_ai` (direct Hebrew, as
+today) and `full_change` (the rules-engine pipeline, which was already
+generating its explanation directly in Hebrew all along - no English
+round-trip in that pipeline to begin with, unlike `lang_only`). Measured
+fresh, on four new real Hebrew/mixed-language requests against the same
+real account, both modes back to back per request:
+
+| Request | `full_ai` | `full_change` | Speedup |
+|---|---|---|---|
+| "At least 32g of fiber a day" (he) | 54.8s | 11.7s | **4.7x** |
+| "Set my sodium max to 1650mg" (he) | 52.1s | 53.9s | **1.0x - declined, fell back** |
+| "Set my calcium target 900-1100mg" (en) | 49.2s | 11.0s | **4.5x** |
+| "Lose 2kg over the next 30 days" (he) | 53.8s | 57.7s | **1.0x - declined, fell back** |
+
+Two of the four show a large, real 4.5-4.7x speedup. The other two show
+**no improvement, not a bug** - both are the rules engine's safety guard
+correctly engaging: the sodium ask (1650mg) exceeds this account's active
+hypertension cap (1500mg, from `CONDITION_TIGHTENING`) so it declines per
+the safety-conflict fix from earlier testing; the weight-loss ask
+apparently pushes projected BMI into an unsafe zone, tripping
+`evaluateTargetWeightSafety` the same way the full path's own independent
+check would. In both cases `full_change` correctly falls back to the
+exact same full call `full_ai` would have run - **never slower than
+today's behavior, only ever faster when it's safely confident.**
+
+**Practical implication:** real-world average speedup depends on how much
+of actual traffic falls into safely-deterministic territory vs. genuinely
+needing full review - not a single fixed multiplier. This is exactly what
+the still-pending regression corpus and continued shadow-mode data
+collection are for: getting a real sense of that mix before deciding how
+much of production traffic could realistically benefit.
+
+Also notable: `full_ai` itself ran 49-55s on these four requests, well
+above the 24-25s seen on the earlier potassium request on this same
+account - confirming (again) that the full call's own latency has real,
+substantial request-to-request variance, not a fixed baseline.
+
+**Decision:** `TARGETS_UPDATE_MODE` stays a 2-way effective choice in
+practice (`full_ai`, `full_change`) - `lang_only` remains implemented in
+code (harmless, unused) but is not a live rollout option going forward
+unless revisited later.
+
 ### Not done yet
 
 - **A real regression corpus** — the design's own bar for moving beyond
