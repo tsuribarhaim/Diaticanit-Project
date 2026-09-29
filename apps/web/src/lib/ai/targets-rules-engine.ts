@@ -243,10 +243,10 @@ export function applyDeterministicAdjustment({
       if (intent.direction === "maintain") {
         continue;
       }
-      const deltaKg = intent.deltaKg ?? 2;
+      const fallbackDeltaKg = intent.deltaKg ?? 2;
       const durationDays = intent.durationDays ?? (intent.direction === "lose" ? 60 : 90);
       const targetWeightKg =
-        intent.targetWeightKg ?? Math.round((profile.weight_kg + (intent.direction === "lose" ? -deltaKg : deltaKg)) * 10) / 10;
+        intent.targetWeightKg ?? Math.round((profile.weight_kg + (intent.direction === "lose" ? -fallbackDeltaKg : fallbackDeltaKg)) * 10) / 10;
 
       const candidatePayload: TargetGenerationPayload = { ...next, targetWeightKg };
       const safetyMessage = evaluateTargetWeightSafety(candidatePayload, profile, locale);
@@ -259,6 +259,16 @@ export function applyDeterministicAdjustment({
         // will produce the same rejection through its own existing check.
         return { covered: false, reason: safetyMessage };
       }
+
+      // The calorie math must be driven by the ACTUAL gap being applied
+      // (resolved targetWeightKg vs the real current weight), never by
+      // intent.deltaKg in isolation - found via real testing: an explicit
+      // "reach 70kg" ask with no separately-stated delta amount silently
+      // fell back to fallbackDeltaKg's default of 2kg for the calorie
+      // calculation alone, even though the real implied change was much
+      // larger, producing an internally inconsistent plan (a big target
+      // jump paired with a calorie surplus sized for a 2kg change).
+      const deltaKg = Math.abs(targetWeightKg - profile.weight_kg) || fallbackDeltaKg;
 
       const dailyKcalDelta = Math.round(
         Math.min(900, Math.max(200, (deltaKg * WEIGHT_LOSS_DAILY_DEFICIT_KCAL_PER_KG_PER_DAY) / durationDays)),

@@ -130,12 +130,13 @@ export async function runFastPathShadowComparison({
     const elapsedMs = Date.now() - start;
 
     if (shadowResult.outcome !== "applied") {
-      logServerError("targets.fast_path_shadow", "declined", { outcome: shadowResult.outcome, reason: shadowResult.reason, elapsedMs });
+      logServerError("targets.fast_path_shadow", "declined", { goalText, outcome: shadowResult.outcome, reason: shadowResult.reason, elapsedMs });
       return;
     }
 
     const diffRows = computeTargetsDiff(fullPathPayload, shadowResult.payload, locale);
     logServerError("targets.fast_path_shadow", diffRows.length === 0 ? "applied_matching" : "applied_diverged", {
+      goalText,
       elapsedMs,
       decidedFacts: shadowResult.decidedFacts,
       diffRowCount: diffRows.length,
@@ -143,6 +144,7 @@ export async function runFastPathShadowComparison({
     });
   } catch (error) {
     logServerError("targets.fast_path_shadow", "errored", {
+      goalText,
       elapsedMs: Date.now() - start,
       error: error instanceof Error ? error.message : String(error),
     });

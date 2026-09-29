@@ -126,17 +126,18 @@ export async function generateTargetsPayload({
         try {
           const fastResult = await tryFastPathTargetsAdjustment({ config: aiConfig, goalText, profile, locale, currentTargets });
           if (fastResult.outcome === "applied") {
-            logServerError("targets.fast_path_serve", "applied", { decidedFacts: fastResult.decidedFacts });
+            logServerError("targets.fast_path_serve", "applied", { goalText, decidedFacts: fastResult.decidedFacts });
             const safetyRejectionMessage = evaluateTargetWeightSafety(fastResult.payload, profile, locale) ?? undefined;
             return { payload: fastResult.payload, source: "ai", heuristicReason: null, safetyRejectionMessage };
           }
           if (fastResult.outcome === "no_actionable_change") {
             throw new NoActionableChangeError(fastResult.reason);
           }
-          logServerError("targets.fast_path_serve", "declined_fallback_to_full", { reason: fastResult.reason });
+          logServerError("targets.fast_path_serve", "declined_fallback_to_full", { goalText, reason: fastResult.reason });
         } catch (fastPathError) {
           if (fastPathError instanceof NoActionableChangeError) throw fastPathError;
           logServerError("targets.fast_path_serve", "errored_fallback_to_full", {
+            goalText,
             error: fastPathError instanceof Error ? fastPathError.message : String(fastPathError),
           });
         }
