@@ -276,3 +276,49 @@ slower review correctly detected the staleness and sent the new
 "changed while I was reviewing" notification instead of overwriting -
 `user_target_update_requests.status` read `failed`, confirming nothing
 was silently applied.
+
+## Follow-up: version number + last-updated header (2026-09-29)
+
+The user's own request after the race-condition fix: with several async
+notifications now possible, it was "very hard to follow" which plan
+Daffy actually checked vs. what she committed. Added a simple, user-
+facing `version` integer on `user_target_profiles` (incremented by
+`performTargetsLock` on every lock-in, quick-apply or full review alike;
+1 for a user's first-ever plan) plus the row's existing `sys_start_date`
+as "updated at" - no new timestamp column needed.
+
+- Targets page header now shows "Version N - Updated <date/time>".
+- The staleness guard from the previous race fix now compares versions
+  instead of an opaque row id - simpler, and directly quotable.
+- Notifications now name real version numbers: "I reviewed version 4,
+  but your plan is now at version 5 - it changed while I was thinking
+  this over..."; "Updated (version 4 -> 5): ...".
+- `applyOrCheckFieldEdit` attaches the freshly-committed version/
+  timestamp onto the payload it returns, so a quick-apply reflects the
+  new header instantly rather than only after a reload.
+
+**A second, separate gap found while verifying this live:** a chat-
+driven quick-apply (`GlobalChatWidget`, mounted separately from
+`TargetsPageClient` with no direct reference to its state) had no way to
+update the page's own state other than `router.refresh()` - which
+re-fetches fresh server data but does NOT by itself reset an already-
+mounted client component's `useState(initialPayload)`. The header (and
+everything else on the page) stayed visibly stale until a manual reload,
+directly undermining the point of this feature. Fixed with the same pure
+render-time state-sync pattern already used elsewhere in this app
+(compare against a tracked previous prop value in the render body, not a
+`useEffect` - the codebase's own `react-hooks/set-state-in-effect` lint
+rule caught the first, incorrect attempt at this).
+
+Also fixed in passing: the Targets page's own subtitle text was still
+describing the old manual-approval flow ("preview it before it's
+applied") - stale copy left over from before the auto-apply redesign,
+noticed while touching this same header block.
+
+**Live-verified:** version incremented correctly across several real
+quick-applies (1 through 6, matching the real number of lock-ins run
+during testing); the header updates instantly after a chat-driven change
+with no reload needed (confirmed after an initially-flawed Playwright
+locator made it look otherwise - a real underlying data value, potassium,
+was independently confirmed to update live at the same time, proving the
+data flow itself was never broken, only the first test's own selector).
