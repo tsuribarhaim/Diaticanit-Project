@@ -239,3 +239,40 @@ Verified two ways:
   in-range value) produced zero new notifications - confirmed by
   comparing the notification count and latest id before and after,
   proving the common case really does stay silent.
+
+## Follow-up: a real race - slow review silently overwrote a quick-apply (2026-09-29)
+
+Found via the user's own direct question after noticing a real symptom
+(a minor fat-level edit that "didn't change, then later did"). The
+earlier supersession guard (`user_target_update_requests`) only protects
+a queued full review against *another* queued request - it never
+accounted for a quick-apply happening while a slower full review was
+already in flight, since quick-apply never touches that table at all.
+
+**Reproduced live, deliberately:** sent a big full-review request, then
+~6s later (while it was still running) a quick-apply protein change. The
+quick-apply wrote correctly. The full review completed afterward using
+its stale, pre-quick-apply snapshot and blindly overwrote the active row
+via `performTargetsLock` - its own notification didn't even mention
+protein, since from its point of view nothing about protein had ever
+changed. The quick-apply was silently and completely lost, with zero
+indication to the user that anything had been overwritten. This matches
+the user's own real-world symptom exactly: a quick-apply written while
+an unrelated background review was still in flight, silently reverted
+once that review finished.
+
+**Fixed:** `runTargetsBackgroundReview` now re-checks the active row's
+`id` right before acting on anything computed from its (possibly stale)
+starting snapshot. If it moved - a quick-apply or anything else was
+written while this review was thinking - it backs off instead of
+applying: an honest notification ("your plan changed while I was
+reviewing this, ask me to take another look if you'd still like a full
+review") and the request marked `failed`, never a silent overwrite.
+
+**Re-verified with the identical scenario against the fix:** the
+quick-apply survived (`raw_goal_text` on the active row read "Direct
+edit: Protein set to 105 g." after the full review completed), and the
+slower review correctly detected the staleness and sent the new
+"changed while I was reviewing" notification instead of overwriting -
+`user_target_update_requests.status` read `failed`, confirming nothing
+was silently applied.
