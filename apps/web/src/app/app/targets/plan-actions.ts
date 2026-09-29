@@ -277,9 +277,9 @@ async function runTargetsBackgroundReview({
       userId,
     });
 
-    // Supersession check: if a newer request has replaced this one while
-    // the AI call was running, discard silently - that newer request's
-    // own background review will report back once IT finishes.
+    // Supersession check: if a newer FULL-REVIEW request has replaced this
+    // one while the AI call was running, discard silently - that newer
+    // request's own background review will report back once IT finishes.
     const { data: latestRequest } = await supabase
       .from("user_target_update_requests")
       .select("request_id")
@@ -293,6 +293,44 @@ async function runTargetsBackgroundReview({
         .update({ status, completed_at: new Date().toISOString() })
         .eq("user_id", userId)
         .eq("request_id", requestId);
+
+    // Staleness check: the supersession check above only catches another
+    // QUEUED request racing this one - it says nothing about a quick-apply
+    // (a direct edit, or a chat ask that resolved to one field) written
+    // in the meantime, since quick-apply never touches
+    // user_target_update_requests at all. Confirmed live as a real bug:
+    // a quick-apply protein change was silently overwritten by a slower,
+    // already-in-flight full review completing afterward, with the
+    // review's own notification not even mentioning protein, since its
+    // snapshot (activeRow, captured at the very start of this function)
+    // predated the quick-apply. The fix: re-check the active row's id
+    // right before acting on anything computed from that now-possibly-
+    // stale snapshot - if it moved, something else was written while this
+    // review was thinking, and applying our stale result now would
+    // silently discard it. Never silently overwrite something the user
+    // already saw applied.
+    const { data: currentActiveRow } = await supabase
+      .from("user_target_profiles")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (currentActiveRow?.id !== activeRow.id) {
+      await createNotification({
+        supabase,
+        userId,
+        targetProfileId: currentActiveRow?.id ?? activeRow.id,
+        severity: "info",
+        message: tr(
+          locale,
+          "I finished reviewing this, but your plan changed while I was thinking it over, so I didn't want to risk overwriting your update. Ask me to take another look if you'd still like a full review.",
+          "סיימתי לבדוק את זה, אך התוכנית שלך השתנתה בזמן שחשבתי על כך, ולכן לא רציתי לסכן דריסה של העדכון שלך. אפשר לבקש ממני לבדוק שוב אם עדיין תרצה/י סקירה מלאה.",
+        ),
+        fieldKeys: [],
+      });
+      await markComplete("failed");
+      return;
+    }
 
     if (safetyRejectionMessage) {
       await createNotification({
