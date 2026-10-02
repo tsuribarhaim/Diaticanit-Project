@@ -7,26 +7,100 @@ import { formatDefaultItemKind, formatDefaultUnit, tr, type AppLocale } from "@/
 export type IngredientRowValue = { name: string; kind: string; quantity: number; unit: string };
 
 const KIND_OPTIONS = ["food", "hydration", "exercise", "custom"] as const;
-const UNIT_OPTIONS: Array<{ value: string; labelKey: string }> = [
-  { value: "unit", labelKey: "unit" },
-  { value: "ml", labelKey: "ml" },
-  { value: "l", labelKey: "liters" },
-  { value: "g", labelKey: "grams" },
-  { value: "kg", labelKey: "kilograms" },
-  { value: "m", labelKey: "meters" },
-  { value: "km", labelKey: "kilometers" },
-  { value: "cup", labelKey: "cups" },
-  { value: "piece", labelKey: "pieces" },
-  { value: "minutes", labelKey: "minutes" },
-];
+type Kind = (typeof KIND_OPTIONS)[number];
+
+type UnitOption = { value: string; labelKey: string };
 
 /**
- * A repeatable "ingredient" row (name/type/quantity/unit) used by both the
+ * TCK-20: units are scoped to what's actually plausible for each kind
+ * (distance/time only make sense for exercise; food/hydration never do),
+ * instead of one flat list showing e.g. "minutes" and "km" on a food row.
+ * "ml" and "cup" deliberately appear on BOTH food and hydration - Orit's
+ * own note on the ticket: there's real overlap there (soup, a milkshake),
+ * unlike the exercise units which never belong on either. "unit" (a bare
+ * count) is kept available everywhere since it's the universal fallback
+ * for anything else. "custom" gets the full list since it's a catch-all
+ * with no narrower meaning to filter against.
+ */
+const UNIT_OPTIONS_BY_KIND: Record<Kind, UnitOption[]> = {
+  food: [
+    { value: "unit", labelKey: "unit" },
+    { value: "g", labelKey: "grams" },
+    { value: "kg", labelKey: "kilograms" },
+    { value: "ml", labelKey: "ml" },
+    { value: "cup", labelKey: "cups" },
+    { value: "piece", labelKey: "pieces" },
+    { value: "tbsp", labelKey: "tbsp" },
+    { value: "tsp", labelKey: "tsp" },
+  ],
+  hydration: [
+    { value: "ml", labelKey: "ml" },
+    { value: "l", labelKey: "liters" },
+    { value: "cup", labelKey: "cups" },
+    { value: "unit", labelKey: "unit" },
+  ],
+  exercise: [
+    { value: "minutes", labelKey: "minutes" },
+    { value: "km", labelKey: "kilometers" },
+    { value: "m", labelKey: "meters" },
+    { value: "unit", labelKey: "unit" },
+  ],
+  custom: [
+    { value: "unit", labelKey: "unit" },
+    { value: "ml", labelKey: "ml" },
+    { value: "l", labelKey: "liters" },
+    { value: "g", labelKey: "grams" },
+    { value: "kg", labelKey: "kilograms" },
+    { value: "m", labelKey: "meters" },
+    { value: "km", labelKey: "kilometers" },
+    { value: "cup", labelKey: "cups" },
+    { value: "piece", labelKey: "pieces" },
+    { value: "tbsp", labelKey: "tbsp" },
+    { value: "tsp", labelKey: "tsp" },
+    { value: "minutes", labelKey: "minutes" },
+  ],
+};
+
+function normalizeKind(kind: string): Kind {
+  return (KIND_OPTIONS as readonly string[]).includes(kind) ? (kind as Kind) : "custom";
+}
+
+/** The kind's own curated unit list, with `currentValue` appended if it
+ * isn't already in it - so editing an existing saved item never silently
+ * drops whatever unit it was actually saved with (e.g. older data saved
+ * before this filtering existed), even if that unit wouldn't normally be
+ * offered for its kind. */
+function unitOptionsFor(kind: string, currentValue?: string): UnitOption[] {
+  const base = UNIT_OPTIONS_BY_KIND[normalizeKind(kind)];
+  if (!currentValue || base.some((option) => option.value === currentValue)) return base;
+  return [...base, { value: currentValue, labelKey: currentValue }];
+}
+
+function populateUnitSelect(select: HTMLSelectElement, kind: string, locale: AppLocale, preferredValue?: string) {
+  const options = unitOptionsFor(kind, preferredValue);
+  select.innerHTML = "";
+  for (const option of options) {
+    const optionEl = document.createElement("option");
+    optionEl.value = option.value;
+    optionEl.textContent = formatDefaultUnit(option.labelKey, locale);
+    select.appendChild(optionEl);
+  }
+  select.value = preferredValue && options.some((o) => o.value === preferredValue) ? preferredValue : options[0]?.value ?? "";
+}
+
+/**
+ * A repeatable "ingredient" row (name/type/unit/quantity) used by both the
  * add-item and edit-item forms on the Saved List page, so a single item
  * ("Eggs") and a bundle of several under one name ("My Breakfast" = eggs +
  * salad + toast + yogurt) use the exact same input shape - the server side
  * treats a lone row as today's simple item and 2+ rows as a bundle (see
  * resolveBundleFields in defaults/actions.ts).
+ *
+ * TCK-21: unit comes before quantity (both in the field order below and in
+ * tab/visual order) - deciding "this is grams" before "80 of them" is the
+ * natural order to fill these in; asking for the number first means
+ * holding an unanswered "of what?" in mind. Pure field reorder, no change
+ * to the posted field names.
  *
  * "Add ingredient" clones the first row and "Remove" deletes a row, both
  * wired via native addEventListener/DOM cloning rather than React state -
@@ -35,7 +109,9 @@ const UNIT_OPTIONS: Array<{ value: string; labelKey: string }> = [
  * this dev environment. All rows share the same field names
  * (ingredient_name/ingredient_kind/ingredient_quantity/ingredient_unit), so
  * formData.getAll() on submit collects them as parallel arrays in DOM order
- * without needing indexed names.
+ * without needing indexed names. The unit <select>'s options are rebuilt
+ * (not just re-filtered via hidden attributes) whenever its row's kind
+ * changes, via the same native-DOM approach, to stay consistent with that.
  */
 export function IngredientRowsFieldset({
   locale,
@@ -70,9 +146,14 @@ export function IngredientRowsFieldset({
       clone.querySelectorAll("input").forEach((input) => {
         input.value = input.type === "number" ? "1" : "";
       });
-      clone.querySelectorAll("select").forEach((select) => {
-        select.selectedIndex = 0;
-      });
+      const kindSelect = clone.querySelector<HTMLSelectElement>('select[name="ingredient_kind"]');
+      const unitSelect = clone.querySelector<HTMLSelectElement>('select[name="ingredient_unit"]');
+      if (kindSelect) kindSelect.selectedIndex = 0;
+      // Rebuilt for the (now-reset) kind rather than just resetting its own
+      // selectedIndex - the cloned template's unit options reflect whatever
+      // kind THAT row was last showing, which can mismatch the new row's
+      // reset-to-first kind (see populateUnitSelect's own reasoning).
+      if (unitSelect) populateUnitSelect(unitSelect, kindSelect?.value ?? "food", locale);
       container!.appendChild(clone);
       updateRemoveButtonsVisibility();
       clone.querySelector<HTMLInputElement>('input[name="ingredient_name"]')?.focus();
@@ -88,14 +169,24 @@ export function IngredientRowsFieldset({
       updateRemoveButtonsVisibility();
     }
 
+    function handleContainerChange(event: Event) {
+      const target = event.target as HTMLElement;
+      if (!(target instanceof HTMLSelectElement) || target.name !== "ingredient_kind") return;
+      const row = target.closest<HTMLElement>("[data-ingredient-row]");
+      const unitSelect = row?.querySelector<HTMLSelectElement>('select[name="ingredient_unit"]');
+      if (unitSelect) populateUnitSelect(unitSelect, target.value, locale);
+    }
+
     addButton.addEventListener("click", handleAdd);
     container.addEventListener("click", handleContainerClick);
+    container.addEventListener("change", handleContainerChange);
     updateRemoveButtonsVisibility();
     return () => {
       addButton.removeEventListener("click", handleAdd);
       container.removeEventListener("click", handleContainerClick);
+      container.removeEventListener("change", handleContainerChange);
     };
-  }, []);
+  }, [locale]);
 
   return (
     <div>
@@ -127,6 +218,16 @@ export function IngredientRowsFieldset({
               </select>
             </label>
             <label className="space-y-1">
+              <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Unit", "יחידה")}</span>
+              <select name="ingredient_unit" defaultValue={row.unit} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700">
+                {unitOptionsFor(row.kind, row.unit).map((unit) => (
+                  <option key={unit.value} value={unit.value}>
+                    {formatDefaultUnit(unit.labelKey, locale)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1">
               <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Quantity", "כמות")}</span>
               <input
                 name="ingredient_quantity"
@@ -135,16 +236,6 @@ export function IngredientRowsFieldset({
                 defaultValue={row.quantity}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700"
               />
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Unit", "יחידה")}</span>
-              <select name="ingredient_unit" defaultValue={row.unit} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700">
-                {UNIT_OPTIONS.map((unit) => (
-                  <option key={unit.value} value={unit.value}>
-                    {formatDefaultUnit(unit.labelKey, locale)}
-                  </option>
-                ))}
-              </select>
             </label>
             <button
               type="button"

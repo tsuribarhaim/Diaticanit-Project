@@ -290,6 +290,8 @@ export function formatDefaultUnit(value: string, locale: AppLocale): string {
   if (token === "cup" || token === "cups") return tr(locale, "cups", "כוסות");
   if (token === "piece" || token === "pieces") return tr(locale, "pieces", "יחידות");
   if (token === "serving" || token === "servings") return tr(locale, "servings", "מנות");
+  if (token === "tbsp" || token === "tablespoon" || token === "tablespoons") return tr(locale, "tbsp", "כף");
+  if (token === "tsp" || token === "teaspoon" || token === "teaspoons") return tr(locale, "tsp", "כפית");
   if (token === "min" || token === "minutes") return tr(locale, "minutes", "דקות");
   return value;
 }
