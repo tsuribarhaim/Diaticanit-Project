@@ -94,9 +94,18 @@ async function isFirstLogin(supabase: Awaited<ReturnType<typeof createClient>>, 
   return !data?.last_login_at;
 }
 
+/**
+ * TCK-22: Daily Report, not the Home dashboard, is the default landing
+ * destination everywhere now - Home has no nav entry anywhere in the app
+ * (confirmed: neither AppNav nor AppBottomNav links to it), so it was only
+ * ever a one-time landing/redirect target, never somewhere a user
+ * revisits on purpose. Its page/content stay in place, unlinked, for
+ * possible future use - this only changes where a plain sign-in with no
+ * explicit `next` (or an unsafe one) ends up.
+ */
 function sanitizeNextPath(nextPath: string | null): string {
-  if (!nextPath) return "/app";
-  if (!nextPath.startsWith("/app")) return "/app";
+  if (!nextPath) return "/app/daily-report";
+  if (!nextPath.startsWith("/app")) return "/app/daily-report";
   return nextPath;
 }
 
@@ -205,6 +214,7 @@ export async function signInAction(
   await persistRecentSignInEmail(parsed.data.email);
 
   const userId = data.user?.id;
+  let hasProfile = true;
   if (userId) {
     const { data: profile } = await supabase
       .from("user_profile")
@@ -212,6 +222,7 @@ export async function signInAction(
       .eq("user_id", userId)
       .maybeSingle();
 
+    hasProfile = Boolean(profile);
     await persistLocalePreference(normalizeLocaleCookieValue(profile?.preferred_language));
     if (await isFirstLogin(supabase, userId)) {
       await markInstallPromptDue();
@@ -219,7 +230,17 @@ export async function signInAction(
     await markSuccessfulLogin(supabase, userId);
   }
 
-  const nextPath = sanitizeNextPath(formData.get("next")?.toString() ?? null);
+  // TCK-22: redirect straight to the final destination in one hop rather
+  // than letting daily-report/page.tsx's own equivalent guard catch a
+  // profile-less user and redirect a second time - chaining a second
+  // redirect() from inside a page reached via a Server Action's own
+  // redirect() isn't reliable (confirmed flaky live, the same underlying
+  // class of issue already documented in middleware.ts's own comment on
+  // passkey sign-in). daily-report/page.tsx's guard stays in place as a
+  // defensive backstop for any OTHER path that lands there directly
+  // (a bookmark, the PWA start_url, a stale link) - just not relied on
+  // for this specific chain.
+  const nextPath = hasProfile ? sanitizeNextPath(formData.get("next")?.toString() ?? null) : "/app/onboarding";
   redirect(nextPath);
 }
 
@@ -287,7 +308,11 @@ export async function signUpAction(
     // request), so no isFirstLogin check needed here unlike signInAction.
     await markInstallPromptDue();
     await markSuccessfulLogin(supabase, data.user.id);
-    redirect("/app");
+    // TCK-22: a brand new signup has no user_profile row yet by
+    // definition, so this goes straight to onboarding in one hop -
+    // see signInAction's own comment on why a second, chained redirect()
+    // out of daily-report/page.tsx's equivalent guard isn't relied on here.
+    redirect("/app/onboarding");
   }
 
   return {

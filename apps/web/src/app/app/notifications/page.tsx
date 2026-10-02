@@ -45,8 +45,10 @@ export default async function NotificationsPage() {
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-10">
       <div className="mb-4">
-        <Link href="/app" className="text-sm font-semibold text-teal-700 dark:text-teal-400">
-          {tr(locale, "← Home", "← בית")}
+        {/* TCK-22: Daily Report, not the unlinked Home dashboard, is where
+            every other back/default link in the app points now. */}
+        <Link href="/app/daily-report" className="text-sm font-semibold text-teal-700 dark:text-teal-400">
+          {tr(locale, "← Daily Report", "← דיווח יומי")}
         </Link>
       </div>
 
