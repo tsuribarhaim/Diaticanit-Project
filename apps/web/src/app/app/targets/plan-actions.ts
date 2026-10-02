@@ -14,9 +14,11 @@ import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
 import {
   mapTargetProfileRowToPayload,
+  recenterBand,
   targetGenerationPayloadSchema,
   toProfileForTargets,
   TARGET_PROFILE_COLUMNS,
+  type ExplicitFieldRequest,
   type ProfileForTargets,
   type TargetGenerationPayload,
 } from "@/lib/targets";
@@ -130,6 +132,18 @@ export async function negotiateActiveTargetsAction({
   // actually available and consented to; otherwise (or if the classifier
   // itself fails, or the ask isn't a clean single-field one) this falls
   // straight through to the full negotiate flow below, unchanged.
+  // Carried into the full review below when a quick-apply resolved to
+  // exactly one nutrient + one number but that number fell outside the
+  // field's safe range - see ExplicitFieldRequest's own comment (lib/
+  // targets.ts) for why this is threaded through explicitly instead of
+  // being discarded (which is what let the full-review AI call silently
+  // apply a THIRD, different number than either the user's ask or its own
+  // stated explanation - confirmed live via tickets #74/#95). Scoped to
+  // nutrient fields only: weight already has its own independent,
+  // deterministic safety check (evaluateTargetWeightSafety) that runs
+  // regardless, and sleep/steps aren't the reported failure mode.
+  let explicitFieldRequest: ExplicitFieldRequest | undefined;
+
   if (aiConfig && hasConsent) {
     try {
       const classification = await classifyTargetsFieldEdit({
@@ -170,6 +184,16 @@ export async function negotiateActiveTargetsAction({
           // No separate "want Daffy to check this?" confirmation needed
           // here the way a direct edit's banner asks one: sending this
           // chat message already WAS the explicit request to look into it.
+          if (field.kind === "nutrient") {
+            explicitFieldRequest = {
+              fieldLabelEn: editResult.fieldLabelEn,
+              fieldLabelHe: editResult.fieldLabelHe,
+              unit: editResult.unit,
+              requestedValue: editResult.attempted,
+              currentLo: editResult.lo,
+              currentHi: editResult.hi,
+            };
+          }
         }
       }
     } catch (err) {
@@ -211,6 +235,7 @@ export async function negotiateActiveTargetsAction({
       locale,
       aiConfig,
       hasConsent,
+      explicitFieldRequest,
     }),
   );
 
@@ -244,6 +269,7 @@ async function runTargetsBackgroundReview({
   locale,
   aiConfig,
   hasConsent,
+  explicitFieldRequest,
 }: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   userId: string;
@@ -253,6 +279,12 @@ async function runTargetsBackgroundReview({
   locale: AppLocale;
   aiConfig: ReturnType<typeof getAiExtractionConfig>;
   hasConsent: boolean;
+  /** See ExplicitFieldRequest's own comment (lib/targets.ts). Bounds are
+   * re-derived fresh below against this function's own just-fetched
+   * activeRow rather than trusting the ones captured back when the chat
+   * message first came in - closes a narrow staleness gap if the active
+   * plan changed in between. */
+  explicitFieldRequest?: ExplicitFieldRequest;
 }): Promise<void> {
   try {
     const { data: activeRow } = await supabase
@@ -266,13 +298,32 @@ async function runTargetsBackgroundReview({
 
     const currentTargets = mapTargetProfileRowToPayload(activeRow);
 
-    const { payload: rawPayload, source, safetyRejectionMessage, notActionableMessage } = await generateTargetsPayload({
+    const explicitFieldNutrientInfo = explicitFieldRequest
+      ? NUTRIENT_DIFF_FIELDS.find((f) => f.labelEn === explicitFieldRequest.fieldLabelEn)
+      : undefined;
+    const effectiveFieldRequest: ExplicitFieldRequest | undefined =
+      explicitFieldRequest && explicitFieldNutrientInfo
+        ? {
+            ...explicitFieldRequest,
+            currentLo: currentTargets[explicitFieldNutrientInfo.minKey] as number,
+            currentHi: currentTargets[explicitFieldNutrientInfo.maxKey] as number,
+          }
+        : undefined;
+
+    const {
+      payload: rawPayload,
+      source,
+      safetyRejectionMessage,
+      notActionableMessage,
+      explicitFieldRejectionMessage,
+    } = await generateTargetsPayload({
       goalText,
       profile,
       locale,
       aiConfig,
       hasConsent,
       currentTargets,
+      explicitFieldRequest: effectiveFieldRequest,
       supabase,
       userId,
     });
@@ -345,6 +396,29 @@ async function runTargetsBackgroundReview({
       return;
     }
 
+    if (explicitFieldRejectionMessage && effectiveFieldRequest) {
+      // Binary accept/reject for the one field the user explicitly asked
+      // about (see ExplicitFieldRequest's own comment) - a reject here
+      // means that field was NOT touched at all, never a negotiated
+      // substitute number. Framed with the field/value named explicitly
+      // since the model's own reason text doesn't necessarily restate
+      // what was being asked about.
+      await createNotification({
+        supabase,
+        userId,
+        targetProfileId: activeRow.id,
+        severity: "concern",
+        message: tr(
+          locale,
+          `I didn't change ${effectiveFieldRequest.fieldLabelEn} to ${effectiveFieldRequest.requestedValue} ${effectiveFieldRequest.unit} as asked: ${explicitFieldRejectionMessage}`,
+          `לא שיניתי את ${effectiveFieldRequest.fieldLabelHe} ל-${effectiveFieldRequest.requestedValue} ${effectiveFieldRequest.unit} כפי שהתבקש: ${explicitFieldRejectionMessage}`,
+        ),
+        fieldKeys: [],
+      });
+      await markComplete("failed");
+      return;
+    }
+
     if (notActionableMessage) {
       // Nothing concrete was actually asked for - the user already got
       // the "let me look into this" acknowledgment, and there's genuinely
@@ -353,7 +427,23 @@ async function runTargetsBackgroundReview({
       return;
     }
 
-    const validatedPayload = targetGenerationPayloadSchema.safeParse(rawPayload);
+    // Binary accept path: never trust the model's own number for the field
+    // it was explicitly asked about (see ExplicitFieldRequest's own
+    // comment) - force the user's exact literal requested value in, the
+    // same recentering logic the quick-apply edit path itself uses, so the
+    // eventual diff/notification shows precisely what was asked for and
+    // nothing else.
+    let payloadWithExplicitField: TargetGenerationPayload = rawPayload;
+    if (effectiveFieldRequest && explicitFieldNutrientInfo) {
+      const { min, max } = recenterBand(
+        effectiveFieldRequest.currentLo,
+        effectiveFieldRequest.currentHi,
+        effectiveFieldRequest.requestedValue,
+      );
+      payloadWithExplicitField = { ...rawPayload, [explicitFieldNutrientInfo.minKey]: min, [explicitFieldNutrientInfo.maxKey]: max };
+    }
+
+    const validatedPayload = targetGenerationPayloadSchema.safeParse(payloadWithExplicitField);
     if (!validatedPayload.success) {
       logServerError("targets.backgroundReview", "invalid_generated_payload", { userId, error: validatedPayload.error.message });
       await markComplete("failed");

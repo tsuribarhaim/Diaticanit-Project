@@ -201,6 +201,53 @@ export type UserTargetEntry = {
 };
 
 /**
+ * A single-field, single-number ask that the quick-apply classifier already
+ * resolved but that fell outside the field's current safe range (see
+ * applyOrCheckFieldEdit's outOfRange branch) - carried forward into the full
+ * AI review instead of being discarded, so the model is told exactly which
+ * field and number were asked for rather than having to re-derive it from
+ * free text. The model only ever returns accept/reject for this field (see
+ * ExplicitFieldRequestRejectedError) - the literal requestedValue or the
+ * current value is what actually gets applied, never a number the model
+ * computes itself, closing off the "AI states one number, applies a third"
+ * failure mode this was built to fix.
+ */
+export type ExplicitFieldRequest = {
+  fieldLabelEn: string;
+  fieldLabelHe: string;
+  unit: string;
+  requestedValue: number;
+  currentLo: number;
+  currentHi: number;
+};
+
+/** Keeps a band's WIDTH but re-centers it on a newly-edited single value, so
+ * the next edit still has a real (non-zero) band to be judged against
+ * instead of every value becoming a hair-trigger "needs AI review" after its
+ * first edit. Clamped at 0 - every field this is used for (nutrients, sleep
+ * hours, steps) has a schema floor of 0, and a wide band centered near that
+ * floor can otherwise recenter to a negative min (confirmed live: editing
+ * Saturated Fat, band width ~26g, from 13g to 12g produced satFatMinG = -1,
+ * which targetGenerationPayloadSchema correctly rejected - surfacing as a
+ * generic "something went wrong" instead of the in-range quick-save it
+ * should have been). Clamping only the floor (not also capping the ceiling
+ * against each field's own upper bound) is enough to fix that - an edit
+ * large enough to hit those much more generous caps hasn't been observed
+ * and would go through the out-of-range/AI path anyway once it's actually
+ * outside the *original* band. Lives here (not in edit-actions.ts, despite
+ * that being its original/primary caller) because plan-actions.ts's own
+ * "use server" file needs it too for the explicit-field-request override
+ * (see ExplicitFieldRequest above), and every export from a "use server"
+ * file must be an async Server Action - a plain sync helper can't live
+ * there. */
+export function recenterBand(oldMin: number, oldMax: number, newValue: number): { min: number; max: number } {
+  const halfWidth = (oldMax - oldMin) / 2;
+  const min = Math.max(0, newValue - halfWidth);
+  const max = Math.max(min, newValue + halfWidth);
+  return { min, max };
+}
+
+/**
  * Full computed target set. Field names mirror `user_target_profiles`
  * columns (camelCase) so mapping to/from the DB row is mechanical.
  */
