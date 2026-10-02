@@ -5,7 +5,7 @@ import { callAiChatCompletionWithProgress } from "@/lib/ai/provider-client";
 import { BMI_GOOD_MAX, BMI_GOOD_MIN, classifyBmi, computeBmi } from "@/lib/bmi";
 import type { AppLocale } from "@/lib/locale";
 import { exerciseModalityOptions } from "@/lib/profile";
-import type { ExerciseTargetEntry, HabitEntry, ProfileForTargets, TargetGenerationPayload, TargetGoalType, UserTargetEntry } from "@/lib/targets";
+import type { ExerciseTargetEntry, ExplicitFieldRequest, HabitEntry, ProfileForTargets, TargetGenerationPayload, TargetGoalType, UserTargetEntry } from "@/lib/targets";
 
 /** The exact modality tokens the rest of the app knows how to localize (see
  * formatExerciseModality in lib/locale.ts) and that onboarding/profile already
@@ -34,6 +34,13 @@ function normalizeAiModality(rawModality: string): (typeof AI_EXERCISE_MODALITY_
  * back to the heuristic generator, since that would silently mask the signal
  * with an unrelated baseline payload. */
 export class NoActionableChangeError extends Error {}
+
+/** Thrown when an ExplicitFieldRequest (see lib/targets.ts) was passed in but
+ * the model did not accept it as safe - the caller must NOT apply any number
+ * for that field (neither the model's own figure nor the literal request);
+ * the field stays at its current value and this message is surfaced to the
+ * user instead. Mirrors NoActionableChangeError's own control-flow shape. */
+export class ExplicitFieldRequestRejectedError extends Error {}
 
 const numberFromUnknown = z.preprocess((value) => {
   if (typeof value === "number") return value;
@@ -75,6 +82,8 @@ const aiUserTargetEntrySchema = z.object({
 const aiTargetsSchema = z.object({
   no_actionable_change: z.boolean().optional().default(false),
   no_actionable_change_reason: z.string().trim().max(300).optional().default(""),
+  explicit_field_request_accepted: z.boolean().optional(),
+  explicit_field_request_reason: z.string().trim().max(400).optional().default(""),
 
   goal_type: z.enum(["weight_loss", "weight_gain", "maintain", "general"]),
   target_weight_kg: numberFromUnknown.optional(),
@@ -341,6 +350,7 @@ export async function generateTargetsWithAi({
   currentTargets,
   medicalDocumentsContext,
   recentCustomTargetLogs,
+  explicitFieldRequest,
   onProgress,
 }: {
   config: AiExtractionConfig;
@@ -353,6 +363,13 @@ export async function generateTargetsWithAi({
    * consistency changes (e.g. lower workout frequency -> lower calorie
    * ceiling), instead of generating a fresh plan from scratch. */
   currentTargets?: TargetGenerationPayload;
+  /** A single field+number the quick-apply classifier already resolved but
+   * that fell outside its safe range - see ExplicitFieldRequest's own
+   * comment for why this is passed in explicitly instead of leaving the
+   * model to re-derive it from goalText alone. When present, the model must
+   * decide accept/reject for this one field (never propose its own number -
+   * see the ACCEPT/REJECT prompt rule below and ExplicitFieldRequestRejectedError). */
+  explicitFieldRequest?: ExplicitFieldRequest;
   /** Extracted findings from the user's uploaded medical documents (e.g. lab
    * results), when any are available - see buildMedicalDocumentsContextRules
    * for how the model is instructed to weigh these. */
@@ -402,6 +419,15 @@ export async function generateTargetsWithAi({
       ]
     : [];
 
+  const explicitFieldRequestLines = explicitFieldRequest
+    ? [
+        `EXPLICIT SINGLE-FIELD REQUEST: the user explicitly and specifically asked to set "${explicitFieldRequest.fieldLabelEn}" to ${explicitFieldRequest.requestedValue} ${explicitFieldRequest.unit}. The field's current range is ${explicitFieldRequest.currentLo}-${explicitFieldRequest.currentHi} ${explicitFieldRequest.unit} - the requested value falls outside it, which is why this reached you for careful review instead of being applied directly as a simple edit.`,
+        `This is a binary ACCEPT/REJECT decision for this one field, not a negotiation: set explicit_field_request_accepted to true only if the LITERAL requested value (${explicitFieldRequest.requestedValue} ${explicitFieldRequest.unit}, exactly) is safe and medically reasonable for this user given their full profile, or to false if it poses a real, specific risk or is implausible. There is no partial or alternative value to propose for this one field - the application will apply the user's exact literal number if you accept, or leave this field completely unchanged at its current value if you reject. Whatever number you write for this same field further below in calories_min/calories_max-style fields is IGNORED and overridden either way - do not spend effort computing a compromise figure for it.`,
+        `If you reject, set explicit_field_request_reason to a short, clear, plain-language explanation (in the reply language) of the actual concern - this is shown directly to the user as-is. If you accept, explicit_field_request_reason may be left empty.`,
+        `You may still adjust OTHER, different fields if the full picture genuinely calls for it (e.g. a real safety-driven knock-on effect elsewhere) - that is independent of your accept/reject decision for this one field.`,
+      ]
+    : [];
+
   const todayIso = new Date().toISOString().slice(0, 10);
   const medicalDocumentsContextLines = medicalDocumentsContext
     ? [
@@ -422,7 +448,7 @@ export async function generateTargetsWithAi({
         role: "user" as const,
         content: [
           "Return strict JSON with exactly this shape (all numeric fields are plain numbers, all ranges must have min <= max):",
-          '{"no_actionable_change":boolean,"no_actionable_change_reason":"string",',
+          '{"no_actionable_change":boolean,"no_actionable_change_reason":"string","explicit_field_request_accepted":boolean,"explicit_field_request_reason":"string",',
           '"goal_type":"weight_loss|weight_gain|maintain|general","target_weight_kg":number,"duration_days":number,"blood_balance_focus":boolean,"sleep_focus":boolean,',
           '"calories_min":number,"calories_max":number,"protein_min_g":number,"protein_max_g":number,"carbs_min_g":number,"carbs_max_g":number,"fats_min_g":number,"fats_max_g":number,',
           '"fiber_min_g":number,"fiber_max_g":number,"sodium_min_mg":number,"sodium_max_mg":number,"added_sugar_min_g":number,"added_sugar_max_g":number,"water_min_ml":number,"water_max_ml":number,',
@@ -455,6 +481,7 @@ export async function generateTargetsWithAi({
           "- Address the user directly in second person (\"you\"/\"your\") in every text field. Never refer to the user in third person (\"he\", \"she\", \"his\", \"her\", or the user's inferred gender) even when their biological_sex is known.",
           "- In Hebrew specifically, prefer gender-neutral or mixed-form second-person phrasing (e.g. \"שלך\", \"את/ה\") over a gendered third-person construction like \"בשל מצבו הרפואי\" or \"בשל מצבה הרפואי\" — write \"בשל המצב הרפואי שלך\" instead.",
           ...adjustmentContextLines,
+          ...explicitFieldRequestLines,
           ...customTargetLoggingContextLines,
           ...medicalDocumentsContextLines,
           "user_profile:",
@@ -490,6 +517,13 @@ export async function generateTargetsWithAi({
   });
 
   const parsed = aiTargetsSchema.parse(parseJsonPayload(contentText));
+
+  if (explicitFieldRequest && parsed.explicit_field_request_accepted !== true) {
+    throw new ExplicitFieldRequestRejectedError(
+      parsed.explicit_field_request_reason ||
+        "This change was not applied because it may not be safe given your current health profile.",
+    );
+  }
 
   if (currentTargets && parsed.no_actionable_change) {
     throw new NoActionableChangeError(

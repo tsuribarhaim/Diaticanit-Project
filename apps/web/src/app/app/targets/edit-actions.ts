@@ -14,6 +14,7 @@ import { createClient } from "@/lib/supabase/server";
 import {
   evaluateCustomTargetQuickApplySafety,
   mapTargetProfileRowToPayload,
+  recenterBand,
   targetGenerationPayloadSchema,
   toProfileForTargets,
   TARGET_PROFILE_COLUMNS,
@@ -35,27 +36,6 @@ export type EditTargetFieldResult =
   | { applied: true; payload: TargetGenerationPayload }
   | { applied: false; outOfRange: true; lo: number; hi: number; unit: string; fieldLabelEn: string; fieldLabelHe: string; attempted: number }
   | { error: string };
-
-/** Keeps a band's WIDTH but re-centers it on a newly-edited single value,
- * so the next edit still has a real (non-zero) band to be judged against
- * instead of every value becoming a hair-trigger "needs AI review" after
- * its first edit. Clamped at 0 - every field this is used for (nutrients,
- * sleep hours, steps) has a schema floor of 0, and a wide band centered
- * near that floor can otherwise recenter to a negative min (confirmed
- * live: editing Saturated Fat, band width ~26g, from 13g to 12g produced
- * satFatMinG = -1, which targetGenerationPayloadSchema correctly rejected
- * - surfacing as a generic "something went wrong" instead of the in-range
- * quick-save it should have been). Clamping only the floor (not also
- * capping the ceiling against each field's own upper bound) is enough to
- * fix that - an edit large enough to hit those much more generous caps
- * hasn't been observed and would go through the out-of-range/AI path
- * anyway once it's actually outside the *original* band. */
-function recenterBand(oldMin: number, oldMax: number, newValue: number): { min: number; max: number } {
-  const halfWidth = (oldMax - oldMin) / 2;
-  const min = Math.max(0, newValue - halfWidth);
-  const max = Math.max(min, newValue + halfWidth);
-  return { min, max };
-}
 
 /**
  * Core "is this edit safe, and if so write it" logic - validates one

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { prepareMedicalContextForTargets } from "@/app/app/documents/actions";
-import { generateTargetsWithAi, NoActionableChangeError } from "@/lib/ai/targets";
+import { ExplicitFieldRequestRejectedError, generateTargetsWithAi, NoActionableChangeError } from "@/lib/ai/targets";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { getRecentCustomTargetLogs } from "@/lib/daily-report";
 import { normalizeLocale, tr } from "@/lib/locale";
@@ -17,6 +17,7 @@ import {
   targetGenerationPayloadSchema,
   targetInputSchema,
   toProfileForTargets,
+  type ExplicitFieldRequest,
   type ProfileForTargets,
   type TargetGenerationPayload,
 } from "@/lib/targets";
@@ -65,6 +66,7 @@ export async function generateTargetsPayload({
   aiConfig,
   hasConsent,
   currentTargets,
+  explicitFieldRequest,
   supabase,
   userId,
   onProgress,
@@ -78,6 +80,9 @@ export async function generateTargetsPayload({
    * plan rather than a fresh generation; ignored by the heuristic fallback
    * (which is a simplified, non-AI path). */
   currentTargets?: TargetGenerationPayload;
+  /** Forwarded to generateTargetsWithAi - see ExplicitFieldRequest's own
+   * comment (lib/targets.ts) for what this does and why. */
+  explicitFieldRequest?: ExplicitFieldRequest;
   /** When provided alongside userId, the user's uploaded medical documents
    * are auto-extracted (if pending) and factored into the AI generation.
    * Omitted callers simply skip document context (no supabase/userId
@@ -98,6 +103,11 @@ export async function generateTargetsPayload({
    * any concrete, in-scope health change to make; same handling as
    * safetyRejectionMessage - do not treat `payload` as valid. */
   notActionableMessage?: string;
+  /** Set when explicitFieldRequest was provided but the model did not
+   * accept the literal requested value as safe - same handling as
+   * safetyRejectionMessage (do not treat `payload` as valid; the field in
+   * question was NOT changed). */
+  explicitFieldRejectionMessage?: string;
 }> {
   let heuristicReason: string | null = null;
   let payload: TargetGenerationPayload | null = null;
@@ -136,6 +146,7 @@ export async function generateTargetsPayload({
         profile,
         locale,
         currentTargets,
+        explicitFieldRequest,
         medicalDocumentsContext: medicalDocumentsContext ?? undefined,
         recentCustomTargetLogs,
         onProgress,
@@ -148,6 +159,15 @@ export async function generateTargetsPayload({
           source: "ai",
           heuristicReason: null,
           notActionableMessage: error.message,
+        };
+      }
+
+      if (error instanceof ExplicitFieldRequestRejectedError) {
+        return {
+          payload: currentTargets ?? generateHeuristicTargetProfile({ freeText: goalText, profile, locale }),
+          source: "ai",
+          heuristicReason: null,
+          explicitFieldRejectionMessage: error.message,
         };
       }
 

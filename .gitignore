@@ -39,3 +39,6 @@ __pycache__/
 # Local test artifacts
 playwright-report/
 test-results/
+
+# Ad-hoc data exports (user health data pulled for one-off requests - never commit)
+exports/

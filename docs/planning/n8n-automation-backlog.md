@@ -1,0 +1,127 @@
+# n8n / Workflow Automation - Backlog
+
+Status: **Not started - deliberately blocked.** Tsuri wants to hold off starting
+this project until all open Alpha-tester tickets with `priority in ('high',
+'urgent')` or `ticket_type = 'bug'` (see `public.tickets`, migration
+`044_phase22_user_tickets.sql`) are cleared to `resolved`/`closed`/`cancelled`.
+Once that's true, remind him and start with Phase A below.
+
+Captured from a design discussion (Sept 2026) exploring where n8n - a
+self-hostable, node-based workflow/automation tool (the same category as
+Zapier/Make) - could provide real benefit across Daffy, beyond the original
+motivating example (a daily digest of total users / tickets opened / AI token
+usage).
+
+## Why n8n, and how it fits
+
+n8n runs as its own long-running service (not part of the Daffy app itself)
+and chains **trigger -> action -> destination** nodes - e.g. a schedule
+trigger firing every day at 6am, calling an HTTP endpoint, then emailing the
+result. For Daffy specifically, the safe integration pattern is: n8n never
+holds direct Supabase credentials; instead it calls small, purpose-built
+endpoints in the Daffy app itself (protected by their own secret, reusing the
+existing `is_admin` flag on `user_profile` for anything also exposed as an
+in-app admin page), keeping "what counts as a user / an open ticket / etc."
+defined in one place in the codebase.
+
+Planned to start hands-on with **Docker Desktop**, locally, for learning
+purposes and to avoid hosting cost up front - understood tradeoff: a local
+n8n instance only fires scheduled triggers while the machine/Docker is
+running, so it's fine for prototyping the workflow logic but not yet a
+"production" always-on scheduler. The workflow itself is portable to a hosted
+instance later without rework.
+
+## Phased plan for the original motivating example (daily metrics digest)
+
+1. **Phase A (learn n8n, quick win):** Run n8n in Docker Desktop. Build the
+   simplest real workflow: schedule trigger -> call a stub metrics endpoint
+   (just total users + tickets opened, both trivial queries against existing
+   tables) -> email the result. Goal is experiencing a real end-to-end
+   workflow fire, not the data itself yet.
+2. **Phase B (real dev work - the biggest chunk):** Instrument AI token usage.
+   Confirmed while scoping this: **Daffy does not currently log token counts
+   anywhere** - every AI provider call goes out and comes back with nothing
+   about its usage persisted. Needs: capturing `input_tokens`/`output_tokens`
+   from the response at every AI call site (targets generation, targets
+   quick-apply + its safety-check verify call, the daily-report chat, the
+   chat router, etc.), into a new table (e.g. `ai_usage_log`: `user_id`,
+   `feature`, `provider`, `model`, `input_tokens`, `output_tokens`,
+   `created_at`) - logged **per user and per feature**, per Tsuri's explicit
+   ask, so the data can answer "which calls/users consume the most tokens"
+   for efficiency tuning, not just a single aggregate number.
+3. **Phase C:** Build an admin-only dashboard page inside Daffy itself (gated
+   by `is_admin`, same pattern as the metrics endpoint) to slice/dice the
+   token-usage data by date range, user, and feature - "as management," per
+   Tsuri's own framing.
+4. **Phase D:** Extend the n8n workflow to pull real token stats and push a
+   link to that dashboard, delivered via **email first** (n8n has a built-in
+   node, trivial to wire up) - WhatsApp deliberately deferred: it requires
+   either Twilio's WhatsApp API or Meta's Cloud API, both needing business
+   setup/approval and per-message cost with Twilio, so it shouldn't be what
+   blocks seeing the pipeline work end-to-end. Add WhatsApp later as its own
+   deliberate step if still wanted (there's already a separate, older,
+   broader "WhatsApp integration" idea logged in
+   `docs/planning/pilot-follow-up-todo.md`'s "Future features to explore"
+   section - worth reconciling the two if WhatsApp delivery is picked up).
+
+## Other places n8n could plug in (logged for later prioritization, not yet scheduled)
+
+**Reliability / ops alerting**
+- The async targets-review design (`runTargetsBackgroundReview`, see
+  `docs/design/targets-background-auto-apply.md`) relies entirely on a
+  server-side background task (`after()`) completing. If it ever crashes
+  mid-flight, a `user_target_update_requests` row is left stuck in `pending`
+  with no one noticing until a user asks why their change didn't apply. A
+  periodic n8n check for rows stuck in `pending` past a reasonable age would
+  catch that failure mode proactively.
+- `logServerError` is already used app-wide for caught server errors, but
+  nothing currently surfaces what lands there. A periodic digest (or an
+  immediate alert on a spike) would turn silent server-side errors into
+  something actually seen.
+- A basic scheduled uptime check against `/api/version`, alerting if it stops
+  responding or the returned version doesn't match the last known deploy.
+
+**Support operations**
+- New tickets in `public.tickets` currently require someone to go check the
+  table/admin view. A near-real-time n8n notification (Slack/WhatsApp/email)
+  on ticket creation turns it into a push instead of a pull. Separately, an
+  SLA-style check for tickets open too long without a status change.
+
+**Product/user engagement** (logging consistency is the core product value)
+- Detect users with no `user_daily_reports` row in N days and trigger a
+  re-engagement nudge.
+- Detect signups stuck mid-onboarding (`needs_onboarding_refresh` true, or no
+  target plan ever generated) and follow up.
+
+**Founder/business visibility**
+- A weekly pilot-funnel digest - invited -> signed up -> completed onboarding
+  -> logged at least once -> still active - computed and pushed without
+  building a bespoke analytics UI for it. `PILOT_ALLOWLIST_ENABLED` and
+  `pilot_allowlist` are the relevant existing pieces.
+
+**Cost control**
+- A direct extension of the Phase B/D token-usage pipeline: a threshold alert
+  ("today's AI spend crossed $X") so a bug like a silent retry loop is caught
+  same-day rather than at the end of a billing cycle.
+
+**Data hygiene**
+- Scheduled purge of old superseded `user_target_update_requests` rows and
+  stale dismissed notifications.
+- Nightly backup export of core tables to cloud storage, as insurance beyond
+  Supabase's own backups.
+
+**Release notifications**
+- The existing promotion pipeline (merge -> migrate -> deploy -> git tag) ends
+  in a tag push. A webhook-triggered (not cron) n8n workflow off that could
+  post an automatic "Daffy vX.Y.Z is live" message - also a good way to learn
+  n8n's webhook-trigger side specifically, as distinct from its schedule
+  side.
+
+**Safety-review rollup**
+- The quick-apply safety net (`verifyQuickAppliedFieldSafety`, see the same
+  targets-background-auto-apply design doc) already flags "this change might
+  be worth reconsidering" per user, per event, but it's buried in that user's
+  own in-app notifications. A digest of all flagged concerns across all users
+  in one place would give Tsuri, as the human in the loop, real visibility
+  into what the AI is catching - especially relevant given these are
+  medical/health targets.

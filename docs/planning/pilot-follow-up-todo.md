@@ -95,6 +95,13 @@ against. Not urgent - the pilot itself runs as-is in the meantime.
   WhatsApp Business Platform/Cloud API (opt-in and messaging-window rules,
   approval process, cost per conversation) and how an inbound WhatsApp
   message maps onto this app's existing daily-report chat/save flow.
+- **n8n / workflow automation project.** See
+  `docs/planning/n8n-automation-backlog.md` for the full scope (a daily
+  metrics digest, AI token-usage instrumentation + admin dashboard, and a
+  longer list of other automation opportunities). Deliberately blocked:
+  Tsuri wants to start this only once all open Alpha-tester tickets with
+  `priority in ('high','urgent')` or `ticket_type = 'bug'` are cleared -
+  remind him once that's true.
 - **Admin-configurable nutrient display order.** Surfaced while designing
   the new onboarding Targets step (see `docs/design/onboarding-redesign.md`
   §7.6): the 19-nutrient list's display order is being set once, by hand,
