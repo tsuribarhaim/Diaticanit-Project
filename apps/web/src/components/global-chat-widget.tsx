@@ -70,6 +70,14 @@ type ChatMessage = {
    * "the next time you open chat with Daffy" now means THIS chat,
    * regardless of screen. */
   reviewPrompt?: { changes: ProfileDiffRow[]; status: "pending" | "answered" };
+  /** TCK-94: present on a daily-report reply that needed to ask a
+   * clarifying question - offers continuing the SAME conversation in the
+   * Daily Report page's own full chat instead of resolving it here, for
+   * cases where a fuller back-and-forth suits the user better than
+   * answering inline. Never set on a plain logged/informational reply -
+   * Orit's explicit condition that simple cases stay zero-friction with
+   * no redirect offered. See handleContinueToFullReport. */
+  offerHandoff?: boolean;
 };
 
 function Spinner({ className }: { className: string }) {
@@ -144,6 +152,15 @@ export function GlobalChatWidget({
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
+  // TCK-93: the floating chat sends each message statelessly (no server-side
+  // conversation memory) - when a daily-report reply comes back as a
+  // clarifying question (needsClarification), this remembers the full
+  // context asked about so far, so the user's next reply ("200g") gets
+  // folded into it ("I had pasta. 200g") instead of being parsed alone with
+  // no idea what it's answering. Cleared on anything else (a successful
+  // log, or a plain "couldn't find anything" reply) so an unrelated later
+  // message never gets incorrectly glued onto a stale question.
+  const [pendingClarification, setPendingClarification] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [hasUnread, setHasUnread] = useState(Boolean(pendingReviewChanges));
@@ -166,6 +183,51 @@ export function GlobalChatWidget({
   function pushMessage(message: ChatMessage) {
     setMessages((previous) => [...previous, message]);
     if (!isChatOpen) setHasUnread(true);
+  }
+
+  /** TCK-93: "the chat doesn't clear after saving, it's still there when
+   * you come back to it" - the floating chat is meant for quick in-and-out
+   * asks (per the ticket's own proposed redesign), so an old conversation
+   * lingering indefinitely just reads as clutter once its own business is
+   * actually finished. Checked right before clearing on close (below) -
+   * never clears out from under something still awaiting the user's own
+   * answer/decision (a clarifying question, or any pending
+   * profile/ticket/review card still showing its buttons). */
+  function hasUnresolvedWork(): boolean {
+    if (pendingClarification) return true;
+    return messages.some(
+      (message) =>
+        message.pendingProfileChange?.status === "pending" ||
+        message.pendingTicketDraft?.status === "pending" ||
+        message.reviewPrompt?.status === "pending",
+    );
+  }
+
+  /** TCK-94: carries this conversation into the Daily Report page's own
+   * full chat as the SAME thread, not a fresh restart - Orit's explicit
+   * condition for the handoff. This widget has no server-side session of
+   * its own (every send is a stateless call - see pendingClarification
+   * above), so the transcript is handed over as plain text via
+   * sessionStorage, in the exact "User: ...\nAssistant: ..." format
+   * daily-report-chat-panel.tsx already parses back into chat bubbles for
+   * its own "Edit entry" flow (see that file's parseTranscriptToMessages) -
+   * reusing that existing parser instead of inventing a second transcript
+   * format. sessionStorage (not localStorage): this is a one-time handoff,
+   * not something that should resurrect itself on a later, unrelated
+   * visit to the page. */
+  function handleContinueToFullReport() {
+    const transcript = messages
+      .filter((message) => message.content.trim().length > 0)
+      .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`)
+      .join("\n");
+    try {
+      window.sessionStorage.setItem("daffy:chat-handoff", transcript);
+    } catch {
+      // Storage can throw (private browsing, quota) - the handoff is a
+      // convenience; the full chat still works fine standalone.
+    }
+    setIsChatOpen(false);
+    router.push("/app/daily-report");
   }
 
   function updateReviewPromptStatus(index: number, status: "answered") {
@@ -374,21 +436,41 @@ export function GlobalChatWidget({
     setChatInput("");
     setIsSending(true);
 
+    // TCK-93: fold in whatever a still-pending clarifying question was
+    // about - see pendingClarification's own comment above. The user only
+    // ever sees their own plain reply (trimmed) in the thread; this
+    // combined version is just what's actually sent for parsing.
+    const effectiveMessage = pendingClarification ? `${pendingClarification}. ${trimmed}` : trimmed;
+
     // try/finally so a network failure or a request that outruns the
     // platform's function timeout (a real risk here - a targets
     // negotiation call routinely takes 30-90s) can never leave isSending
     // stuck true, which would permanently disable the chat input until the
     // user reloads the page.
     try {
-      const result: ChatRouterResult = await routeChatMessageAction({ message: trimmed, currentScreen });
+      const result: ChatRouterResult = await routeChatMessageAction({ message: effectiveMessage, currentScreen });
 
       if ("error" in result) {
         pushMessage({ role: "assistant", content: result.error });
         return;
       }
 
+      // Cleared by default for every branch below - only the daily_report
+      // branch's own needsClarification case re-sets it right after this.
+      // Prevents a stale pending question from a food message that got
+      // ignored (the user asked about something else instead, routed to a
+      // different domain entirely) from later gluing itself onto an
+      // unrelated future message.
+      setPendingClarification(null);
+
       if (result.domain === "daily_report") {
-        pushMessage({ role: "assistant", content: result.reply, tone: result.logged ? "confirm" : undefined });
+        pushMessage({
+          role: "assistant",
+          content: result.reply,
+          tone: result.logged ? "confirm" : undefined,
+          offerHandoff: result.needsClarification,
+        });
+        setPendingClarification(result.needsClarification ? effectiveMessage : null);
         if (result.logged) router.refresh();
         return;
       }
@@ -445,6 +527,15 @@ export function GlobalChatWidget({
       <button
         type="button"
         onClick={() => {
+          // TCK-93: closing (not opening) an already-finished conversation
+          // resets it - see hasUnresolvedWork's own comment. Checked here
+          // rather than inside the setIsChatOpen updater since it reads
+          // other state (messages/pendingClarification) the updater
+          // function form can't see.
+          if (isChatOpen && !hasUnresolvedWork()) {
+            setMessages([]);
+            setPendingClarification(null);
+          }
           setIsChatOpen((open) => !open);
           setHasUnread(false);
           if (!hasShownReviewPrompt && pendingReviewChanges && pendingReviewChanges.length > 0) {
@@ -529,6 +620,15 @@ export function GlobalChatWidget({
                 >
                   {message.content}
                 </div>
+                {message.offerHandoff ? (
+                  <button
+                    type="button"
+                    onClick={handleContinueToFullReport}
+                    className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold text-teal-700 hover:underline dark:text-teal-400"
+                  >
+                    {tr(locale, "Continue to full report", "המשך לדיווח המלא")} →
+                  </button>
+                ) : null}
                 {message.pendingChange ? (
                   <div className="mt-1.5 max-w-[85%]">
                     {message.pendingChange.status === "pending" ? (
@@ -688,9 +788,18 @@ export function GlobalChatWidget({
               </div>
             ))}
             {isSending ? (
+              // TCK-93: this generic spinner caption used to say "Checking
+              // that for you…" regardless of which domain the message was
+              // about - reported as sounding exactly like the targets
+              // review's own (much slower, much more deliberate) voice even
+              // for an ordinary food log. Kept deliberately neutral/brief
+              // here instead of domain-specific, since the real domain
+              // isn't known yet at this point (classification hasn't
+              // returned) - the wording itself shouldn't imply a specific
+              // kind of work is happening.
               <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
                 <Spinner className="h-3.5 w-3.5 animate-spin" />
-                {tr(locale, "Checking that for you…", "בודקת את זה בשבילך…")}
+                {tr(locale, "One sec…", "שנייה אחת…")}
               </div>
             ) : null}
           </div>
