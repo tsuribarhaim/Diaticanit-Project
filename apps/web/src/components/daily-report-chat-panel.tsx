@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal, flushSync, useFormStatus } from "react-dom";
 
-import { deleteDailyReportAction } from "@/app/app/daily-report/actions";
+import { deleteDailyReportAction, getDailyReportBreakdownAction, type DailyReportBreakdownItem } from "@/app/app/daily-report/actions";
 import { logSavedItemFromChatAction } from "@/app/app/daily-report/quick-log-actions";
 import type { DailyReportDefaultItem } from "@/components/daily-report-defaults-picker";
 import { SavedListQuickPicker } from "@/components/saved-list-quick-picker";
@@ -25,6 +25,12 @@ type ChatMessage = {
    * also get folded into whatever this compose box's own Save/Conclude
    * submits next, which would duplicate it or confuse the AI parser. */
   localOnly?: boolean;
+  /** TCK-94: the structured item-by-item breakdown card shown under a
+   * reply once the conversation signals there's something concrete to log
+   * (see getDailyReportBreakdownAction's own comment) - display only,
+   * computed separately from the save itself, which still works exactly
+   * as before off the free-text transcript. */
+  breakdown?: DailyReportBreakdownItem[];
 };
 type SseEvent =
   | { type: "token"; text: string }
@@ -444,6 +450,9 @@ export function DailyReportChatPanel({
   // client-side, so gating the portal on it - true only after mount - keeps
   // the server pass from ever reaching document.body.
   const [isMounted, setIsMounted] = useState(false);
+  // See the handoff effect below, which these two gate.
+  const handoffReadRef = useRef(false);
+  const pendingHandoffRef = useRef<ChatMessage[] | null>(null);
   useEffect(() => {
     // setTimeout, not a direct call - this codebase's react-hooks/set-state-in-effect
     // rule flags a synchronous setState at the top of an effect body even
@@ -453,6 +462,57 @@ export function DailyReportChatPanel({
     // after mount.
     const timeoutId = setTimeout(() => setIsMounted(true), 0);
     return () => clearTimeout(timeoutId);
+  }, []);
+
+  // TCK-94: "continue to full report" handoff from the floating chat -
+  // see handleContinueToFullReport in global-chat-widget.tsx. That widget
+  // hands its transcript over as plain text via sessionStorage (it has no
+  // server-side session of its own), using the exact "User: ...\nAssistant:
+  // ..." format parseTranscriptToMessages above already parses for the
+  // "Edit entry" flow - reused here rather than a second transcript format.
+  // Runs once on mount, after buildInitialMessages has already seeded the
+  // greeting - a real handoff is never expected to coincide with isEditing
+  // (editing a saved report has its own, different transcript source), so
+  // this only ever overwrites the generic greeting case. Removed from
+  // storage immediately so navigating back to this page later doesn't
+  // resurrect a stale conversation.
+  //
+  // handoffReadRef/pendingHandoffRef split the destructive sessionStorage
+  // read from the actual setState: React 18 dev StrictMode runs this effect
+  // (and its cleanup) twice on mount, and a plain single-pass version loses
+  // the handoff entirely - the first pass's cleanup clears its own setTimeout
+  // before it fires, and by the second pass sessionStorage has already been
+  // emptied by the first pass's own read, leaving nothing to restore. Reading
+  // and removing the item happens at most once (guarded by handoffReadRef,
+  // which - like the parsed result it gates - survives across both passes
+  // since refs aren't reset by a cleanup/re-run), while the setState itself
+  // is safely rescheduled on every pass, so whichever pass is the real one
+  // (never cleaned up) is the one that actually commits it.
+  useEffect(() => {
+    if (isEditing) return;
+    if (!handoffReadRef.current) {
+      handoffReadRef.current = true;
+      try {
+        const handoff = window.sessionStorage.getItem("daffy:chat-handoff");
+        if (handoff) {
+          window.sessionStorage.removeItem("daffy:chat-handoff");
+          const parsed = parseTranscriptToMessages(handoff);
+          if (parsed.length > 0) pendingHandoffRef.current = parsed;
+        }
+      } catch {
+        // Storage can throw (private browsing) - nothing to restore.
+      }
+    }
+    const pending = pendingHandoffRef.current;
+    if (!pending) return;
+    // setTimeout, not a direct call - same react-hooks/set-state-in-effect
+    // idiom used by the isMounted effect just above.
+    const timeoutId = setTimeout(() => {
+      setMessages(pending);
+      setIsOpen(true);
+    }, 0);
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -691,6 +751,12 @@ export function DailyReportChatPanel({
     let assistantText = "";
     let receivedAnything = false;
     let errorMessage: string | null = null;
+    // TCK-94: set from the stream's own "actionable" event (already
+    // computed server-side, previously never read by this client at all)
+    // - true once the model's reply contains something concrete to log,
+    // which is the trigger for fetching the structured breakdown card
+    // below, after the stream itself finishes.
+    let isActionable = false;
 
     try {
       armTimeout();
@@ -745,6 +811,8 @@ export function DailyReportChatPanel({
               next[next.length - 1] = { role: "assistant", content: assistantText };
               return next;
             });
+          } else if (event.type === "actionable") {
+            isActionable = event.value;
           } else if (event.type === "delete_intent") {
             setPendingDeleteOnSave(event.value);
           } else if (event.type === "error") {
@@ -783,6 +851,30 @@ export function DailyReportChatPanel({
     }
 
     setIsStreaming(false);
+
+    // TCK-94: fire-and-forget, deliberately AFTER setIsStreaming(false) -
+    // never blocks the user from continuing the conversation while this
+    // resolves (it's a second AI call, on top of the one that just
+    // finished). historyForRequest + this turn's own two messages is the
+    // exact same transcript shape "Conclude & Report" itself builds
+    // (see handleQuickSave below) - just computed one turn earlier.
+    if (isActionable && assistantText && !errorMessage) {
+      const transcriptSoFar = [...historyForRequest, { role: "user" as const, content: userContent }, { role: "assistant" as const, content: assistantText }]
+        .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`)
+        .join("\n");
+      void getDailyReportBreakdownAction(transcriptSoFar).then((result) => {
+        if ("items" in result && result.items.length > 0) {
+          setMessages((previous) => {
+            const next = [...previous];
+            const lastIndex = next.length - 1;
+            if (next[lastIndex]?.role === "assistant" && next[lastIndex].content === assistantText) {
+              next[lastIndex] = { ...next[lastIndex], breakdown: result.items };
+            }
+            return next;
+          });
+        }
+      });
+    }
   }
 
   /**
@@ -1074,6 +1166,28 @@ export function DailyReportChatPanel({
                   <img src={message.imagePreviewUrl} alt="" className="mb-1.5 h-28 w-28 rounded-lg object-cover" />
                 ) : null}
                 {message.content || (isStreaming && index === messages.length - 1 ? "…" : "")}
+                {/* TCK-94: structured breakdown card, matching the design
+                    from the ticket - display only, computed separately
+                    (see getDailyReportBreakdownAction's own comment); what
+                    actually gets saved still comes from the free-text
+                    transcript exactly as before. */}
+                {message.breakdown && message.breakdown.length > 0 ? (
+                  <div className="mt-2 overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+                    {message.breakdown.map((item, itemIndex) => (
+                      <div
+                        key={itemIndex}
+                        className={`flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs ${
+                          itemIndex > 0 ? "border-t border-slate-100 dark:border-slate-800" : ""
+                        }`}
+                      >
+                        <span className="font-semibold text-slate-800 dark:text-slate-200">{formatDefaultItemName(item.name, locale)}</span>
+                        <span className="text-slate-500 dark:text-slate-400">
+                          {item.quantity} {formatDefaultUnit(item.unit, locale)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             </div>
           ))}

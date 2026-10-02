@@ -15,7 +15,7 @@ import { DailyReportSuccessToast } from "@/components/daily-report-success-toast
 import { SubmitButton } from "@/components/daily-report-submit-button";
 import { TargetsStaleModal } from "@/components/targets-stale-modal";
 import { useUnsavedPreview } from "@/components/unsaved-preview-context";
-import { directionForLocale, formatDefaultUnit, formatMeasurementUnit, tr, type AppLocale } from "@/lib/locale";
+import { directionForLocale, formatDefaultUnit, formatMeasurementUnit, formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
 
 const initialState: DailyReportActionState = {};
 
@@ -81,7 +81,7 @@ function buildReportAtValueForSelectedDate(selectedDateParam?: string): string {
   return nowValue;
 }
 
-export type LoggableCustomTarget = { id: string; label: string; unit: string };
+export type LoggableCustomTarget = { id: string; label: string; unit: string; targetMin: number; targetMax: number };
 
 export type EditingDailyReport = {
   id: string;
@@ -101,11 +101,94 @@ function toLocalDateTimeValue(isoString: string): string {
   return Number.isNaN(parsed.getTime()) ? getLocalDateTimeValue(new Date()) : getLocalDateTimeValue(parsed);
 }
 
+/** TCK-82: "Last: 51.4 · 3 days ago" - small 0/1/N special-casing so the
+ * common recent cases read naturally rather than always "N days ago". */
+function formatDaysAgo(daysAgo: number, locale: AppLocale): string {
+  if (daysAgo <= 0) return tr(locale, "today", "היום");
+  if (daysAgo === 1) return tr(locale, "yesterday", "אתמול");
+  return tr(locale, `${daysAgo} days ago`, `לפני ${daysAgo} ימים`);
+}
+
+/** TCK-82: the three quick-entry rows' compact icon, kept as a single small
+ * stroke-based glyph each (matching the app's existing nav-icon style -
+ * see app-bottom-nav.tsx) rather than emoji, so they sit at the same visual
+ * weight as the rest of the app's own iconography. */
+function QuickMetricIcon({ kind }: { kind: "weight" | "sleep" | "steps" }) {
+  const common = {
+    width: 16,
+    height: 16,
+    viewBox: "0 0 24 24",
+    fill: "none" as const,
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true as const,
+  };
+  if (kind === "weight") {
+    return (
+      <svg {...common}>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M8.5 13a3.5 3.5 0 0 0 7 0" />
+      </svg>
+    );
+  }
+  if (kind === "sleep") {
+    return (
+      <svg {...common}>
+        <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z" />
+      </svg>
+    );
+  }
+  return (
+    <svg {...common}>
+      <circle cx="9" cy="7" r="1.6" />
+      <path d="M8 10.5c1.2 0 1.6 1 1.3 2.3L8 18" />
+      <circle cx="15.5" cy="12" r="1.6" />
+      <path d="M14.5 15.3c1.2 0 1.6 1 1.3 2.3L15 21" />
+    </svg>
+  );
+}
+
+/** TCK-82 round 3: name and details stacked on two lines (not one combined
+ * line - round 2's single-line version still truncated on an actual phone
+ * width, only ever looking right on a wide laptop browser) - name matches
+ * DailyReportGoalBars' own nutrient-name text (text-[13px] font-medium) so
+ * this row reads at the same visual weight as the nutrient rows right below
+ * it; details drop to 11px underneath. Both lines stay right-aligned
+ * (text-start - "start" is the RIGHT edge in this page's RTL context, same
+ * as every nutrient name below it), truncating independently rather than
+ * wrapping if either one is still too long for the row. */
+function MetricInfoLine({
+  icon,
+  name,
+  details,
+}: {
+  icon?: "weight" | "sleep" | "steps";
+  name: string;
+  details: string;
+}) {
+  return (
+    <div className="min-w-0 flex-1 text-start">
+      <div className="flex items-center gap-1 truncate text-[13px] font-medium text-slate-800 dark:text-slate-100">
+        {icon ? <QuickMetricIcon kind={icon} /> : null}
+        <span className="truncate">{name}</span>
+      </div>
+      {details ? <p className="truncate text-[11px] text-slate-500 dark:text-slate-400">{details}</p> : null}
+    </div>
+  );
+}
+
 export function DailyReportForm({
   defaultItems,
   aiAvailable,
   locale,
   currentWeightKg,
+  targetWeightKg = null,
+  previousWeightKg = null,
+  previousWeightDaysAgo = null,
+  selectedDateDay,
+  previousDateDay,
   coreDisplayMetrics = [],
   extraDisplayMetrics = [],
   customTargets = [],
@@ -119,6 +202,22 @@ export function DailyReportForm({
   aiAvailable: boolean;
   locale: AppLocale;
   currentWeightKg?: number | null;
+  /** TCK-82: the locked plan's own target weight (user_target_profiles.
+   * target_weight_kg), shown as plain read-only text next to the field -
+   * display only, never edited from here (that confusion - "is this the
+   * target or today's entry?" - is exactly what this whole redesign was
+   * for). null when there's no active plan yet. */
+  targetWeightKg?: number | null;
+  /** TCK-82: the most recently logged weight strictly BEFORE the day being
+   * viewed, for the "Last: X · N days ago" context line - see page.tsx's
+   * own comment on why this is never today's own value, even once logged. */
+  previousWeightKg?: number | null;
+  previousWeightDaysAgo?: number | null;
+  /** TCK-82: day-of-month for the day being viewed and the day before it -
+   * spells out the exact night span ("the night of the 26th-27th") on the
+   * sleep row instead of a bare, potentially ambiguous "last night". */
+  selectedDateDay: number;
+  previousDateDay: number;
   /** The goal bars shown on the daily-report page - portaled in below (see
    * goalBarsTarget) rather than rendered by the page itself, so tapping one
    * (TCK-41) can reach the chat panel this component owns. */
@@ -226,18 +325,19 @@ export function DailyReportForm({
   );
   const [fallbackSelectedSavedListItems, setFallbackSelectedSavedListItems] = useState<SelectedSavedListItem[]>([]);
   // Deliberately NOT pre-filled with the user's current weight as a
-  // starting *value* (only shown as a placeholder hint below) - a
-  // pre-filled value is submitted exactly like a real entry, so if the
-  // user only mentioned a new weight in the chat text and never touched
-  // this field, the stale pre-filled number would silently win over the
-  // one actually extracted from their message (saveDailyReportAction
-  // prefers an explicit reported_weight_kg over text-extracted weight).
-  // Leaving it empty when untouched lets that text-extraction fallback
-  // through correctly. When editing, though, the field IS pre-filled with
-  // that report's own previously-saved weight (if any) - there's no "the
-  // user hasn't touched this yet" ambiguity to protect here, and leaving it
-  // blank would silently drop the original weight on save.
-  const initialWeightValue = currentWeightKg != null ? String(currentWeightKg) : "";
+  // starting *value* (TCK-82: shown instead as separate "Last: X · N days
+  // ago" context text, via the previousWeightKg/previousWeightDaysAgo
+  // props, never as something sitting IN the input) - a pre-filled value is
+  // submitted exactly like a real entry, so if the user only mentioned a
+  // new weight in the chat text and never touched this field, the stale
+  // pre-filled number would silently win over the one actually extracted
+  // from their message (saveDailyReportAction prefers an explicit
+  // reported_weight_kg over text-extracted weight). Leaving it empty when
+  // untouched lets that text-extraction fallback through correctly. When
+  // editing, though, the field IS pre-filled with that report's own
+  // previously-saved weight (if any) - there's no "the user hasn't touched
+  // this yet" ambiguity to protect here, and leaving it blank would
+  // silently drop the original weight on save.
   const editingWeightValue = editingReport?.reportedWeightKg != null ? String(editingReport.reportedWeightKg) : "";
   const [weightValue, setWeightValue] = useState(editingWeightValue);
   // The baseline weightValue is compared against for "has this been
@@ -684,74 +784,258 @@ export function DailyReportForm({
           that direct read used to race the target div's own commit. */}
       {quickMetricsTarget
         ? createPortal(
-            <>
-              <label className="block min-w-[110px] flex-1">
-                <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">{tr(locale, "Weight (kg)", "משקל (ק\"ג)")}</span>
-                <input
-                  type="number"
-                  name="reported_weight_kg"
-                  form="daily-report-form"
-                  min="20"
-                  max="400"
-                  step="0.1"
-                  inputMode="decimal"
-                  value={weightValue}
-                  onChange={(event) => {
-                    setWeightValue(event.target.value);
-                    // The browser's own native validation bubble (from
-                    // min/max/step below) always renders in the BROWSER's
-                    // own language, never this app's selected locale -
-                    // reported as an English message ("round to 64.4 or
-                    // 64.5") showing up while using the app in Hebrew.
-                    // setCustomValidity replaces just the message text with
-                    // a properly localized one; the native bubble UI/timing
-                    // itself (used by handleQuickSave's reportValidity()
-                    // call) is unaffected. Must be re-evaluated on every
-                    // keystroke and cleared once valid again, or the field
-                    // would stay stuck invalid after a later correction.
-                    const el = event.currentTarget;
-                    if (el.validity.rangeUnderflow || el.validity.rangeOverflow) {
-                      el.setCustomValidity(tr(locale, "Weight must be between 20 and 400 kg.", "המשקל חייב להיות בין 20 ל-400 ק\"ג."));
-                    } else if (el.validity.stepMismatch) {
-                      el.setCustomValidity(
-                        tr(locale, "Please enter weight to one decimal place (e.g. 63.1).", "יש להזין משקל עם ספרה עשרונית אחת (למשל 63.1)."),
-                      );
-                    } else if (el.validity.badInput) {
-                      el.setCustomValidity(tr(locale, "Please enter a valid number.", "יש להזין מספר תקין."));
-                    } else {
-                      el.setCustomValidity("");
-                    }
-                  }}
-                  placeholder={
-                    initialWeightValue
-                      ? tr(locale, `Current: ${initialWeightValue}`, `נוכחי: ${initialWeightValue}`)
-                      : tr(locale, "e.g. 63.8", "לדוגמה: 63.8")
-                  }
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 dark:border-slate-700 dark:bg-slate-900"
-                />
-              </label>
-              <input type="hidden" name="changed_custom_target_ids" form="daily-report-form" value={changedCustomTargetIds.join(",")} />
-              {customTargets.map((target) => (
-                <label key={target.id} className="block min-w-[110px] flex-1">
-                  <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">
-                    {target.label} ({formatMeasurementUnit(target.unit, locale)})
-                  </span>
-                  <input
-                    type="number"
-                    name={`custom_target_value__${target.id}`}
-                    form="daily-report-form"
-                    step="any"
-                    inputMode="decimal"
-                    value={customTargetValues[target.id] ?? ""}
-                    placeholder={tr(locale, "Optional", "לא חובה")}
-                    onChange={(event) =>
-                      setCustomTargetValues((prev) => ({ ...prev, [target.id]: event.target.value }))
-                    }
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 dark:border-slate-700 dark:bg-slate-900"
-                  />
-                </label>
-              ))}
-            </>,
+            (() => {
+              const sleepTarget = customTargets.find((target) => target.id === "sleep_hours");
+              const stepsTarget = customTargets.find((target) => target.id === "daily_steps");
+              // target_weight is excluded too - already shown above via the
+              // dedicated weight row (which reads targetWeightKg, not this
+              // generic entry), so including it here would duplicate it.
+              const otherTargets = customTargets.filter(
+                (target) => target.id !== "sleep_hours" && target.id !== "daily_steps" && target.id !== "target_weight",
+              );
+              const sleepPillValues = sleepTarget
+                ? [2, 1, 0, -1, -2]
+                    .map((offset) => Math.round(sleepTarget.targetMax) + offset)
+                    .filter((value) => value >= 1)
+                : [];
+
+              // TCK-82 round 2: one line per row, name+details together
+              // ("Weight - Target 70kg · Last: 63.3 · 15 days ago") instead
+              // of 2-3 stacked lines. Kept as separate name/details pieces
+              // (not one pre-joined string) so they can render at two text
+              // sizes on that same line - the full compound detail text
+              // genuinely doesn't fit next to the input box at a single
+              // larger size without truncating mid-word (confirmed live).
+              function buildMetricDetails(parts: Array<string | null>): string {
+                return parts.filter((part): part is string => Boolean(part)).join(" · ");
+              }
+
+              const weightTargetPart = targetWeightKg != null
+                ? tr(
+                    locale,
+                    `Target ${formatNumberForLocale(targetWeightKg, locale, { maximumFractionDigits: 1 })} kg`,
+                    `יעד ${formatNumberForLocale(targetWeightKg, locale, { maximumFractionDigits: 1 })} ק"ג`,
+                  )
+                : null;
+              const weightLastPart = previousWeightKg != null && previousWeightDaysAgo != null
+                ? tr(
+                    locale,
+                    `Last: ${formatNumberForLocale(previousWeightKg, locale, { maximumFractionDigits: 1 })} ${formatDaysAgo(previousWeightDaysAgo, locale)}`,
+                    `אחרון: ${formatNumberForLocale(previousWeightKg, locale, { maximumFractionDigits: 1 })} ${formatDaysAgo(previousWeightDaysAgo, locale)}`,
+                  )
+                : null;
+              const weightName = tr(locale, "Weight", "משקל");
+              const weightDetails = buildMetricDetails([weightTargetPart, weightLastPart]);
+
+              // "Last night" moved into the smaller-text details (not the
+              // name) specifically to buy back enough width for the date
+              // range + target to all fit on one line too - this row has
+              // the most text of the three and was still clipping at the
+              // larger name-sized font (confirmed live).
+              const sleepName = tr(locale, "Sleep", "שינה");
+              const sleepDetails = sleepTarget
+                ? buildMetricDetails([
+                    tr(
+                      locale,
+                      `Last night (${previousDateDay}-${selectedDateDay}) · target ${formatNumberForLocale(sleepTarget.targetMax, locale)} ${formatMeasurementUnit(sleepTarget.unit, locale)}`,
+                      `ליל אמש (${previousDateDay}-${selectedDateDay}) · יעד ${formatNumberForLocale(sleepTarget.targetMax, locale)} ${formatMeasurementUnit(sleepTarget.unit, locale)}`,
+                    ),
+                  ])
+                : "";
+
+              const stepsName = tr(locale, "Steps", "צעדים");
+              const stepsDetails = stepsTarget
+                ? buildMetricDetails([
+                    tr(locale, `Target ${formatNumberForLocale(stepsTarget.targetMax, locale)}`, `יעד ${formatNumberForLocale(stepsTarget.targetMax, locale)}`),
+                    tr(locale, "OK to enter at day's end", "אפשר להזין בסוף היום"),
+                  ])
+                : "";
+
+              // Shared, compact sizing for every quick-entry box here - TCK-82
+              // round 2: matches DailyReportGoalBars' own value text
+              // (text-[13px] font-semibold) instead of standing out larger
+              // than every nutrient value on the same page.
+              const inputClassName =
+                "w-full rounded-lg border border-slate-300 bg-white px-1.5 py-1.5 text-center text-[13px] font-semibold tabular-nums outline-none ring-teal-600 focus:ring-2 dark:border-slate-700 dark:bg-slate-900";
+
+              return (
+                <div className="flex-1 min-w-[260px] overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
+                  {/* Weight row - TCK-82: the input starts empty (see
+                      weightValue's own comment above) and the target shown
+                      here is purely informational (user_target_profiles.
+                      target_weight_kg) - this field only ever writes
+                      reported_weight_kg, never the target itself.
+                      Info block is the FIRST child (not the input) so it
+                      lands on the same side as every nutrient row's own
+                      name below it: this page's dir="rtl" context flips a
+                      plain flex-row's visual order, so DOM-first = right
+                      side, DOM-second = left - matching where the nutrient
+                      value numbers sit (round 2 feedback). */}
+                  <div className="flex items-center gap-2 p-2.5">
+                    <MetricInfoLine icon="weight" name={weightName} details={weightDetails} />
+                    <div className="w-14 shrink-0">
+                      <input
+                        type="number"
+                        name="reported_weight_kg"
+                        form="daily-report-form"
+                        min="20"
+                        max="400"
+                        step="0.1"
+                        inputMode="decimal"
+                        value={weightValue}
+                        onChange={(event) => {
+                          setWeightValue(event.target.value);
+                          // The browser's own native validation bubble (from
+                          // min/max/step below) always renders in the BROWSER's
+                          // own language, never this app's selected locale -
+                          // reported as an English message ("round to 64.4 or
+                          // 64.5") showing up while using the app in Hebrew.
+                          // setCustomValidity replaces just the message text with
+                          // a properly localized one; the native bubble UI/timing
+                          // itself (used by handleQuickSave's reportValidity()
+                          // call) is unaffected. Must be re-evaluated on every
+                          // keystroke and cleared once valid again, or the field
+                          // would stay stuck invalid after a later correction.
+                          const el = event.currentTarget;
+                          if (el.validity.rangeUnderflow || el.validity.rangeOverflow) {
+                            el.setCustomValidity(tr(locale, "Weight must be between 20 and 400 kg.", "המשקל חייב להיות בין 20 ל-400 ק\"ג."));
+                          } else if (el.validity.stepMismatch) {
+                            el.setCustomValidity(
+                              tr(locale, "Please enter weight to one decimal place (e.g. 63.1).", "יש להזין משקל עם ספרה עשרונית אחת (למשל 63.1)."),
+                            );
+                          } else if (el.validity.badInput) {
+                            el.setCustomValidity(tr(locale, "Please enter a valid number.", "יש להזין מספר תקין."));
+                          } else {
+                            el.setCustomValidity("");
+                          }
+                        }}
+                        placeholder="—"
+                        aria-label={tr(locale, "Weight (kg)", "משקל (ק\"ג)")}
+                        className={inputClassName}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Sleep row - TCK-82: framed as "last night" with the
+                      exact night span spelled out, since sleep logged today
+                      is always reporting on the night before. Pills are a
+                      faster alternate entry path into the SAME field below -
+                      not a separate value, just another way to fill it. */}
+                  {sleepTarget ? (
+                    <div className="flex flex-col gap-1.5 border-t border-slate-200 p-2.5 dark:border-slate-800">
+                      <div className="flex items-center gap-2">
+                        <MetricInfoLine icon="sleep" name={sleepName} details={sleepDetails} />
+                        <div className="w-14 shrink-0">
+                          <input
+                            type="number"
+                            name={`custom_target_value__${sleepTarget.id}`}
+                            form="daily-report-form"
+                            step="any"
+                            inputMode="decimal"
+                            value={customTargetValues[sleepTarget.id] ?? ""}
+                            placeholder="—"
+                            aria-label={sleepTarget.label}
+                            onChange={(event) =>
+                              setCustomTargetValues((prev) => ({ ...prev, [sleepTarget.id]: event.target.value }))
+                            }
+                            className={inputClassName}
+                          />
+                        </div>
+                      </div>
+                      {/* TCK-82 round 3: pills on their own line below,
+                          pushed to the same side as the input box above
+                          (justify-end = the LEFT edge in this page's RTL
+                          context) - on an actual phone width there isn't
+                          room for name + details + 5 pills + the input all
+                          on one row (confirmed live: it was crowding out
+                          the description text badly). */}
+                      {sleepPillValues.length > 0 ? (
+                        <div className="flex flex-wrap justify-end gap-1.5">
+                          {sleepPillValues.map((value) => (
+                            <button
+                              key={value}
+                              type="button"
+                              onClick={() =>
+                                setCustomTargetValues((prev) => ({ ...prev, [sleepTarget.id]: String(value) }))
+                              }
+                              className={`h-7 w-7 rounded-full border text-xs font-semibold ${
+                                customTargetValues[sleepTarget.id] === String(value)
+                                  ? "border-teal-700 bg-teal-700 text-white dark:border-teal-600 dark:bg-teal-600"
+                                  : "border-slate-300 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+                              }`}
+                            >
+                              {value}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {/* Steps row - TCK-82: the note acknowledges (per Orit's
+                      own comment on the ticket) that steps genuinely update
+                      several times a day - this is just one end-of-day
+                      entry, not a live tracker. */}
+                  {stepsTarget ? (
+                    <div className="flex items-center gap-2 border-t border-slate-200 p-2.5 dark:border-slate-800">
+                      <MetricInfoLine icon="steps" name={stepsName} details={stepsDetails} />
+                      <div className="w-14 shrink-0">
+                        <input
+                          type="number"
+                          name={`custom_target_value__${stepsTarget.id}`}
+                          form="daily-report-form"
+                          step="any"
+                          inputMode="decimal"
+                          value={customTargetValues[stepsTarget.id] ?? ""}
+                          placeholder="—"
+                          aria-label={stepsTarget.label}
+                          onChange={(event) =>
+                            setCustomTargetValues((prev) => ({ ...prev, [stepsTarget.id]: event.target.value }))
+                          }
+                          className={inputClassName}
+                        />
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* Any further custom target beyond the 3 standing ones
+                      (rare - see lib/ai/targets.ts's own "up to 3 more"
+                      rule) - same compact row, generic framing. */}
+                  {otherTargets.map((target) => (
+                    <div key={target.id} className="flex items-center gap-2 border-t border-slate-200 p-2.5 dark:border-slate-800">
+                      <MetricInfoLine
+                        name={target.label}
+                        details={buildMetricDetails([
+                          tr(
+                            locale,
+                            `Target ${formatNumberForLocale(target.targetMax, locale)} ${formatMeasurementUnit(target.unit, locale)}`,
+                            `יעד ${formatNumberForLocale(target.targetMax, locale)} ${formatMeasurementUnit(target.unit, locale)}`,
+                          ),
+                        ])}
+                      />
+                      <div className="w-14 shrink-0">
+                        <input
+                          type="number"
+                          name={`custom_target_value__${target.id}`}
+                          form="daily-report-form"
+                          step="any"
+                          inputMode="decimal"
+                          value={customTargetValues[target.id] ?? ""}
+                          placeholder="—"
+                          aria-label={target.label}
+                          onChange={(event) =>
+                            setCustomTargetValues((prev) => ({ ...prev, [target.id]: event.target.value }))
+                          }
+                          className={inputClassName}
+                        />
+                      </div>
+                    </div>
+                  ))}
+
+                  <input type="hidden" name="changed_custom_target_ids" form="daily-report-form" value={changedCustomTargetIds.join(",")} />
+                </div>
+              );
+            })(),
             quickMetricsTarget,
           )
         : null}

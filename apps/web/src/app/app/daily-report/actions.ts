@@ -447,6 +447,62 @@ async function parseReportTextByMode({
   };
 }
 
+export type DailyReportBreakdownItem = { name: string; quantity: number; unit: string };
+
+/**
+ * TCK-94: the Daily Report chat's structured item-by-item breakdown card -
+ * deliberately a separate, lightweight call rather than a new phase inside
+ * the streaming negotiation itself. lib/ai/daily-report-chat.ts's own
+ * token-marker SSE protocol (ACTIONABLE/INFO, then KEEP/DELETE_ALL,
+ * buffered across streamed chunks) is delicate and already working live -
+ * adding a third marker phase there for comparatively little gain risked
+ * destabilizing it. This instead reuses the same, already-proven
+ * parseDailyReportWithAi this page's own Save flow already relies on, fed
+ * the chat transcript built so far - called once the conversation signals
+ * something concrete to log (the stream's own "actionable" event), only
+ * after the stream itself has finished.
+ */
+export async function getDailyReportBreakdownAction(
+  transcriptText: string,
+): Promise<{ items: DailyReportBreakdownItem[] } | { error: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/sign-in");
+  }
+
+  const aiConfig = getAiExtractionConfig();
+  if (!aiConfig) {
+    return { error: "AI is not available." };
+  }
+
+  const { data: profileRow } = await supabase
+    .from("user_profile")
+    .select("preferred_language, weight_kg")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  const locale = normalizeLocale(profileRow?.preferred_language);
+
+  try {
+    const parsed = await parseDailyReportWithAi({
+      config: aiConfig,
+      reportText: transcriptText,
+      weightKg: Number(profileRow?.weight_kg ?? 0),
+      locale,
+    });
+    return { items: parsed.foodItems.map((item) => ({ name: item.name, quantity: item.quantity, unit: item.unit })) };
+  } catch (error) {
+    logServerError("dailyReport.getBreakdown", "parse_failed", {
+      userId: user.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { error: "Could not build a breakdown." };
+  }
+}
+
 export async function saveDailyReportAction(
   _prevState: DailyReportActionState,
   formData: FormData,

@@ -9,7 +9,7 @@ import {
 import { DailyReportDateJumpForm } from "@/components/daily-report-date-jump-form";
 import { DailyReportEditPencilIcon, DailyReportEntryEditForm } from "@/components/daily-report-entry-edit-form";
 import { DailyReportEntryQuickActions } from "@/components/daily-report-entry-quick-actions";
-import { DailyReportForm } from "@/components/daily-report-form";
+import { DailyReportForm, type LoggableCustomTarget } from "@/components/daily-report-form";
 import { DailyReportPageNotice } from "@/components/daily-report-page-notice";
 import type { RingMetric } from "@/components/daily-report-goal-bars";
 import { DailyReportWeightTrend, type WeightPoint } from "@/components/daily-report-weight-trend";
@@ -232,9 +232,18 @@ export default async function DailyReportPage({
   // boundary that batch's queries filter against (selectedDayStartIso and
   // friends) needs this first (ticket #31: these used to be computed in
   // server/UTC time unconditionally, which is wrong for anyone not near
-  // UTC - see lib/timezone.ts).
+  // UTC - see lib/timezone.ts). Also doubles as the "has this user actually
+  // finished onboarding" guard the old Home dashboard used to provide
+  // (TCK-22: Daily Report is the default landing destination everywhere
+  // now, including straight after a brand-new signup that has no
+  // user_profile row yet at all) - a missing row (not just a missing
+  // timezone value on an existing one) means onboarding was never
+  // completed.
   const { data: timezoneRow } = await supabase.from("user_profile").select("timezone").eq("user_id", user.id).maybeSingle();
-  const timeZone = timezoneRow?.timezone ?? DEFAULT_TIMEZONE;
+  if (!timezoneRow) {
+    redirect("/app/onboarding");
+  }
+  const timeZone = timezoneRow.timezone ?? DEFAULT_TIMEZONE;
 
   const selectedDate = parseSelectedDateParam(resolvedSearchParams.date, timeZone);
   const todayDateString = getLocalDateString(timeZone);
@@ -315,7 +324,7 @@ export default async function DailyReportPage({
     supabase
       .from("user_target_profiles")
       .select(
-        "id, protein_min_g, protein_max_g, carbs_min_g, carbs_max_g, water_min_ml, water_max_ml, calories_min, calories_max, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, magnesium_min_mg, magnesium_max_mg, potassium_min_mg, potassium_max_mg, iron_min_mg, iron_max_mg, zinc_min_mg, zinc_max_mg, sodium_min_mg, sodium_max_mg, added_sugar_min_g, added_sugar_max_g, calcium_min_mg, calcium_max_mg, vit_c_min_mg, vit_c_max_mg, vit_b12_min_mcg, vit_b12_max_mcg, vit_d_min_mcg, vit_d_max_mcg, sat_fat_min_g, sat_fat_max_g, omega3_min_g, omega3_max_g, cholesterol_min_mg, cholesterol_max_mg, user_targets",
+        "id, target_weight_kg, protein_min_g, protein_max_g, carbs_min_g, carbs_max_g, water_min_ml, water_max_ml, calories_min, calories_max, fats_min_g, fats_max_g, fiber_min_g, fiber_max_g, magnesium_min_mg, magnesium_max_mg, potassium_min_mg, potassium_max_mg, iron_min_mg, iron_max_mg, zinc_min_mg, zinc_max_mg, sodium_min_mg, sodium_max_mg, added_sugar_min_g, added_sugar_max_g, calcium_min_mg, calcium_max_mg, vit_c_min_mg, vit_c_max_mg, vit_b12_min_mcg, vit_b12_max_mcg, vit_d_min_mcg, vit_d_max_mcg, sat_fat_min_g, sat_fat_max_g, omega3_min_g, omega3_max_g, cholesterol_min_mg, cholesterol_max_mg, user_targets",
       )
       .eq("user_id", user.id)
       .eq("is_active", true)
@@ -478,6 +487,8 @@ export default async function DailyReportPage({
       id: entry.id!,
       label: entry.label,
       unit: entry.unit!,
+      targetMin: entry.targetMin!,
+      targetMax: entry.targetMax!,
     }));
   const customTargetById = new Map(loggableCustomTargets.map((target) => [target.id, target]));
 
@@ -718,6 +729,25 @@ export default async function DailyReportPage({
         .filter((row) => row.reported_weight_kg !== null)
         .map((row) => ({ date: row.report_at, weightKg: Number(row.reported_weight_kg) }))
     : [];
+
+  // TCK-82: "Last: X · N days ago" context next to the weight quick-entry
+  // field - deliberately the most recent entry strictly BEFORE the day
+  // being viewed (never today's own, even once it's been logged), so this
+  // always reads as "what it was last time" context rather than echoing
+  // back whatever's sitting in the input. Reuses weightHistoryRowsResult
+  // (already fetched unconditionally above, ascending by report_at) rather
+  // than a new query - only misses a prior entry older than its own 30-day
+  // window, an acceptable bound for a "last time" hint.
+  const previousWeightRow = (weightHistoryRowsResult.data ?? [])
+    .filter((row) => row.reported_weight_kg !== null && row.report_at < selectedDayStartIso)
+    .at(-1);
+  const previousWeightKg = previousWeightRow ? Number(previousWeightRow.reported_weight_kg) : null;
+  const previousWeightDaysAgo = previousWeightRow
+    ? Math.round(
+        (Date.parse(selectedDate) - Date.parse(getLocalDateString(timeZone, new Date(previousWeightRow.report_at)))) /
+          86_400_000,
+      )
+    : null;
 
   let reportsError: Error | null = null;
   let reports:
@@ -1069,7 +1099,7 @@ export default async function DailyReportPage({
                   : {};
               const reportCustomTargetRows = Object.entries(reportCustomTargetValues)
                 .map(([id, value]) => ({ target: customTargetById.get(id), value }))
-                .filter((row): row is { target: { id: string; label: string; unit: string }; value: number } => Boolean(row.target));
+                .filter((row): row is { target: LoggableCustomTarget; value: number } => Boolean(row.target));
 
               // Which of this report's own nutrient totals are directly
               // editable in "Edit" below, and whether each is currently
@@ -1501,6 +1531,16 @@ export default async function DailyReportPage({
                 ? Number(profileRow.weight_kg)
                 : null
           }
+          targetWeightKg={activeTargetProfile?.target_weight_kg != null ? Number(activeTargetProfile.target_weight_kg) : null}
+          previousWeightKg={previousWeightKg}
+          previousWeightDaysAgo={previousWeightDaysAgo}
+          // TCK-82: "the night of the 26th-27th" on the sleep row - sleep is
+          // reported each morning FOR the night before, so this spells out
+          // which two calendar days that actually spans for the day being
+          // viewed, instead of leaving it ambiguous which night "last
+          // night" means relative to a possibly-past selectedDate.
+          selectedDateDay={Number(selectedDate.slice(8, 10))}
+          previousDateDay={Number(previousDateString.slice(8, 10))}
           todaysCustomTargetValues={todaysCustomTargetValues}
           editingReport={editingReport}
           selectedDateParam={resolvedSearchParams.date}

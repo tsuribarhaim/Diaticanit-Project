@@ -27,15 +27,15 @@ export function NavChromeRefresher() {
 
   useEffect(() => {
     // Onboarding is a transient, single-purpose wizard whose own page
-    // (app/onboarding/page.tsx) does a server-side redirect("/app") once
-    // the profile is saved and an active target profile already exists -
-    // true for anyone re-testing an already-onboarded account. A
+    // (app/onboarding/page.tsx) does a server-side redirect("/app/daily-report")
+    // once the profile is saved and an active target profile already
+    // exists - true for anyone re-testing an already-onboarded account. A
     // background router.refresh() landing mid-wizard re-runs that
     // redirect check and can silently kick the user out of the wizard
     // right as they finish a step, discarding client state with no error
     // shown (confirmed live: the profile-save fetch completed
-    // successfully, but the next thing that happened was a navigation to
-    // /app - a router.refresh()-triggered redirect, not a crash). Nothing
+    // successfully, but the next thing that happened was a navigation away -
+    // a router.refresh()-triggered redirect, not a crash). Nothing
     // on this route depends on nav-chrome staying fresh in the background
     // the way a page the user sits on for a while does.
     if (pathname?.startsWith("/app/onboarding")) return;

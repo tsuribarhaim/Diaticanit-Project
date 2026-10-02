@@ -7,9 +7,14 @@ import { normalizeLocale } from "@/lib/locale";
 const RECENT_SIGNIN_EMAILS_COOKIE = "phc_recent_signin_emails";
 const LOCALE_COOKIE = "phc_locale";
 
+// TCK-22: Daily Report, not the unlinked Home dashboard, is the default
+// landing destination now - see auth/actions.ts's own sanitizeNextPath
+// (this is a separate, pre-existing duplicate of that same function; kept
+// in sync rather than merged into one shared helper, matching how it was
+// already structured).
 function sanitizeNextPath(nextPath: string | undefined): string {
-  if (!nextPath) return "/app";
-  if (!nextPath.startsWith("/app")) return "/app";
+  if (!nextPath) return "/app/daily-report";
+  if (!nextPath.startsWith("/app")) return "/app/daily-report";
   return nextPath;
 }
 

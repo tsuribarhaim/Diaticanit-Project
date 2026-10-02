@@ -103,7 +103,10 @@ export async function middleware(request: NextRequest) {
   // meant to do.
   if (pathname.startsWith("/auth") && user && !request.headers.get("next-action")) {
     const redirectUrl = request.nextUrl.clone();
-    redirectUrl.pathname = "/app";
+    // TCK-22: Daily Report is the default landing destination everywhere
+    // now, not the unlinked Home dashboard - see sanitizeNextPath's own
+    // comment in auth/actions.ts.
+    redirectUrl.pathname = "/app/daily-report";
     redirectUrl.search = "";
     return NextResponse.redirect(redirectUrl);
   }

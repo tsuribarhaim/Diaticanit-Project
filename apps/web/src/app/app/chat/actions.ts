@@ -6,7 +6,7 @@ import { negotiateProfileChatChangeAction } from "@/app/app/profile/chat-actions
 import { negotiateActiveTargetsAction } from "@/app/app/targets/plan-actions";
 import { classifyChatDomain, type ChatDomain } from "@/lib/ai/chat-router";
 import { getAiExtractionConfig } from "@/lib/ai/env";
-import { parseDailyReportWithAi } from "@/lib/ai/daily-report";
+import { checkDailyReportNeedsClarification, parseDailyReportWithAi } from "@/lib/ai/daily-report";
 import { answerHelpQuestion, type HelpTicketDraft } from "@/lib/ai/help-chat";
 import { detectDangerousSubstance, parseDailyReportText } from "@/lib/daily-report";
 import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
@@ -30,11 +30,19 @@ export type ChatRouterResult =
       domain: "daily_report";
       reply: string;
       /** Whether this actually got saved as a new entry - false for a
-       * declined dangerous-substance report, or a message that turned out
-       * to have nothing loggable in it (matches saveDailyReportAction's
-       * own "add something" behavior, just answered conversationally
-       * instead of as a form validation error). */
+       * declined dangerous-substance report, a message that turned out to
+       * have nothing loggable in it (matches saveDailyReportAction's own
+       * "add something" behavior, just answered conversationally instead
+       * of as a form validation error), or a clarifying question (see
+       * needsClarification). */
       logged: boolean;
+      /** TCK-93: true when `reply` is a clarifying question about a
+       * genuinely missing quantity (see checkDailyReportNeedsClarification)
+       * rather than a save confirmation or a plain failure message - the
+       * caller should remember the original message and fold the user's
+       * next reply into it before sending, instead of treating it as a
+       * fresh, unrelated message. */
+      needsClarification?: boolean;
     }
   | {
       domain: "profile";
@@ -100,9 +108,31 @@ export async function routeChatMessageAction({
   }
 
   const aiConfig = getAiExtractionConfig();
-  const domain: ChatDomain = aiConfig
-    ? (await classifyChatDomain({ config: aiConfig, message: trimmed, currentScreen, locale })).domain
-    : currentScreen; // No AI configured at all - fall back to wherever the chat was opened from rather than failing outright.
+  const classification = aiConfig
+    ? await classifyChatDomain({ config: aiConfig, message: trimmed, currentScreen, locale })
+    : { domain: currentScreen, understood: true }; // No AI configured at all - fall back to wherever the chat was opened from rather than failing outright.
+  const domain: ChatDomain = classification.domain;
+
+  // Gibberish/meaningless input (see classifyChatDomain's own "understood"
+  // rule) would otherwise get forced into whichever domain the ambiguous-
+  // message tie-breaker lands on and silently trigger a real domain action
+  // for nothing - e.g. "fix nho" landing on "targets" and kicking off an
+  // actual background targets review over nonsense. Answered directly here,
+  // before any domain handler runs, as a "help" reply (that domain already
+  // models non-actionable conversational replies) rather than a new result
+  // shape every caller would need its own branch for.
+  if (!classification.understood) {
+    return {
+      domain: "help",
+      reply: tr(
+        locale,
+        "I couldn't quite understand that. Could you rephrase? For example: log something you ate, ask about your targets, or ask a question about the app.",
+        "לא הצלחתי להבין את ההודעה. אפשר לנסח מחדש? לדוגמה: לדווח על משהו שנאכל, לשאול על היעדים, או לשאול שאלה על האפליקציה.",
+      ),
+      link: null,
+      ticketDraft: null,
+    };
+  }
 
   if (domain === "targets") {
     const result = await negotiateActiveTargetsAction({ message: trimmed });
@@ -208,6 +238,26 @@ async function logDailyReportFromChat({
         "לא הצלחתי למצוא משהו לרישום בהודעה הזו - נסו לתאר מה אכלתם, שתיתם או עשיתם כפעילות גופנית.",
       ),
     };
+  }
+
+  // TCK-93: ask for a genuinely missing quantity instead of silently
+  // defaulting one in - only when the AI config is actually available
+  // (this check needs its own AI call), and only on the food items (the
+  // thing this was actually reported about, e.g. "I had pasta" with no
+  // amount) - exercise entries aren't in scope for this check.
+  if (aiConfig) {
+    const clarification = await checkDailyReportNeedsClarification({
+      config: aiConfig,
+      message,
+      foodItems: result.foodItems.map((item) => ({ name: item.name, quantity: item.quantity, unit: item.unit })),
+      locale,
+    }).catch((error) => {
+      logServerError("chat.logDailyReport", "clarification_check_failed", { userId, error: error instanceof Error ? error.message : String(error) });
+      return { needsClarification: false, question: "" };
+    });
+    if (clarification.needsClarification) {
+      return { domain: "daily_report", logged: false, needsClarification: true, reply: clarification.question };
+    }
   }
 
   const m = result.metrics;

@@ -21,6 +21,15 @@ export type ChatDomain = "targets" | "daily_report" | "profile" | "help";
 const classifySchema = z.object({
   domain: z.enum(["targets", "daily_report", "profile", "help"]),
   reason: z.string().trim().max(200).optional().default(""),
+  /** False only for input with no discernible meaning at all (keyboard
+   * mashing, random characters) - see this schema's own prompt rule below.
+   * A real but off-topic, unclear, or small-talk message still counts as
+   * understood and routes normally (domain "help" already handles those);
+   * this exists only to stop meaningless input from being forced into
+   * whichever domain the ambiguous-message tie-breaker happens to land on
+   * and silently triggering a real domain action (e.g. a background
+   * targets review) for nothing. */
+  understood: z.boolean().optional().default(true),
 });
 
 function parseJson(text: string): unknown {
@@ -47,7 +56,7 @@ export async function classifyChatDomain({
    * file's own top comment. */
   currentScreen: ChatDomain;
   locale: AppLocale;
-}): Promise<{ domain: ChatDomain; reason: string }> {
+}): Promise<{ domain: ChatDomain; reason: string; understood: boolean }> {
   const messages = [
     {
       role: "system" as const,
@@ -57,7 +66,7 @@ export async function classifyChatDomain({
     {
       role: "user" as const,
       content: [
-        'Return strict JSON with exactly this shape: {"domain":"targets"|"daily_report"|"profile"|"help","reason":"string"}',
+        'Return strict JSON with exactly this shape: {"domain":"targets"|"daily_report"|"profile"|"help","reason":"string","understood":true|false}',
         "Rules:",
         '- "targets": the message is about the user\'s standing daily targets/goals - nutrient ranges (calories, protein, carbs, etc.), weight target, sleep target, step target, or asking to change/review any of those.',
         '- "daily_report": the message is about logging or asking about what the user has actually eaten, drunk, done for exercise, or weighed TODAY (or on a specific day) - a concrete real-world event, not a standing goal.',
@@ -66,6 +75,7 @@ export async function classifyChatDomain({
         '- A message can mention more than one domain, in which case pick whichever is the actual ACTION being requested (e.g. "I just ate a salad, does that fit my carb target?" is daily_report - logging the salad is the action; a follow-up like "so should I lower my carb target?" is targets; "I switched to vegetarian, update my profile" is profile; "how do I change my target weight?" is help, since the action is asking how, not actually changing it).',
         '- Weight is ambiguous by itself: "I now weigh 71kg" (a fact about the user right now) is profile; "lower my weight target to 71kg" (a goal) is targets.',
         `- If the message is genuinely ambiguous with no clear subject of its own (e.g. "can we lower this a bit?", "what about now?"), fall back to whichever domain matches currentScreen ("${currentScreen}") below, since that's most likely what "this" refers to.`,
+        '- "understood": set to false ONLY when the message has no discernible meaning at all in any language - keyboard mashing, a random string of characters, or similar gibberish (e.g. "fix nho", "asdkjfh"). A real sentence that is simply off-topic, vague, small talk, or a greeting still counts as understood (domain "help" already covers those) - when in doubt, use true. This matters because understood:false skips picking a domain entirely instead of forcing meaningless input into one.',
         `- reason: one short phrase in ${locale === "he" ? "Hebrew" : "English"} explaining the classification, for logging only.`,
         `currentScreen: ${currentScreen}`,
         "message:",
@@ -87,13 +97,13 @@ export async function classifyChatDomain({
   }).catch(() => null);
 
   if (!contentText) {
-    return { domain: currentScreen, reason: "classification unavailable, fell back to current screen" };
+    return { domain: currentScreen, reason: "classification unavailable, fell back to current screen", understood: true };
   }
 
   try {
     const parsed = classifySchema.parse(parseJson(contentText));
-    return { domain: parsed.domain, reason: parsed.reason };
+    return { domain: parsed.domain, reason: parsed.reason, understood: parsed.understood };
   } catch {
-    return { domain: currentScreen, reason: "classification unparseable, fell back to current screen" };
+    return { domain: currentScreen, reason: "classification unparseable, fell back to current screen", understood: true };
   }
 }

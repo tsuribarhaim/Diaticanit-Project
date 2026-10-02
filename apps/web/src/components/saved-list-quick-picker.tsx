@@ -73,6 +73,18 @@ export function SavedListQuickPicker({
 }) {
   const [query, setQuery] = useState("");
   const [desktopAnchor, setDesktopAnchor] = useState<{ left: number; bottom: number } | null>(null);
+  // TCK-93: the mobile sheet below used to anchor purely off
+  // window.innerHeight (the LAYOUT viewport), which on Android does not
+  // shrink when the on-screen keyboard opens - only the VISUAL viewport
+  // does. That left the sheet positioned behind the keyboard, visible only
+  // as a thin sliver peeking above it (confirmed live, matching the
+  // screenshot on the ticket). keyboardInset is how much of the layout
+  // viewport's bottom is currently covered (0 when the keyboard is
+  // closed); visualViewportHeight is the actual visible height, used to
+  // cap the sheet's own max-height so it doesn't try to extend further up
+  // than the keyboard-shrunk screen actually has room for.
+  const [keyboardInset, setKeyboardInset] = useState(0);
+  const [visualViewportHeight, setVisualViewportHeight] = useState<number | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -91,6 +103,24 @@ export function SavedListQuickPicker({
     }, 0);
     return () => clearTimeout(timeout);
   }, [isOpen, triggerRef]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+    function updateFromViewport() {
+      const covered = window.innerHeight - vv!.height - vv!.offsetTop;
+      setKeyboardInset(Math.max(0, Math.round(covered)));
+      setVisualViewportHeight(vv!.height);
+    }
+    updateFromViewport();
+    vv.addEventListener("resize", updateFromViewport);
+    vv.addEventListener("scroll", updateFromViewport);
+    return () => {
+      vv.removeEventListener("resize", updateFromViewport);
+      vv.removeEventListener("scroll", updateFromViewport);
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -176,17 +206,28 @@ export function SavedListQuickPicker({
         </div>
       ) : null}
 
-      {/* Mobile: full-width bottom sheet with a backdrop. */}
+      {/* Mobile: full-width bottom sheet with a backdrop. TCK-93: bottom
+          and max-height both switch to keyboard-aware values once the
+          on-screen keyboard is open (keyboardInset > 0) - sits just above
+          the keyboard instead of behind it, and caps its own height to
+          what's actually still visible above the keyboard rather than the
+          full (keyboard-unaware) 70vh. */}
       <div className="sm:hidden">
         <div role="presentation" onClick={onClose} className="fixed inset-0 z-[60] bg-slate-900/40" />
-        <div className="fixed inset-x-3 bottom-[calc(8rem+env(safe-area-inset-bottom))] z-[60] flex max-h-[70vh] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+        <div
+          className="fixed inset-x-3 z-[60] flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900"
+          style={{
+            bottom: keyboardInset > 0 ? `${keyboardInset + 8}px` : "calc(8rem + env(safe-area-inset-bottom))",
+            maxHeight: keyboardInset > 0 && visualViewportHeight ? `${Math.round(visualViewportHeight * 0.8)}px` : "70vh",
+          }}
+        >
           <div className="border-b border-slate-200 px-3 py-2.5 dark:border-slate-800">
             <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">
               {tr(locale, "Your saved list", "הרשימה השמורה שלך")}
             </p>
             {searchBox}
           </div>
-          {renderList("max-h-[45vh]")}
+          {renderList("max-h-full flex-1")}
           <button
             type="button"
             onClick={onClose}

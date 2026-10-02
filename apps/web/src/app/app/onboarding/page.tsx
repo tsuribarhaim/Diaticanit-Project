@@ -60,7 +60,9 @@ export default async function OnboardingPage() {
   }
 
   if (hasAnyProfile && !needsRefresh && hasActiveTargetProfile) {
-    redirect("/app");
+    // TCK-22: already fully onboarded - Daily Report is the default
+    // landing destination everywhere now, not the unlinked Home dashboard.
+    redirect("/app/daily-report");
   }
 
   const startAtTargetsStep = hasAnyProfile && !needsRefresh && !hasActiveTargetProfile;

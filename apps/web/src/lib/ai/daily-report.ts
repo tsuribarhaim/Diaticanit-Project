@@ -554,3 +554,86 @@ export async function reconcileCustomTargetValueUnits({
 
   return result;
 }
+
+export type DailyReportClarificationCheck = {
+  needsClarification: boolean;
+  question: string;
+};
+
+/**
+ * TCK-93: lets the floating chat's food-report path ask for a genuinely
+ * missing quantity instead of silently defaulting one in - same narrow,
+ * single-purpose-call pattern as reconcileCustomTargetValueUnits above and
+ * verifyQuickAppliedFieldSafety (lib/ai/targets-quick-apply-verify.ts):
+ * one small, separate judgment call, not a general confidence score baked
+ * into the main parse. A broader "requiresConfirmation" field used to
+ * exist on the main parse call and was deliberately removed/hardcoded off
+ * (see parseDailyReportWithAi's own schema) for being unreliable - this is
+ * intentionally narrower than that (one specific question: was a real
+ * quantity ever stated at all) to avoid repeating whatever made the old,
+ * broader signal flaky.
+ *
+ * Deliberately conservative: the floating chat's whole point (per the
+ * ticket this is for) is logging a simple report with zero friction, so
+ * this should stay silent far more often than not - only a quantity truly
+ * invented from nothing (not a fair real-world estimate like "a bowl of
+ * pasta") should ever trigger it, and never more than one question at a
+ * time. A failed AI call here falls back to no clarification needed,
+ * matching reconcileCustomTargetValueUnits' own "never block logging over
+ * this check" principle - this is a nice-to-have on top of logging, not a
+ * gate in front of it.
+ */
+export async function checkDailyReportNeedsClarification({
+  config,
+  message,
+  foodItems,
+  locale,
+}: {
+  config: AiExtractionConfig;
+  message: string;
+  foodItems: Array<{ name: string; quantity: number; unit: string }>;
+  locale: AppLocale;
+}): Promise<DailyReportClarificationCheck> {
+  if (foodItems.length === 0) return { needsClarification: false, question: "" };
+
+  const languageName = locale === "he" ? "Hebrew" : "English";
+
+  try {
+    const contentText = await callAiChatCompletion({
+      config,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You check whether a food/drink log is missing a genuinely important quantity the user never actually stated. Return strict JSON only.",
+        },
+        {
+          role: "user",
+          content: [
+            "The user's message:",
+            message,
+            "What was parsed from it (JSON):",
+            JSON.stringify(foodItems),
+            'Decide ONLY whether the single most important item is missing a real quantity that the user simply never mentioned at all (e.g. "I ate pasta" with no amount, no container, no comparison - nothing to reasonably estimate from). Do NOT flag anything when there\'s enough real-world context to make a fair estimate ("a bowl of pasta", "pasta with chicken", "a slice of pizza") - normal estimation is fine and expected, this is only for when a number is truly just invented out of nothing. Be conservative: when genuinely unsure, do not flag it. Never flag more than one thing.',
+            `If you flag something, question is one short, natural, friendly question in ${languageName} asking for that one missing amount - ready to show the user as-is (e.g. "How much pasta did you have?" / "כמה פסטה אכלת?").`,
+            'Return strict JSON: {"needs_clarification":boolean,"question":"string"}',
+          ].join("\n"),
+        },
+      ],
+      temperature: 0,
+      jsonMode: true,
+      timeoutMs: 10000,
+    });
+
+    const parsed = JSON.parse(contentText) as { needs_clarification?: unknown; question?: unknown };
+    const needsClarification = Boolean(parsed.needs_clarification);
+    const question = typeof parsed.question === "string" ? parsed.question.trim() : "";
+
+    return needsClarification && question ? { needsClarification: true, question } : { needsClarification: false, question: "" };
+  } catch (error) {
+    logServerError("daily_report.needs_clarification_check", "failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { needsClarification: false, question: "" };
+  }
+}
