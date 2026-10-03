@@ -181,7 +181,13 @@ export function DailyReportGoalBars({
 
       {extraMetrics.length ? (
         <details className="mt-4 group">
-          <summary className="flex cursor-pointer list-none items-center justify-center gap-1.5 text-xs font-semibold text-teal-700 [&::-webkit-details-marker]:hidden">
+          {/* TCK-16: bumped from text-xs to text-sm, and the missing
+              dark:text-teal-400 added, to match the "Choose values to
+              display" toggle's own weight - this is the one other control
+              on the page that works the same way (tap to reveal more),
+              and reads as more prominent/intentional than this one used
+              to. */}
+          <summary className="flex cursor-pointer list-none items-center justify-center gap-1.5 text-sm font-semibold text-teal-700 dark:text-teal-400 [&::-webkit-details-marker]:hidden">
             {tr(locale, "Show full detail", "הצג פירוט מלא")}
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" className="transition-transform group-open:rotate-180" aria-hidden="true">
               <path d="M6 9l6 6 6-6" />
