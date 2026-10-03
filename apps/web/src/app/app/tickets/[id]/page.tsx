@@ -7,6 +7,7 @@ import { CancelTicketDialog } from "@/components/cancel-ticket-dialog";
 import { EditTicketDialog } from "@/components/edit-ticket-dialog";
 import { LocalDateTime } from "@/components/local-time";
 import { ReopenTicketDialog } from "@/components/reopen-ticket-dialog";
+import { SubmitTicketDraftButton } from "@/components/submit-ticket-draft-button";
 import { TicketAttachmentViewer } from "@/components/ticket-attachment-viewer";
 import { TicketHistoryLog } from "@/components/ticket-history-log";
 import { markNotificationRead } from "@/lib/notifications";
@@ -25,6 +26,7 @@ import {
   isCurrentUserAdmin,
   isEditableTicketStatus,
   isReopenableTicketStatus,
+  isSubmittableTicketStatus,
   parseTicketDescriptionLog,
   type TicketArea,
   type TicketPriority,
@@ -137,6 +139,7 @@ export default async function TicketDetailPage({
   }
 
   const status = ticket.status as TicketStatus;
+  const notSetLabel = tr(locale, "Not set yet", "טרם נבחר");
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col px-6 py-10">
@@ -167,18 +170,32 @@ export default async function TicketDetailPage({
         </div>
 
         <div className="mt-5 space-y-3 border-t border-slate-100 pt-4 dark:border-slate-800">
-          <DetailRow label={tr(locale, "Type", "סוג")} value={formatTicketType(ticket.ticket_type, locale)} />
-          <DetailRow label={tr(locale, "Area", "אזור")} value={formatTicketArea(ticket.area, locale)} />
+          <DetailRow label={tr(locale, "Type", "סוג")} value={ticket.ticket_type ? formatTicketType(ticket.ticket_type, locale) : notSetLabel} />
+          <DetailRow label={tr(locale, "Area", "אזור")} value={ticket.area ? formatTicketArea(ticket.area, locale) : notSetLabel} />
           <DetailRow label={tr(locale, "Priority", "עדיפות")} value={formatTicketPriority(ticket.priority, locale)} />
           <DetailRow label={tr(locale, "Submitted", "נשלח")} value={<LocalDateTime value={ticket.created_at} locale={locale} />} />
         </div>
 
-        <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{tr(locale, "Description", "תיאור")}</p>
-          <div className="mt-2">
-            <TicketHistoryLog locale={locale} entries={parseTicketDescriptionLog(ticket.description, ticket.created_at)} />
+        {status !== "draft" || ticket.description ? (
+          <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{tr(locale, "Description", "תיאור")}</p>
+            <div className="mt-2">
+              <TicketHistoryLog locale={locale} entries={parseTicketDescriptionLog(ticket.description ?? "", ticket.created_at)} />
+            </div>
           </div>
-        </div>
+        ) : null}
+
+        {status === "draft" ? (
+          <div className="mt-5 rounded-lg border border-dashed border-indigo-300 bg-indigo-50 px-3 py-2 dark:border-indigo-700 dark:bg-indigo-950/30">
+            <p className="text-sm text-indigo-800 dark:text-indigo-300">
+              {tr(
+                locale,
+                "This is a draft - keep editing to add detail, then submit it when ready. We won't look at it until then.",
+                "זו טיוטה - אפשר להמשיך לערוך ולהוסיף פרטים, ולשלוח אותה כשתהיה מוכנה. לא נתייחס אליה עד אז.",
+              )}
+            </p>
+          </div>
+        ) : null}
 
         {attachments && attachments.length > 0 ? (
           <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800">
@@ -258,8 +275,8 @@ export default async function TicketDetailPage({
                   ticketId={ticket.id}
                   ticketSeq={ticket.ticket_seq}
                   currentSubject={ticket.subject}
-                  currentType={ticket.ticket_type as TicketType}
-                  currentArea={ticket.area as TicketArea}
+                  currentType={ticket.ticket_type as TicketType | null}
+                  currentArea={ticket.area as TicketArea | null}
                   currentPriority={ticket.priority as TicketPriority}
                   currentAttachments={(attachments ?? []).map((attachment) => ({
                     id: attachment.id,
@@ -270,6 +287,7 @@ export default async function TicketDetailPage({
                   autoOpen={resolvedSearchParams.edit === "1"}
                 />
               ) : null}
+              {!isAdmin && isSubmittableTicketStatus(status) ? <SubmitTicketDraftButton locale={locale} ticketId={ticket.id} /> : null}
               {!isAdmin && isReopenableTicketStatus(status) ? (
                 <ReopenTicketDialog locale={locale} ticketId={ticket.id} ticketSeq={ticket.ticket_seq} autoOpen={resolvedSearchParams.reopen === "1"} />
               ) : null}

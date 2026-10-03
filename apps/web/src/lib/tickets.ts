@@ -33,6 +33,7 @@ export type TicketPriority = (typeof ticketPriorityOptions)[number];
  * user-facing action produces it yet. See the design doc's own open
  * item on this. */
 export const ticketStatusOptions = [
+  "draft",
   "open",
   "in_progress",
   "resolved",
@@ -61,10 +62,21 @@ export function isCancellableTicketStatus(status: string): boolean {
  * isCancellableTicketStatus above. Deliberately does NOT include
  * 'resolved' - reopening (see isReopenableTicketStatus) is the gateway
  * back into edit mode for a resolved ticket, not a side door around it. */
-export const EDITABLE_TICKET_STATUSES: readonly TicketStatus[] = ["open", "in_progress", "reopened"];
+export const EDITABLE_TICKET_STATUSES: readonly TicketStatus[] = ["draft", "open", "in_progress", "reopened"];
 
 export function isEditableTicketStatus(status: string): boolean {
   return (EDITABLE_TICKET_STATUSES as readonly string[]).includes(status);
+}
+
+/** Statuses a user can self-service Submit FROM - mirrors the
+ * tickets_submit_own RLS policy (draft -> open only). The
+ * tickets_draft_fields_required_once_submitted check constraint is what
+ * actually guarantees type/area/description are filled in by the time this
+ * succeeds; this is only the UI's own "show the Submit button" gate. */
+export const SUBMITTABLE_TICKET_STATUSES: readonly TicketStatus[] = ["draft"];
+
+export function isSubmittableTicketStatus(status: string): boolean {
+  return (SUBMITTABLE_TICKET_STATUSES as readonly string[]).includes(status);
 }
 
 /** Statuses a user can self-service reopen FROM - mirrors the
@@ -83,6 +95,10 @@ export function isReopenableTicketStatus(status: string): boolean {
  * dropdown.tsx) - one status-to-color mapping, not two copies that could
  * drift apart. */
 export function ticketStatusBadgeClass(status: TicketStatus): string {
+  // Dashed border - visually "not real yet", distinct from every solid-
+  // border status below (including the plain slate fallback for
+  // closed/duplicate) so a draft never reads as just another normal state.
+  if (status === "draft") return "border-dashed border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-950/30 dark:text-indigo-400";
   if (status === "open") return "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-800 dark:bg-sky-950/30 dark:text-sky-400";
   if (status === "in_progress" || status === "reopened")
     return "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400";
@@ -118,10 +134,13 @@ export type TicketListRow = {
 };
 
 export type TicketDetail = TicketListRow & {
-  ticket_type: TicketType;
-  area: TicketArea;
+  // TCK-draft: null only while status is "draft" - every other status
+  // requires all three to be set (see the tickets_draft_fields_required_
+  // once_submitted check constraint, 062_phase22_ticket_draft_status.sql).
+  ticket_type: TicketType | null;
+  area: TicketArea | null;
   priority: TicketPriority;
-  description: string;
+  description: string | null;
   cancelled_reason: string | null;
   cancelled_at: string | null;
   fix_description: string | null;

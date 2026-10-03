@@ -366,6 +366,7 @@ export function formatTicketPriority(value: string, locale: AppLocale): string {
 
 export function formatTicketStatus(value: string, locale: AppLocale): string {
   const token = normalizeToken(value);
+  if (token === "draft") return tr(locale, "Draft", "טיוטה");
   if (token === "open") return tr(locale, "Open", "פתוחה");
   if (token === "in_progress") return tr(locale, "In Progress", "בטיפול");
   if (token === "resolved") return tr(locale, "Resolved", "טופלה");
