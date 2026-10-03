@@ -58,8 +58,11 @@ export function EditTicketDialog({
   ticketId: string;
   ticketSeq: number;
   currentSubject: string;
-  currentType: TicketType;
-  currentArea: TicketArea;
+  /** TCK-draft: null only while the ticket is still a draft - every other
+   * status always has both set (see tickets_draft_fields_required_once_
+   * submitted). */
+  currentType: TicketType | null;
+  currentArea: TicketArea | null;
   currentPriority: TicketPriority;
   currentAttachments: ExistingAttachment[];
   /** Opens the dialog immediately on mount - used when arriving from the
@@ -70,8 +73,8 @@ export function EditTicketDialog({
 }) {
   const [isOpen, setIsOpen] = useState(autoOpen);
   const [subject, setSubject] = useState(currentSubject);
-  const [ticketType, setTicketType] = useState<TicketType>(currentType);
-  const [area, setArea] = useState<TicketArea>(currentArea);
+  const [ticketType, setTicketType] = useState<TicketType | "">(currentType ?? "");
+  const [area, setArea] = useState<TicketArea | "">(currentArea ?? "");
   const [priority, setPriority] = useState<TicketPriority>(currentPriority);
   const [note, setNote] = useState("");
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
@@ -84,8 +87,8 @@ export function EditTicketDialog({
 
   function resetDraft() {
     setSubject(currentSubject);
-    setTicketType(currentType);
-    setArea(currentArea);
+    setTicketType(currentType ?? "");
+    setArea(currentArea ?? "");
     setPriority(currentPriority);
     setNote("");
     setRemovedIds(new Set());
@@ -93,9 +96,14 @@ export function EditTicketDialog({
 
   const previewLines = useMemo(() => {
     const lines: string[] = [];
+    const notSet = tr(locale, "(not set)", "(לא נבחר)");
     if (subject.trim() !== currentSubject) lines.push(tr(locale, "Subject updated", "הנושא עודכן"));
-    if (ticketType !== currentType) lines.push(`${tr(locale, "Type", "סוג")}: ${formatTicketType(currentType, locale)} → ${formatTicketType(ticketType, locale)}`);
-    if (area !== currentArea) lines.push(`${tr(locale, "Area", "אזור")}: ${formatTicketArea(currentArea, locale)} → ${formatTicketArea(area, locale)}`);
+    if (ticketType !== (currentType ?? ""))
+      lines.push(
+        `${tr(locale, "Type", "סוג")}: ${currentType ? formatTicketType(currentType, locale) : notSet} → ${ticketType ? formatTicketType(ticketType, locale) : notSet}`,
+      );
+    if (area !== (currentArea ?? ""))
+      lines.push(`${tr(locale, "Area", "אזור")}: ${currentArea ? formatTicketArea(currentArea, locale) : notSet} → ${area ? formatTicketArea(area, locale) : notSet}`);
     if (priority !== currentPriority)
       lines.push(`${tr(locale, "Priority", "עדיפות")}: ${formatTicketPriority(currentPriority, locale)} → ${formatTicketPriority(priority, locale)}`);
     for (const attachment of currentAttachments) {
@@ -139,7 +147,8 @@ export function EditTicketDialog({
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block">
               <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Type", "סוג")}</span>
-              <select name="ticket_type" required value={ticketType} onChange={(event) => setTicketType(event.target.value as TicketType)} className={inputClassName}>
+              <select name="ticket_type" value={ticketType} onChange={(event) => setTicketType(event.target.value as TicketType | "")} className={inputClassName}>
+                <option value="">{tr(locale, "Not set yet", "טרם נבחר")}</option>
                 {ticketTypeOptions.map((option) => (
                   <option key={option} value={option}>
                     {formatTicketType(option, locale)}
@@ -162,7 +171,8 @@ export function EditTicketDialog({
 
           <label className="block">
             <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Area", "אזור")}</span>
-            <select name="area" required value={area} onChange={(event) => setArea(event.target.value as TicketArea)} className={inputClassName}>
+            <select name="area" value={area} onChange={(event) => setArea(event.target.value as TicketArea | "")} className={inputClassName}>
+              <option value="">{tr(locale, "Not set yet", "טרם נבחר")}</option>
               {ticketAreaOptions.map((option) => (
                 <option key={option} value={option}>
                   {formatTicketArea(option, locale)}

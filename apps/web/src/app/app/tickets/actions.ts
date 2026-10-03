@@ -14,6 +14,7 @@ import {
   isCurrentUserAdmin,
   isEditableTicketStatus,
   isReopenableTicketStatus,
+  isSubmittableTicketStatus,
   MAX_TICKET_ATTACHMENTS,
   ticketAreaOptions,
   ticketPriorityOptions,
@@ -61,6 +62,50 @@ function buildTicketSchema(locale: AppLocale) {
   });
 }
 
+/** TCK-draft: a draft only ever requires a subject - everything else can
+ * be filled in over later edits (see EDITABLE_TICKET_STATUSES including
+ * "draft"). ticket_type/area accept the select's own unselected ""
+ * placeholder value (the New Ticket form's "Save as Draft" button uses
+ * formNoValidate specifically so an unselected required <select> doesn't
+ * block submission the way it would for a real Submit) and normalize to
+ * null below, same as a never-touched description. */
+function buildDraftTicketSchema(locale: AppLocale) {
+  return z.object({
+    subject: z
+      .string()
+      .trim()
+      .min(1, tr(locale, "Enter a subject.", "יש להזין נושא."))
+      .max(200, tr(locale, "Subject is too long.", "הנושא ארוך מדי.")),
+    // z.string().nullish().refine(...) rather than a z.union of enum +
+    // literal("") - confirmed live that the union form rejects a plain ""
+    // value with zod's own generic "Invalid input" message instead of
+    // matching the literal("") branch. nullish (not just optional) matters
+    // too: a <select> whose only "selected" option is the disabled
+    // placeholder is excluded from FormData entirely by the browser - so
+    // formData.get("ticket_type") comes back null, not undefined, for an
+    // untouched draft field, and plain .optional() only tolerates
+    // undefined.
+    ticket_type: z
+      .string()
+      .nullish()
+      .refine((value) => !value || (ticketTypeOptions as readonly string[]).includes(value), {
+        message: tr(locale, "Choose a ticket type.", "יש לבחור סוג פנייה."),
+      }),
+    area: z
+      .string()
+      .nullish()
+      .refine((value) => !value || (ticketAreaOptions as readonly string[]).includes(value), {
+        message: tr(locale, "Choose which area this is about.", "יש לבחור לאיזה אזור זה קשור."),
+      }),
+    priority: z.enum(ticketPriorityOptions),
+    description: z
+      .string()
+      .trim()
+      .max(5000, tr(locale, "Description is too long.", "התיאור ארוך מדי."))
+      .optional(),
+  });
+}
+
 /** Shared by createTicketAction and updateTicketAction so file-validation
  * rules (and their exact messages) can't drift between the two - the only
  * difference between callers is what they do with an accepted file
@@ -99,19 +144,34 @@ export async function createTicketAction(_prevState: TicketFormState, formData: 
   }
 
   const locale = await resolveUserLocale(supabase, user.id);
-  const genericFailureMessage = tr(locale, "Could not submit your ticket. Please try again.", "לא ניתן היה לשלוח את הפנייה. יש לנסות שוב.");
+  // TCK-draft: a second submit button on the same form sets intent="draft"
+  // (see new-ticket-form.tsx's SaveDraftButton) - everything else about
+  // this action stays identical between the two paths (same attachment
+  // upload flow, same rollback-on-failure), only validation strictness and
+  // the inserted status/fields differ.
+  const isDraft = formData.get("intent") === "draft";
+  const genericFailureMessage = isDraft
+    ? tr(locale, "Could not save your draft. Please try again.", "לא ניתן היה לשמור את הטיוטה. יש לנסות שוב.")
+    : tr(locale, "Could not submit your ticket. Please try again.", "לא ניתן היה לשלוח את הפנייה. יש לנסות שוב.");
 
-  const parsed = buildTicketSchema(locale).safeParse({
+  const rawFields = {
     subject: formData.get("subject"),
     ticket_type: formData.get("ticket_type"),
     area: formData.get("area"),
     priority: formData.get("priority"),
     description: formData.get("description"),
-  });
+  };
+  const parsed = isDraft ? buildDraftTicketSchema(locale).safeParse(rawFields) : buildTicketSchema(locale).safeParse(rawFields);
 
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? genericFailureMessage };
   }
+  // Normalizes the draft schema's optional/"" fields to null for the
+  // insert below - a real (non-draft) parse always has all three set, so
+  // this is a no-op on that path.
+  const ticketType = parsed.data.ticket_type || null;
+  const area = parsed.data.area || null;
+  const description = parsed.data.description?.trim() || null;
 
   // Optional - a ticket can be submitted with no attachment at all. Every
   // file under this field name (browse, drag-drop, and a pasted image all
@@ -183,11 +243,12 @@ export async function createTicketAction(_prevState: TicketFormState, formData: 
     .from("tickets")
     .insert({
       created_by: user.id,
+      status: isDraft ? "draft" : "open",
       subject: parsed.data.subject,
-      ticket_type: parsed.data.ticket_type,
-      area: parsed.data.area,
+      ticket_type: ticketType,
+      area: area,
       priority: parsed.data.priority,
-      description: parsed.data.description,
+      description: description,
       current_version: currentVersion,
     })
     .select("id")
@@ -219,6 +280,12 @@ export async function createTicketAction(_prevState: TicketFormState, formData: 
   }
 
   revalidatePath("/app/tickets");
+  // A draft lands on its own detail page (ready to keep filling in), not
+  // the list - "save it and work on it" means staying with it, not being
+  // bounced away right after creating it.
+  if (isDraft) {
+    redirect(`/app/tickets/${insertedTicket.id}`);
+  }
   redirect("/app/tickets?notice=1");
 }
 
@@ -337,16 +404,25 @@ export async function updateTicketAction(_prevState: TicketFormState, formData: 
 
   const authoredBySupport = isAdmin && existingTicket.created_by !== user.id;
 
-  const parsed = buildTicketFieldsSchema(locale).safeParse({
+  // TCK-draft: a draft can still be edited with type/area left unset (see
+  // buildDraftTicketSchema) - every other status keeps the strict schema,
+  // same as before.
+  const isDraft = existingTicket.status === "draft";
+  const rawFields = {
     subject: formData.get("subject"),
     ticket_type: formData.get("ticket_type"),
     area: formData.get("area"),
     priority: formData.get("priority"),
-  });
+  };
+  const parsed = isDraft
+    ? buildDraftTicketSchema(locale).omit({ description: true }).safeParse(rawFields)
+    : buildTicketFieldsSchema(locale).safeParse(rawFields);
 
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? genericFailureMessage };
   }
+  const ticketType = parsed.data.ticket_type || null;
+  const area = parsed.data.area || null;
 
   const note = (formData.get("note")?.toString() ?? "").trim();
   if (note.length > 2000) {
@@ -363,11 +439,20 @@ export async function updateTicketAction(_prevState: TicketFormState, formData: 
   if (parsed.data.subject !== existingTicket.subject) {
     changeLines.push("Subject updated");
   }
-  if (parsed.data.ticket_type !== existingTicket.ticket_type) {
-    changeLines.push(`Type: ${formatTicketType(existingTicket.ticket_type, "en")} → ${formatTicketType(parsed.data.ticket_type, "en")}`);
+  // TCK-draft: either side can be null here (a draft that hasn't had this
+  // field set yet) - formatTicketType/Area expect a real value, so this
+  // only calls them on a non-null side and falls back to a plain "(not
+  // set)" marker otherwise, same idea as the UI's own placeholder for an
+  // unset draft field.
+  if (ticketType !== existingTicket.ticket_type) {
+    const before = existingTicket.ticket_type ? formatTicketType(existingTicket.ticket_type, "en") : "(not set)";
+    const after = ticketType ? formatTicketType(ticketType, "en") : "(not set)";
+    changeLines.push(`Type: ${before} → ${after}`);
   }
-  if (parsed.data.area !== existingTicket.area) {
-    changeLines.push(`Area: ${formatTicketArea(existingTicket.area, "en")} → ${formatTicketArea(parsed.data.area, "en")}`);
+  if (area !== existingTicket.area) {
+    const before = existingTicket.area ? formatTicketArea(existingTicket.area, "en") : "(not set)";
+    const after = area ? formatTicketArea(area, "en") : "(not set)";
+    changeLines.push(`Area: ${before} → ${after}`);
   }
   if (parsed.data.priority !== existingTicket.priority) {
     changeLines.push(`Priority: ${formatTicketPriority(existingTicket.priority, "en")} → ${formatTicketPriority(parsed.data.priority, "en")}`);
@@ -477,14 +562,14 @@ export async function updateTicketAction(_prevState: TicketFormState, formData: 
     }
   }
 
-  const description = appendTicketDescriptionEntry({ currentDescription: existingTicket.description, changeLines, note, authoredBySupport });
+  const description = appendTicketDescriptionEntry({ currentDescription: existingTicket.description ?? "", changeLines, note, authoredBySupport });
 
   let updateQuery = supabase
     .from("tickets")
     .update({
       subject: parsed.data.subject,
-      ticket_type: parsed.data.ticket_type,
-      area: parsed.data.area,
+      ticket_type: ticketType,
+      area: area,
       priority: parsed.data.priority,
       description,
     })
@@ -567,6 +652,68 @@ export async function reopenTicketAction(_prevState: TicketFormState, formData: 
   revalidatePath("/app/tickets");
   revalidatePath(`/app/tickets/${ticketId}`);
   return { success: tr(locale, "Ticket reopened.", "הפנייה נפתחה מחדש.") };
+}
+
+/**
+ * Self-service submit, draft -> open only - mirrors tickets_submit_own.
+ * Validated here first with the full (non-draft) schema so an incomplete
+ * draft gets a clear "choose a type"/"enter a description"-style message
+ * instead of a raw constraint-violation error from the database's own
+ * tickets_draft_fields_required_once_submitted check, which is what would
+ * actually stop this update if skipped.
+ */
+export async function submitTicketDraftAction(_prevState: TicketFormState, formData: FormData): Promise<TicketFormState> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/sign-in");
+  }
+
+  const locale = await resolveUserLocale(supabase, user.id);
+  const ticketId = formData.get("ticket_id")?.toString();
+  if (!ticketId) {
+    return { error: tr(locale, "Missing ticket.", "הפנייה חסרה.") };
+  }
+
+  const { data: existingTicket } = await supabase
+    .from("tickets")
+    .select("subject, ticket_type, area, priority, description, status")
+    .eq("id", ticketId)
+    .eq("created_by", user.id)
+    .maybeSingle();
+
+  if (!existingTicket || !isSubmittableTicketStatus(existingTicket.status)) {
+    return { error: tr(locale, "This ticket can no longer be submitted.", "לא ניתן עוד לשלוח את הפנייה הזו.") };
+  }
+
+  const parsed = buildTicketSchema(locale).safeParse({
+    subject: existingTicket.subject,
+    ticket_type: existingTicket.ticket_type,
+    area: existingTicket.area,
+    priority: existingTicket.priority,
+    description: existingTicket.description,
+  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? tr(locale, "Fill in the missing details before submitting.", "יש להשלים את הפרטים החסרים לפני השליחה.") };
+  }
+
+  const { error: updateError } = await supabase
+    .from("tickets")
+    .update({ status: "open" })
+    .eq("id", ticketId)
+    .eq("created_by", user.id);
+
+  if (updateError) {
+    logServerError("tickets.submitDraft", "update_failed", { userId: user.id, ticketId, error: updateError.message });
+    return { error: tr(locale, "Could not submit this ticket. Please try again.", "לא ניתן היה לשלוח את הפנייה. יש לנסות שוב.") };
+  }
+
+  revalidatePath("/app/tickets");
+  revalidatePath(`/app/tickets/${ticketId}`);
+  return { success: tr(locale, "Ticket submitted.", "הפנייה נשלחה.") };
 }
 
 /**

@@ -499,6 +499,21 @@ export default async function DailyReportPage({
   // no exercise still shows a single plain number like before.
   const netCaloriesKcal = Math.round(todaysTotals.caloriesKcal - todaysTotals.estimatedBurnKcal);
 
+  // TCK-100: the Targets page's own nutrient table already shows
+  // round((min+max)/2) as its one "Target" column (see
+  // targets-plan-view.tsx) - these bars were showing `max` as their own
+  // denominator instead, so the two screens visibly disagreed on every
+  // nutrient whose range wasn't a single locked point (reported as "the
+  // targets are different between the Targets screen and the Daily Report
+  // bars"). Mirrors that exact formula rather than introducing a third,
+  // independently-computed "absolute number" that could drift from it -
+  // min/max themselves are untouched and still drive each bar's own
+  // fill-color/healthy-range logic (see daily-report-goal-bars.tsx),
+  // exactly as before.
+  function midpointTarget(min: number, max: number): number {
+    return Math.round((min + max) / 2);
+  }
+
   const coreMetricDefinitions: Record<DailyReportChartCoreMetric, RingMetric> = {
     calories: {
       id: "calories",
@@ -515,6 +530,7 @@ export default async function DailyReportPage({
       ...(todaysTotals.estimatedBurnKcal > 0 ? { grossTotal: todaysTotals.caloriesKcal } : {}),
       min: Number(activeTargetProfile?.calories_min ?? 0),
       max: Number(activeTargetProfile?.calories_max ?? 0),
+      target: midpointTarget(Number(activeTargetProfile?.calories_min ?? 0), Number(activeTargetProfile?.calories_max ?? 0)),
       unit: "kcal",
     },
     protein: {
@@ -524,6 +540,7 @@ export default async function DailyReportPage({
       total: todaysTotals.proteinG,
       min: Number(activeTargetProfile?.protein_min_g ?? 0),
       max: Number(activeTargetProfile?.protein_max_g ?? 0),
+      target: midpointTarget(Number(activeTargetProfile?.protein_min_g ?? 0), Number(activeTargetProfile?.protein_max_g ?? 0)),
       unit: "g",
       exceedingIsPositive: true,
     },
@@ -534,6 +551,7 @@ export default async function DailyReportPage({
       total: todaysTotals.carbsG,
       min: Number(activeTargetProfile?.carbs_min_g ?? 0),
       max: Number(activeTargetProfile?.carbs_max_g ?? 0),
+      target: midpointTarget(Number(activeTargetProfile?.carbs_min_g ?? 0), Number(activeTargetProfile?.carbs_max_g ?? 0)),
       unit: "g",
       exceedingIsPositive: true,
     },
@@ -544,6 +562,7 @@ export default async function DailyReportPage({
       total: todaysTotals.fatG,
       min: Number(activeTargetProfile?.fats_min_g ?? 0),
       max: Number(activeTargetProfile?.fats_max_g ?? 0),
+      target: midpointTarget(Number(activeTargetProfile?.fats_min_g ?? 0), Number(activeTargetProfile?.fats_max_g ?? 0)),
       unit: "g",
       exceedingIsPositive: true,
     },
@@ -554,6 +573,7 @@ export default async function DailyReportPage({
       total: todaysTotals.fiberG,
       min: Number(activeTargetProfile?.fiber_min_g ?? 0),
       max: Number(activeTargetProfile?.fiber_max_g ?? 0),
+      target: midpointTarget(Number(activeTargetProfile?.fiber_min_g ?? 0), Number(activeTargetProfile?.fiber_max_g ?? 0)),
       unit: "g",
       exceedingIsPositive: true,
     },
@@ -564,6 +584,7 @@ export default async function DailyReportPage({
       total: todaysTotals.waterMl,
       min: Number(activeTargetProfile?.water_min_ml ?? 0),
       max: Number(activeTargetProfile?.water_max_ml ?? 0),
+      target: midpointTarget(Number(activeTargetProfile?.water_min_ml ?? 0), Number(activeTargetProfile?.water_max_ml ?? 0)),
       unit: "ml",
       exceedingIsPositive: true,
     },
@@ -577,6 +598,7 @@ export default async function DailyReportPage({
       total: todaysTotals.magnesiumMg,
       min: Number(activeTargetProfile?.magnesium_min_mg ?? 0),
       max: Number(activeTargetProfile?.magnesium_max_mg ?? 0),
+      target: midpointTarget(Number(activeTargetProfile?.magnesium_min_mg ?? 0), Number(activeTargetProfile?.magnesium_max_mg ?? 0)),
       unit: "mg",
       exceedingIsPositive: true,
     },
@@ -587,6 +609,7 @@ export default async function DailyReportPage({
       total: todaysTotals.potassiumMg,
       min: Number(activeTargetProfile?.potassium_min_mg ?? 0),
       max: Number(activeTargetProfile?.potassium_max_mg ?? 0),
+      target: midpointTarget(Number(activeTargetProfile?.potassium_min_mg ?? 0), Number(activeTargetProfile?.potassium_max_mg ?? 0)),
       unit: "mg",
       exceedingIsPositive: true,
     },
@@ -597,6 +620,7 @@ export default async function DailyReportPage({
       total: todaysTotals.ironMg,
       min: Number(activeTargetProfile?.iron_min_mg ?? 0),
       max: Number(activeTargetProfile?.iron_max_mg ?? 0),
+      target: midpointTarget(Number(activeTargetProfile?.iron_min_mg ?? 0), Number(activeTargetProfile?.iron_max_mg ?? 0)),
       unit: "mg",
       exceedingIsPositive: true,
     },
@@ -607,6 +631,7 @@ export default async function DailyReportPage({
       total: todaysTotals.zincMg,
       min: Number(activeTargetProfile?.zinc_min_mg ?? 0),
       max: Number(activeTargetProfile?.zinc_max_mg ?? 0),
+      target: midpointTarget(Number(activeTargetProfile?.zinc_min_mg ?? 0), Number(activeTargetProfile?.zinc_max_mg ?? 0)),
       unit: "mg",
       exceedingIsPositive: true,
     },
@@ -617,6 +642,7 @@ export default async function DailyReportPage({
       total: todaysTotals.sodiumMg,
       min: Number(activeTargetProfile?.sodium_min_mg ?? 0),
       max: Number(activeTargetProfile?.sodium_max_mg ?? 0),
+      target: midpointTarget(Number(activeTargetProfile?.sodium_min_mg ?? 0), Number(activeTargetProfile?.sodium_max_mg ?? 0)),
       unit: "mg",
     },
     addedSugar: {
@@ -626,6 +652,7 @@ export default async function DailyReportPage({
       total: todaysTotals.addedSugarG,
       min: Number(activeTargetProfile?.added_sugar_min_g ?? 0),
       max: Number(activeTargetProfile?.added_sugar_max_g ?? 0),
+      target: midpointTarget(Number(activeTargetProfile?.added_sugar_min_g ?? 0), Number(activeTargetProfile?.added_sugar_max_g ?? 0)),
       unit: "g",
     },
     calcium: {
@@ -635,6 +662,7 @@ export default async function DailyReportPage({
       total: todaysTotals.calciumMg,
       min: Number(activeTargetProfile?.calcium_min_mg ?? 0),
       max: Number(activeTargetProfile?.calcium_max_mg ?? 0),
+      target: midpointTarget(Number(activeTargetProfile?.calcium_min_mg ?? 0), Number(activeTargetProfile?.calcium_max_mg ?? 0)),
       unit: "mg",
       exceedingIsPositive: true,
     },
@@ -645,6 +673,7 @@ export default async function DailyReportPage({
       total: todaysTotals.vitCMg,
       min: Number(activeTargetProfile?.vit_c_min_mg ?? 0),
       max: Number(activeTargetProfile?.vit_c_max_mg ?? 0),
+      target: midpointTarget(Number(activeTargetProfile?.vit_c_min_mg ?? 0), Number(activeTargetProfile?.vit_c_max_mg ?? 0)),
       unit: "mg",
       exceedingIsPositive: true,
     },
@@ -655,6 +684,7 @@ export default async function DailyReportPage({
       total: todaysTotals.vitB12Mcg,
       min: Number(activeTargetProfile?.vit_b12_min_mcg ?? 0),
       max: Number(activeTargetProfile?.vit_b12_max_mcg ?? 0),
+      target: midpointTarget(Number(activeTargetProfile?.vit_b12_min_mcg ?? 0), Number(activeTargetProfile?.vit_b12_max_mcg ?? 0)),
       unit: "mcg",
       exceedingIsPositive: true,
     },
@@ -665,6 +695,7 @@ export default async function DailyReportPage({
       total: todaysTotals.vitDMcg,
       min: Number(activeTargetProfile?.vit_d_min_mcg ?? 0),
       max: Number(activeTargetProfile?.vit_d_max_mcg ?? 0),
+      target: midpointTarget(Number(activeTargetProfile?.vit_d_min_mcg ?? 0), Number(activeTargetProfile?.vit_d_max_mcg ?? 0)),
       unit: "mcg",
       exceedingIsPositive: true,
     },
@@ -675,6 +706,7 @@ export default async function DailyReportPage({
       total: todaysTotals.satFatG,
       min: Number(activeTargetProfile?.sat_fat_min_g ?? 0),
       max: Number(activeTargetProfile?.sat_fat_max_g ?? 0),
+      target: midpointTarget(Number(activeTargetProfile?.sat_fat_min_g ?? 0), Number(activeTargetProfile?.sat_fat_max_g ?? 0)),
       unit: "g",
     },
     omega3: {
@@ -684,6 +716,7 @@ export default async function DailyReportPage({
       total: todaysTotals.omega3G,
       min: Number(activeTargetProfile?.omega3_min_g ?? 0),
       max: Number(activeTargetProfile?.omega3_max_g ?? 0),
+      target: midpointTarget(Number(activeTargetProfile?.omega3_min_g ?? 0), Number(activeTargetProfile?.omega3_max_g ?? 0)),
       unit: "g",
       exceedingIsPositive: true,
     },
@@ -694,6 +727,7 @@ export default async function DailyReportPage({
       total: todaysTotals.cholesterolMg,
       min: Number(activeTargetProfile?.cholesterol_min_mg ?? 0),
       max: Number(activeTargetProfile?.cholesterol_max_mg ?? 0),
+      target: midpointTarget(Number(activeTargetProfile?.cholesterol_min_mg ?? 0), Number(activeTargetProfile?.cholesterol_max_mg ?? 0)),
       unit: "mg",
     },
   };

@@ -9,6 +9,16 @@ export type RingMetric = {
   total: number;
   min: number;
   max: number;
+  /** TCK-100: the single number actually shown as "today's goal" (the
+   * displayed "/X" denominator and the bar's own fill percentage) -
+   * min/max stay in charge of the bar's color/healthy-range logic only.
+   * Optional and falls back to `max` when absent (every caller that
+   * doesn't model a real min/max nutrient range - a day-count, a custom
+   * target, exercise minutes - has no separate "target" distinct from its
+   * own max to begin with, so this changes nothing for them). See
+   * daily-report/page.tsx's own midpointTarget for why this specific
+   * formula, matching what the Targets page already shows. */
+  target?: number;
   unit: string;
   /** True when an unresolved background-check notification concerns this
    * specific field (see docs/design/targets-save-performance-redesign.md's

@@ -33,6 +33,35 @@ function SubmitTicketButton({ locale }: { locale: AppLocale }) {
   );
 }
 
+/** TCK-draft: a second submit button on the same form, with its own
+ * `name="intent" value="draft"` so only ITS click includes that in
+ * FormData (standard HTML behavior - the button that triggered the submit
+ * is the only one whose own name/value pair gets included) - no JS state
+ * needed to track which one was pressed. None of the fields below carry
+ * `required` (a draft is explicitly allowed to be incomplete - see
+ * buildDraftTicketSchema - and the real Submit path is still fully
+ * enforced server-side via buildTicketSchema), so there's deliberately no
+ * formNoValidate here either - confirmed live that it makes this button's
+ * click fall back to a real native form POST (a full page reload,
+ * silently discarding every typed field) instead of the fetch-based
+ * submission React's own form-action handling otherwise gives both
+ * buttons uniformly. */
+function SaveDraftButton({ locale }: { locale: AppLocale }) {
+  const { pending } = useFormStatus();
+  return (
+    <button
+      type="submit"
+      name="intent"
+      value="draft"
+      disabled={pending}
+      className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-70 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+    >
+      {pending ? <Spinner className="h-4 w-4 animate-spin" /> : null}
+      {pending ? tr(locale, "Saving...", "שומר...") : tr(locale, "Save as Draft", "שמירה כטיוטה")}
+    </button>
+  );
+}
+
 const inputClassName =
   "w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none ring-teal-600 placeholder:text-slate-400 focus:ring-2 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
 
@@ -55,7 +84,7 @@ export function NewTicketForm({ locale }: { locale: AppLocale }) {
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="block">
           <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Type", "סוג")}</span>
-          <select name="ticket_type" required defaultValue="" className={inputClassName}>
+          <select name="ticket_type" defaultValue="" className={inputClassName}>
             <option value="" disabled>
               {tr(locale, "Select a type...", "בחרו סוג...")}
             </option>
@@ -81,7 +110,7 @@ export function NewTicketForm({ locale }: { locale: AppLocale }) {
 
       <label className="block">
         <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Area", "אזור")}</span>
-        <select name="area" required defaultValue="" className={inputClassName}>
+        <select name="area" defaultValue="" className={inputClassName}>
           <option value="" disabled>
             {tr(locale, "Which part of the app is this about?", "לאיזה חלק באפליקציה זה קשור?")}
           </option>
@@ -97,7 +126,6 @@ export function NewTicketForm({ locale }: { locale: AppLocale }) {
         <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Description", "תיאור")}</span>
         <textarea
           name="description"
-          required
           rows={6}
           maxLength={5000}
           className={inputClassName}
@@ -132,7 +160,17 @@ export function NewTicketForm({ locale }: { locale: AppLocale }) {
         </p>
       ) : null}
 
-      <SubmitTicketButton locale={locale} />
+      <div className="flex flex-wrap items-center gap-3">
+        <SubmitTicketButton locale={locale} />
+        <SaveDraftButton locale={locale} />
+      </div>
+      <p className="text-xs text-slate-400 dark:text-slate-500">
+        {tr(
+          locale,
+          "Save as Draft to keep gathering details across multiple sessions - nothing is looked at until you submit it.",
+          "שמירה כטיוטה מאפשרת להמשיך לאסוף פרטים על פני כמה פעמים - לא נתייחס לפנייה עד שתישלח.",
+        )}
+      </p>
     </form>
   );
 }

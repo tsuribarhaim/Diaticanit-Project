@@ -55,7 +55,12 @@ function GoalBarRow({
   metric: RingMetric;
   onSelect?: (metric: RingMetric) => void;
 }) {
-  const percent = metric.max > 0 ? clampPercent((metric.total / metric.max) * 100) : 0;
+  // TCK-100: displayed against `target` (falls back to `max` for a metric
+  // with no separate target - see RingMetric's own comment), not `max` -
+  // the bar's fill/color zones (barColorClass et al. below) are the only
+  // things still driven by the real min/max range.
+  const target = metric.target ?? metric.max;
+  const percent = target > 0 ? clampPercent((metric.total / target) * 100) : 0;
   const burnedAmount =
     metric.grossTotal !== undefined && metric.grossTotal !== metric.total ? metric.grossTotal - metric.total : null;
 
@@ -72,7 +77,7 @@ function GoalBarRow({
         <span dir="ltr" className={`text-[13px] font-semibold tabular-nums ${valueColorClass(metric)}`}>
           {formatNumberForLocale(metric.total, locale, { maximumFractionDigits: 0 })}
           {" / "}
-          {formatNumberForLocale(metric.max, locale, { maximumFractionDigits: 0 })} {formatMeasurementUnit(metric.unit, locale)}
+          {formatNumberForLocale(target, locale, { maximumFractionDigits: 0 })} {formatMeasurementUnit(metric.unit, locale)}
         </span>
       </div>
       <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">

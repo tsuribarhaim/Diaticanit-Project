@@ -43,6 +43,20 @@ export function AppBottomNav({
     return null;
   }
 
+  // TCK-96: with a pending notification, this tab used to point at
+  // /app/notifications unconditionally - fine the first tap (see this
+  // block's own history below), but with no OTHER way to reach Profile on
+  // mobile at all (the desktop nav's separate, always-"/app/profile" link
+  // - app-nav.tsx - only reaches whoever has a wide-enough viewport, e.g.
+  // landscape), this became a one-way door: notificationCount is real
+  // server-side account state, so it survives a fresh sign-in, a reinstall,
+  // anything - confirmed live as "the profile screen stays stuck on
+  // notifications, nothing reachable, reinstalling didn't help either."
+  // Once already ON notifications, this same tab now goes to Profile
+  // instead - an escape hatch through the same tap target, not a second
+  // control - rather than reopening notifications pointlessly.
+  const isOnNotifications = pathname?.startsWith("/app/notifications") ?? false;
+
   const tabs: Array<{ href: string; label: string; isActive: boolean; icon: ReactNode }> = [
     {
       // Goes straight to Notifications instead of Profile when there's
@@ -53,7 +67,7 @@ export function AppBottomNav({
       // Notifications"). The tap target is the same size either way (the
       // whole tab, not just the small dot), so this doesn't need its own
       // separate hit area.
-      href: notificationCount ? "/app/notifications" : "/app/profile",
+      href: !isOnNotifications && notificationCount ? "/app/notifications" : "/app/profile",
       label: tr(locale, "Profile", "פרופיל"),
       isActive: (pathname?.startsWith("/app/profile") || pathname?.startsWith("/app/notifications")) ?? false,
       // The user's own picture/initial doubles as this tab's icon - "which
