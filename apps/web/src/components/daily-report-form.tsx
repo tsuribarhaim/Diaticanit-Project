@@ -179,6 +179,58 @@ function MetricInfoLine({
   );
 }
 
+/** TCK-108: an explicit save control for the Weight/Sleep/Steps quick-entry
+ * rows, which (unlike the chat composer's own always-visible send icon)
+ * previously had no save affordance of their own at all - see
+ * handleQuickSave's own comment for the full report this fixes. One shared
+ * status (passed in from the parent) rather than a per-row status: all
+ * three rows already submit together through the same real form, so three
+ * independently-tracked icons would just be three views of the one same
+ * save - this still renders next to whichever row the user is looking at,
+ * it just doesn't pretend there are three separate saves happening. */
+function QuickSaveIcon({ locale, status, onSave }: { locale: AppLocale; status: "idle" | "pending" | "saved" | "error"; onSave: () => void }) {
+  const label = tr(locale, "Save", "שמירה");
+  if (status === "pending") {
+    return (
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center" aria-label={tr(locale, "Saving…", "שומר…")}>
+        <svg className="h-4 w-4 animate-spin text-slate-400" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+        </svg>
+      </span>
+    );
+  }
+  if (status === "saved") {
+    return (
+      <span
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white"
+        aria-label={tr(locale, "Saved", "נשמר")}
+      >
+        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M5 13l4 4L19 7" />
+        </svg>
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onSave}
+      title={label}
+      aria-label={label}
+      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition-colors ${
+        status === "error"
+          ? "border-rose-300 text-rose-600 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950/30"
+          : "border-emerald-300 text-emerald-600 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
+      }`}
+    >
+      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M5 13l4 4L19 7" />
+      </svg>
+    </button>
+  );
+}
+
 export function DailyReportForm({
   defaultItems,
   aiAvailable,
@@ -638,6 +690,63 @@ export function DailyReportForm({
     setReportText(text.slice(0, REPORT_MAX_LENGTH));
   }
 
+  // TCK-108: Weight/Sleep/Steps had no save affordance of their own - unlike
+  // the chat composer's always-visible send icon, or a saved-list item's
+  // immediate "tap it, it's logged" confirmation, these three just sat in
+  // local state until the user found the real Report button further down
+  // the page. Reported live as a lost edit: the user filled in sleep/steps,
+  // assumed the chat's own send icon nearby was "the" save control (it
+  // isn't - the chat was empty, so there was nothing to send), navigated
+  // away, and the values were never actually persisted. This button
+  // triggers the exact same real submit (formRef, not a separate action) so
+  // it goes through the identical out-of-range confirmation / reconciliation
+  // / weight-resync logic the bottom Report button already does correctly -
+  // only the pending/success feedback below is new.
+  const [quickSavePending, setQuickSavePending] = useState(false);
+  const [quickSaveError, setQuickSaveError] = useState(false);
+  function handleQuickSave() {
+    setQuickSavePending(true);
+    setQuickSaveError(false);
+    formRef.current?.requestSubmit();
+  }
+  // Resolves the pending spinner on ANY submit outcome - a real success
+  // (state changes, toastMessage picks it up below), a validation error
+  // (state changes to carry state.error - flagged transiently here rather
+  // than read straight off state.error, which keeps its last value around
+  // indefinitely until the next submit and would otherwise make this icon
+  // report "error" forever after one unrelated failure), or handleFormSubmit
+  // blocking the submit entirely for the out-of-range confirmation dialog
+  // (saveBlockedSignal increments instead, since state never changes then).
+  const [prevStateForQuickSave, setPrevStateForQuickSave] = useState(state);
+  if (state !== prevStateForQuickSave) {
+    setPrevStateForQuickSave(state);
+    if (quickSavePending) {
+      setQuickSavePending(false);
+      if (state.error) setQuickSaveError(true);
+    }
+  }
+  const [prevSaveBlockedSignal, setPrevSaveBlockedSignal] = useState(saveBlockedSignal);
+  if (saveBlockedSignal !== prevSaveBlockedSignal) {
+    setPrevSaveBlockedSignal(saveBlockedSignal);
+    setQuickSavePending(false);
+  }
+  useEffect(() => {
+    if (!quickSaveError) return;
+    const timeoutId = setTimeout(() => setQuickSaveError(false), SAVE_TOAST_DURATION_MS);
+    return () => clearTimeout(timeoutId);
+  }, [quickSaveError]);
+  // toastMessage is already exactly "a save just succeeded, show it for
+  // SAVE_TOAST_DURATION_MS" (set from state.success above) - reusing it here
+  // instead of a second, separately-timed "saved" flag keeps this icon's
+  // green check in sync with the same toast rather than two timers drifting.
+  const quickSaveStatus: "idle" | "pending" | "saved" | "error" = quickSavePending
+    ? "pending"
+    : quickSaveError
+      ? "error"
+      : toastMessage
+        ? "saved"
+        : "idle";
+
   const reportLength = reportText.length;
   const reportCharsLeft = REPORT_MAX_LENGTH - reportLength;
 
@@ -793,9 +902,25 @@ export function DailyReportForm({
               const otherTargets = customTargets.filter(
                 (target) => target.id !== "sleep_hours" && target.id !== "daily_steps" && target.id !== "target_weight",
               );
+              // TCK-109: the band here is a display/logging tolerance around
+              // one real target value, not the target itself - Math.max(0,
+              // value - halfWidth)/(value + halfWidth) in applyOrCheckFieldEdit
+              // (edit-actions.ts) means targetMax sits a full half-width ABOVE
+              // whatever the user actually set (e.g. 8000 steps really means
+              // a [6500, 9500] band, so reading targetMax straight showed
+              // "Target 9500" here while the Targets page correctly showed
+              // the 8000 the user entered - reported live as the two pages
+              // disagreeing). The midpoint is exactly the value that was set
+              // (recenterBand keeps the band symmetric around it, barring the
+              // rare 0-floor clamp for a value smaller than its own half-
+              // width), matching the same midpointTarget formula this page's
+              // own nutrient goal bars already use (see daily-report/page.tsx).
+              function midpointTarget(target: LoggableCustomTarget): number {
+                return Math.round((target.targetMin + target.targetMax) / 2);
+              }
               const sleepPillValues = sleepTarget
                 ? [2, 1, 0, -1, -2]
-                    .map((offset) => Math.round(sleepTarget.targetMax) + offset)
+                    .map((offset) => midpointTarget(sleepTarget) + offset)
                     .filter((value) => value >= 1)
                 : [];
 
@@ -837,8 +962,8 @@ export function DailyReportForm({
                 ? buildMetricDetails([
                     tr(
                       locale,
-                      `Last night (${previousDateDay}-${selectedDateDay}) · target ${formatNumberForLocale(sleepTarget.targetMax, locale)} ${formatMeasurementUnit(sleepTarget.unit, locale)}`,
-                      `ליל אמש (${previousDateDay}-${selectedDateDay}) · יעד ${formatNumberForLocale(sleepTarget.targetMax, locale)} ${formatMeasurementUnit(sleepTarget.unit, locale)}`,
+                      `Last night (${previousDateDay}-${selectedDateDay}) · target ${formatNumberForLocale(midpointTarget(sleepTarget), locale)} ${formatMeasurementUnit(sleepTarget.unit, locale)}`,
+                      `ליל אמש (${previousDateDay}-${selectedDateDay}) · יעד ${formatNumberForLocale(midpointTarget(sleepTarget), locale)} ${formatMeasurementUnit(sleepTarget.unit, locale)}`,
                     ),
                   ])
                 : "";
@@ -846,7 +971,7 @@ export function DailyReportForm({
               const stepsName = tr(locale, "Steps", "צעדים");
               const stepsDetails = stepsTarget
                 ? buildMetricDetails([
-                    tr(locale, `Target ${formatNumberForLocale(stepsTarget.targetMax, locale)}`, `יעד ${formatNumberForLocale(stepsTarget.targetMax, locale)}`),
+                    tr(locale, `Target ${formatNumberForLocale(midpointTarget(stepsTarget), locale)}`, `יעד ${formatNumberForLocale(midpointTarget(stepsTarget), locale)}`),
                     tr(locale, "OK to enter at day's end", "אפשר להזין בסוף היום"),
                   ])
                 : "";
@@ -914,6 +1039,7 @@ export function DailyReportForm({
                         className={inputClassName}
                       />
                     </div>
+                    <QuickSaveIcon locale={locale} status={quickSaveStatus} onSave={handleQuickSave} />
                   </div>
 
                   {/* Sleep row - TCK-82: framed as "last night" with the
@@ -941,6 +1067,7 @@ export function DailyReportForm({
                             className={inputClassName}
                           />
                         </div>
+                        <QuickSaveIcon locale={locale} status={quickSaveStatus} onSave={handleQuickSave} />
                       </div>
                       {/* TCK-82 round 3: pills on their own line below,
                           pushed to the same side as the input box above
@@ -995,6 +1122,7 @@ export function DailyReportForm({
                           className={inputClassName}
                         />
                       </div>
+                      <QuickSaveIcon locale={locale} status={quickSaveStatus} onSave={handleQuickSave} />
                     </div>
                   ) : null}
 
@@ -1029,6 +1157,7 @@ export function DailyReportForm({
                           className={inputClassName}
                         />
                       </div>
+                      <QuickSaveIcon locale={locale} status={quickSaveStatus} onSave={handleQuickSave} />
                     </div>
                   ))}
 
