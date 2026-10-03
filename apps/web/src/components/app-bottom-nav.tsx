@@ -122,12 +122,30 @@ export function AppBottomNav({
             key={tab.href}
             href={tab.href}
             confirmMessage={tr(locale, CONFIRM_MESSAGE_EN, CONFIRM_MESSAGE_HE)}
-            className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] font-medium ${
+            // TCK-107: flex-col lived on THIS link, but GuardedLink renders
+            // its children through PendingOverlay (nav-link.tsx), which
+            // wraps them in one plain, unstyled <span> - the link's own
+            // flex-col has only that single span to "stack", so it does
+            // nothing. Targets/Daily Report only ever looked stacked by
+            // accident: their icon+label combined width happens to exceed
+            // this tab's own share of a narrow screen, so the label text
+            // wraps onto its own line same as any overflowing inline
+            // content would. Profile's short label fits next to its
+            // (wider) avatar icon on one line, so it never "accidentally"
+            // wrapped - reported live as the icon sitting beside the text
+            // instead of above it. The real fix is an explicit inner
+            // wrapper that stacks icon+label on purpose, regardless of
+            // PendingOverlay's own span or how wide any given label is -
+            // this also makes Targets/Daily Report's stacking reliable
+            // instead of lucky, not just Profile's.
+            className={`flex flex-1 items-center justify-center py-2 text-[11px] font-medium ${
               tab.isActive ? "text-teal-700 dark:text-teal-400" : "text-slate-500 dark:text-slate-500"
             }`}
           >
-            {tab.icon}
-            {tab.label}
+            <span className="flex flex-col items-center gap-0.5">
+              {tab.icon}
+              {tab.label}
+            </span>
           </GuardedLink>
         ))}
       </div>
