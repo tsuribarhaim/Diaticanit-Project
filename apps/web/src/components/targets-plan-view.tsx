@@ -1,4 +1,4 @@
-import { formatMeasurementUnit, formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
+import { formatExerciseModality, formatMeasurementUnit, formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
 import type { TargetGenerationPayload } from "@/lib/targets";
 import { NUTRIENT_DIFF_FIELDS } from "@/lib/targets-diff";
 
@@ -124,7 +124,22 @@ export function TargetsPlanView({ payload, locale }: { payload: TargetGeneration
                 key={`${entry.modality}-${index}`}
                 className="flex min-h-[80px] flex-col justify-between rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/60"
               >
-                <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">{entry.modality}</p>
+                <div>
+                  {/* TCK-90: localized via the same formatExerciseModality
+                      this file's own generator (lib/targets.ts) already
+                      uses for its own adjustment notes - the raw token
+                      (e.g. "martial_arts") used to render as-is, untranslated. */}
+                  <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">{formatExerciseModality(entry.modality, locale)}</p>
+                  {/* "other" (and any modality, really) is just a bucket
+                      name - search_keywords is where the AI already puts
+                      the actual activity ("beginner Pilates routine",
+                      "Dance workout"), per its own prompt instructions
+                      (lib/ai/targets.ts) - this card just never rendered
+                      it, so "other" alone told the user nothing concrete. */}
+                  {entry.searchKeywords.length > 0 ? (
+                    <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-400">{entry.searchKeywords[0]}</p>
+                  ) : null}
+                </div>
                 <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
                   {entry.frequencyPerWeek}x/{tr(locale, "week", "שבוע")} · {entry.durationMinutesPerSession} {tr(locale, "min", "דק'")}
                 </p>

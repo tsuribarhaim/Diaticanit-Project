@@ -5,7 +5,7 @@ import { Fragment, useState } from "react";
 import { negotiateActiveTargetsAction } from "@/app/app/targets/plan-actions";
 import { editTargetFieldAction, type EditableFieldRef } from "@/app/app/targets/edit-actions";
 import { InfoPopoverButton } from "@/components/info-popover";
-import { formatMeasurementUnit, formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
+import { formatExerciseModality, formatMeasurementUnit, formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
 import { getNutrientReference } from "@/lib/nutrient-reference";
 import type { TargetGenerationPayload } from "@/lib/targets";
 import { ORDERED_NUTRIENT_FIELDS } from "@/components/targets-plan-view";
@@ -588,7 +588,17 @@ export function TargetsPlanEditor({
                 key={`${entry.modality}-${index}`}
                 className="flex min-h-[80px] flex-col justify-between rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/60"
               >
-                <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">{entry.modality}</p>
+                <div>
+                  {/* TCK-90: same fix as targets-plan-view.tsx's identical
+                      card (this file duplicates that markup) - localized
+                      via formatExerciseModality instead of the raw token,
+                      and search_keywords surfaced so "other" means
+                      something concrete instead of nothing. */}
+                  <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">{formatExerciseModality(entry.modality, locale)}</p>
+                  {entry.searchKeywords.length > 0 ? (
+                    <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-400">{entry.searchKeywords[0]}</p>
+                  ) : null}
+                </div>
                 <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
                   {entry.frequencyPerWeek}x/{tr(locale, "week", "שבוע")} · {entry.durationMinutesPerSession} {tr(locale, "min", "דק'")}
                 </p>
