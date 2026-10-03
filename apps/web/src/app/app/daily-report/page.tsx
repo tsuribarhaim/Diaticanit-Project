@@ -10,6 +10,7 @@ import { DailyReportDateJumpForm } from "@/components/daily-report-date-jump-for
 import { DailyReportEditPencilIcon, DailyReportEntryEditForm } from "@/components/daily-report-entry-edit-form";
 import { DailyReportEntryQuickActions } from "@/components/daily-report-entry-quick-actions";
 import { DailyReportForm, type LoggableCustomTarget } from "@/components/daily-report-form";
+import { DailyReportMetricOrderEditor } from "@/components/daily-report-metric-order-editor";
 import { DailyReportPageNotice } from "@/components/daily-report-page-notice";
 import type { RingMetric } from "@/components/daily-report-goal-bars";
 import { DailyReportWeightTrend, type WeightPoint } from "@/components/daily-report-weight-trend";
@@ -158,31 +159,6 @@ function buildDisplayConversation(rawText: string, locale: AppLocale, userDispla
     .map((line) => line.replace(/^User: /, `${userDisplayName}: `).replace(/^Assistant: /, `${assistantLabel}: `))
     .join("\n");
 }
-
-const coreMetricLabels: Record<DailyReportChartCoreMetric, { en: string; he: string }> = {
-  calories: { en: "Calories", he: "קלוריות" },
-  protein: { en: "Protein", he: "חלבון" },
-  carbs: { en: "Carbs", he: "פחמימות" },
-  fats: { en: "Fats", he: "שומנים" },
-  fiber: { en: "Dietary Fiber", he: "סיבים תזונתיים" },
-  water: { en: "Fluid / Water", he: "נוזלים / מים" },
-};
-
-const extraMetricLabels: Record<DailyReportChartExtraMetric, { en: string; he: string }> = {
-  magnesium: { en: "Magnesium", he: "מגנזיום" },
-  potassium: { en: "Potassium", he: "אשלגן" },
-  iron: { en: "Iron", he: "ברזל" },
-  zinc: { en: "Zinc", he: "אבץ" },
-  sodium: { en: "Sodium", he: "נתרן" },
-  addedSugar: { en: "Added Sugar", he: "סוכר מוסף" },
-  calcium: { en: "Calcium", he: "סידן" },
-  vitC: { en: "Vitamin C", he: "ויטמין C" },
-  vitB12: { en: "Vitamin B12", he: "ויטמין B12" },
-  vitD: { en: "Vitamin D", he: "ויטמין D" },
-  satFat: { en: "Saturated Fat", he: "שומן רווי" },
-  omega3: { en: "Omega-3", he: "אומגה 3" },
-  cholesterol: { en: "Cholesterol", he: "כולסטרול" },
-};
 
 /** Parses a YYYY-MM-DD search param into a valid local calendar-day string
  * (see lib/timezone.ts - ticket #31), falling back to today in the user's
@@ -732,30 +708,34 @@ export default async function DailyReportPage({
     },
   };
 
-  // Built in canonical order (not the order the user happened to check
-  // boxes in, which `getAll()` would otherwise preserve) so the displayed
-  // order stays stable and predictable regardless of how the selection was
-  // saved. Kept as two separate arrays (rather than one merged list, as
-  // before DailyReportGoalBars replaced the ring grid) - core metrics
-  // render as always-visible bars, extra metrics render collapsed behind
-  // "Show full detail".
-  const coreDisplayMetrics: RingMetric[] = CHART_CORE_METRIC_IDS.filter((id) => chartPreferences.coreMetrics.includes(id)).map(
-    (id) => coreMetricDefinitions[id],
-  );
-  const extraDisplayMetrics: RingMetric[] = CHART_EXTRA_METRIC_IDS.filter((id) => chartPreferences.extraMetrics.includes(id)).map(
-    (id) => extraMetricDefinitions[id],
-  );
+  // TCK-16: rendered in the USER'S OWN saved order (chartPreferences.
+  // coreMetrics/extraMetrics are themselves ordered arrays - see
+  // normalizeDailyReportChartPreferences), not re-sorted to a fixed
+  // canonical order. That re-sort used to be deliberate, back when
+  // selection was checkbox-only and the array order was just whatever a
+  // native getAll() happened to return - meaningless to preserve. Now that
+  // the settings UI is a real drag-to-reorder list (DailyReportMetricOrderEditor),
+  // the order IS the whole point - it's the one thing the user explicitly
+  // controls by dragging, so throwing it away here would silently undo
+  // every reorder. Still filtered against the canonical id lists first, so
+  // a stale/tampered preferences array can never smuggle in an unknown id.
+  const coreDisplayMetrics: RingMetric[] = chartPreferences.coreMetrics
+    .filter((id) => (CHART_CORE_METRIC_IDS as readonly string[]).includes(id))
+    .map((id) => coreMetricDefinitions[id]);
+  const extraDisplayMetrics: RingMetric[] = chartPreferences.extraMetrics
+    .filter((id) => (CHART_EXTRA_METRIC_IDS as readonly string[]).includes(id))
+    .map((id) => extraMetricDefinitions[id]);
 
-  // Same filter-canonical-ids-by-selection pattern as
-  // coreDisplayMetrics/extraDisplayMetrics just above (core metrics first,
-  // in their fixed order, then selected extras) - this is what the
-  // per-entry detail grid and its Edit form below build their own field
-  // list from, so a report's breakdown reflects the same nutrients the
-  // user chose to track everywhere, instead of the fixed 8-field subset
-  // they used to hardcode independently of chartPreferences (TCK-44).
+  // Same user-order-first pattern as coreDisplayMetrics/extraDisplayMetrics
+  // just above (core metrics first, in the user's own order, then extras
+  // in theirs) - this is what the per-entry detail grid and its Edit form
+  // below build their own field list from, so a report's breakdown
+  // reflects the same nutrients (and the same order) the user chose to
+  // track everywhere, instead of the fixed 8-field subset they used to
+  // hardcode independently of chartPreferences (TCK-44).
   const selectedReportMetricIds: (DailyReportChartCoreMetric | DailyReportChartExtraMetric)[] = [
-    ...CHART_CORE_METRIC_IDS.filter((id) => chartPreferences.coreMetrics.includes(id)),
-    ...CHART_EXTRA_METRIC_IDS.filter((id) => chartPreferences.extraMetrics.includes(id)),
+    ...chartPreferences.coreMetrics.filter((id) => (CHART_CORE_METRIC_IDS as readonly string[]).includes(id)),
+    ...chartPreferences.extraMetrics.filter((id) => (CHART_EXTRA_METRIC_IDS as readonly string[]).includes(id)),
   ];
 
   const weightHistory: WeightPoint[] = chartPreferences.showWeightTrend
@@ -1027,58 +1007,32 @@ export default async function DailyReportPage({
               </details>
             ) : null}
 
+            {/* TCK-16: renamed from "Customize values to track" - this is
+                about CHOOSING and ORDERING which values show up, not
+                tweaking chart settings, and the old name read as a vaguer
+                "chart customization" menu than what's actually in here. */}
             <details className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/60">
               <summary className="cursor-pointer text-sm font-semibold text-teal-700 dark:text-teal-400">
-                {tr(locale, "Customize values to track", "התאמת ערכים למעקב")}
+                {tr(locale, "Choose values to display", "בחירת ערכים לתצוגה")}
               </summary>
-              <form action={updateDailyReportChartPreferencesAction} className="mt-3 space-y-4">
-                <div>
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                    {tr(locale, "Primary metrics", "מדדים עיקריים")}
-                  </p>
-                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                    {CHART_CORE_METRIC_IDS.map((metricId) => (
-                      <label key={metricId} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-                        <input
-                          type="checkbox"
-                          name="core_metric"
-                          value={metricId}
-                          defaultChecked={chartPreferences.coreMetrics.includes(metricId)}
-                          className="h-4 w-4 accent-teal-700"
-                        />
-                        {tr(locale, coreMetricLabels[metricId].en, coreMetricLabels[metricId].he)}
-                      </label>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                    {tr(locale, "Additional metrics", "מדדים נוספים")}
-                  </p>
-                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                    {CHART_EXTRA_METRIC_IDS.map((metricId) => (
-                      <label key={metricId} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-                        <input
-                          type="checkbox"
-                          name="extra_metric"
-                          value={metricId}
-                          defaultChecked={chartPreferences.extraMetrics.includes(metricId)}
-                          className="h-4 w-4 accent-teal-700"
-                        />
-                        {tr(locale, extraMetricLabels[metricId].en, extraMetricLabels[metricId].he)}
-                      </label>
-                    ))}
-                    <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-                      <input
-                        type="checkbox"
-                        name="show_weight_trend"
-                        defaultChecked={chartPreferences.showWeightTrend}
-                        className="h-4 w-4 accent-teal-700"
-                      />
-                      {tr(locale, "Weight trend", "מגמת משקל")}
-                    </label>
-                  </div>
-                </div>
+              <form action={updateDailyReportChartPreferencesAction} className="mt-3 space-y-3">
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {tr(
+                    locale,
+                    "Drag to reorder, or drag across a divider to move a value between groups - the top group always shows as bars; the middle group waits behind \"Show full detail\".",
+                    "ניתן לגרור לשינוי סדר, או לגרור מעבר לקו מפריד כדי להעביר ערך בין קבוצות - הקבוצה העליונה תמיד מוצגת כבארים; הקבוצה האמצעית ממתינה מתחת ל\"הצג פירוט מלא\".",
+                  )}
+                </p>
+                <DailyReportMetricOrderEditor locale={locale} coreMetrics={chartPreferences.coreMetrics} extraMetrics={chartPreferences.extraMetrics} />
+                <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+                  <input
+                    type="checkbox"
+                    name="show_weight_trend"
+                    defaultChecked={chartPreferences.showWeightTrend}
+                    className="h-4 w-4 accent-teal-700"
+                  />
+                  {tr(locale, "Weight trend", "מגמת משקל")}
+                </label>
                 <button
                   type="submit"
                   className="rounded-lg bg-teal-700 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
