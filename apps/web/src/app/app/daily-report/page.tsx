@@ -848,6 +848,26 @@ export default async function DailyReportPage({
     }
   }
 
+  // TCK-110: the weight field itself (unlike the custom-target values just
+  // above) was never seeded from an already-logged same-day value at all -
+  // currentWeightKg/lastRecordedWeightKg deliberately carries the most
+  // recent weight from ANY day (see that constant's own comment), shown
+  // only as read-only "Last: X" context text, specifically so a stale
+  // value from a PRIOR day never silently wins over a weight the user
+  // mentions in today's chat text. That protection doesn't need to - and
+  // shouldn't - also blank out a weight already logged for THIS SAME day:
+  // reported live as "weight keeps clearing every time I switch screens",
+  // same complaint sleep/steps had before todaysCustomTargetValues fixed
+  // it for them. Same newest-first scan as todaysCustomTargetValues, just
+  // for reported_weight_kg instead of custom_target_values.
+  let todaysWeightKg: number | null = null;
+  for (const report of reports ?? []) {
+    if (report.reported_weight_kg != null) {
+      todaysWeightKg = Number(report.reported_weight_kg);
+      break;
+    }
+  }
+
   return (
     // Extra bottom padding below `sm` clears the chat panel's floating
     // bubble trigger (fixed above AppBottomNav on mobile - see
@@ -1520,6 +1540,7 @@ export default async function DailyReportPage({
                 : null
           }
           targetWeightKg={activeTargetProfile?.target_weight_kg != null ? Number(activeTargetProfile.target_weight_kg) : null}
+          todaysWeightKg={todaysWeightKg}
           previousWeightKg={previousWeightKg}
           previousWeightDaysAgo={previousWeightDaysAgo}
           // TCK-82: "the night of the 26th-27th" on the sleep row - sleep is

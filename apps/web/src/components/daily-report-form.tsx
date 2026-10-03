@@ -237,6 +237,7 @@ export function DailyReportForm({
   locale,
   currentWeightKg,
   targetWeightKg = null,
+  todaysWeightKg = null,
   previousWeightKg = null,
   previousWeightDaysAgo = null,
   selectedDateDay,
@@ -260,6 +261,16 @@ export function DailyReportForm({
    * target or today's entry?" - is exactly what this whole redesign was
    * for). null when there's no active plan yet. */
   targetWeightKg?: number | null;
+  /** TCK-110: whatever weight the user already logged for the day currently
+   * being viewed (most-recent-report-wins, same precedence as
+   * lastRecordedWeightKg/currentWeightKg) - unlike currentWeightKg (which
+   * deliberately spans ANY day and only ever shows as read-only "Last: X"
+   * text, never pre-filling the input, specifically so a stale value from a
+   * PRIOR day never wins over a weight mentioned in today's chat text),
+   * this is scoped to THIS day only, exactly like todaysCustomTargetValues
+   * below - seeding the input with it fixes "weight keeps clearing every
+   * time I switch screens" without reopening that prior-day conflict. */
+  todaysWeightKg?: number | null;
   /** TCK-82: the most recently logged weight strictly BEFORE the day being
    * viewed, for the "Last: X · N days ago" context line - see page.tsx's
    * own comment on why this is never today's own value, even once logged. */
@@ -381,28 +392,39 @@ export function DailyReportForm({
   // ago" context text, via the previousWeightKg/previousWeightDaysAgo
   // props, never as something sitting IN the input) - a pre-filled value is
   // submitted exactly like a real entry, so if the user only mentioned a
-  // new weight in the chat text and never touched this field, the stale
-  // pre-filled number would silently win over the one actually extracted
-  // from their message (saveDailyReportAction prefers an explicit
-  // reported_weight_kg over text-extracted weight). Leaving it empty when
-  // untouched lets that text-extraction fallback through correctly. When
-  // editing, though, the field IS pre-filled with that report's own
-  // previously-saved weight (if any) - there's no "the user hasn't touched
-  // this yet" ambiguity to protect here, and leaving it blank would
-  // silently drop the original weight on save.
-  const editingWeightValue = editingReport?.reportedWeightKg != null ? String(editingReport.reportedWeightKg) : "";
-  const [weightValue, setWeightValue] = useState(editingWeightValue);
+  // new weight in the chat text and never touched this field, a STALE
+  // pre-filled number (from some OTHER, earlier day) would silently win
+  // over the one actually extracted from their message
+  // (saveDailyReportAction prefers an explicit reported_weight_kg over
+  // text-extracted weight). currentWeightKg (which can span any past day)
+  // is therefore still never used here. todaysWeightKg carries none of that
+  // risk - it's scoped to THIS day only, same precedence as
+  // todaysCustomTargetValues - so pre-filling with it doesn't reopen that
+  // problem; it just stops a same-day weight from silently disappearing
+  // every time the user navigates away and back (TCK-110). When editing,
+  // the field IS pre-filled with that report's own previously-saved weight
+  // (if any) - there's no "the user hasn't touched this yet" ambiguity to
+  // protect here, and leaving it blank would silently drop the original
+  // weight on save.
+  const initialWeightValue =
+    editingReport?.reportedWeightKg != null
+      ? String(editingReport.reportedWeightKg)
+      : todaysWeightKg != null
+        ? String(todaysWeightKg)
+        : "";
+  const [weightValue, setWeightValue] = useState(initialWeightValue);
   // The baseline weightValue is compared against for "has this been
-  // edited" - starts empty (matching weightValue's own starting point
-  // above), but advances to whatever was just saved after a successful
-  // submit (see below), since weightValue intentionally isn't cleared on
-  // save (convenient prefill for the next report) and shouldn't therefore
-  // read as permanently "unsaved." When editing, it starts at the loaded
-  // report's own weight for the same reason - that's not an unsaved edit.
-  // State, not a ref: isDirty (below) needs to read it during render, and
-  // reading a ref's .current there is a lint error (react-hooks/refs) -
+  // edited" - starts at the same already-logged-today value as weightValue
+  // itself above (so a value that's already saved doesn't immediately read
+  // as an unsaved edit), but advances to whatever was just saved after a
+  // successful submit (see below), since weightValue intentionally isn't
+  // cleared on save (convenient prefill for the next report) and shouldn't
+  // therefore read as permanently "unsaved." When editing, it starts at the
+  // loaded report's own weight for the same reason - that's not an unsaved
+  // edit. State, not a ref: isDirty (below) needs to read it during render,
+  // and reading a ref's .current there is a lint error (react-hooks/refs) -
   // it's only ever written from an effect anyway, exactly what state is for.
-  const [weightBaseline, setWeightBaseline] = useState(editingWeightValue);
+  const [weightBaseline, setWeightBaseline] = useState(initialWeightValue);
   // currentWeightKg reflects whatever the server currently considers the
   // profile's current weight - it can change for reasons OTHER than this
   // form's own save, e.g. deleting the report that held the value currently
