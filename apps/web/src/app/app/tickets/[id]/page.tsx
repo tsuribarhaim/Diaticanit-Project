@@ -2,6 +2,7 @@ import { NavLink as Link } from "@/components/nav-link";
 import { notFound, redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { AdminAutoHandleControl } from "@/components/admin-auto-handle-control";
 import { AdminStatusDropdown } from "@/components/admin-status-dropdown";
 import { CancelTicketDialog } from "@/components/cancel-ticket-dialog";
 import { EditTicketDialog } from "@/components/edit-ticket-dialog";
@@ -29,6 +30,7 @@ import {
   isSubmittableTicketStatus,
   parseTicketDescriptionLog,
   type TicketArea,
+  type TicketAutoHandle,
   type TicketPriority,
   type TicketStatus,
   type TicketType,
@@ -80,7 +82,7 @@ export default async function TicketDetailPage({
   let ticketQuery = supabase
     .from("tickets")
     .select(
-      "id, ticket_seq, subject, ticket_type, area, priority, description, status, created_at, created_by, cancelled_reason, cancelled_at, fix_description, resolved_at, deferred_reason, technical_response, current_version",
+      "id, ticket_seq, subject, ticket_type, area, priority, description, status, created_at, created_by, cancelled_reason, cancelled_at, fix_description, resolved_at, deferred_reason, technical_response, current_version, auto_handle, auto_handle_notes",
     )
     .eq("id", id);
   if (!isAdmin) {
@@ -161,7 +163,10 @@ export default async function TicketDetailPage({
             ) : null}
           </div>
           {isAdmin ? (
-            <AdminStatusDropdown locale={locale} ticketId={ticket.id} status={status} size="md" />
+            <div className="flex flex-wrap items-center gap-2">
+              <AdminStatusDropdown locale={locale} ticketId={ticket.id} status={status} size="md" />
+              <AdminAutoHandleControl locale={locale} ticketId={ticket.id} autoHandle={ticket.auto_handle as TicketAutoHandle | null} />
+            </div>
           ) : (
             <span className="rounded-full border border-slate-300 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
               {formatTicketStatus(status, locale)}
@@ -244,6 +249,20 @@ export default async function TicketDetailPage({
               </span>
             </div>
             <p className="mt-1 text-sm text-indigo-900 dark:text-indigo-300">{ticket.technical_response}</p>
+          </div>
+        ) : null}
+
+        {isAdmin && ticket.auto_handle_notes ? (
+          <div className="mt-5 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 dark:border-cyan-800 dark:bg-cyan-950/30">
+            <div className="flex items-center gap-1.5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700 dark:text-cyan-400">
+                {tr(locale, "Auto-handle notes", "הערות טיפול אוטומטי")}
+              </p>
+              <span className="rounded-full border border-indigo-200 bg-indigo-100 px-1.5 py-0 text-[10px] font-semibold text-indigo-700 dark:border-indigo-800 dark:bg-indigo-900/50 dark:text-indigo-300">
+                {tr(locale, "Admin only", "מנהלים בלבד")}
+              </span>
+            </div>
+            <p className="mt-1 whitespace-pre-wrap text-sm text-cyan-900 dark:text-cyan-300">{ticket.auto_handle_notes}</p>
           </div>
         ) : null}
 

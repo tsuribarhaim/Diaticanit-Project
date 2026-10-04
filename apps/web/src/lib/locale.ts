@@ -369,6 +369,7 @@ export function formatTicketStatus(value: string, locale: AppLocale): string {
   if (token === "draft") return tr(locale, "Draft", "טיוטה");
   if (token === "open") return tr(locale, "Open", "פתוחה");
   if (token === "in_progress") return tr(locale, "In Progress", "בטיפול");
+  if (token === "fixed") return tr(locale, "Fixed", "תוקנה");
   if (token === "resolved") return tr(locale, "Resolved", "טופלה");
   if (token === "closed") return tr(locale, "Closed", "סגורה");
   if (token === "cancelled") return tr(locale, "Cancelled", "בוטלה");
@@ -376,4 +377,14 @@ export function formatTicketStatus(value: string, locale: AppLocale): string {
   if (token === "reopened") return tr(locale, "Reopened", "נפתחה מחדש");
   if (token === "deferred") return tr(locale, "Deferred", "נדחתה");
   return locale === "he" ? value : titleCase(value.replace(/_/g, " "));
+}
+
+/** Admin-only label for the auto_handle flag (see docs/design/
+ * auto-ticket-handling.md) - value is whatever's stored on the row (Y/P/D
+ * or null/undefined for "not opted in"). */
+export function formatTicketAutoHandle(value: string | null | undefined, locale: AppLocale): string {
+  if (value === "Y") return tr(locale, "Queued for automation", "ממתינה לאוטומציה");
+  if (value === "P") return tr(locale, "Plan ready - needs you", "תוכנית מוכנה - דרוש אישור");
+  if (value === "D") return tr(locale, "Fix ready on dev - needs you", "תיקון מוכן בפיתוח - דרוש אישור");
+  return tr(locale, "Not opted in", "לא סומנה לאוטומציה");
 }
