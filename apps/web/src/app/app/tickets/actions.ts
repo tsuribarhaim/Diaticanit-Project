@@ -17,9 +17,11 @@ import {
   isSubmittableTicketStatus,
   MAX_TICKET_ATTACHMENTS,
   ticketAreaOptions,
+  ticketAutoHandleOptions,
   ticketPriorityOptions,
   ticketStatusOptions,
   ticketTypeOptions,
+  type TicketAutoHandle,
   type TicketStatus,
 } from "@/lib/tickets";
 
@@ -869,6 +871,52 @@ export async function updateTicketStatusAdminAction(
   if (updateError) {
     logServerError("tickets.adminUpdateStatus", "update_failed", { userId: user.id, ticketId, status, error: updateError.message });
     return { error: tr(locale, "Could not update status. Please try again.", "לא ניתן היה לעדכן את הסטטוס. יש לנסות שוב.") };
+  }
+
+  revalidatePath("/app/tickets");
+  revalidatePath(`/app/tickets/${ticketId}`);
+  return {};
+}
+
+export type AdminAutoHandleUpdateResult = { error?: string };
+
+/**
+ * Admin-only write to the auto_handle flag (see docs/design/
+ * auto-ticket-handling.md) - same shape/trust model as
+ * updateTicketStatusAdminAction just above: is_admin checked here for a
+ * clean error rather than a raw RLS rejection, but RLS's own
+ * tickets_update_admin policy (048) is what actually enforces it. null
+ * clears the flag back to "not opted in" - there's no separate 'N' value.
+ */
+export async function updateTicketAutoHandleAdminAction(
+  ticketId: string,
+  autoHandle: TicketAutoHandle | null,
+): Promise<AdminAutoHandleUpdateResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/sign-in");
+  }
+
+  const locale = await resolveUserLocale(supabase, user.id);
+
+  if (autoHandle !== null && !ticketAutoHandleOptions.includes(autoHandle)) {
+    return { error: tr(locale, "Unknown value.", "ערך לא מוכר.") };
+  }
+
+  const isAdmin = await isCurrentUserAdmin(supabase, user.id);
+  if (!isAdmin) {
+    return { error: tr(locale, "Not authorized.", "אין הרשאה.") };
+  }
+
+  const { error: updateError } = await supabase.from("tickets").update({ auto_handle: autoHandle }).eq("id", ticketId);
+
+  if (updateError) {
+    logServerError("tickets.adminUpdateAutoHandle", "update_failed", { userId: user.id, ticketId, autoHandle, error: updateError.message });
+    return { error: tr(locale, "Could not update. Please try again.", "לא ניתן היה לעדכן. יש לנסות שוב.") };
   }
 
   revalidatePath("/app/tickets");

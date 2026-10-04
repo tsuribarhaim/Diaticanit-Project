@@ -36,6 +36,7 @@ export const ticketStatusOptions = [
   "draft",
   "open",
   "in_progress",
+  "fixed",
   "resolved",
   "closed",
   "cancelled",
@@ -44,6 +45,16 @@ export const ticketStatusOptions = [
   "deferred",
 ] as const;
 export type TicketStatus = (typeof ticketStatusOptions)[number];
+
+/** Auto Ticket Handling via n8n (see docs/design/auto-ticket-handling.md) -
+ * an admin-only opt-in flag, not a user-facing field. "Not opted in" is
+ * NULL, not a 4th 'N' value - there's deliberately only one way to
+ * represent the off state. No dedicated RLS policy: tickets_update_admin
+ * (db/migrations/048_phase22_ticket_admin.sql) already grants admins free-
+ * column update access, same protection technical_response/fix_description
+ * already rely on. */
+export const ticketAutoHandleOptions = ["Y", "P", "D"] as const;
+export type TicketAutoHandle = (typeof ticketAutoHandleOptions)[number];
 
 /** Statuses a user can still Cancel from - mirrors the tickets_cancel_own
  * RLS policy's own `status in ('open', 'in_progress')` check, kept here so
@@ -102,6 +113,8 @@ export function ticketStatusBadgeClass(status: TicketStatus): string {
   if (status === "open") return "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-800 dark:bg-sky-950/30 dark:text-sky-400";
   if (status === "in_progress" || status === "reopened")
     return "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400";
+  if (status === "fixed")
+    return "border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-800 dark:bg-cyan-950/30 dark:text-cyan-400";
   if (status === "resolved")
     return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-400";
   if (status === "cancelled")
