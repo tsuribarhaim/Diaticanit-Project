@@ -21,6 +21,7 @@ import {
   tr,
   type AppLocale,
 } from "@/lib/locale";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 import {
   isCancellableTicketStatus,
@@ -106,17 +107,23 @@ export default async function TicketDetailPage({
     .eq("ticket_id", ticket.id)
     .order("created_at", { ascending: true });
 
-  // Only fetched for admins viewing someone else's ticket - a plain user's
-  // own tickets are all theirs, and an admin viewing their own doesn't
-  // need to be told they submitted it.
+  // Only fetched for admins - a plain user's own tickets are all theirs.
+  // Shown on every ticket an admin opens, their own included (TCK-113).
+  // Falls back to the auth email when the profile has no first/last name,
+  // same as tickets/page.tsx's TCK-83 follow-up (email lives on the auth
+  // user, so it needs the service-role admin client).
   let submittedByName: string | null = null;
-  if (isAdmin && ticket.created_by !== user.id) {
+  if (isAdmin) {
     const { data: creator } = await supabase
       .from("user_profile")
       .select("first_name, last_name")
       .eq("user_id", ticket.created_by)
       .maybeSingle();
     submittedByName = creator ? [creator.first_name, creator.last_name].filter(Boolean).join(" ") || null : null;
+    if (!submittedByName) {
+      const { data } = await createAdminClient().auth.admin.getUserById(ticket.created_by);
+      submittedByName = data.user?.email ?? ticket.created_by;
+    }
   }
 
   // Landing on a ticket this way (typically via a "View ticket" click from
@@ -156,11 +163,6 @@ export default async function TicketDetailPage({
           <div>
             <p className="font-mono text-xs text-slate-500 dark:text-slate-400">TCK-{ticket.ticket_seq}</p>
             <h1 className="mt-0.5 text-xl font-bold text-slate-900 dark:text-slate-100" dir="auto">{ticket.subject}</h1>
-            {submittedByName ? (
-              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                {tr(locale, "Submitted by", "נשלח על ידי")} {submittedByName}
-              </p>
-            ) : null}
           </div>
           {isAdmin ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -179,6 +181,7 @@ export default async function TicketDetailPage({
           <DetailRow label={tr(locale, "Area", "אזור")} value={ticket.area ? formatTicketArea(ticket.area, locale) : notSetLabel} />
           <DetailRow label={tr(locale, "Priority", "עדיפות")} value={formatTicketPriority(ticket.priority, locale)} />
           <DetailRow label={tr(locale, "Submitted", "נשלח")} value={<LocalDateTime value={ticket.created_at} locale={locale} />} />
+          {isAdmin && submittedByName ? <DetailRow label={tr(locale, "Submitted by", "נשלח על ידי")} value={submittedByName} /> : null}
         </div>
 
         {status !== "draft" || ticket.description ? (
@@ -303,6 +306,9 @@ export default async function TicketDetailPage({
                     mimeType: attachment.mime_type,
                     fileSizeBytes: attachment.file_size_bytes,
                   }))}
+                  isDraft={status === "draft"}
+                  currentDescription={ticket.description}
+                  canSubmitDraft={!isAdmin && isSubmittableTicketStatus(status)}
                   autoOpen={resolvedSearchParams.edit === "1"}
                 />
               ) : null}

@@ -1200,7 +1200,7 @@ export default async function DailyReportPage({
                 : hasExercise
                   ? { number: formatNumber(-Math.abs(Number(report.estimated_burn_kcal ?? 0)), locale, 0), unit: tr(locale, "kcal", 'קק"ל') }
                   : hasWeight
-                    ? { number: formatNumber(report.reported_weight_kg, locale, 2), unit: formatMeasurementUnit("kg", locale) }
+                    ? { number: formatNumber(report.reported_weight_kg, locale, 1), unit: formatMeasurementUnit("kg", locale) }
                     : reportCustomTargetRows.length === 1
                       ? {
                           number: formatNumberForLocale(reportCustomTargetRows[0].value, locale, {
@@ -1225,7 +1225,7 @@ export default async function DailyReportPage({
               const noContentSummaryParts: string[] = [];
               if (hasWeight) {
                 noContentSummaryParts.push(
-                  `${tr(locale, "Weight", "משקל")} (${formatNumber(report.reported_weight_kg, locale, 2)} ${formatMeasurementUnit("kg", locale)})`,
+                  `${tr(locale, "Weight", "משקל")} (${formatNumber(report.reported_weight_kg, locale, 1)} ${formatMeasurementUnit("kg", locale)})`,
                 );
               }
               for (const row of reportCustomTargetRows) {
@@ -1352,7 +1352,7 @@ export default async function DailyReportPage({
                           their own relevant value(s) instead. */}
                       {hasFood || hasExercise ? (
                         <div className="grid gap-2 text-xs text-slate-700 dark:text-slate-300 sm:grid-cols-2 lg:grid-cols-4">
-                          <p>{tr(locale, "Reported weight", "משקל מדווח")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{report.reported_weight_kg === null ? tr(locale, "n/a", "לא זמין") : formatNumber(report.reported_weight_kg, locale, 2)}</span>{report.reported_weight_kg === null ? "" : ` ${formatMeasurementUnit("kg", locale)}`}</p>
+                          <p>{tr(locale, "Reported weight", "משקל מדווח")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{report.reported_weight_kg === null ? tr(locale, "n/a", "לא זמין") : formatNumber(report.reported_weight_kg, locale, 1)}</span>{report.reported_weight_kg === null ? "" : ` ${formatMeasurementUnit("kg", locale)}`}</p>
                           {/* Same nutrients the user selected in "Customize
                               charts", in the same order the bars above
                               show them - see selectedReportMetricIds' own
@@ -1378,7 +1378,7 @@ export default async function DailyReportPage({
                         </div>
                       ) : hasWeight ? (
                         <p className="text-xs text-slate-700 dark:text-slate-300">
-                          {tr(locale, "Reported weight", "משקל מדווח")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatNumber(report.reported_weight_kg, locale, 2)}</span> {formatMeasurementUnit("kg", locale)}
+                          {tr(locale, "Reported weight", "משקל מדווח")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatNumber(report.reported_weight_kg, locale, 1)}</span> {formatMeasurementUnit("kg", locale)}
                         </p>
                       ) : null}
 

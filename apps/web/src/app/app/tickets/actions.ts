@@ -358,7 +358,9 @@ export async function cancelTicketAction(_prevState: TicketFormState, formData: 
  * appendTicketDescriptionEntry). Attachments can be added (same upload
  * path as createTicketAction) and/or removed (storage + row delete) in
  * the same save - both also get logged as change lines, same as a plain
- * field change would.
+ * field change would. Drafts are the exception (TCK-110): their
+ * description is overwritten in place with no history entry, and an
+ * intent="submit" save also flips them draft -> open.
  *
  * Two distinct callers share this one action:
  * - The ticket's own creator, gated to open/in_progress/reopened (mirrors
@@ -431,6 +433,27 @@ export async function updateTicketAction(_prevState: TicketFormState, formData: 
     return { error: tr(locale, "Note is too long.", "ההערה ארוכה מדי.") };
   }
 
+  // TCK-110: a draft's description is edited in place (no history entry -
+  // nothing has been submitted yet, so there's nothing to keep a log of),
+  // and "Save & submit" (intent="submit") flips it draft -> open in the
+  // same update. Submit is owner-only, same as submitTicketDraftAction /
+  // tickets_submit_own, and validated up front with the same full schema
+  // so nothing (attachments included) is touched if it can't go through.
+  const draftDescription = isDraft ? (formData.get("description")?.toString() ?? "").trim() || null : null;
+  if (draftDescription && draftDescription.length > 5000) {
+    return { error: tr(locale, "Description is too long.", "התיאור ארוך מדי.") };
+  }
+  const submitDraft = isDraft && formData.get("intent") === "submit";
+  if (submitDraft) {
+    if (existingTicket.created_by !== user.id) {
+      return { error: tr(locale, "This ticket can no longer be submitted.", "לא ניתן עוד לשלוח את הפנייה הזו.") };
+    }
+    const submitParsed = buildTicketSchema(locale).safeParse({ ...rawFields, description: draftDescription });
+    if (!submitParsed.success) {
+      return { error: submitParsed.error.issues[0]?.message ?? tr(locale, "Fill in the missing details before submitting.", "יש להשלים את הפרטים החסרים לפני השליחה.") };
+    }
+  }
+
   const userId = user.id;
   const changeLines: string[] = [];
 
@@ -500,7 +523,13 @@ export async function updateTicketAction(_prevState: TicketFormState, formData: 
     }
   }
 
-  if (changeLines.length === 0 && removedAttachments.length === 0 && newFiles.length === 0 && !note) {
+  const draftDescriptionChanged = isDraft && draftDescription !== (existingTicket.description?.trim() || null);
+  if (
+    changeLines.length === 0 &&
+    removedAttachments.length === 0 &&
+    newFiles.length === 0 &&
+    (isDraft ? !draftDescriptionChanged && !submitDraft : !note)
+  ) {
     return { error: tr(locale, "Nothing to save.", "אין מה לשמור.") };
   }
 
@@ -564,7 +593,9 @@ export async function updateTicketAction(_prevState: TicketFormState, formData: 
     }
   }
 
-  const description = appendTicketDescriptionEntry({ currentDescription: existingTicket.description ?? "", changeLines, note, authoredBySupport });
+  const description = isDraft
+    ? draftDescription
+    : appendTicketDescriptionEntry({ currentDescription: existingTicket.description ?? "", changeLines, note, authoredBySupport });
 
   let updateQuery = supabase
     .from("tickets")
@@ -574,6 +605,7 @@ export async function updateTicketAction(_prevState: TicketFormState, formData: 
       area: area,
       priority: parsed.data.priority,
       description,
+      ...(submitDraft ? { status: "open" } : {}),
     })
     .eq("id", ticketId);
   if (!isAdmin) {
@@ -589,6 +621,9 @@ export async function updateTicketAction(_prevState: TicketFormState, formData: 
 
   revalidatePath("/app/tickets");
   revalidatePath(`/app/tickets/${ticketId}`);
+  if (submitDraft) {
+    return { success: tr(locale, "Ticket submitted.", "הפנייה נשלחה.") };
+  }
   return { success: tr(locale, "Ticket updated.", "הפנייה עודכנה.") };
 }
 
