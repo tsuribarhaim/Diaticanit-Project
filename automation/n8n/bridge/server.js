@@ -226,12 +226,21 @@ async function reportResult(ticketId, autoHandle, notes, status) {
  * under --restricted, Bash/PowerShell/REPL/WebFetch are removed entirely
  * unless "Bash" is named here. Getting Bash scoped down safely needs BOTH
  * `allowedTools` and `disallowedTools` together - confirmed live across
- * three isolated smoke tests: `allowedTools` alone (e.g. "Bash(node *)")
+ * several isolated smoke tests: `allowedTools` alone (e.g. "Bash(node *)")
  * did NOT narrow anything - an unrelated command (`git status`) still ran
  * with zero permission_denials; `disallowedTools` alone with no
  * `allowedTools` instead denied EVERYTHING, including the pattern meant to
  * stay open (plain `node`); only passing both at once gave the intended
- * result (node ran, git was denied with a real, reported denial). */
+ * result (node ran, git was denied with a real, reported denial).
+ *
+ * The same "--tools only makes a tool exist, it does not approve using it"
+ * rule turned out to apply to Edit/Write too, not just Bash - a real ticket
+ * (TCK-97) came back with the exact right one-line fix identified but
+ * never applied, because the Edit/Write call itself was auto-denied under
+ * --permission-prompts none for not being in `allowedTools`. Confirmed live
+ * and fixed by adding bare "Edit"/"Write" to `allowedTools` alongside the
+ * Bash patterns - every tool Phase 2 is meant to actually use (not just
+ * have available) needs to be named there. */
 function runClaudeHeadless({ cwd, prompt, tools, allowedTools, disallowedTools, restricted, permissionPrompts, budget, timeoutMs, schema }) {
   return new Promise((resolve, reject) => {
     const args = [CLAUDE_CLI_PATH, "-p", prompt];
@@ -529,7 +538,7 @@ async function processTicket(ticket, budgetTracker) {
       cwd: worktreeDir,
       prompt: buildPhase2Prompt(ticket, phase1.output, DEV_SERVER_PORT),
       tools: "Read,Grep,Glob,Edit,Write,Bash",
-      allowedTools: "Bash(npx tsc*) Bash(npx eslint*) Bash(node *)",
+      allowedTools: "Edit Write Bash(npx tsc*) Bash(npx eslint*) Bash(node *)",
       disallowedTools: "Bash(git *) Bash(npm *) Bash(yarn *) Bash(pnpm *) Bash(rm *) Bash(rmdir *) Bash(del *) Bash(taskkill*) Bash(npx next*)",
       restricted: true,
       budget: PHASE2_MAX_BUDGET_USD,
