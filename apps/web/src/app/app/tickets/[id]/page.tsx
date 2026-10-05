@@ -303,6 +303,9 @@ export default async function TicketDetailPage({
                     mimeType: attachment.mime_type,
                     fileSizeBytes: attachment.file_size_bytes,
                   }))}
+                  isDraft={status === "draft"}
+                  currentDescription={ticket.description}
+                  canSubmitDraft={!isAdmin && isSubmittableTicketStatus(status)}
                   autoOpen={resolvedSearchParams.edit === "1"}
                 />
               ) : null}

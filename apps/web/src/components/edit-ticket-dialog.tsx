@@ -15,15 +15,34 @@ const initialState: TicketFormState = {};
 const inputClassName =
   "w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
 
-function SaveButton({ locale, disabled }: { locale: AppLocale; disabled: boolean }) {
+function SaveButton({ locale, disabled, isDraft }: { locale: AppLocale; disabled: boolean; isDraft: boolean }) {
   const { pending } = useFormStatus();
   return (
     <button
       type="submit"
+      name="intent"
+      value="save"
       disabled={pending || disabled}
       className="flex-1 rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
     >
-      {pending ? tr(locale, "Saving...", "שומר...") : tr(locale, "Save changes", "שמירת שינויים")}
+      {pending ? tr(locale, "Saving...", "שומר...") : isDraft ? tr(locale, "Save", "שמירה") : tr(locale, "Save changes", "שמירת שינויים")}
+    </button>
+  );
+}
+
+/** TCK-110: drafts only - saves and flips draft -> open in one step (see
+ * updateTicketAction's intent="submit" branch). */
+function SaveAndSubmitButton({ locale, disabled }: { locale: AppLocale; disabled: boolean }) {
+  const { pending } = useFormStatus();
+  return (
+    <button
+      type="submit"
+      name="intent"
+      value="submit"
+      disabled={pending || disabled}
+      className="flex-1 rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+    >
+      {pending ? tr(locale, "Saving...", "שומר...") : tr(locale, "Save & submit", "שמירה ושליחה")}
     </button>
   );
 }
@@ -41,7 +60,8 @@ type ExistingAttachment = { id: string; fileName: string; mimeType: string; file
  * computes the real, stored version of that server-side - the preview
  * here is cosmetic, shown in the viewer's own locale for readability,
  * while what actually gets stored is always English, same convention as
- * technical_response).
+ * technical_response). Drafts are the exception (TCK-110): their
+ * description IS edited in place, with no note/preview and no history entry.
  */
 export function EditTicketDialog({
   locale,
@@ -52,6 +72,9 @@ export function EditTicketDialog({
   currentArea,
   currentPriority,
   currentAttachments,
+  isDraft = false,
+  currentDescription = null,
+  canSubmitDraft = false,
   autoOpen = false,
 }: {
   locale: AppLocale;
@@ -65,6 +88,12 @@ export function EditTicketDialog({
   currentArea: TicketArea | null;
   currentPriority: TicketPriority;
   currentAttachments: ExistingAttachment[];
+  /** TCK-110: a draft's description is edited in place (no history entry,
+   * no "Add a note"), with an extra "Save & submit" button when
+   * canSubmitDraft - shown only where SubmitTicketDraftButton is. */
+  isDraft?: boolean;
+  currentDescription?: string | null;
+  canSubmitDraft?: boolean;
   /** Opens the dialog immediately on mount - used when arriving from the
    * My Tickets list's own Edit icon (see page.tsx's `?edit=1` link), so
    * that click deep-links straight into an already-open form instead of
@@ -77,6 +106,7 @@ export function EditTicketDialog({
   const [area, setArea] = useState<TicketArea | "">(currentArea ?? "");
   const [priority, setPriority] = useState<TicketPriority>(currentPriority);
   const [note, setNote] = useState("");
+  const [description, setDescription] = useState(currentDescription ?? "");
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const [state, formAction] = useActionState(updateTicketAction, initialState);
 
@@ -91,6 +121,7 @@ export function EditTicketDialog({
     setArea(currentArea ?? "");
     setPriority(currentPriority);
     setNote("");
+    setDescription(currentDescription ?? "");
     setRemovedIds(new Set());
   }
 
@@ -115,7 +146,10 @@ export function EditTicketDialog({
     return lines;
   }, [subject, ticketType, area, priority, currentSubject, currentType, currentArea, currentPriority, currentAttachments, removedIds, newAttachments, locale]);
 
-  const hasNothingToSave = previewLines.length === 0 && note.trim().length === 0;
+  const hasNothingToSave = isDraft
+    ? previewLines.length === 0 && description.trim() === (currentDescription ?? "").trim()
+    : previewLines.length === 0 && note.trim().length === 0;
+  const isMissingTypeOrArea = !ticketType || !area;
 
   return (
     <>
@@ -219,39 +253,63 @@ export function EditTicketDialog({
             </div>
           ) : null}
 
+          {isDraft ? (
+            <label className="block">
+              <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Description", "תיאור")}</span>
+              <textarea
+                name="description"
+                rows={6}
+                maxLength={5000}
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                className={`${inputClassName} resize-y`}
+              />
+            </label>
+          ) : null}
+
           <TicketAttachmentsField locale={locale} attachments={newAttachments} flash={flash} onAdd={addFiles} onRemove={removeFile} />
 
-          <div
-            className={`rounded-lg border px-3 py-2 text-xs ${
-              previewLines.length > 0
-                ? "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300"
-                : "border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-400"
-            }`}
-          >
-            {previewLines.length > 0
-              ? `${tr(locale, "Will be logged", "יירשם בהיסטוריה")}: ${previewLines.join(" · ")}`
-              : tr(locale, "No attribute changes yet - editing the fields or attachments above will show what gets logged here.", "אין עדיין שינויים במאפיינים - עריכת השדות או הקבצים למעלה תציג כאן מה יירשם.")}
-          </div>
+          {isDraft ? null : (
+            <>
+              <div
+                className={`rounded-lg border px-3 py-2 text-xs ${
+                  previewLines.length > 0
+                    ? "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300"
+                    : "border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-400"
+                }`}
+              >
+                {previewLines.length > 0
+                  ? `${tr(locale, "Will be logged", "יירשם בהיסטוריה")}: ${previewLines.join(" · ")}`
+                  : tr(locale, "No attribute changes yet - editing the fields or attachments above will show what gets logged here.", "אין עדיין שינויים במאפיינים - עריכת השדות או הקבצים למעלה תציג כאן מה יירשם.")}
+              </div>
 
-          <label className="block">
-            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Add a note (optional)", "הוספת הערה (אופציונלי)")}</span>
-            <textarea
-              name="note"
-              rows={3}
-              maxLength={2000}
-              value={note}
-              onChange={(event) => setNote(event.target.value)}
-              placeholder={tr(locale, "Anything else worth adding...", "עוד משהו שכדאי להוסיף...")}
-              className={`${inputClassName} resize-none`}
-            />
-            <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-              {tr(
-                locale,
-                "This becomes a new dated entry in the ticket's history, along with any attribute changes above.",
-                "זה יהפוך לרשומה חדשה עם תאריך בהיסטוריית הפנייה, יחד עם כל שינוי במאפיינים שלמעלה.",
-              )}
+              <label className="block">
+                <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Add a note (optional)", "הוספת הערה (אופציונלי)")}</span>
+                <textarea
+                  name="note"
+                  rows={3}
+                  maxLength={2000}
+                  value={note}
+                  onChange={(event) => setNote(event.target.value)}
+                  placeholder={tr(locale, "Anything else worth adding...", "עוד משהו שכדאי להוסיף...")}
+                  className={`${inputClassName} resize-none`}
+                />
+                <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+                  {tr(
+                    locale,
+                    "This becomes a new dated entry in the ticket's history, along with any attribute changes above.",
+                    "זה יהפוך לרשומה חדשה עם תאריך בהיסטוריית הפנייה, יחד עם כל שינוי במאפיינים שלמעלה.",
+                  )}
+                </p>
+              </label>
+            </>
+          )}
+
+          {isDraft && canSubmitDraft && isMissingTypeOrArea ? (
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              {tr(locale, "Choose a type and an area before submitting. You can still save the draft.", "יש לבחור סוג ואזור לפני השליחה. עדיין אפשר לשמור את הטיוטה.")}
             </p>
-          </label>
+          ) : null}
 
           {state.error ? <p className="text-xs text-rose-600 dark:text-rose-400">{state.error}</p> : null}
 
@@ -263,7 +321,8 @@ export function EditTicketDialog({
             >
               {tr(locale, "Cancel", "ביטול")}
             </button>
-            <SaveButton locale={locale} disabled={hasNothingToSave} />
+            <SaveButton locale={locale} disabled={hasNothingToSave} isDraft={isDraft} />
+            {isDraft && canSubmitDraft ? <SaveAndSubmitButton locale={locale} disabled={isMissingTypeOrArea} /> : null}
           </div>
         </form>
       </QuickEditSheet>
