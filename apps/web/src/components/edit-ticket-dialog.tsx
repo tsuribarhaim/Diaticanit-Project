@@ -97,15 +97,18 @@ export function EditTicketDialog({
   const previewLines = useMemo(() => {
     const lines: string[] = [];
     const notSet = tr(locale, "(not set)", "(לא נבחר)");
+    // The sheet renders dir="rtl" in Hebrew, so old -> new reads right to
+    // left there and the arrow has to point left (TCK-97).
+    const arrow = tr(locale, "→", "←");
     if (subject.trim() !== currentSubject) lines.push(tr(locale, "Subject updated", "הנושא עודכן"));
     if (ticketType !== (currentType ?? ""))
       lines.push(
-        `${tr(locale, "Type", "סוג")}: ${currentType ? formatTicketType(currentType, locale) : notSet} → ${ticketType ? formatTicketType(ticketType, locale) : notSet}`,
+        `${tr(locale, "Type", "סוג")}: ${currentType ? formatTicketType(currentType, locale) : notSet} ${arrow} ${ticketType ? formatTicketType(ticketType, locale) : notSet}`,
       );
     if (area !== (currentArea ?? ""))
-      lines.push(`${tr(locale, "Area", "אזור")}: ${currentArea ? formatTicketArea(currentArea, locale) : notSet} → ${area ? formatTicketArea(area, locale) : notSet}`);
+      lines.push(`${tr(locale, "Area", "אזור")}: ${currentArea ? formatTicketArea(currentArea, locale) : notSet} ${arrow} ${area ? formatTicketArea(area, locale) : notSet}`);
     if (priority !== currentPriority)
-      lines.push(`${tr(locale, "Priority", "עדיפות")}: ${formatTicketPriority(currentPriority, locale)} → ${formatTicketPriority(priority, locale)}`);
+      lines.push(`${tr(locale, "Priority", "עדיפות")}: ${formatTicketPriority(currentPriority, locale)} ${arrow} ${formatTicketPriority(priority, locale)}`);
     for (const attachment of currentAttachments) {
       if (removedIds.has(attachment.id)) lines.push(tr(locale, `Attachment removed: ${attachment.fileName}`, `קובץ הוסר: ${attachment.fileName}`));
     }
