@@ -12,15 +12,21 @@ export type NavChromeData = {
     theme_preference?: string | null;
   } | null;
   profileError: { message: string } | null;
-  /** "Pending your attention" - not simply every unresolved row. A concern
-   * notification (a flagged Targets value) only ever leaves this count when
-   * a later background check confirms it's actually fixed, same as before -
-   * opening it only marks it read, on purpose, so a real warning can't
-   * silently vanish just because it was glanced at. A plain info
-   * notification (e.g. a ticket status change) has no such second check to
-   * wait on, so for those, read is the resolution: they leave this count
-   * the moment they're marked read. See mark-notification-read-button.tsx
-   * for the only UI that writes read_at for this purpose. */
+  /** "Pending your attention" - simply every unread row, both severities.
+   * Used to key off resolved_at for a concern (only cleared once a LATER
+   * background check confirmed it, not just by reading it) specifically so
+   * a real warning couldn't silently vanish from glancing at it - but that
+   * meant the badge/redirect could never clear at all for an affected
+   * account until Daffy's own background check caught up, confirmed live as
+   * "stuck no matter how many times I try, even after reinstalling"
+   * (TCK-96). Tsuri's explicit call: read is now the signal for BOTH
+   * severities here - a concern's true resolved_at state still shows on the
+   * Notifications page itself (and still drives the separate Targets/Daily
+   * Report ring-warning icons via getFlaggedFieldKeys, deliberately
+   * untouched by this change), just not this badge. See
+   * mark-notification-read-button.tsx (now shown for concern rows too) and
+   * the Notifications page's own auto-mark-on-view for what writes
+   * read_at. */
   unresolvedNotificationCount: number;
 };
 
@@ -61,7 +67,7 @@ const getCachedNavChrome = unstable_cache(
         .from("user_notifications")
         .select("id", { count: "exact", head: true })
         .eq("user_id", userId)
-        .or("and(severity.eq.concern,resolved_at.is.null),and(severity.eq.info,read_at.is.null)"),
+        .is("read_at", null),
     ]);
 
     let profile: NavChromeData["profile"] = fullSelect.data;
