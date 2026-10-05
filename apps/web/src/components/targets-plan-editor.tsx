@@ -589,14 +589,19 @@ export function TargetsPlanEditor({
                 className="flex min-h-[80px] flex-col justify-between rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/60"
               >
                 <div>
-                  {/* TCK-90: same fix as targets-plan-view.tsx's identical
-                      card (this file duplicates that markup) - localized
-                      via formatExerciseModality instead of the raw token,
-                      and search_keywords surfaced so "other" means
-                      something concrete instead of nothing. */}
-                  <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">{formatExerciseModality(entry.modality, locale)}</p>
-                  {entry.searchKeywords.length > 0 ? (
-                    <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-400">{entry.searchKeywords[0]}</p>
+                  {/* TCK-90 round 2: same fix as targets-plan-view.tsx's
+                      identical card (this file duplicates that markup) -
+                      activityName takes over the heading for a named
+                      "other" activity, and the caption now shows
+                      aiAdjustmentNote (always in the reply language)
+                      instead of searchKeywords[0] (deliberately always
+                      English - a YouTube search query, not user-facing
+                      prose - see lib/ai/targets.ts's own language rule). */}
+                  <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+                    {entry.activityName || formatExerciseModality(entry.modality, locale)}
+                  </p>
+                  {entry.aiAdjustmentNote ? (
+                    <p className="mt-0.5 truncate text-xs text-slate-600 dark:text-slate-400">{entry.aiAdjustmentNote}</p>
                   ) : null}
                 </div>
                 <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">

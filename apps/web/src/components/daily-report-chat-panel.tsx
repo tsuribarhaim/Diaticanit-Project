@@ -613,7 +613,7 @@ export function DailyReportChatPanel({
           { role: "assistant", content: goalBarRequest.notice!, localOnly: true },
         ]);
       } else if (goalBarRequest.question) {
-        void sendMessage(goalBarRequest.question);
+        void sendMessage(goalBarRequest.question, undefined, { localOnly: true });
       }
     }, 0);
     return () => clearTimeout(timeoutId);
@@ -712,7 +712,25 @@ export function DailyReportChatPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages]);
 
-  async function sendMessage(text: string, image?: { base64: string; mimeType: string; previewUrl: string }) {
+  /**
+   * TCK-111: options.localOnly marks this entire turn (question, streamed
+   * answer, and any retry of it) as never counting toward a real report -
+   * for the goal-bar "explain this value" flow specifically, which asks
+   * the AI a question but isn't the user actually reporting anything new.
+   * Without this, the exchange fed into reportText (via the transcript
+   * effect below, which already filters out localOnly messages) made
+   * isDirty/hasChanges true from a tap that never should have looked like
+   * an edit - triggering the unsaved-changes warning, enabling the save
+   * icon, and on an actual save, re-submitting the AI's own explanation
+   * text as new report content (re-logging items already logged). Mirrors
+   * the same localOnly treatment the empty-metric notice branch above
+   * already uses - this just extends it to the branch that calls the AI.
+   */
+  async function sendMessage(
+    text: string,
+    image?: { base64: string; mimeType: string; previewUrl: string },
+    options?: { localOnly?: boolean },
+  ) {
     const trimmed = text.trim();
     if ((!trimmed && !image) || isStreaming) return;
 
@@ -733,8 +751,8 @@ export function DailyReportChatPanel({
     const userContent = trimmed || tr(locale, "(attached a photo)", "(תמונה מצורפת)");
     setMessages((previous) => [
       ...previous,
-      { role: "user", content: userContent, imagePreviewUrl: image?.previewUrl },
-      { role: "assistant", content: "" },
+      { role: "user", content: userContent, imagePreviewUrl: image?.previewUrl, localOnly: options?.localOnly },
+      { role: "assistant", content: "", localOnly: options?.localOnly },
     ]);
     setInputValue("");
     setIsStreaming(true);
@@ -808,7 +826,7 @@ export function DailyReportChatPanel({
             assistantText += event.text;
             setMessages((previous) => {
               const next = [...previous];
-              next[next.length - 1] = { role: "assistant", content: assistantText };
+              next[next.length - 1] = { role: "assistant", content: assistantText, localOnly: options?.localOnly };
               return next;
             });
           } else if (event.type === "actionable") {
@@ -846,7 +864,7 @@ export function DailyReportChatPanel({
       setStreamError(errorMessage);
       if (!assistantText && !receivedAnything) {
         setMessages((previous) => previous.slice(0, -1));
-        setRetryAction(() => () => sendMessage(text, image));
+        setRetryAction(() => () => sendMessage(text, image, options));
       }
     }
 
@@ -858,7 +876,7 @@ export function DailyReportChatPanel({
     // finished). historyForRequest + this turn's own two messages is the
     // exact same transcript shape "Conclude & Report" itself builds
     // (see handleQuickSave below) - just computed one turn earlier.
-    if (isActionable && assistantText && !errorMessage) {
+    if (isActionable && assistantText && !errorMessage && !options?.localOnly) {
       const transcriptSoFar = [...historyForRequest, { role: "user" as const, content: userContent }, { role: "assistant" as const, content: assistantText }]
         .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`)
         .join("\n");

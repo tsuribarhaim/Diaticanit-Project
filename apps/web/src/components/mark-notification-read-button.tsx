@@ -36,10 +36,12 @@ function CheckIcon({ className }: { className: string }) {
   );
 }
 
-/** Only ever shown for info-severity, unread notifications - see
- * nav-chrome.ts's own comment on why a concern notification has no
- * equivalent manual control here (reading one is already automatic via
- * click-through, and deliberately never reduces the badge either way). */
+/** Shown for any unread notification, concern or info (see TCK-96 /
+ * nav-chrome.ts's own comment) - reading it clears the nav badge either
+ * way now. For a concern specifically this only means "reviewed", not
+ * "fixed" - resolved_at is untouched and still drives its own separate
+ * "Resolved" label and the Discuss-with-AI-coach button on the
+ * Notifications page. */
 export function MarkNotificationReadButton({ locale, notificationId }: { locale: AppLocale; notificationId: string }) {
   return (
     <form action={markNotificationReadAction}>

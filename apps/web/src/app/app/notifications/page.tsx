@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { LocalDateTime } from "@/components/local-time";
 import { MarkAllNotificationsReadButton } from "@/components/mark-all-notifications-read-button";
 import { MarkNotificationReadButton } from "@/components/mark-notification-read-button";
-import { listNotifications } from "@/lib/notifications";
+import { listNotifications, markAllNotificationsRead } from "@/lib/notifications";
 import { normalizeLocale, tr } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 
@@ -42,6 +42,19 @@ export default async function NotificationsPage() {
   const notifications = await listNotifications({ supabase, userId: user.id });
   const hasUnread = notifications.some((notification) => !notification.read_at);
 
+  // TCK-96: "entered the note" is itself enough to count as read now, not
+  // just an explicit tap - this render still shows every row's PRE-mark
+  // state (notifications was already fetched above), so nothing here looks
+  // different on this exact load; it only changes what the nav badge (and
+  // this page) shows the NEXT time. Done as a plain write rather than a
+  // Server Action - revalidateNavChrome()/revalidatePath are restricted to
+  // Server Actions and Route Handlers, but nav-chrome's own cache already
+  // tolerates up to 10s staleness by design, which comfortably covers a
+  // user reading this page for longer than that before navigating away.
+  if (hasUnread) {
+    await markAllNotificationsRead({ supabase, userId: user.id });
+  }
+
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-10">
       <div className="mb-4">
@@ -72,13 +85,16 @@ export default async function NotificationsPage() {
         ) : (
           notifications.map((notification) => {
             const isConcern = notification.severity === "concern";
-            // "Done" means different things per severity - see
-            // nav-chrome.ts's own comment: a concern is only ever done once
-            // a later background check confirms it's actually resolved
-            // (reading it doesn't count, on purpose), while a plain info
-            // notification has no such second check to wait on, so being
-            // read IS being done.
-            const isDone = isConcern ? Boolean(notification.resolved_at) : Boolean(notification.read_at);
+            // TCK-96: isRead now drives "done" for both severities (matches
+            // the nav badge - see nav-chrome.ts). isResolved stays separate
+            // and still real for a concern: Daffy's own later background
+            // check, not something reading it changes - shown as its own
+            // "Resolved" label and still what gates the "Discuss with AI
+            // coach" button below, so a reviewed-but-not-actually-fixed
+            // concern doesn't look like there's nothing left to do.
+            const isRead = Boolean(notification.read_at);
+            const isResolved = Boolean(notification.resolved_at);
+            const isDone = isRead;
             // A ticket-status-change notification (see tickets table's own
             // notify_ticket_status_change trigger) carries a
             // "ticket_<uuid>" field key instead of a RingMetric id -
@@ -109,9 +125,11 @@ export default async function NotificationsPage() {
                     }`}
                   >
                     {isConcern
-                      ? isDone
+                      ? isResolved
                         ? tr(locale, "Resolved", "טופל")
-                        : tr(locale, "⚠ Needs attention", "⚠ דורש תשומת לב")
+                        : isRead
+                          ? tr(locale, "Reviewed", "נסקר")
+                          : tr(locale, "⚠ Needs attention", "⚠ דורש תשומת לב")
                       : isDone
                         ? tr(locale, "Read", "נקרא")
                         : tr(locale, "Info", "מידע")}
@@ -122,14 +140,20 @@ export default async function NotificationsPage() {
                 </div>
                 <p className="mt-2 text-sm text-slate-800 dark:text-slate-200">{notification.message}</p>
                 {isConcern ? (
-                  !isDone ? (
-                    <Link
-                      href={`/app/targets?concern=${notification.id}`}
-                      className="mt-3 inline-flex items-center rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
-                    >
-                      {tr(locale, "Discuss with AI coach", "לדון עם מאמן ה-AI")}
-                    </Link>
-                  ) : null
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {/* Gated on isResolved, not isRead/isDone - reviewing
+                        doesn't mean it's actually fixed, so the way to
+                        actually address it stays available either way. */}
+                    {!isResolved ? (
+                      <Link
+                        href={`/app/targets?concern=${notification.id}`}
+                        className="inline-flex items-center rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+                      >
+                        {tr(locale, "Discuss with AI coach", "לדון עם מאמן ה-AI")}
+                      </Link>
+                    ) : null}
+                    {!isRead ? <MarkNotificationReadButton locale={locale} notificationId={notification.id} /> : null}
+                  </div>
                 ) : (
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     {ticketId ? (

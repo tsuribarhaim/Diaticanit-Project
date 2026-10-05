@@ -460,7 +460,13 @@ export function TargetsSectionTabs({
             <div className="grid gap-3 sm:grid-cols-2">
               {payload.exerciseTargets.map((entry, index) => (
                 <div key={`${entry.modality}-${index}`} className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-                  <p className="font-semibold text-slate-900 dark:text-slate-100">{formatExerciseModality(entry.modality, locale)}</p>
+                  {/* TCK-90 round 2: activityName takes over for a named
+                      "other" activity (e.g. "Pilates") - see
+                      lib/ai/targets.ts. This file already used
+                      aiAdjustmentNote (not searchKeywords) as its caption,
+                      the one thing the other two copies of this card got
+                      wrong. */}
+                  <p className="font-semibold text-slate-900 dark:text-slate-100">{entry.activityName || formatExerciseModality(entry.modality, locale)}</p>
                   <p className="mt-1 text-sm text-slate-700 dark:text-slate-300">
                     {tr(locale, "Frequency", "תדירות")}: {entry.frequencyPerWeek} {tr(locale, "times/week", "פעמים בשבוע")}
                   </p>
