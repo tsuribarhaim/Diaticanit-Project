@@ -25,6 +25,7 @@ export type TargetGoalType = (typeof targetGoalTypes)[number];
 
 const exerciseTargetEntrySchema = z.object({
   modality: z.string().trim().min(1).max(60),
+  activityName: z.string().trim().min(1).max(60).nullable().optional().default(null),
   frequencyPerWeek: z.number().min(0).max(14),
   durationMinutesPerSession: z.number().min(0).max(240),
   aiAdjustmentNote: z.string().max(400),
@@ -166,6 +167,13 @@ export const targetInputSchema = z.object({
 
 export type ExerciseTargetEntry = {
   modality: string;
+  /** TCK-90 round 2: the user's own activity name (e.g. "Pilates", "Dance")
+   * for an entry backed by one of their exercise_other_activities - only
+   * ever set when modality is "other" (see normalizeAiModality in
+   * lib/ai/targets.ts). The UI shows this in place of the generic "Other"
+   * bucket label when present; null for every ordinary fixed-modality
+   * entry, which still shows its normal localized modality label. */
+  activityName: string | null;
   frequencyPerWeek: number;
   durationMinutesPerSession: number;
   aiAdjustmentNote: string;
@@ -610,6 +618,7 @@ function buildExerciseTargets(profile: ProfileForTargets, goalType: TargetGoalTy
     return [
       {
         modality: "endurance_cardio",
+        activityName: null,
         frequencyPerWeek: fallback.frequency,
         durationMinutesPerSession: fallback.duration,
         aiAdjustmentNote: tr(
@@ -621,6 +630,7 @@ function buildExerciseTargets(profile: ProfileForTargets, goalType: TargetGoalTy
       },
       {
         modality: "resistance_hypertrophy",
+        activityName: null,
         frequencyPerWeek: 2,
         durationMinutesPerSession: 30,
         aiAdjustmentNote: tr(
@@ -644,6 +654,7 @@ function buildExerciseTargets(profile: ProfileForTargets, goalType: TargetGoalTy
 
     return {
       modality,
+      activityName: null,
       frequencyPerWeek,
       durationMinutesPerSession,
       aiAdjustmentNote: tr(
@@ -1133,6 +1144,7 @@ function normalizeExerciseTargetsJson(value: unknown): ExerciseTargetEntry[] {
     const record = (item ?? {}) as Record<string, unknown>;
     return {
       modality: typeof record.modality === "string" ? record.modality : "other",
+      activityName: typeof record.activity_name === "string" && record.activity_name.trim() ? record.activity_name : null,
       frequencyPerWeek: toNum(record.frequency_per_week as number | string | null, 0),
       durationMinutesPerSession: toNum(record.duration_minutes_per_session as number | string | null, 0),
       aiAdjustmentNote: typeof record.ai_adjustment_note === "string" ? record.ai_adjustment_note : "",

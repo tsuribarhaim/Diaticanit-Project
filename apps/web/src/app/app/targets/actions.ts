@@ -402,6 +402,7 @@ export async function performTargetsLock({
 
     exercise_targets: parsedPayload.exerciseTargets.map((entry) => ({
       modality: entry.modality,
+      activity_name: entry.activityName,
       frequency_per_week: entry.frequencyPerWeek,
       duration_minutes_per_session: entry.durationMinutesPerSession,
       ai_adjustment_note: entry.aiAdjustmentNote,

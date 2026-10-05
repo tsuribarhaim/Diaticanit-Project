@@ -53,6 +53,11 @@ const numberFromUnknown = z.preprocess((value) => {
 
 const aiExerciseTargetSchema = z.object({
   modality: z.string().trim().min(1).max(60),
+  // TCK-90 round 2: only meaningful (and only ever set by the prompt) when
+  // modality is "other" and backed by one of the user's own named
+  // exercise_other_activities - see toExerciseTargets below, which drops it
+  // for any non-"other" entry regardless of what the model sends.
+  activity_name: z.string().trim().min(1).max(60).nullable().optional().default(null),
   frequency_per_week: numberFromUnknown,
   duration_minutes_per_session: numberFromUnknown,
   ai_adjustment_note: z.string().trim().max(400).optional().default(""),
@@ -185,15 +190,22 @@ function parseJsonPayload(contentText: string): unknown {
 }
 
 function toExerciseTargets(items: z.infer<typeof aiExerciseTargetSchema>[]): ExerciseTargetEntry[] {
-  return items.slice(0, 6).map((item) => ({
-    modality: normalizeAiModality(item.modality),
-    frequencyPerWeek: Math.round(clamp(item.frequency_per_week, 0, 14)),
-    durationMinutesPerSession: Math.round(clamp(item.duration_minutes_per_session, 0, 240)),
-    aiAdjustmentNote: item.ai_adjustment_note,
-    // Never trust AI-suggested direct video links; only keyword phrases are
-    // accepted, and the UI only ever builds YouTube *search* URLs from them.
-    searchKeywords: item.search_keywords.slice(0, 5),
-  }));
+  return items.slice(0, 6).map((item) => {
+    const modality = normalizeAiModality(item.modality);
+    return {
+      modality,
+      // Only ever kept for an actual "other" entry - a non-"other" entry
+      // has no business showing a custom activity name in place of its
+      // real, specific modality label, regardless of what the model sent.
+      activityName: modality === "other" ? item.activity_name : null,
+      frequencyPerWeek: Math.round(clamp(item.frequency_per_week, 0, 14)),
+      durationMinutesPerSession: Math.round(clamp(item.duration_minutes_per_session, 0, 240)),
+      aiAdjustmentNote: item.ai_adjustment_note,
+      // Never trust AI-suggested direct video links; only keyword phrases are
+      // accepted, and the UI only ever builds YouTube *search* URLs from them.
+      searchKeywords: item.search_keywords.slice(0, 5),
+    };
+  });
 }
 
 function toHabitEntries(items: z.infer<typeof aiHabitEntrySchema>[]): HabitEntry[] {
@@ -455,7 +467,7 @@ export async function generateTargetsWithAi({
           '"potassium_min_mg":number,"potassium_max_mg":number,"magnesium_min_mg":number,"magnesium_max_mg":number,"calcium_min_mg":number,"calcium_max_mg":number,"iron_min_mg":number,"iron_max_mg":number,',
           '"zinc_min_mg":number,"zinc_max_mg":number,"vit_c_min_mg":number,"vit_c_max_mg":number,"vit_b12_min_mcg":number,"vit_b12_max_mcg":number,"vit_d_min_mcg":number,"vit_d_max_mcg":number,',
           '"sat_fat_min_g":number,"sat_fat_max_g":number,"omega3_min_g":number,"omega3_max_g":number,"cholesterol_min_mg":number,"cholesterol_max_mg":number,',
-          `"exercise_targets":[{"modality":"${AI_EXERCISE_MODALITY_TOKENS.join("|")}","frequency_per_week":number,"duration_minutes_per_session":number,"ai_adjustment_note":"string","search_keywords":["string"]}],`,
+          `"exercise_targets":[{"modality":"${AI_EXERCISE_MODALITY_TOKENS.join("|")}","activity_name":"string|null","frequency_per_week":number,"duration_minutes_per_session":number,"ai_adjustment_note":"string","search_keywords":["string"]}],`,
           '"habits_do":[{"id":"string","habit_instruction":"string","rationale":"string"}],',
           '"habits_dont":[{"id":"string","habit_instruction":"string","rationale":"string"}],',
           '"user_targets":[{"id":"string","label":"string","value":"string","unit":"string","target_min":number,"target_max":number,"higher_is_better":boolean}],',
@@ -467,7 +479,7 @@ export async function generateTargetsWithAi({
           "- MANDATORY SAFETY REVIEW: check the numeric ranges themselves (not just habit text) against the user's medical conditions. In particular: hypertension calls for a tighter, lower sodium range (roughly 1,200-1,500 mg rather than a generic 1,500-2,300 mg); diabetes calls for a lower added-sugar ceiling (roughly 15 g rather than a generic 25 g). Apply comparable, clinically-reasonable tightening for any other stated condition that has an established dietary implication. This review applies even when it is not the explicit subject of goal_text.",
           "- MANDATORY BMI SAFETY REVIEW: user_profile's bmi line reflects the user's CURRENT weight, not a request or a hypothetical - if it is outside the healthy 18.5-24.9 range, that by itself is a concrete, in-scope safety issue you must act on, even when goal_text says nothing about weight (a bare \"profile changed\" or \"recalculate\" note included - see the no-actionable-change rule above, this is exactly the kind of thing that rule means by \"the safety review IS the request\"). Underweight (bmi below 18.5): raise calories_min/calories_max and protein_min_g/protein_max_g above the generic DRI baseline to support safe, gradual weight gain. Overweight/obese (bmi above 24.9): lower calories_min/calories_max moderately, keeping protein comparatively high, to support safe, gradual weight loss. State the current bmi value and this adjustment explicitly in global_coaching_explanation. This is independent of target_weight_kg, which must still remain a literal translation of goal_text per the rule above - do not set or change target_weight_kg based on this review alone.",
           `- exercise_targets: 2 to 4 entries. modality must be exactly one of these tokens: ${AI_EXERCISE_MODALITY_TOKENS.join(", ")} - never a free-text activity name like "walking" or "yoga" (the app only knows how to display these exact tokens; anything else renders as raw untranslated text). Put the specific activity itself (e.g. "brisk walking", "beginner yoga") in ai_adjustment_note and search_keywords instead - that's where the detail belongs, not in modality. search_keywords must be short YouTube search phrases only (e.g. \"beginner resistance training routine\") — NEVER include a URL or a specific video title/link, since direct AI-suggested links are unreliable.`,
-          "- When user_profile includes exercise_other_activities (one or more specific activity names the user typed, e.g. \"Dance\", \"Pilates\", each with its own weekly frequency/duration), each one is a real, named part of the user's routine, not a generic placeholder - give each its own exercise_targets entry with modality \"other\" (per the fixed token list above; multiple entries may share modality \"other\", one per named activity), anchored on that activity's own days_per_week/minutes_per_session unless goal_text asks to change it, and name the activity explicitly and by name (e.g. \"Dance\", not just \"other workouts\") in that entry's ai_adjustment_note and search_keywords. Refer to each by its specific name rather than the generic word \"other\" in global_coaching_explanation whenever you mention it - talk about it exactly like you would talk about any other activity (e.g. \"your Dance sessions\"). Never explain, mention, or allude to the fact that the app internally files it under an \"other\" category/modality/token, that this required a definition or naming step, or any other detail about how the app's taxonomy works internally; the user only ever typed an activity name and should only ever read that plain activity name back. If exercise_other_activities lists more named activities than the 2-4 exercise_targets slots allow alongside the user's other modalities, prioritize by weekly frequency and keep the rest implicit rather than dropping them from global_coaching_explanation silently.",
+          "- When user_profile includes exercise_other_activities (one or more specific activity names the user typed, e.g. \"Dance\", \"Pilates\", each with its own weekly frequency/duration), each one is a real, named part of the user's routine, not a generic placeholder - give each its own exercise_targets entry with modality \"other\" (per the fixed token list above; multiple entries may share modality \"other\", one per named activity) AND that entry's activity_name set to the exact name as the user typed it (e.g. \"Dance\", \"Pilates\") - the app shows activity_name as that card's own title in place of the generic \"Other\" bucket label, so this is what the user actually sees, not just internal detail. Anchor each on that activity's own days_per_week/minutes_per_session unless goal_text asks to change it, and also name the activity explicitly in that entry's ai_adjustment_note and search_keywords. Refer to each by its specific name rather than the generic word \"other\" in global_coaching_explanation whenever you mention it - talk about it exactly like you would talk about any other activity (e.g. \"your Dance sessions\"). Never explain, mention, or allude to the fact that the app internally files it under an \"other\" category/modality/token, that this required a definition or naming step, or any other detail about how the app's taxonomy works internally; the user only ever typed an activity name and should only ever read that plain activity name back. Every other exercise_targets entry (not backed by a named other-activity) must leave activity_name null. If exercise_other_activities lists more named activities than the 2-4 exercise_targets slots allow alongside the user's other modalities, prioritize by weekly frequency and keep the rest implicit rather than dropping them from global_coaching_explanation silently.",
           "- exercise_targets GROUNDING: beyond exercise_other_activities (handled above), the rest of exercise_targets must be grounded in user_profile's own exercise_modalities - prioritize an entry for each modality the user actually already selected there over introducing one they didn't. Only include a modality absent from exercise_modalities when goal_text itself gives a clear, stated reason to add it (e.g. the user's own words ask for a new kind of activity, or a stated goal their current modalities don't address) - say that reason explicitly in that entry's ai_adjustment_note when you do. This was confirmed live as a real problem: a profile with no connection to martial arts got a martial_arts entry with no explanation of why, reading as random rather than personalized. If exercise_modalities is empty or [\"none\"], fall back to a small, generic, low-barrier plan (e.g. walking-style endurance_cardio) rather than inventing a specific, possibly-unwanted modality out of nowhere.",
           "- habits_do and habits_dont: 2 to 4 entries each, each with a short actionable instruction and a one-sentence rationale.",
           "- user_targets: 3 to 6 entries. Three are STANDING and always required, regardless of whether goal_text asks for them - id \"target_weight\" (unit \"kg\", label a plain \"Target weight\"/localized equivalent), id \"sleep_hours\" (unit \"hours\"), and id \"daily_steps\" (unit \"steps\"). If current_active_targets.user_targets already has an entry with one of these exact ids, carry it forward (update it only if this request specifically changes it, keeping the same id); otherwise generate a sensible starting value from user_profile and goal_type - target_weight: current body weight adjusted by roughly 5% in the goal's direction for weight_loss/weight_gain, or unchanged for maintain/general; sleep_hours: 7-9 (typically 8) unless a stated medical condition or habit calls for adjusting it; daily_steps: 7,000-10,000 based on activity_level (lower for sedentary, higher for active). Beyond these three, add up to 3 more entries only for other concrete, health-relevant OUTCOMEs the user actually asked for in goal_text that this schema has no OTHER dedicated field for (e.g. a specific step-free exercise-minutes goal, or a genuinely custom tracked habit) - do not invent additional entries beyond the three standing ones. user_targets is NEVER for an exercise activity or modality itself (e.g. \"Walking\", \"Running\", \"Yoga\") - any activity you add or recommend, including one chosen specifically to help reach a user_targets goal like weight loss, belongs in exercise_targets instead, never as its own user_targets entry.",
