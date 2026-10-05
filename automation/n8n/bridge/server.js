@@ -169,7 +169,11 @@ function buildPhase2Prompt(ticket, phase1Output, port) {
     "1. REPRODUCE: a Daffy dev server for THIS exact worktree is already running at " +
       `http://localhost:${port} - do not start, stop, or restart any server yourself (you have no tool to do that anyway). ` +
       `Sign in with email "${AUTOFIX_BOT_EMAIL}" and password "${AUTOFIX_BOT_PASSWORD}" - this is a dedicated internal test ` +
-      "account for exactly this purpose, not a real user, so it's safe to use freely. Try to actually trigger the behavior " +
+      "account for exactly this purpose, not a real user, so it's safe to sign in with. Prefer read-only checks (fetching pages, " +
+      "reading state). Do NOT create tickets, drafts, or any other records unless the bug cannot be reproduced without one: " +
+      "leftover test rows show up in the admin's real screens and have crashed pages before (a draft ticket with a null " +
+      "type/area did). If you must create a record, delete it again before you finish, and if you cannot, list it " +
+      "(table + id/ticket number) in reproductionSummary so a human can remove it. Try to actually trigger the behavior " +
       "the ticket describes - calling the relevant server action/API route directly, inspecting the resulting state, or " +
       "writing a small node script (you can use fetch) against that running server are all fine. You do NOT have a browser " +
       "automation tool - if the bug is purely visual/CSS and genuinely can't be confirmed without seeing a rendered page, " +
