@@ -14,12 +14,21 @@ type AdminTicketRow = {
   subject: string;
   status: TicketStatus;
   created_at: string;
-  ticket_type: TicketType;
-  area: TicketArea;
+  ticket_type: TicketType | null;
+  area: TicketArea | null;
   priority: TicketPriority;
   created_by: string;
   userName: string;
 };
+
+// Drafts are saved before a type/area is chosen, so both can be null.
+function typeLabel(value: TicketType | null, locale: AppLocale): string {
+  return value ? formatTicketType(value, locale) : tr(locale, "Not set yet", "טרם נבחר");
+}
+
+function areaLabel(value: TicketArea | null, locale: AppLocale): string {
+  return value ? formatTicketArea(value, locale) : tr(locale, "Not set yet", "טרם נבחר");
+}
 
 const priorityTextClass: Record<TicketPriority, string> = {
   low: "text-slate-500 dark:text-slate-400",
@@ -263,8 +272,8 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
           (!userFilter || ticket.created_by === userFilter) &&
           (multiFilters.status.length === 0 || multiFilters.status.includes(ticket.status)) &&
           (multiFilters.priority.length === 0 || multiFilters.priority.includes(ticket.priority)) &&
-          (multiFilters.type.length === 0 || multiFilters.type.includes(ticket.ticket_type)) &&
-          (multiFilters.area.length === 0 || multiFilters.area.includes(ticket.area)),
+          (multiFilters.type.length === 0 || (ticket.ticket_type !== null && multiFilters.type.includes(ticket.ticket_type))) &&
+          (multiFilters.area.length === 0 || (ticket.area !== null && multiFilters.area.includes(ticket.area))),
       ),
     [tickets, userFilter, multiFilters],
   );
@@ -283,9 +292,9 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
         case "userName":
           return ticket.userName.toLowerCase();
         case "ticket_type":
-          return formatTicketType(ticket.ticket_type, locale).toLowerCase();
+          return typeLabel(ticket.ticket_type, locale).toLowerCase();
         case "area":
-          return formatTicketArea(ticket.area, locale).toLowerCase();
+          return areaLabel(ticket.area, locale).toLowerCase();
         case "priority":
           return priorityRank[ticket.priority];
         case "created_at":
@@ -505,8 +514,8 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
                       </Link>
                     </td>
                     <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">{ticket.userName}</td>
-                    <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">{formatTicketType(ticket.ticket_type, locale)}</td>
-                    <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">{formatTicketArea(ticket.area, locale)}</td>
+                    <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">{typeLabel(ticket.ticket_type, locale)}</td>
+                    <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">{areaLabel(ticket.area, locale)}</td>
                     <td className={`py-3 pe-3 ${priorityTextClass[ticket.priority]}`}>{formatTicketPriority(ticket.priority, locale)}</td>
                     <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">
                       <LocalDate value={ticket.created_at} locale={locale} />
