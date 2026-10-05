@@ -15,8 +15,10 @@
  * "Auto-Fix Bot" dev account (never a real user's), starts an isolated dev
  * server the bridge itself manages, and gives Claude a narrow, explicit
  * toolset (Read/Grep/Glob/Edit/Write + a small Bash allowlist for
- * tsc/eslint/build/node - no git, no npm, no dev-server control) to try to
- * reproduce the issue and, only if it's genuinely a narrow code fix with no
+ * tsc/eslint/node, with git/npm/yarn/pnpm/rm/del/taskkill/another-dev-server
+ * hard-blocked on top - see runClaudeHeadless for why both an allow- and a
+ * deny-list are needed together) to try to reproduce the issue and, only
+ * if it's genuinely a narrow code fix with no
  * functionality/UX impact, implement and verify it. ALL git operations
  * (branch creation, staging, commit) are done by the bridge's own
  * deterministic code afterward, never by the agent - same for the final
@@ -218,12 +220,26 @@ async function reportResult(ticketId, autoHandle, notes, status) {
  * vary between Phase 1 and Phase 2, everything else (the Windows .cmd-shim
  * workaround, JSON parsing, error shape) is identical. Returns both the
  * structured output AND the real dollar cost (total_cost_usd) so callers
- * can track a running daily total. */
-function runClaudeHeadless({ cwd, prompt, tools, restricted, permissionPrompts, budget, timeoutMs, schema }) {
+ * can track a running daily total.
+ *
+ * `tools` (--tools) only takes bare built-in tool names (e.g. "Bash,Edit") -
+ * under --restricted, Bash/PowerShell/REPL/WebFetch are removed entirely
+ * unless "Bash" is named here. Getting Bash scoped down safely needs BOTH
+ * `allowedTools` and `disallowedTools` together - confirmed live across
+ * three isolated smoke tests: `allowedTools` alone (e.g. "Bash(node *)")
+ * did NOT narrow anything - an unrelated command (`git status`) still ran
+ * with zero permission_denials; `disallowedTools` alone with no
+ * `allowedTools` instead denied EVERYTHING, including the pattern meant to
+ * stay open (plain `node`); only passing both at once gave the intended
+ * result (node ran, git was denied with a real, reported denial). */
+function runClaudeHeadless({ cwd, prompt, tools, allowedTools, disallowedTools, restricted, permissionPrompts, budget, timeoutMs, schema }) {
   return new Promise((resolve, reject) => {
     const args = [CLAUDE_CLI_PATH, "-p", prompt];
     if (restricted) args.push("--restricted");
-    args.push("--tools", tools, "--permission-prompts", permissionPrompts || "none", "--output-format", "json", "--json-schema", schema, "--max-budget-usd", budget);
+    args.push("--tools", tools);
+    if (allowedTools) args.push("--allowedTools", allowedTools);
+    if (disallowedTools) args.push("--disallowedTools", disallowedTools);
+    args.push("--permission-prompts", permissionPrompts || "none", "--output-format", "json", "--json-schema", schema, "--max-budget-usd", budget);
     execFile(
       process.execPath,
       args,
@@ -512,7 +528,9 @@ async function processTicket(ticket, budgetTracker) {
     const phase2 = await runClaudeHeadless({
       cwd: worktreeDir,
       prompt: buildPhase2Prompt(ticket, phase1.output, DEV_SERVER_PORT),
-      tools: "Read,Grep,Glob,Edit,Write,Bash(npx tsc*),Bash(npx eslint*),Bash(node *)",
+      tools: "Read,Grep,Glob,Edit,Write,Bash",
+      allowedTools: "Bash(npx tsc*) Bash(npx eslint*) Bash(node *)",
+      disallowedTools: "Bash(git *) Bash(npm *) Bash(yarn *) Bash(pnpm *) Bash(rm *) Bash(rmdir *) Bash(del *) Bash(taskkill*) Bash(npx next*)",
       restricted: true,
       budget: PHASE2_MAX_BUDGET_USD,
       timeoutMs: PHASE2_TIMEOUT_MS,
