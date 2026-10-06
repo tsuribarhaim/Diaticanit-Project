@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 
 import { AdminAutoHandleControl } from "@/components/admin-auto-handle-control";
 import { AdminStatusDropdown } from "@/components/admin-status-dropdown";
+import { ReviewCallout } from "@/components/review-banner";
 import { CancelTicketDialog } from "@/components/cancel-ticket-dialog";
 import { EditTicketDialog } from "@/components/edit-ticket-dialog";
 import { LocalDateTime } from "@/components/local-time";
@@ -192,6 +193,8 @@ export default async function TicketDetailPage({
             </span>
           )}
         </div>
+
+        {isAdmin ? <ReviewCallout locale={locale} ticketId={ticket.id} autoHandle={ticket.auto_handle as TicketAutoHandle | null} /> : null}
 
         <div className="mt-5 space-y-3 border-t border-slate-100 pt-4 dark:border-slate-800">
           <DetailRow label={tr(locale, "Type", "סוג")} value={ticket.ticket_type ? formatTicketType(ticket.ticket_type, locale) : notSetLabel} />

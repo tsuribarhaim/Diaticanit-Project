@@ -383,8 +383,10 @@ export function formatTicketStatus(value: string, locale: AppLocale): string {
  * auto-ticket-handling.md) - value is whatever's stored on the row (Y/P/D
  * or null/undefined for "not opted in"). */
 export function formatTicketAutoHandle(value: string | null | undefined, locale: AppLocale): string {
-  if (value === "Y") return tr(locale, "Queued for automation", "ממתינה לאוטומציה");
-  if (value === "P") return tr(locale, "Plan ready - needs you", "תוכנית מוכנה - דרוש אישור");
-  if (value === "D") return tr(locale, "Fix ready on dev - needs you", "תיקון מוכן בפיתוח - דרוש אישור");
+  if (value === "Y") return tr(locale, "Queued for night run", "בתור להרצת הלילה");
+  if (value === "S") return tr(locale, "Spec requested", "התבקש אפיון");
+  if (value === "A") return tr(locale, "Awaiting your approval", "ממתין לאישורך");
+  if (value === "P") return tr(locale, "Returned with questions", "חזר עם שאלות");
+  if (value === "D") return tr(locale, "Fix ready - merge to dev", "תיקון מוכן - מיזוג לפיתוח");
   return tr(locale, "Not opted in", "לא סומנה לאוטומציה");
 }
