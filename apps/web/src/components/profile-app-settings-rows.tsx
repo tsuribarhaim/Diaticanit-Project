@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 import { updateAiConsentAction } from "@/app/app/profile/actions";
+import { ChangePasswordForm } from "@/components/change-password-form";
 import { PasskeyManager } from "@/components/passkey-manager";
 import { ExpandableRow, ProfileRow, QuickEditSheet, ToggleSwitch } from "@/components/profile-quick-edit";
 import { tr, type AppLocale } from "@/lib/locale";
@@ -45,6 +46,25 @@ export function PasskeysRow({ locale }: { locale: AppLocale }) {
         )}
       >
         <PasskeyManager locale={locale} />
+      </QuickEditSheet>
+    </>
+  );
+}
+
+/** Same ChangePasswordForm as Settings -> Password; a successful change
+ * signs the user out and lands them on sign-in (see changePasswordAction). */
+export function PasswordRow({ locale }: { locale: AppLocale }) {
+  const [isOpen, setIsOpen] = useState(false);
+  return (
+    <>
+      <ProfileRow label={tr(locale, "Change password", "שינוי סיסמה")} onClick={() => setIsOpen(true)} />
+      <QuickEditSheet
+        locale={locale}
+        isOpen={isOpen}
+        onClose={() => setIsOpen(false)}
+        title={tr(locale, "Change password", "שינוי סיסמה")}
+      >
+        <ChangePasswordForm locale={locale} />
       </QuickEditSheet>
     </>
   );

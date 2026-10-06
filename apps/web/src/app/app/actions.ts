@@ -5,6 +5,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
+import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { revalidateNavChrome } from "@/lib/nav-chrome";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
@@ -150,13 +151,25 @@ export type ChangePasswordState = {
   success?: string;
 };
 
-const changePasswordSchema = z.object({
-  currentPassword: z.string().min(1, "Enter your current password."),
-  newPassword: z.string().min(8, "New password must be at least 8 characters."),
-});
+async function resolveUserLocale(supabase: Awaited<ReturnType<typeof createClient>>, userId: string) {
+  const { data } = await supabase
+    .from("user_profile")
+    .select("preferred_language")
+    .eq("user_id", userId)
+    .maybeSingle();
+  return normalizeLocale(data?.preferred_language);
+}
+
+function changePasswordSchema(locale: AppLocale) {
+  return z.object({
+    currentPassword: z.string().min(1, tr(locale, "Enter your current password.", "יש להזין את הסיסמה הנוכחית.")),
+    newPassword: z.string().min(8, tr(locale, "New password must be at least 8 characters.", "הסיסמה החדשה חייבת להכיל לפחות 8 תווים.")),
+  });
+}
 
 /**
- * For an already-signed-in user (Settings -> Password), unlike the sign-in
+ * For an already-signed-in user (Settings -> Password, Profile -> Change
+ * password), unlike the sign-in
  * page's own forgot-password flow - no email round trip needed since
  * they're already authenticated. Still re-verifies the CURRENT password
  * first (via a second signInWithPassword call, using the session's own
@@ -177,13 +190,17 @@ export async function changePasswordAction(
     redirect("/auth/sign-in");
   }
 
-  const parsed = changePasswordSchema.safeParse({
+  // Resolved while the session is still live - the success path below
+  // signs the user out.
+  const locale = await resolveUserLocale(supabase, user.id);
+
+  const parsed = changePasswordSchema(locale).safeParse({
     currentPassword: formData.get("current_password"),
     newPassword: formData.get("new_password"),
   });
 
   if (!parsed.success) {
-    return { error: parsed.error.issues[0]?.message ?? "Invalid password payload." };
+    return { error: parsed.error.issues[0]?.message ?? tr(locale, "Invalid password payload.", "נתוני הסיסמה אינם תקינים.") };
   }
 
   const { error: reauthError } = await supabase.auth.signInWithPassword({
@@ -193,17 +210,31 @@ export async function changePasswordAction(
 
   if (reauthError) {
     logServerError("app.changePassword", "reauth_failed", { userId: user.id, error: reauthError.message });
-    return { error: "Current password is incorrect." };
+    return { error: tr(locale, "Current password is incorrect.", "הסיסמה הנוכחית שגויה.") };
   }
 
   const { error: updateError } = await supabase.auth.updateUser({ password: parsed.data.newPassword });
 
   if (updateError) {
     logServerError("app.changePassword", "update_failed", { userId: user.id, error: updateError.message });
-    return { error: updateError.message };
+    if (updateError.code === "same_password") {
+      return { error: tr(locale, "New password must be different from the current one.", "הסיסמה החדשה חייבת להיות שונה מהנוכחית.") };
+    }
+    if (updateError.code === "weak_password") {
+      return { error: tr(locale, "New password is too weak. Choose a stronger one.", "הסיסמה החדשה חלשה מדי. בחרו סיסמה חזקה יותר.") };
+    }
+    return { error: tr(locale, "Couldn't update the password. Please try again.", "לא ניתן היה לעדכן את הסיסמה. נסו שוב.") };
   }
 
-  return { success: "Password updated." };
+  // Sign out so the user proves the new password works right away (sign-in
+  // shows a matching notice via reason=password_changed).
+  const { error: signOutError } = await supabase.auth.signOut();
+
+  if (signOutError) {
+    logServerError("app.changePassword", "sign_out_failed", { userId: user.id, error: signOutError.message });
+  }
+
+  redirect("/auth/sign-in?reason=password_changed");
 }
 
 export async function signOutAction() {
