@@ -441,7 +441,7 @@ export function FixPanel({
               />
               {error ? <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{error}</p> : null}
               <div className="mt-3 flex flex-wrap gap-2">
-                <ActionButton variant="primary" pending={pending && which === "merge"} disabled={pending} onClick={() => run("merge", () => requestMergeAction(proposalId), "stay")}>
+                <ActionButton variant="primary" pending={pending && which === "merge"} disabled={pending} onClick={() => run("merge", () => requestMergeAction(proposalId))}>
                   {tr(locale, "Merge to dev", "מיזוג לפיתוח")}
                 </ActionButton>
                 <ActionButton pending={pending && which === "return"} disabled={pending} onClick={() => run("return", () => returnFixAction(proposalId, comment))}>

@@ -58,6 +58,20 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
     }
   }
   const needsRow: Record<string, string> = { A: "proposal", P: "questions", D: "fix" };
+
+  // Where each fix's "Merge to dev" request stands: queued (not finished yet), or finished.
+  const latestMerge = new Map<string, { done: boolean }>();
+  if (ids.length > 0) {
+    const { data: mergeRequests } = await supabase
+      .from("automation_requests")
+      .select("ticket_id, completed_at")
+      .eq("kind", "merge")
+      .in("ticket_id", ids)
+      .order("requested_at", { ascending: false });
+    for (const row of mergeRequests ?? []) {
+      if (!latestMerge.has(row.ticket_id)) latestMerge.set(row.ticket_id, { done: Boolean(row.completed_at) });
+    }
+  }
   const { data: openRequests } = await supabase.from("automation_requests").select("id, kind").is("completed_at", null);
   const analysisRequested = (openRequests ?? []).some((request) => request.kind === "analyze");
 
@@ -96,6 +110,14 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
                   {flag === "D" && mergedByTicket.has(ticket.id) ? (
                     <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-600 dark:text-emerald-400">
                       {tr(locale, "Merged on dev", "מוזג בפיתוח")}
+                    </span>
+                  ) : flag === "D" && latestMerge.get(ticket.id) && !latestMerge.get(ticket.id)!.done ? (
+                    <span className="rounded-full bg-sky-100 px-2.5 py-0.5 text-xs font-semibold text-sky-800 dark:bg-sky-950/50 dark:text-sky-300">
+                      {tr(locale, "Merge queued", "מיזוג בתור")}
+                    </span>
+                  ) : flag === "D" && latestMerge.get(ticket.id)?.done ? (
+                    <span className="rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-800 dark:bg-rose-950/50 dark:text-rose-300">
+                      {tr(locale, "Merge failed - open it", "המיזוג נכשל - לפתיחה")}
                     </span>
                   ) : (
                     <AutoHandlePill locale={locale} value={ticket.auto_handle} />

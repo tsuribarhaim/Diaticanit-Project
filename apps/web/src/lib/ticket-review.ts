@@ -195,5 +195,5 @@ export async function requestMerge(supabase: Client, adminId: string, locale: Ap
   if ((pending ?? []).length > 0) return { success: tr(locale, "A merge is already requested.", "מיזוג כבר התבקש.") };
   const { error } = await supabase.from("automation_requests").insert({ kind: "merge", ticket_id: loaded.ticket.id, requested_by: adminId });
   if (error) return dbError(locale);
-  return { success: tr(locale, "Merge requested. It runs within a few minutes while your laptop is on.", "מיזוג התבקש. הוא ירוץ תוך כמה דקות כל עוד המחשב הנייד דלוק.") };
+  return { success: tr(locale, `Merge queued for TCK-${loaded.ticket.ticket_seq}. It runs within about a minute while your laptop is on.`, `המיזוג של TCK-${loaded.ticket.ticket_seq} נכנס לתור. הוא ירוץ תוך בערך דקה כל עוד המחשב הנייד דלוק.`) };
 }
