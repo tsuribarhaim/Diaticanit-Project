@@ -41,12 +41,14 @@ export function SignInForm({
   recentEmails,
   environmentBadgeLabel,
   sessionExpired = false,
+  passwordChanged = false,
 }: {
   locale: AppLocale;
   nextPath: string;
   recentEmails: string[];
   environmentBadgeLabel: string | null;
   sessionExpired?: boolean;
+  passwordChanged?: boolean;
 }) {
   const [state, formAction] = useActionState(signInAction, initialState);
   const [email, setEmail] = useState("");
@@ -197,6 +199,12 @@ export function SignInForm({
               "You were signed out after a period without activity. Please sign in again.",
               "התנתקת אוטומטית בעקבות תקופה ללא פעילות. יש להתחבר מחדש.",
             )}
+          </p>
+        ) : null}
+
+        {passwordChanged ? (
+          <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+            {tr(locale, "Password updated. Sign in with your new password.", "הסיסמה עודכנה. התחברו עם הסיסמה החדשה.")}
           </p>
         ) : null}
 
