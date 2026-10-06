@@ -84,9 +84,24 @@ export default async function TicketsPage({ searchParams }: { searchParams: Prom
   // auto_handle is an admin-only flag: fetched in its own query, and only for
   // admins, so it is never part of the rows a plain user's page receives.
   let autoHandleById = new Map<string, TicketAutoHandle | null>();
+  // What is really waiting on the admin: a pending proposal / questions / fix row on a ticket that
+  // is still live. (Old tickets carry a leftover "D" flag from before this existed.)
+  const waitingCounts = { waiting: 0, returned: 0, fixReady: 0 };
   if (isAdmin) {
     const { data: flags } = await supabase.from("tickets").select("id, auto_handle");
     autoHandleById = new Map((flags ?? []).map((row) => [row.id, row.auto_handle as TicketAutoHandle | null]));
+    const liveIds = new Set((tickets ?? []).filter((ticket) => !["resolved", "closed", "cancelled", "duplicate"].includes(ticket.status)).map((ticket) => ticket.id));
+    const { data: pendingRows } = await supabase.from("ticket_proposals").select("ticket_id, kind").eq("status", "pending");
+    const seen = new Set<string>();
+    for (const row of pendingRows ?? []) {
+      const flag = autoHandleById.get(row.ticket_id);
+      const key = `${row.ticket_id}:${row.kind}`;
+      if (!liveIds.has(row.ticket_id) || seen.has(key)) continue;
+      seen.add(key);
+      if (row.kind === "proposal" && flag === "A") waitingCounts.waiting += 1;
+      else if (row.kind === "questions" && flag === "P") waitingCounts.returned += 1;
+      else if (row.kind === "fix" && flag === "D") waitingCounts.fixReady += 1;
+    }
   }
 
   if (isAdmin) {
@@ -94,9 +109,9 @@ export default async function TicketsPage({ searchParams }: { searchParams: Prom
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 py-10">
         <ReviewBanner
           locale={locale}
-          waiting={[...autoHandleById.values()].filter((flag) => flag === "A").length}
-          returned={[...autoHandleById.values()].filter((flag) => flag === "P").length}
-          fixReady={[...autoHandleById.values()].filter((flag) => flag === "D").length}
+          waiting={waitingCounts.waiting}
+          returned={waitingCounts.returned}
+          fixReady={waitingCounts.fixReady}
         />
         <AdminTicketsTable
           locale={locale}
