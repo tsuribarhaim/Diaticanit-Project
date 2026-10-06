@@ -348,6 +348,8 @@ export async function getHomeOverviewData({
       // sodium/added sugar/saturated fat/cholesterol is - shown as an
       // "ahead of target" positive rather than a warning.
       exceedingIsPositive: true,
+      // TCK-104: same progress coloring as the Daily Report's own protein bar.
+      goalProgress: true,
     },
     ...(reportingConsistencyRingMetric ? [reportingConsistencyRingMetric] : []),
     // Custom targets from the Targets chat (e.g. "Sleep duration") that

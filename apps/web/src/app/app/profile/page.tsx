@@ -9,6 +9,7 @@ import {
   ComingSoonRow,
   DataPrivacyRow,
   PasskeysRow,
+  PasswordRow,
 } from "@/components/profile-app-settings-rows";
 import { DocumentUploadForm } from "@/components/document-upload-form";
 import {
@@ -409,6 +410,7 @@ export default async function ProfilePage({
           <ComingSoonRow locale={locale} label={tr(locale, "Measurement units", "יחידות מידה")} caption={tr(locale, "Metric (kg, cm)", "מטרי (ק\"ג, ס\"מ)")} />
           <ComingSoonRow locale={locale} label={tr(locale, "Connected apps & devices", "אפליקציות ומכשירים מחוברים")} />
           <PasskeysRow locale={locale} />
+          <PasswordRow locale={locale} />
           <ProfileRow label={tr(locale, "Manage saved meals list", "ניהול רשימת ארוחות שמורות")} href="/app/daily-report/defaults" />
           <DataPrivacyRow locale={locale} />
           {/* Plain text, not the pill/badge treatment EnvironmentBadge

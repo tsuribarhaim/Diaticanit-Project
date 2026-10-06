@@ -158,8 +158,25 @@ export default async function TicketDetailPage({
         </Link>
       </div>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+      <section className="relative rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+        {/* Close just navigates back to the ticket list - not a status
+            change. An icon in the top end corner (top-left in Hebrew)
+            rather than a footer button, so it can't be mistaken for
+            closing the ticket itself (TCK-6). Positioned via a wrapper
+            since NavLink always puts `relative` on the link itself. */}
+        <div className="absolute end-3 top-3">
+          <Link
+            href="/app/tickets"
+            aria-label={tr(locale, "Close", "סגירה")}
+            title={tr(locale, "Close", "סגירה")}
+            className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 dark:text-slate-400 dark:hover:bg-slate-800"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true" className="block">
+              <path d="M3 3l10 10M13 3L3 13" />
+            </svg>
+          </Link>
+        </div>
+        <div className="flex flex-wrap items-start justify-between gap-3 pe-10">
           <div>
             <p className="font-mono text-xs text-slate-500 dark:text-slate-400">TCK-{ticket.ticket_seq}</p>
             <h1 className="mt-0.5 text-xl font-bold text-slate-900 dark:text-slate-100" dir="auto">{ticket.subject}</h1>
@@ -278,18 +295,19 @@ export default async function TicketDetailPage({
           </div>
         ) : null}
 
-        {/* Close here just navigates back to the ticket list - not a
-            status change. Reopen/Cancel are self-service-only (admins
-            already have full status control via the dropdown above, so
-            they don't get a second, narrower way to change status down
-            here too) - but Edit is available to BOTH: a user on their own
-            still-live ticket, or an admin on ANY ticket in any status
-            (mirrors tickets_update_admin's own unrestricted RLS grant -
-            the status dropdown already lets an admin move a ticket
-            anywhere freely, so gating content edits more tightly than
-            that would only be inconsistent, not actually safer). */}
-        <div className="mt-6 flex items-center justify-between border-t border-slate-100 pt-4 dark:border-slate-800">
-          {isAdmin || isEditableTicketStatus(status) || isReopenableTicketStatus(status) || isCancellableTicketStatus(status) ? (
+        {/* Reopen/Cancel are self-service-only (admins already have full
+            status control via the dropdown above, so they don't get a
+            second, narrower way to change status down here too) - but
+            Edit is available to BOTH: a user on their own still-live
+            ticket, or an admin on ANY ticket in any status (mirrors
+            tickets_update_admin's own unrestricted RLS grant - the status
+            dropdown already lets an admin move a ticket anywhere freely,
+            so gating content edits more tightly than that would only be
+            inconsistent, not actually safer). No footer at all when no
+            action applies (Submit only shows for drafts, which are
+            editable, so this condition covers it too). */}
+        {isAdmin || isEditableTicketStatus(status) || isReopenableTicketStatus(status) || isCancellableTicketStatus(status) ? (
+          <div className="mt-6 border-t border-slate-100 pt-4 dark:border-slate-800">
             <div className="flex flex-wrap items-center gap-4">
               {isAdmin || isEditableTicketStatus(status) ? (
                 <EditTicketDialog
@@ -318,16 +336,8 @@ export default async function TicketDetailPage({
               ) : null}
               {!isAdmin && isCancellableTicketStatus(status) ? <CancelTicketDialog locale={locale} ticketId={ticket.id} ticketSeq={ticket.ticket_seq} /> : null}
             </div>
-          ) : (
-            <span />
-          )}
-          <Link
-            href="/app/tickets"
-            className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
-          >
-            {tr(locale, "Close", "סגירה")}
-          </Link>
-        </div>
+          </div>
+        ) : null}
       </section>
     </main>
   );

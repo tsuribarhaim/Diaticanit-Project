@@ -55,6 +55,9 @@ export default async function SignInPage({
       // policy reason" from a plain first-time/never-logged-in visit, which
       // would otherwise look identical (both just land here with no user).
       sessionExpired={resolvedSearchParams.reason === "expired"}
+      // Set by changePasswordAction, which signs the user out after a
+      // successful password change.
+      passwordChanged={resolvedSearchParams.reason === "password_changed"}
     />
   );
 }

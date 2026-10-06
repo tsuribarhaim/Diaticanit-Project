@@ -7,6 +7,8 @@ import { createPortal, flushSync, useFormStatus } from "react-dom";
 import { deleteDailyReportAction, getDailyReportBreakdownAction, type DailyReportBreakdownItem } from "@/app/app/daily-report/actions";
 import { logSavedItemFromChatAction } from "@/app/app/daily-report/quick-log-actions";
 import type { DailyReportDefaultItem } from "@/components/daily-report-defaults-picker";
+import { SAVE_TOAST_DURATION_MS } from "@/components/daily-report-form";
+import { DailyReportSuccessToast } from "@/components/daily-report-success-toast";
 import { SavedListQuickPicker } from "@/components/saved-list-quick-picker";
 import { SubmitButton } from "@/components/daily-report-submit-button";
 import { directionForLocale, formatDefaultItemName, formatDefaultUnit, tr, trGendered, type AppLocale } from "@/lib/locale";
@@ -384,6 +386,16 @@ export function DailyReportChatPanel({
   const [isSavedListOpen, setIsSavedListOpen] = useState(false);
   const savedListTriggerRef = useRef<HTMLButtonElement | null>(null);
   const router = useRouter();
+  // handleLogSavedItem's success toast (null hides it) and its auto-hide
+  // timer - reset on every tap, so two identical taps in a row still each
+  // get their full display time.
+  const [savedItemToast, setSavedItemToast] = useState<{ message: string | null }>({ message: null });
+  const savedItemToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (savedItemToastTimerRef.current) clearTimeout(savedItemToastTimerRef.current);
+    };
+  }, []);
   // Edit mode only - true once the model's latest reply confirmed the user
   // wants to delete this whole entry (see the "delete_intent" SSE event and
   // isEditingExistingEntry below), swapping Save for a delete action so
@@ -1015,8 +1027,10 @@ export function DailyReportChatPanel({
    * for the identical pattern). Deliberately NOT folded into this panel's
    * own compose/transcript flow the way the old checkbox picker's
    * selections were - this creates its own separate report row right
-   * away, so the confirmation bubble below is marked localOnly (shown in
-   * the thread, excluded from what Send/Conclude or the AI ever sees).
+   * away. Success shows only a brief toast (nothing is added to the
+   * thread, so nothing lingers on screen - same as a manual save); a
+   * failure still lands as a localOnly bubble (shown in the thread,
+   * excluded from what Send/Conclude or the AI ever sees).
    */
   async function handleLogSavedItem(item: DailyReportDefaultItem) {
     setIsSavedListOpen(false);
@@ -1028,28 +1042,25 @@ export function DailyReportChatPanel({
     }
     const name = formatDefaultItemName(item.name, locale);
     const unit = formatDefaultUnit(item.default_unit, locale);
-    setMessages((previous) => [
-      ...previous,
-      {
-        role: "assistant",
-        // "was reported", not "added" - this already created its own
-        // report row via logSavedItemFromChatAction above, so the Report
-        // icon in the composer stays correctly disabled right after this
-        // (nothing pending from the compose flow itself) - wording it as
-        // "added" read like an in-progress draft still waiting on that
-        // icon, reported as confusing once the icon visibly wasn't
-        // clickable right after. Hebrew keeps "הדיווח" (the report, always
-        // masculine) as the sentence's own subject rather than conjugating
-        // a verb to agree with the item name's own gender, which this
-        // component has no way to know for an arbitrary saved-list entry.
-        content: tr(
-          locale,
-          `✓ ${name} (${item.default_quantity} ${unit}) was reported to today's log.`,
-          `✓ הדיווח על ${name} (${item.default_quantity} ${unit}) נשלח ליומן היום.`,
-        ),
-        localOnly: true,
-      },
-    ]);
+    // "was saved", not "sent"/"reported" - this already created its own
+    // report row via logSavedItemFromChatAction above, so it's done, not
+    // something still waiting on the chat's own Send. Hebrew keeps
+    // "הדיווח" (the report, always masculine) as the sentence's own subject
+    // rather than conjugating a verb to agree with the item name's own
+    // gender, which this component has no way to know for an arbitrary
+    // saved-list entry.
+    if (savedItemToastTimerRef.current) clearTimeout(savedItemToastTimerRef.current);
+    setSavedItemToast({
+      message: tr(
+        locale,
+        `The report for ${name} (${item.default_quantity} ${unit}) was saved to today's log.`,
+        `הדיווח של ${name} (${item.default_quantity} ${unit}) נשמר ביומן היום.`,
+      ),
+    });
+    savedItemToastTimerRef.current = setTimeout(() => {
+      savedItemToastTimerRef.current = null;
+      setSavedItemToast({ message: null });
+    }, SAVE_TOAST_DURATION_MS);
     router.refresh();
   }
 
@@ -1488,6 +1499,7 @@ export function DailyReportChatPanel({
 
   return (
     <>
+      <DailyReportSuccessToast locale={locale} message={savedItemToast.message} />
       <input
         ref={photoGalleryInputRef}
         type="file"
