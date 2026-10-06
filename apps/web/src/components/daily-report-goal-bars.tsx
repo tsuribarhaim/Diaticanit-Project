@@ -1,4 +1,5 @@
 import { formatMeasurementUnit, formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
+import { BAR_BG_CLASS, BAR_TEXT_CLASS, getMetricTone } from "@/lib/metric-tone";
 import type { RingMetric } from "@/components/daily-report-progress-rings";
 
 export type { RingMetric };
@@ -22,24 +23,13 @@ function isOverLimit(metric: RingMetric): boolean {
   return !metric.neverOverLimit && !metric.exceedingIsPositive && metric.max > 0 && metric.total > metric.max;
 }
 
-function isExceededPositively(metric: RingMetric): boolean {
-  return Boolean(metric.exceedingIsPositive) && metric.max > 0 && metric.total > metric.max;
-}
-
+/** TCK-104: same color decision as the rings - see lib/metric-tone.ts. */
 function barColorClass(metric: RingMetric): string {
-  if (isOverLimit(metric)) return "bg-rose-600 dark:bg-rose-500";
-  if (isExceededPositively(metric)) return "bg-blue-600 dark:bg-blue-500";
-  if (metric.neverOverLimit && metric.max > 0 && metric.total >= metric.max) return "bg-emerald-600 dark:bg-emerald-500";
-  if (metric.min > 0 && metric.total >= metric.min) return "bg-emerald-600 dark:bg-emerald-500";
-  return "bg-teal-600 dark:bg-teal-500";
+  return BAR_BG_CLASS[getMetricTone(metric)];
 }
 
 function valueColorClass(metric: RingMetric): string {
-  if (isOverLimit(metric)) return "text-rose-700 dark:text-rose-400";
-  if (isExceededPositively(metric)) return "text-blue-700 dark:text-blue-400";
-  if (metric.neverOverLimit && metric.max > 0 && metric.total >= metric.max) return "text-emerald-700 dark:text-emerald-400";
-  if (metric.min > 0 && metric.total >= metric.min) return "text-emerald-700 dark:text-emerald-400";
-  return "text-slate-900 dark:text-slate-100";
+  return BAR_TEXT_CLASS[getMetricTone(metric)];
 }
 
 function clampPercent(value: number): number {
