@@ -207,16 +207,25 @@ export function ProposalPanel({ locale, proposalId, payload }: { locale: AppLoca
             </>
           ) : null}
         </div>
-        <div className={cardClass}>
-          <h3 className={headingClass}>{tr(locale, "Decisions - my recommendation is selected", "החלטות - ההמלצה שלי מסומנת")}</h3>
-          <DecisionList
-            locale={locale}
-            decisions={payload.decisions ?? []}
-            chosen={chosen}
-            namePrefix={`d-${proposalId}`}
-            onPick={(di, oi) => setChosen((current) => current.map((value, index) => (index === di ? oi : value)))}
-          />
-        </div>
+        {(payload.decisions ?? []).length > 0 ? (
+          <div className={cardClass}>
+            <h3 className={headingClass}>{tr(locale, "Decisions - my recommendation is selected", "החלטות - ההמלצה שלי מסומנת")}</h3>
+            <DecisionList
+              locale={locale}
+              decisions={payload.decisions ?? []}
+              chosen={chosen}
+              namePrefix={`d-${proposalId}`}
+              onPick={(di, oi) => setChosen((current) => current.map((value, index) => (index === di ? oi : value)))}
+            />
+          </div>
+        ) : (
+          <div className={cardClass}>
+            <h3 className={headingClass}>{tr(locale, "Decisions", "החלטות")}</h3>
+            <p className="text-sm text-slate-800 dark:text-slate-200">
+              {tr(locale, "Nothing left to decide: the ticket already settles what to do. Approve to queue it as written.", "אין מה להחליט: הפנייה כבר קובעת מה לעשות. אישור מכניס אותה לתור כפי שהיא.")}
+            </p>
+          </div>
+        )}
         <details className="rounded-2xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900/60">
           <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-800 dark:text-slate-200">
             {tr(locale, "The brief the night agent will receive", "התקציר שסוכן הלילה יקבל")}
