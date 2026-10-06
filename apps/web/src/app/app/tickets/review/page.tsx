@@ -47,14 +47,22 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
 
   const ids = tickets.map((ticket) => ticket.id);
   const mergedByTicket = new Set<string>();
+  // A / P / D only matter while there is a pending row to act on (or a fix that was just merged);
+  // an old flag with nothing behind it is not a to-do. S and Y need no row.
+  const hasRow = new Set<string>();
   if (ids.length > 0) {
-    const { data: merged } = await supabase.from("ticket_proposals").select("ticket_id").in("ticket_id", ids).eq("kind", "fix").eq("status", "merged");
-    for (const row of merged ?? []) mergedByTicket.add(row.ticket_id);
+    const { data: rows } = await supabase.from("ticket_proposals").select("ticket_id, kind, status").in("ticket_id", ids).in("status", ["pending", "merged"]);
+    for (const row of rows ?? []) {
+      hasRow.add(`${row.ticket_id}:${row.kind}`);
+      if (row.kind === "fix" && row.status === "merged") mergedByTicket.add(row.ticket_id);
+    }
   }
+  const needsRow: Record<string, string> = { A: "proposal", P: "questions", D: "fix" };
   const { data: openRequests } = await supabase.from("automation_requests").select("id, kind").is("completed_at", null);
   const analysisRequested = (openRequests ?? []).some((request) => request.kind === "analyze");
 
-  const by = (flag: string) => tickets.filter((ticket) => ticket.auto_handle === flag);
+  const by = (flag: string) =>
+    tickets.filter((ticket) => ticket.auto_handle === flag && (!needsRow[flag] || hasRow.has(`${ticket.id}:${needsRow[flag]}`)));
   const section = (title: string, flag: string, note?: string, extra?: ReactNode) => {
     const list = by(flag);
     return (

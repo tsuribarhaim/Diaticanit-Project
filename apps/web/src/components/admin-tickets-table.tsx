@@ -50,6 +50,9 @@ const priorityTextClass: Record<TicketPriority, string> = {
   urgent: "text-rose-700 dark:text-rose-400 font-semibold",
 };
 
+/** Statuses where a ticket is done; an old auto_handle flag on one of them is history, not a to-do. */
+const FINAL_TICKET_STATUSES: TicketStatus[] = ["resolved", "closed", "cancelled", "duplicate"];
+
 /** "none" is the filter value for tickets with no auto_handle flag (NULL). */
 const AUTO_HANDLE_NONE = "none";
 
@@ -588,7 +591,7 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
                     <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">{typeLabel(ticket.ticket_type, locale)}</td>
                     <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">{areaLabel(ticket.area, locale)}</td>
                     <td className={`py-3 pe-3 ${priorityTextClass[ticket.priority]}`}>{formatTicketPriority(ticket.priority, locale)}</td>
-                    <td className="py-3 pe-3"><AutoHandlePill locale={locale} value={ticket.auto_handle} /></td>
+                    <td className="py-3 pe-3"><AutoHandlePill locale={locale} value={ticket.auto_handle} settled={FINAL_TICKET_STATUSES.includes(ticket.status)} /></td>
                     <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">
                       <LocalDate value={ticket.created_at} locale={locale} />
                     </td>
