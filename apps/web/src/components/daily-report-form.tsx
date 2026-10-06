@@ -50,8 +50,9 @@ const REPORT_MAX_LENGTH = 2000;
  * before auto-dismissing - also how long an edit-save's exit from edit
  * mode is deliberately delayed, so the page doesn't navigate (and
  * potentially remount this whole form, clearing the toast's own timer)
- * while the toast is still meant to be showing. */
-const SAVE_TOAST_DURATION_MS = 2000;
+ * while the toast is still meant to be showing. Shared with both chats'
+ * saved-list one-tap log toast, so every "saved" toast lasts the same. */
+export const SAVE_TOAST_DURATION_MS = 2000;
 
 function getLocalDateTimeValue(date: Date): string {
   const copy = new Date(date);
