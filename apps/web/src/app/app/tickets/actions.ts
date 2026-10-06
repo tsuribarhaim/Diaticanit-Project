@@ -8,8 +8,10 @@ import { ALLOWED_DOCUMENT_MIME_TYPES, MAX_DOCUMENT_SIZE_BYTES, sanitizeFileName 
 import { formatTicketArea, formatTicketPriority, formatTicketType, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
+import { approveProposal } from "@/lib/ticket-review";
 import {
   appendTicketDescriptionEntry,
+  extractSpecBrief,
   isCancellableTicketStatus,
   isCurrentUserAdmin,
   isEditableTicketStatus,
@@ -947,7 +949,51 @@ export async function updateTicketAutoHandleAdminAction(
     return { error: tr(locale, "Not authorized.", "אין הרשאה.") };
   }
 
-  const { error: updateError } = await supabase.from("tickets").update({ auto_handle: autoHandle }).eq("id", ticketId);
+  const patch: Record<string, unknown> = { auto_handle: autoHandle };
+
+  // Queuing a ticket whose analyst proposal is waiting (A -> Y) IS the approval, with the
+  // recommended option for every decision: the proposal's brief and choices move into the
+  // ticket's own log as a support entry - that is where the night agent reads decisions from.
+  // (The review screen does the same with the admin's own picks.)
+  if (autoHandle === "Y") {
+    const { data: existing } = await supabase
+      .from("tickets")
+      .select("auto_handle, auto_handle_notes, description, status, created_by")
+      .eq("id", ticketId)
+      .maybeSingle();
+    if (existing?.auto_handle === "A") {
+      const { data: pendingProposal } = await supabase
+        .from("ticket_proposals")
+        .select("id")
+        .eq("ticket_id", ticketId)
+        .eq("kind", "proposal")
+        .eq("status", "pending")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (pendingProposal) {
+        const approved = await approveProposal(supabase, user.id, locale, pendingProposal.id, null, null);
+        if (approved.error) return { error: approved.error };
+        revalidatePath("/app/tickets");
+        revalidatePath(`/app/tickets/${ticketId}`);
+        return {};
+      }
+      // Older proposals were written as plain text in the admin-only notes.
+      const brief = extractSpecBrief(existing.auto_handle_notes);
+      if (!brief) {
+        return { error: tr(locale, "This proposal has no brief to approve.", "להצעה אין תקציר לאישור.") };
+      }
+      patch.description = appendTicketDescriptionEntry({
+        currentDescription: existing.description ?? "",
+        changeLines: [],
+        note: `Approved spec (where an admin note earlier in this ticket changes a point below, that note wins):\n${brief}`,
+        authoredBySupport: existing.created_by !== user.id,
+      });
+      if (existing.status === "in_progress") patch.status = "open";
+    }
+  }
+
+  const { error: updateError } = await supabase.from("tickets").update(patch).eq("id", ticketId);
 
   if (updateError) {
     logServerError("tickets.adminUpdateAutoHandle", "update_failed", { userId: user.id, ticketId, autoHandle, error: updateError.message });

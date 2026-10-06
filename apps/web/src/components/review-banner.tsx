@@ -1,0 +1,51 @@
+import { NavLink as Link } from "@/components/nav-link";
+
+import { tr, type AppLocale } from "@/lib/locale";
+import type { TicketAutoHandle } from "@/lib/tickets";
+
+/** Top of the admin ticket list: what is waiting on the admin, with a way into the review page.
+ * With nothing waiting it is just a quiet link, so the review page is always one click away. */
+export function ReviewBanner({ locale, waiting, returned, fixReady }: { locale: AppLocale; waiting: number; returned: number; fixReady: number }) {
+  const total = waiting + returned + fixReady;
+  if (total === 0) {
+    return (
+      <p className="mb-4 text-sm">
+        <Link href="/app/tickets/review" className="font-semibold text-teal-700 dark:text-teal-400">
+          {tr(locale, "Open the spec review page", "פתיחת דף סקירת האפיונים")} {"→"}
+        </Link>
+      </p>
+    );
+  }
+  const parts: string[] = [];
+  if (waiting > 0) parts.push(tr(locale, `${waiting} proposal${waiting === 1 ? "" : "s"} waiting for your review`, waiting === 1 ? "הצעה אחת ממתינה לסקירה שלך" : `${waiting} הצעות ממתינות לסקירה שלך`));
+  if (returned > 0) parts.push(tr(locale, `${returned} returned with questions`, returned === 1 ? "פנייה אחת חזרה עם שאלות" : `${returned} פניות חזרו עם שאלות`));
+  if (fixReady > 0) parts.push(tr(locale, `${fixReady} fix${fixReady === 1 ? "" : "es"} ready to merge`, fixReady === 1 ? "תיקון אחד מוכן למיזוג" : `${fixReady} תיקונים מוכנים למיזוג`));
+  return (
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 border-s-4 border-s-amber-600 bg-amber-50 px-4 py-3 dark:border-amber-900 dark:border-s-amber-500 dark:bg-amber-950/30">
+      <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">{parts.join(" · ")}</p>
+      <Link href="/app/tickets/review" className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500">
+        {tr(locale, "Open the review page", "פתיחת דף הסקירה")}
+      </Link>
+    </div>
+  );
+}
+
+/** On a ticket itself: the same hand-off, for the one state that is waiting on the admin. */
+export function ReviewCallout({ locale, ticketId, autoHandle }: { locale: AppLocale; ticketId: string; autoHandle: TicketAutoHandle | null }) {
+  if (autoHandle !== "A" && autoHandle !== "P" && autoHandle !== "D") return null;
+  const text =
+    autoHandle === "A"
+      ? tr(locale, "A proposal is waiting for your approval", "הצעה ממתינה לאישורך")
+      : autoHandle === "P"
+        ? tr(locale, "The night run stopped and has questions for you", "ריצת הלילה נעצרה ויש לה שאלות אליך")
+        : tr(locale, "A fix is ready to merge on dev", "תיקון מוכן למיזוג בפיתוח");
+  const cta = autoHandle === "A" ? tr(locale, "Review it", "לסקירה") : autoHandle === "P" ? tr(locale, "Open the questions", "לשאלות") : tr(locale, "Open the fix", "לתיקון");
+  return (
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 border-s-4 border-s-amber-600 bg-amber-50 px-4 py-3 dark:border-amber-900 dark:border-s-amber-500 dark:bg-amber-950/30">
+      <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">{text}</p>
+      <Link href={`/app/tickets/review/${ticketId}`} className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500">
+        {cta}
+      </Link>
+    </div>
+  );
+}

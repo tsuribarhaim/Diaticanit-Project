@@ -53,8 +53,18 @@ export type TicketStatus = (typeof ticketStatusOptions)[number];
  * (db/migrations/048_phase22_ticket_admin.sql) already grants admins free-
  * column update access, same protection technical_response/fix_description
  * already rely on. */
-export const ticketAutoHandleOptions = ["Y", "P", "D"] as const;
+export const ticketAutoHandleOptions = ["Y", "P", "D", "S", "A"] as const;
 export type TicketAutoHandle = (typeof ticketAutoHandleOptions)[number];
+
+/** An analyst's proposal lives in auto_handle_notes (admin-only, so a pending
+ * proposal is never visible to the ticket's creator). Only the text between
+ * these markers is the "brief" that gets copied into the ticket - as a
+ * support entry - when the admin approves (auto_handle A -> Y). */
+const SPEC_BRIEF_RE = /--- BRIEF START ---\r?\n([\s\S]*?)\r?\n--- BRIEF END ---/;
+export function extractSpecBrief(notes: string | null | undefined): string | null {
+  const match = SPEC_BRIEF_RE.exec(notes ?? "");
+  return match?.[1].trim() || null;
+}
 
 /** Statuses a user can still Cancel from - mirrors the tickets_cancel_own
  * RLS policy's own `status in ('open', 'in_progress')` check, kept here so

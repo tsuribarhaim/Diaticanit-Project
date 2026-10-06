@@ -8,14 +8,15 @@ import { type TicketAutoHandle } from "@/lib/tickets";
 
 const NOT_OPTED_IN = "none";
 
-/** Only 'Y' is something an admin ever deliberately picks - that's the
- * actual decision this control exists for ("opt this ticket into
- * automation"). 'P'/'D' are outcomes the automation itself reports back
+/** 'S' (ask for a spec first) and 'Y' (queue for the night run) are the
+ * decisions an admin deliberately makes. Picking 'Y' while the ticket is 'A'
+ * is the approval of the analyst's proposal. 'A', 'P' and 'D' are outcomes
+ * the automation itself reports back
  * (see the auto-handle-result API route) - they used to also be pickable
  * here, which let an admin select "Plan ready" or "Fix ready" as if
  * choosing them made it so, when really only the bridge reporting back
  * ever means that. */
-const ADMIN_PICKABLE_OPTIONS: TicketAutoHandle[] = ["Y"];
+const ADMIN_PICKABLE_OPTIONS: TicketAutoHandle[] = ["S", "Y"];
 
 /**
  * Admin-only control for the auto_handle flag (see docs/design/

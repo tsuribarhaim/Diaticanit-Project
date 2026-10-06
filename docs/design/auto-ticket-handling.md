@@ -142,6 +142,63 @@ reads the ticket's stored notes and continues from there. Nothing about
 "logging back in" is special; it works identically whether it's been an
 hour or a month, and survives a laptop restart.
 
+## Spec-first flow: analyst, review screen, night run (2026-10-06)
+
+Added after a trial showed why night runs stopped: of five tickets the night run could not fix
+alone, every stop was a **missing decision**, not a coding problem. Once each ticket carried
+written decisions, four of five were fixed unattended. The analyst makes that hand-off a
+first-class step instead of a manual one.
+
+**More `auto_handle` values** (`db/migrations/064`): `'S'` spec requested, `'A'` proposal waiting
+for the admin's approval. The full life cycle:
+
+```
+NULL --admin marks "spec requested"--> S
+S --analyst (evening batch, or "Run analysis now")--> A      proposal stored, ticket text untouched
+A --admin approves (one click, or sets Queued)--> Y          choices + brief copied into the ticket
+A --"Request a change" + comment--> S                        analyst revises, new version
+A --Reject + reason--> NULL, status 'deferred'
+Y --night run--> D (fix on a local branch)  or  P (stopped, with questions)
+P --admin answers--> Y                                       answers copied into the ticket
+D --"Merge to dev"--> branch merged on the dev copy (never pushed, never production)
+```
+
+**Where things live** (`db/migrations/065`): `ticket_proposals` (admin-only, versioned; kinds
+`proposal`, `questions`, `fix`; the mockup HTML and screenshots live in `payload`) and
+`automation_requests` ("Run analysis now" / "Merge to dev" clicks). An unapproved proposal is
+**never** in the ticket's own text, so the ticket's creator cannot see it. Approving writes a
+support entry into `tickets.description`; that is the only place the night run reads decisions from.
+
+**The analyst** (`POST /analyze` on the bridge): read-only like Phase 1, one disposable worktree per
+ticket. Its prompt requires every file/line it cites to have been opened, a blast-radius list
+(every other place the touched code is used - the check that would have caught the rings being on
+a different screen than assumed), 2-3 option decisions with exactly one recommended, mockups (ui_ux
+only, one self-contained HTML document each, shown in a sandboxed iframe), a brief for the night
+agent, and a `needsPairing` flag for changes too risky to do unattended.
+
+**Night run changes:** Phase 1 treats decisions already in the ticket (approved spec, admin notes,
+answers) as settled and only checks them against the real code; it returns structured questions
+when it does stop. Phase 2 can take screenshots of its own change with `bridge/tools/shot.js`
+(headless Chromium, signed in as the test account) and look at them; the bridge captures the final
+ones itself and stores them with the fix. Screenshots are written outside the worktree because the
+bridge commits with `git add -A`.
+
+**"Run now" and "Merge to dev" from the hosted app:** the app (Vercel) cannot call the laptop, so a
+click inserts an `automation_requests` row and the n8n workflow "Daffy - Review Requests Poller"
+(every 5 minutes) claims it, calls the bridge (`/analyze` or `/merge`) and reports the result back.
+`/merge` only ever merges into `main` of the dev repo, aborts a failed merge so nothing is left
+half-done, and never pushes.
+
+**Scheduling:** the Windows task `Daffy Auto Ticket Handling` (02:00) and, once promoted, `Daffy
+Spec Analyst` (17:45) wake the laptop and ready n8n + the bridge; n8n's own schedules (02:15 and
+18:00) start the runs; the Windows script fires the webhook itself only if n8n did not, and the
+bridge refuses overlapping runs. `automation/n8n/manage-auto-ticket-schedule.ps1` stops, starts and
+retimes either job (`-Job analyst`).
+
+**Open limits:** the night run's agent signs in as a non-admin test account with no data, so admin
+screens and data-dependent states cannot be seen in its screenshots; the review screen is admin
+only (English analyst text is shown with `dir="auto"` inside the Hebrew layout).
+
 ## Security
 
 The bridge never holds a raw Supabase service-role key. It only knows one

@@ -4,9 +4,21 @@ import { NavLink as Link } from "@/components/nav-link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AdminStatusDropdown } from "@/components/admin-status-dropdown";
+import { AutoHandlePill } from "@/components/auto-handle-pill";
 import { LocalDate } from "@/components/local-time";
-import { formatTicketArea, formatTicketPriority, formatTicketStatus, formatTicketType, tr, type AppLocale } from "@/lib/locale";
-import { ticketAreaOptions, ticketPriorityOptions, ticketStatusOptions, ticketTypeOptions, type TicketArea, type TicketPriority, type TicketStatus, type TicketType } from "@/lib/tickets";
+import { formatTicketArea, formatTicketAutoHandle, formatTicketPriority, formatTicketStatus, formatTicketType, tr, type AppLocale } from "@/lib/locale";
+import {
+  ticketAreaOptions,
+  ticketAutoHandleOptions,
+  ticketPriorityOptions,
+  ticketStatusOptions,
+  ticketTypeOptions,
+  type TicketArea,
+  type TicketAutoHandle,
+  type TicketPriority,
+  type TicketStatus,
+  type TicketType,
+} from "@/lib/tickets";
 
 type AdminTicketRow = {
   id: string;
@@ -19,6 +31,7 @@ type AdminTicketRow = {
   priority: TicketPriority;
   created_by: string;
   userName: string;
+  auto_handle: TicketAutoHandle | null;
 };
 
 // Drafts are saved before a type/area is chosen, so both can be null.
@@ -37,9 +50,12 @@ const priorityTextClass: Record<TicketPriority, string> = {
   urgent: "text-rose-700 dark:text-rose-400 font-semibold",
 };
 
-type MultiFilterKey = "status" | "priority" | "type" | "area";
+/** "none" is the filter value for tickets with no auto_handle flag (NULL). */
+const AUTO_HANDLE_NONE = "none";
+
+type MultiFilterKey = "status" | "priority" | "type" | "area" | "autoHandle";
 type MultiFilterState = Record<MultiFilterKey, string[]>;
-const EMPTY_MULTI_FILTERS: MultiFilterState = { status: [], priority: [], type: [], area: [] };
+const EMPTY_MULTI_FILTERS: MultiFilterState = { status: [], priority: [], type: [], area: [], autoHandle: [] };
 
 /** Per-admin, per-browser only (localStorage - same precedent already used
  * in this app for install-app-prompt.tsx's own dismissal flag) - not
@@ -56,6 +72,7 @@ const DEFAULT_SORT: SortState = { key: "created_at", dir: "desc" };
 function isMultiFilterState(value: unknown): value is MultiFilterState {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
+  // autoHandle was added later - filters saved before then are still valid (merged with the defaults on load)
   return (["status", "priority", "type", "area"] as const).every((key) => Array.isArray(record[key]));
 }
 
@@ -193,6 +210,8 @@ function SortIcons({ active, dir }: { active: boolean; dir: SortDir }) {
  */
 export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLocale; tickets: AdminTicketRow[]; notice: boolean }) {
   const [userFilter, setUserFilter] = useState("");
+  // Not saved between visits on purpose: typing a ticket number is a one-off lookup.
+  const [numberFilter, setNumberFilter] = useState("");
   const [multiFilters, setMultiFilters] = useState<MultiFilterState>(EMPTY_MULTI_FILTERS);
   const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
   const [openFilter, setOpenFilter] = useState<MultiFilterKey | null>(null);
@@ -235,7 +254,7 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
         if (raw) {
           const parsed = JSON.parse(raw);
           if (typeof parsed.userFilter === "string") setUserFilter(parsed.userFilter);
-          if (isMultiFilterState(parsed.multiFilters)) setMultiFilters(parsed.multiFilters);
+          if (isMultiFilterState(parsed.multiFilters)) setMultiFilters({ ...EMPTY_MULTI_FILTERS, ...parsed.multiFilters });
           if (parsed.sort && typeof parsed.sort.key === "string" && (parsed.sort.dir === "asc" || parsed.sort.dir === "desc")) {
             setSort(parsed.sort);
           }
@@ -265,17 +284,27 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
     return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [tickets]);
 
+  // "114", "TCK-114", "tck 114" and "#114" all mean ticket 114.
+  const numberQuery = useMemo(() => {
+    const digits = numberFilter.replace(/\D/g, "");
+    return digits ? Number(digits) : null;
+  }, [numberFilter]);
+
   const filtered = useMemo(
     () =>
-      tickets.filter(
-        (ticket) =>
-          (!userFilter || ticket.created_by === userFilter) &&
-          (multiFilters.status.length === 0 || multiFilters.status.includes(ticket.status)) &&
-          (multiFilters.priority.length === 0 || multiFilters.priority.includes(ticket.priority)) &&
-          (multiFilters.type.length === 0 || (ticket.ticket_type !== null && multiFilters.type.includes(ticket.ticket_type))) &&
-          (multiFilters.area.length === 0 || (ticket.area !== null && multiFilters.area.includes(ticket.area))),
-      ),
-    [tickets, userFilter, multiFilters],
+      // A ticket number overrides every other filter: it shows that one ticket if it exists.
+      numberQuery !== null
+        ? tickets.filter((ticket) => ticket.ticket_seq === numberQuery)
+        : tickets.filter(
+            (ticket) =>
+              (!userFilter || ticket.created_by === userFilter) &&
+              (multiFilters.status.length === 0 || multiFilters.status.includes(ticket.status)) &&
+              (multiFilters.priority.length === 0 || multiFilters.priority.includes(ticket.priority)) &&
+              (multiFilters.type.length === 0 || (ticket.ticket_type !== null && multiFilters.type.includes(ticket.ticket_type))) &&
+              (multiFilters.area.length === 0 || (ticket.area !== null && multiFilters.area.includes(ticket.area))) &&
+              (multiFilters.autoHandle.length === 0 || multiFilters.autoHandle.includes(ticket.auto_handle ?? AUTO_HANDLE_NONE)),
+          ),
+    [tickets, userFilter, multiFilters, numberQuery],
   );
 
   const sorted = useMemo(() => {
@@ -311,11 +340,18 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
   }, [filtered, sort, locale]);
 
   const hasActiveFilters = Boolean(
-    userFilter || multiFilters.status.length || multiFilters.priority.length || multiFilters.type.length || multiFilters.area.length,
+    userFilter ||
+      numberFilter ||
+      multiFilters.status.length ||
+      multiFilters.priority.length ||
+      multiFilters.type.length ||
+      multiFilters.area.length ||
+      multiFilters.autoHandle.length,
   );
 
   function clearFilters() {
     setUserFilter("");
+    setNumberFilter("");
     setMultiFilters(EMPTY_MULTI_FILTERS);
   }
 
@@ -381,7 +417,22 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
       ) : null}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              {tr(locale, "Ticket number", "מספר פנייה")}
+            </span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={numberFilter}
+              onChange={(event) => setNumberFilter(event.target.value)}
+              placeholder="TCK-114"
+              aria-label={tr(locale, "Ticket number", "מספר פנייה")}
+              className={selectClassName}
+              style={isDarkTheme ? { backgroundColor: "#020617", color: "#f1f5f9" } : undefined}
+            />
+          </label>
           <label className="block">
             <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
               {tr(locale, "User", "משתמש")}
@@ -456,6 +507,23 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
               onToggle={() => setOpenFilter((current) => (current === "area" ? null : "area"))}
             />
           </div>
+          <div className="block">
+            <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              {tr(locale, "Auto-handle", "טיפול אוטומטי")}
+            </span>
+            <MultiSelectFilter
+              locale={locale}
+              label={tr(locale, "Auto-handle", "טיפול אוטומטי")}
+              options={[
+                { value: AUTO_HANDLE_NONE, label: formatTicketAutoHandle(null, locale) },
+                ...ticketAutoHandleOptions.map((option) => ({ value: option, label: formatTicketAutoHandle(option, locale) })),
+              ]}
+              selected={multiFilters.autoHandle}
+              onChange={(next) => setMultiFilters((current) => ({ ...current, autoHandle: next }))}
+              isOpen={openFilter === "autoHandle"}
+              onToggle={() => setOpenFilter((current) => (current === "autoHandle" ? null : "autoHandle"))}
+            />
+          </div>
           <div className="flex items-end">
             <button
               type="button"
@@ -482,7 +550,9 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
       <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 sm:p-6">
         {sorted.length === 0 ? (
           <p className="rounded-lg border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-            {tr(locale, "No tickets match these filters.", "אין פניות התואמות את הסינון הזה.")}
+            {numberQuery !== null
+              ? tr(locale, `No ticket TCK-${numberQuery} exists.`, `לא קיימת פנייה TCK-${numberQuery}.`)
+              : tr(locale, "No tickets match these filters.", "אין פניות התואמות את הסינון הזה.")}
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -495,6 +565,7 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
                   <th className="pe-3">{sortHeaderButton("ticket_type", tr(locale, "Type", "סוג"))}</th>
                   <th className="pe-3">{sortHeaderButton("area", tr(locale, "Area", "אזור"))}</th>
                   <th className="pe-3">{sortHeaderButton("priority", tr(locale, "Priority", "עדיפות"))}</th>
+                  <th className="pe-3">{tr(locale, "Auto-handle", "טיפול אוטומטי")}</th>
                   <th className="pe-3">{sortHeaderButton("created_at", tr(locale, "Date", "תאריך"))}</th>
                   <th className="py-2 pe-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                     {tr(locale, "Status", "סטטוס")}
@@ -517,6 +588,7 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
                     <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">{typeLabel(ticket.ticket_type, locale)}</td>
                     <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">{areaLabel(ticket.area, locale)}</td>
                     <td className={`py-3 pe-3 ${priorityTextClass[ticket.priority]}`}>{formatTicketPriority(ticket.priority, locale)}</td>
+                    <td className="py-3 pe-3"><AutoHandlePill locale={locale} value={ticket.auto_handle} /></td>
                     <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">
                       <LocalDate value={ticket.created_at} locale={locale} />
                     </td>

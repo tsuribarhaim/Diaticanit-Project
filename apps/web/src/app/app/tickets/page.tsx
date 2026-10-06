@@ -2,12 +2,13 @@ import { NavLink as Link } from "@/components/nav-link";
 import { redirect } from "next/navigation";
 
 import { AdminTicketsTable } from "@/components/admin-tickets-table";
+import { ReviewBanner } from "@/components/review-banner";
 import { CancelTicketDialog } from "@/components/cancel-ticket-dialog";
 import { LocalDate } from "@/components/local-time";
 import { formatTicketStatus, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
-import { isCancellableTicketStatus, isCurrentUserAdmin, isEditableTicketStatus, isReopenableTicketStatus, ticketStatusBadgeClass, type TicketStatus } from "@/lib/tickets";
+import { isCancellableTicketStatus, isCurrentUserAdmin, isEditableTicketStatus, isReopenableTicketStatus, ticketStatusBadgeClass, type TicketAutoHandle, type TicketStatus } from "@/lib/tickets";
 
 export const dynamic = "force-dynamic";
 
@@ -80,15 +81,30 @@ export default async function TicketsPage({ searchParams }: { searchParams: Prom
     }
   }
 
+  // auto_handle is an admin-only flag: fetched in its own query, and only for
+  // admins, so it is never part of the rows a plain user's page receives.
+  let autoHandleById = new Map<string, TicketAutoHandle | null>();
+  if (isAdmin) {
+    const { data: flags } = await supabase.from("tickets").select("id, auto_handle");
+    autoHandleById = new Map((flags ?? []).map((row) => [row.id, row.auto_handle as TicketAutoHandle | null]));
+  }
+
   if (isAdmin) {
     return (
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 py-10">
+        <ReviewBanner
+          locale={locale}
+          waiting={[...autoHandleById.values()].filter((flag) => flag === "A").length}
+          returned={[...autoHandleById.values()].filter((flag) => flag === "P").length}
+          fixReady={[...autoHandleById.values()].filter((flag) => flag === "D").length}
+        />
         <AdminTicketsTable
           locale={locale}
           tickets={(tickets ?? []).map((ticket) => ({
             ...ticket,
             status: ticket.status as TicketStatus,
             userName: userNamesById.get(ticket.created_by) ?? ticket.created_by,
+            auto_handle: autoHandleById.get(ticket.id) ?? null,
           }))}
           notice={resolvedSearchParams.notice ? true : false}
         />
