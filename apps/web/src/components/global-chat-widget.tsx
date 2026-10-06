@@ -2,13 +2,15 @@
 
 import { NavLink as Link } from "@/components/nav-link";
 import { usePathname, useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { listQuickLogSavedItemsAction, logSavedItemFromChatAction, type QuickLogSavedItem } from "@/app/app/daily-report/quick-log-actions";
 import { applyProfileChatChangeAction } from "@/app/app/profile/chat-actions";
 import { applyActiveTargetsAction, clearTargetsReviewPendingAction, negotiateActiveTargetsAction } from "@/app/app/targets/plan-actions";
 import { routeChatMessageAction, type ChatRouterResult } from "@/app/app/chat/actions";
 import { submitTicketFromChatAction } from "@/app/app/tickets/chat-actions";
+import { SAVE_TOAST_DURATION_MS } from "@/components/daily-report-form";
+import { DailyReportSuccessToast } from "@/components/daily-report-success-toast";
 import { SavedListQuickPicker } from "@/components/saved-list-quick-picker";
 import { formatDefaultItemName, formatDefaultUnit, formatTicketArea, formatTicketPriority, formatTicketType, tr, trGendered, type AppLocale } from "@/lib/locale";
 import type { ChatDomain } from "@/lib/ai/chat-router";
@@ -171,6 +173,16 @@ export function GlobalChatWidget({
   const [savedItems, setSavedItems] = useState<QuickLogSavedItem[] | null>(null);
   const [isSavedListLoading, setIsSavedListLoading] = useState(false);
   const savedListTriggerRef = useRef<HTMLButtonElement | null>(null);
+  // handleLogSavedItem's success toast (null hides it) and its auto-hide
+  // timer - reset on every tap, so two identical taps in a row still each
+  // get their full display time.
+  const [savedItemToast, setSavedItemToast] = useState<{ message: string | null }>({ message: null });
+  const savedItemToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (savedItemToastTimerRef.current) clearTimeout(savedItemToastTimerRef.current);
+    };
+  }, []);
   // Injects the reminder at most once per session, the first time the
   // chat is actually opened - see targets-page-client.tsx's own former
   // comment on this (identical reasoning, just no longer Targets-specific).
@@ -395,8 +407,8 @@ export function GlobalChatWidget({
 
   /** One tap, no review step - matches the approved design exactly ("user
    * clicks the item, item is saved and added to his daily log, that's
-   * it"): the popover closes immediately and a confirmation lands in the
-   * chat, rather than a diff/preview card like the other three domains
+   * it"): the popover closes immediately and a brief confirmation toast
+   * shows (nothing is added to the chat thread), rather than a diff/preview card like the other three domains
    * use for something that changes standing state. Logging a meal is
    * already a routine, low-stakes action elsewhere in the app (the
    * Daily Report page's own saved-list picker works the same way), so
@@ -410,21 +422,23 @@ export function GlobalChatWidget({
     }
     const name = formatDefaultItemName(item.name, locale);
     const unit = formatDefaultUnit(item.unit, locale);
-    pushMessage({
-      role: "assistant",
-      // "was reported" - matches the identical fix in daily-report-chat-
-      // panel.tsx's own handleLogSavedItem (see its own comment): this
-      // already created its own report row, so wording it as still-pending
-      // ("added") reads wrong once nothing else is left to do for it.
-      // Hebrew keeps "הדיווח" (masculine) as the subject rather than
-      // conjugating a verb to agree with an arbitrary item name's gender.
-      content: tr(
+    // "was saved" - matches daily-report-chat-panel.tsx's own
+    // handleLogSavedItem (see its own comment): this already created its
+    // own report row, so it's done, not still pending. Hebrew keeps
+    // "הדיווח" (masculine) as the subject rather than conjugating a verb
+    // to agree with an arbitrary item name's gender.
+    if (savedItemToastTimerRef.current) clearTimeout(savedItemToastTimerRef.current);
+    setSavedItemToast({
+      message: tr(
         locale,
-        `✓ ${name} (${item.quantity} ${unit}) was reported to today's log.`,
-        `✓ הדיווח על ${name} (${item.quantity} ${unit}) נשלח ליומן היום.`,
+        `The report for ${name} (${item.quantity} ${unit}) was saved to today's log.`,
+        `הדיווח של ${name} (${item.quantity} ${unit}) נשמר ביומן היום.`,
       ),
-      tone: "confirm",
     });
+    savedItemToastTimerRef.current = setTimeout(() => {
+      savedItemToastTimerRef.current = null;
+      setSavedItemToast({ message: null });
+    }, SAVE_TOAST_DURATION_MS);
     router.refresh();
   }
 
@@ -519,6 +533,7 @@ export function GlobalChatWidget({
 
   return (
     <>
+      <DailyReportSuccessToast locale={locale} message={savedItemToast.message} />
       {/* Same physical bottom-right position, safe-area handling, and
           RTL-independence as the app's other floating chat bubbles
           (daily-report-chat-panel.tsx, the old targets-page-client.tsx
