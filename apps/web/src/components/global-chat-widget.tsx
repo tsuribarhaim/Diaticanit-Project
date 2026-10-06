@@ -605,14 +605,6 @@ export function GlobalChatWidget({
           <div className="min-h-[6rem] flex-1 space-y-2.5 overflow-y-auto p-3">
             {messages.length === 0 ? (
               <p className="text-sm text-slate-500 dark:text-slate-400">
-                {/* TCK-38: not gendered like the rest of this sentence -
-                    it's about Daffy, not the user. Resets with the rest of
-                    this empty state whenever the conversation clears. */}
-                {tr(
-                  locale,
-                  "Daffy is an AI companion, not a substitute for professional medical or nutrition advice. ",
-                  "דפי היא מלווה מבוססת AI ואינה תחליף לייעוץ רפואי או תזונתי מקצועי. ",
-                )}
                 {trGendered(
                   locale,
                   userGender,
@@ -874,9 +866,8 @@ export function GlobalChatWidget({
             </button>
           </div>
 
-          {/* TCK-38: always visible while this widget is open, not just on
-              a fresh chat like the paragraph above - the short standing
-              form of the same disclaimer, same spot AI chat products
+          {/* TCK-38: the only place the disclaimer is shown, always visible
+              while this widget is open - same spot AI chat products
               commonly put "AI can make mistakes". */}
           <p className="border-t border-slate-200 px-3 py-1.5 text-center text-[11px] text-slate-400 dark:border-slate-800 dark:text-slate-500">
             {tr(
