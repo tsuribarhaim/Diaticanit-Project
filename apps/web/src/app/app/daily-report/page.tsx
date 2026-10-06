@@ -15,6 +15,7 @@ import { DailyReportPageNotice } from "@/components/daily-report-page-notice";
 import type { RingMetric } from "@/components/daily-report-goal-bars";
 import { DailyReportWeightTrend, type WeightPoint } from "@/components/daily-report-weight-trend";
 import { LocalTime } from "@/components/local-time";
+import { PendingSubmitButton } from "@/components/pending-submit-button";
 import {
   CHART_CORE_METRIC_IDS,
   CHART_EXTRA_METRIC_IDS,
@@ -1071,12 +1072,11 @@ export default async function DailyReportPage({
                   />
                   {tr(locale, "Weight trend", "מגמת משקל")}
                 </label>
-                <button
-                  type="submit"
+                <PendingSubmitButton
                   className="rounded-lg bg-teal-700 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
                 >
                   {tr(locale, "Save values-to-track preferences", "שמירת העדפות ערכים למעקב")}
-                </button>
+                </PendingSubmitButton>
               </form>
             </details>
           </>
@@ -1497,24 +1497,23 @@ export default async function DailyReportPage({
                                 placeholder={tr(locale, "e.g. My morning eggs breakfast", "לדוגמה: ארוחת בוקר ביצים שלי")}
                                 className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
                               />
-                              <button
-                                type="submit"
+                              <PendingSubmitButton
                                 className="rounded-lg border border-cyan-300 px-3 py-2 text-xs font-semibold text-cyan-700 hover:bg-cyan-50 dark:border-cyan-700 dark:text-cyan-400 dark:hover:bg-cyan-900/30"
                               >
                                 {tr(locale, "Save to Saved List", "שמירה לרשימה השמורה")}
-                              </button>
+                              </PendingSubmitButton>
                             </form>
                           </details>
                         ) : null}
 
                         <form action={deleteDailyReportAction}>
                           <input type="hidden" name="report_id" value={report.id} />
-                          <button
-                            type="submit"
+                          <PendingSubmitButton
                             className="text-xs font-medium text-rose-700 hover:text-rose-800 dark:text-rose-400 dark:hover:text-rose-300"
+                            spinnerClassName="h-3 w-3"
                           >
                             {tr(locale, "Delete entry", "מחיקת רשומה")}
-                          </button>
+                          </PendingSubmitButton>
                         </form>
                       </div>
                     </div>

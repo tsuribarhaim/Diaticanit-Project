@@ -43,9 +43,13 @@ type FieldState = {
   editing: boolean;
   draft: string;
   banner: Banner | null;
+  /** editTargetFieldAction in flight - the field stays open showing a
+   * spinner (instead of closing right away onto the old value with no
+   * sign anything was happening) and ignores repeat taps until it answers. */
+  saving: boolean;
 };
 
-const emptyFieldState: FieldState = { editing: false, draft: "", banner: null };
+const emptyFieldState: FieldState = { editing: false, draft: "", banner: null, saving: false };
 
 /** A tappable value that turns into a number input + save/cancel icons.
  * Defined at module scope (not nested inside TargetsPlanEditor) so its
@@ -93,8 +97,10 @@ function EditableValue({
           step={decimals > 0 ? 10 ** -decimals : 1}
           value={state.draft}
           autoFocus
+          readOnly={state.saving}
           onChange={(event) => onDraftChange(event.target.value)}
           onKeyDown={(event) => {
+            if (state.saving) return;
             if (event.key === "Enter") onConfirm();
             if (event.key === "Escape") onCancel();
           }}
@@ -103,16 +109,23 @@ function EditableValue({
         <button
           type="button"
           onClick={onConfirm}
+          disabled={state.saving}
+          aria-busy={state.saving}
           aria-label={tr(locale, "Save", "שמירה")}
-          className="flex h-7 w-7 items-center justify-center rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
+          className="flex h-7 w-7 items-center justify-center rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
         >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+          {state.saving ? (
+            <Spinner className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+          )}
         </button>
         <button
           type="button"
           onClick={onCancel}
+          disabled={state.saving}
           aria-label={tr(locale, "Cancel", "ביטול")}
-          className="flex h-7 w-7 items-center justify-center rounded-lg border border-rose-300 text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950/40"
+          className="flex h-7 w-7 items-center justify-center rounded-lg border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950/40"
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="M6 6l12 12" /></svg>
         </button>
@@ -292,6 +305,7 @@ export function TargetsPlanEditor({
 
   async function confirmEdit(key: string, field: EditableFieldRef, decimals: number) {
     const state = getState(key);
+    if (state.saving) return;
     const raw = Number.parseFloat(state.draft);
     if (!Number.isFinite(raw)) {
       cancelEdit(key);
@@ -299,8 +313,13 @@ export function TargetsPlanEditor({
     }
     const rounded = decimals > 0 ? Math.round(raw * 10 ** decimals) / 10 ** decimals : Math.round(raw);
 
-    patchState(key, { editing: false });
-    const result = await editTargetFieldAction({ field, newValue: rounded });
+    patchState(key, { saving: true });
+    let result: Awaited<ReturnType<typeof editTargetFieldAction>>;
+    try {
+      result = await editTargetFieldAction({ field, newValue: rounded });
+    } finally {
+      patchState(key, { editing: false, saving: false });
+    }
 
     if ("error" in result) {
       patchState(key, { banner: { phase: "error", text: result.error } });
