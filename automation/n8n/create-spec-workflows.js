@@ -1,6 +1,6 @@
 // Creates (or updates) the two n8n workflows behind the spec-first review flow:
 //   "Daffy - Spec Analyst"            evening schedule + manual webhook -> bridge /analyze -> email
-//   "Daffy - Review Requests Poller"  every 5 minutes -> picks up "Run analysis now" / "Merge to dev"
+//   "Daffy - Review Requests Poller"  every minute -> picks up "Run analysis now" / "Merge to dev"
 //                                     clicks made in the web app and has the bridge do them
 //
 //   node create-spec-workflows.js <dev|prod> [activate|deactivate]
@@ -125,10 +125,10 @@ async function api(method, p, body) {
   return text ? JSON.parse(text) : {};
 }
 
-async function upsert(name, nodes, connections) {
+async function upsert(name, nodes, connections, settings = { executionOrder: "v1" }) {
   const all = await api("GET", "/workflows?limit=100");
   const existing = (all.data || []).find((w) => w.name === name);
-  const payload = { name, nodes, connections, settings: { executionOrder: "v1" } };
+  const payload = { name, nodes, connections, settings };
   if (existing) {
     // Keep the webhook id of an existing workflow so its URL stays stable.
     const current = await api("GET", `/workflows/${existing.id}`);
@@ -183,11 +183,13 @@ async function upsert(name, nodes, connections) {
 
   // ---------- Poller ----------
   const pollSchedule = {
-    id: uuid(), name: "Every 5 minutes", type: "n8n-nodes-base.scheduleTrigger", typeVersion: 1.2, position: [0, 0],
-    parameters: { rule: { interval: [{ field: "minutes", minutesInterval: 5 }] } },
+    id: uuid(), name: "Every minute", type: "n8n-nodes-base.scheduleTrigger", typeVersion: 1.2, position: [0, 0],
+    parameters: { rule: { interval: [{ field: "minutes", minutesInterval: 1 }] } },
   };
   const pollCode = { id: uuid(), name: "Process requests", type: "n8n-nodes-base.code", typeVersion: 2, position: [240, 0], parameters: { jsCode: pollerJs } };
-  const pollerId = await upsert(POLLER_NAME, [pollSchedule, pollCode], { [pollSchedule.name]: { main: [[{ node: pollCode.name, type: "main", index: 0 }]] } });
+  const pollerId = await upsert(POLLER_NAME, [pollSchedule, pollCode], { [pollSchedule.name]: { main: [[{ node: pollCode.name, type: "main", index: 0 }]] } },
+    // Runs every minute, so successful (usually empty) runs are not stored; failures still are.
+    { executionOrder: "v1", saveDataSuccessExecution: "none" });
 
   console.log(`mode=${mode}  analyst=${analystId}  poller=${pollerId}`);
   for (const [id, name] of [[analystId, ANALYST_NAME], [pollerId, POLLER_NAME]]) {
