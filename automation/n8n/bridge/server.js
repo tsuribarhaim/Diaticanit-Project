@@ -54,7 +54,9 @@ function loadEnvLocal(filePath) {
 // Accepts an optional override path as the first CLI arg (used for safe
 // dev-pointed test runs without touching the real .env.local that n8n's
 // production runs use) - defaults to the real config.
-const envFilePath = process.argv[2] || path.join(__dirname, ".env.local");
+const envFilePath = path.resolve(process.argv[2] || path.join(__dirname, ".env.local"));
+// tools/shot.js (run by the agent and by this bridge) reads the same config file.
+process.env.BRIDGE_ENV_FILE = envFilePath;
 const env = loadEnvLocal(envFilePath);
 
 const PORT = Number(env.BRIDGE_PORT || 7891);
@@ -83,6 +85,12 @@ const DEV_SERVER_BOOT_TIMEOUT_MS = Number(env.DEV_SERVER_BOOT_TIMEOUT_MS || 6000
 const AUTOFIX_BOT_EMAIL = env.AUTOFIX_BOT_EMAIL;
 const AUTOFIX_BOT_PASSWORD = env.AUTOFIX_BOT_PASSWORD;
 const WEB_APP_SUBDIR = env.WEB_APP_SUBDIR || "apps/web";
+const ANALYST_MAX_BUDGET_USD = env.ANALYST_MAX_BUDGET_USD_PER_TICKET || "3.00";
+const ANALYST_TIMEOUT_MS = Number(env.ANALYST_TIMEOUT_MS || 900000);
+const SHOT_TOOL = path.join(__dirname, "tools", "shot.js");
+// Outside every worktree on purpose: the bridge commits with `git add -A`, and screenshots must never end up in a fix.
+const SHOTS_BASE = path.join(__dirname, "shots");
+const MAX_SHOTS = 4;
 
 for (const [key, value] of Object.entries({ LOCAL_SECRET, DAFFY_BASE_URL, TICKET_SECRET, REPO_PATH, WORKTREE_BASE, CLAUDE_CLI_PATH })) {
   if (!value) {
@@ -99,6 +107,20 @@ if (PHASE2_ENABLED) {
   }
 }
 
+const QUESTION_ITEM_SCHEMA = {
+  type: "object",
+  properties: {
+    q: { type: "string" },
+    options: {
+      type: "array",
+      items: { type: "object", properties: { label: { type: "string" }, rec: { type: "boolean" } }, required: ["label", "rec"], additionalProperties: false },
+    },
+    why: { type: "string" },
+  },
+  required: ["q", "options", "why"],
+  additionalProperties: false,
+};
+
 const PHASE1_RESULT_SCHEMA = JSON.stringify({
   type: "object",
   properties: {
@@ -106,13 +128,21 @@ const PHASE1_RESULT_SCHEMA = JSON.stringify({
     diagnosis: { type: "string" },
     proposedFix: { type: ["string", "null"] },
     filesLikelyInvolved: { type: "array", items: { type: "string" } },
+    questions: { type: "array", items: QUESTION_ITEM_SCHEMA },
   },
-  required: ["classification", "diagnosis", "proposedFix", "filesLikelyInvolved"],
+  required: ["classification", "diagnosis", "proposedFix", "filesLikelyInvolved", "questions"],
   additionalProperties: false,
 });
 
+/** True when the ticket's own log already holds decisions the admin made: an approved spec
+ * (written by the review screen), a "Product decision (admin)" note, or answers to questions
+ * an earlier run asked. */
+function hasAdminDecisions(ticket) {
+  return /Approved spec \(|Product decision \(admin\)|Product decisions \(admin\)|Admin answers to the questions/.test(ticket.description || "");
+}
+
 function buildPhase1Prompt(ticket) {
-  return [
+  const lines = [
     "You are doing a READ-ONLY investigation of a support ticket for the Daffy app (this repository).",
     "You only have read-only tools available (Read, Grep, Glob) - there is no way for you to edit anything, so don't attempt to.",
     "",
@@ -120,12 +150,31 @@ function buildPhase1Prompt(ticket) {
     `Type: ${ticket.ticket_type} | Area: ${ticket.area} | Priority: ${ticket.priority}`,
     `Description: ${ticket.description}`,
     "",
+  ];
+  if (hasAdminDecisions(ticket)) {
+    lines.push(
+      "The Description above contains decisions the admin has ALREADY MADE (an approved spec, product decisions, or answers to " +
+        "questions an earlier run asked). Treat every product, UX and wording decision in them as SETTLED: do not reopen them, and " +
+        "do not classify as needs_judgment merely because the change is a new feature, touches several files, or changes how " +
+        "something behaves. Your job here is to check the spec against the REAL code. Classify safe_code_fix when it can be " +
+        "implemented as written. Use needs_judgment only for something the admin could not have known: (a) the spec contradicts the " +
+        "real code or itself, (b) something it relies on does not exist or lives somewhere else, (c) a risk it did not address that " +
+        "could hurt users' data or other screens and needs a decision. Name exactly what is missing.",
+      "",
+    );
+  }
+  lines.push(
     "Investigate the real code (grep/read the relevant files; check recent git log/blame if it helps) and determine whether " +
       "this is a safe, narrowly-scoped pure code fix with no functionality or UI/UX decision involved, or whether it " +
       "needs a human's judgment call (a product/UX decision, ambiguous requirements, something already fixed, or anything " +
       "you're genuinely not confident about). Be conservative: when in doubt, classify as needs_judgment rather than " +
-      "guessing. Output your findings per the provided JSON schema.",
-  ].join("\n");
+      "guessing.",
+    "",
+    "In `questions`: when the classification is needs_judgment or unclear, list 1 to 5 concrete questions the admin must answer " +
+      "before this can be built, each with 2 or 3 concrete options, EXACTLY ONE of them marked rec:true (your recommendation), and a " +
+      "one-sentence why. For safe_code_fix return an empty array. Output your findings per the provided JSON schema.",
+  );
+  return lines.join("\n");
 }
 
 // TCK-nature classification (bug/logic/ui_ux) is separate from the Y/P/D
@@ -147,12 +196,21 @@ const PHASE2_RESULT_SCHEMA = JSON.stringify({
     fixSummary: { type: ["string", "null"] },
     testSummary: { type: ["string", "null"] },
     filesChanged: { type: "array", items: { type: "string" } },
+    screenshotPages: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { path: { type: "string" }, label: { type: "string" }, mobile: { type: "boolean" }, full: { type: "boolean" } },
+        required: ["path", "label", "mobile", "full"],
+        additionalProperties: false,
+      },
+    },
   },
-  required: ["reproduced", "nature", "classification", "reproductionSummary", "diagnosis", "fixSummary", "testSummary", "filesChanged"],
+  required: ["reproduced", "nature", "classification", "reproductionSummary", "diagnosis", "fixSummary", "testSummary", "filesChanged", "screenshotPages"],
   additionalProperties: false,
 });
 
-function buildPhase2Prompt(ticket, phase1Output, port) {
+function buildPhase2Prompt(ticket, phase1Output, port, shotsDir) {
   return [
     "This ticket passed a first, read-only pre-filter as a likely safe, narrow code bug (see the earlier diagnosis below).",
     "You now have broader tools to actually confirm it and, if it really is safe, fix it. Read this whole prompt before doing anything.",
@@ -196,6 +254,17 @@ function buildPhase2Prompt(ticket, phase1Output, port) {
       "behavior actually changed. If anything doesn't come out clean, downgrade classification to incomplete rather than " +
       "claiming success - do not leave half-working changes reported as fixed.",
     "",
+    "LOOKING AT YOUR CHANGE: you can take a real screenshot of any page of the running dev server and then read it. Run " +
+      `\`node "${SHOT_TOOL.replace(/\\/g, "/")}" <page> "${shotsDir.replace(/\\/g, "/")}/<name>.jpg"\` where <page> is the app path WITHOUT a leading slash ` +
+      "(for example app/profile - a leading slash gets rewritten by the shell), add --mobile for a phone-sized view, --full for the " +
+      "whole page, --locale he for Hebrew on pages that allow it; then Read the .jpg file to look at it. The browser is signed in as " +
+      "the non-admin test account with no data, so pages that need an admin or real data show less than a real user would see - say so " +
+      "honestly. Save every image ONLY inside that folder: your shell cannot write anywhere else, git ignores the folder, and the bridge " +
+      "cleans it up, so do not delete it or its files. Look at the result after your fix; if what you see is wrong, fix it. In " +
+      "`screenshotPages` list up to " +
+      `${MAX_SHOTS} pages that best show the change (path without a leading slash, a short label, mobile true or false, and full true when the part that shows your change is below the first screen) - the bridge ` +
+      "captures them itself after you finish. Use an empty array if no page shows the change.",
+    "",
     "You do NOT have git access (no commits, no branches) and no access to npm install or any dev-server control - the " +
       "bridge handles all of that separately after you finish. Just edit files and verify. Output your findings per the " +
       "provided JSON schema.",
@@ -209,6 +278,85 @@ async function fetchQueue() {
   if (!res.ok) throw new Error(`Queue fetch failed: HTTP ${res.status}`);
   const data = await res.json();
   return data.tickets || [];
+}
+
+/** Hand the admin something to decide on or review (see the proposal-result route). With
+ * strict:false a failure is only logged: a bridge pointed at an app that does not have the route
+ * yet must keep working exactly as before. */
+async function reportProposal(ticketId, kind, payload, { strict = false } = {}) {
+  try {
+    const res = await fetch(`${DAFFY_BASE_URL}/api/admin/tickets/proposal-result`, {
+      method: "POST",
+      headers: { "x-ticket-automation-secret": TICKET_SECRET, "Content-Type": "application/json" },
+      body: JSON.stringify({ ticketId, kind, payload }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status} - ${(await res.text()).slice(0, 200)}`);
+  } catch (err) {
+    if (strict) throw new Error(`Proposal report failed: ${err.message}`);
+    console.warn(`reportProposal(${kind}) skipped: ${err.message}`);
+  }
+}
+
+function shotsDirFor(ticket, label) {
+  return path.join(SHOTS_BASE, `tck-${ticket.ticket_seq}-${label}`);
+}
+
+/** The agent's shell can only write inside its own worktree, so its screenshots go to this folder
+ * there. It is added to the worktree's private git exclude list first, so `git add -A` never commits
+ * it, and the whole worktree (folder included) is removed afterwards. */
+const AGENT_SHOTS_DIRNAME = ".agent-shots";
+async function excludeAgentShots(worktreeDir) {
+  const excludeFile = path.resolve(worktreeDir, await runGit(["rev-parse", "--git-path", "info/exclude"], worktreeDir));
+  fs.mkdirSync(path.dirname(excludeFile), { recursive: true });
+  // info/exclude is shared by every worktree of the repo (it lives in the common .git folder), so add the line only once.
+  const existing = fs.existsSync(excludeFile) ? fs.readFileSync(excludeFile, "utf8") : "";
+  if (!existing.split("\n").map((line) => line.trim()).includes(`${AGENT_SHOTS_DIRNAME}/`)) {
+    fs.appendFileSync(excludeFile, `\n${AGENT_SHOTS_DIRNAME}/\n`);
+  }
+}
+
+/** The bridge's own screenshots of the pages the agent named, taken while the dev server for the
+ * worktree is still up. Failures are skipped: a missing screenshot never blocks a fix. */
+async function captureShots(ticket, pages) {
+  const dir = shotsDirFor(ticket, "final");
+  fs.mkdirSync(dir, { recursive: true });
+  const shots = [];
+  for (const [i, page] of (pages || []).slice(0, MAX_SHOTS).entries()) {
+    const cleanPath = String(page.path || "").replace(/^\/+/, "");
+    if (!cleanPath || /[\s"'`$&|;<>]/.test(cleanPath)) continue;
+    const file = path.join(dir, `${i + 1}.jpg`);
+    const args = [SHOT_TOOL, cleanPath, file];
+    if (page.mobile) args.push("--mobile");
+    if (page.full) args.push("--full");
+    const ok = await new Promise((resolve) => execFile(process.execPath, args, { timeout: 120000, shell: false }, (err) => resolve(!err)));
+    if (!ok || !fs.existsSync(file)) continue;
+    shots.push({ label: String(page.label || cleanPath).slice(0, 120), dataUrl: "data:image/jpeg;base64," + fs.readFileSync(file).toString("base64") });
+  }
+  return shots;
+}
+
+function removeShotDirs(ticket) {
+  fs.rmSync(shotsDirFor(ticket, "final"), { recursive: true, force: true });
+}
+
+/** "Merge to dev": the fix lives on a local branch on this laptop, so the laptop merges it. Only
+ * ever into main of the dev repo, never pushed, and a failed merge is aborted so nothing is left half-done. */
+async function mergeBranch(ticketSeq) {
+  const branch = `auto-fix/tck-${Number(ticketSeq)}`;
+  if (!Number.isInteger(Number(ticketSeq))) return { ok: false, result: "Invalid ticket number." };
+  try {
+    const current = await runGit(["branch", "--show-current"], REPO_PATH);
+    if (current !== "main") return { ok: false, result: `The dev repo is on "${current}", not main - nothing was merged.` };
+    const exists = await runGit(["rev-parse", "--verify", "--quiet", branch], REPO_PATH).catch(() => "");
+    if (!exists) return { ok: false, result: `Branch ${branch} does not exist on this laptop.` };
+    const already = await runGit(["merge-base", "--is-ancestor", branch, "main"], REPO_PATH).then(() => true).catch(() => false);
+    if (already) return { ok: true, result: `${branch} is already merged into main on dev.` };
+    await runGit(["merge", "--no-ff", "-m", `Merge ${branch}`, branch], REPO_PATH);
+    return { ok: true, result: `Merged ${branch} into main on dev (not pushed).` };
+  } catch (err) {
+    await runGit(["merge", "--abort"], REPO_PATH).catch(() => {});
+    return { ok: false, result: "Merge failed and was undone - nothing was changed. The branch most likely conflicts with newer changes on main, or with uncommitted changes in your dev copy. Merge it by hand: git merge " + branch };
+  }
 }
 
 async function reportResult(ticketId, autoHandle, notes, status) {
@@ -455,7 +603,7 @@ async function verifyAndCommitFix(worktreeDir, ticket, phase2Output) {
     ],
     worktreeDir,
   );
-  return { committed: true, branch, reason: null };
+  return { committed: true, branch, reason: null, files: changedFiles.split("\n").filter(Boolean) };
 }
 
 function formatPhase1Notes(output) {
@@ -519,6 +667,13 @@ async function processTicket(ticket, budgetTracker) {
     });
     budgetTracker.spentUsd += phase1.costUsd;
     await reportResult(ticket.id, "P", formatPhase1Notes(phase1.output), "in_progress");
+    if (phase1.output.classification !== "safe_code_fix") {
+      // What the admin sees on the review screen: why the run stopped and what it needs answered.
+      await reportProposal(ticket.id, "questions", {
+        why: [phase1.output.diagnosis, phase1.output.proposedFix ? `Proposed fix if approved:\n${phase1.output.proposedFix}` : ""].filter(Boolean).join("\n\n"),
+        questions: phase1.output.questions || [],
+      });
+    }
 
     const baseResult = {
       ticketId: ticket.id,
@@ -535,12 +690,13 @@ async function processTicket(ticket, budgetTracker) {
     }
 
     copyEnvLocal(worktreeDir);
+    await excludeAgentShots(worktreeDir);
     await npmInstall(worktreeDir);
     devServerProc = await startDevServer(worktreeDir, DEV_SERVER_PORT);
 
     const phase2 = await runClaudeHeadless({
       cwd: worktreeDir,
-      prompt: buildPhase2Prompt(ticket, phase1.output, DEV_SERVER_PORT),
+      prompt: buildPhase2Prompt(ticket, phase1.output, DEV_SERVER_PORT, path.join(worktreeDir, AGENT_SHOTS_DIRNAME)),
       tools: "Read,Grep,Glob,Edit,Write,Bash",
       allowedTools: "Edit Write Bash(npx tsc*) Bash(npx eslint*) Bash(node *)",
       disallowedTools: "Bash(git *) Bash(npm *) Bash(yarn *) Bash(pnpm *) Bash(rm *) Bash(rmdir *) Bash(del *) Bash(taskkill*) Bash(npx next*)",
@@ -551,6 +707,9 @@ async function processTicket(ticket, budgetTracker) {
     });
     budgetTracker.spentUsd += phase2.costUsd;
 
+    // Screenshots need the dev server, so they are taken before it is stopped.
+    const shots = phase2.output.classification === "reproduced_and_fixed" ? await captureShots(ticket, phase2.output.screenshotPages) : [];
+
     await stopDevServer(devServerProc);
     devServerProc = null;
 
@@ -558,6 +717,24 @@ async function processTicket(ticket, budgetTracker) {
     const finalAutoHandle = commitResult.committed ? "D" : "P";
     const finalStatus = commitResult.committed ? "fixed" : "in_progress";
     await reportResult(ticket.id, finalAutoHandle, formatPhase2Notes(phase2.output, commitResult), finalStatus);
+    if (commitResult.committed) {
+      await reportProposal(ticket.id, "fix", {
+        summary: phase2.output.fixSummary || phase2.output.diagnosis,
+        branch: commitResult.branch,
+        files: commitResult.files || [],
+        checks: [
+          { ok: true, text: "Type check passes (run by the bridge, not taken from the agent)" },
+          { ok: true, text: "Lint passes with 0 errors (run by the bridge)" },
+        ],
+        verification: phase2.output.testSummary || "",
+        shots,
+      });
+    } else {
+      await reportProposal(ticket.id, "questions", {
+        why: [phase2.output.diagnosis, commitResult.reason ? `Not committed: ${commitResult.reason}` : ""].filter(Boolean).join("\n\n"),
+        questions: [],
+      });
+    }
 
     return {
       ...baseResult,
@@ -574,6 +751,7 @@ async function processTicket(ticket, budgetTracker) {
     return { ticketId: ticket.id, ticketSeq: ticket.ticket_seq, subject: ticket.subject, outcome: "failed", error: err.message };
   } finally {
     if (devServerProc) await stopDevServer(devServerProc);
+    removeShotDirs(ticket);
     // Safe to always remove the worktree directory itself, win or lose - a
     // real commit (if any) lives in git's object store tied to its branch,
     // not the ephemeral worktree checkout, so deleting the checkout never
@@ -581,6 +759,116 @@ async function processTicket(ticket, budgetTracker) {
     await gitWorktreeRemove(worktreeDir);
   }
 }
+
+// ---------------------------------------------------------------- analyst ----
+// Turns a ticket flagged 'S' into a proposal the admin can approve in one click, so the night run
+// does not have to stop and ask. Read-only, like Phase 1. See docs/design/auto-ticket-handling.md.
+const ANALYST_RESULT_SCHEMA = JSON.stringify({
+  type: "object",
+  properties: {
+    summary: { type: "string" },
+    nature: { type: "string", enum: ["bug", "logic", "ui_ux"] },
+    findings: { type: "array", items: { type: "string" } },
+    blastRadius: { type: "array", items: { type: "string" } },
+    decisions: { type: "array", items: QUESTION_ITEM_SCHEMA },
+    mockups: {
+      type: "array",
+      items: { type: "object", properties: { title: { type: "string" }, html: { type: "string" } }, required: ["title", "html"], additionalProperties: false },
+    },
+    brief: { type: "string" },
+    outOfScope: { type: "array", items: { type: "string" } },
+    needsPairing: { type: "boolean" },
+    pairingReason: { type: "string" },
+  },
+  required: ["summary", "nature", "findings", "blastRadius", "decisions", "mockups", "brief", "outOfScope", "needsPairing", "pairingReason"],
+  additionalProperties: false,
+});
+
+function buildAnalystPrompt(ticket) {
+  const lines = [
+    "You are the ANALYST for the Daffy app (this repository). Turn the ticket below into a PROPOSAL an admin can approve in one click, so that a night-time coding agent can then implement it without needing to ask anything.",
+    "You only have read-only tools (Read, Grep, Glob). You cannot run the app. Be conservative: CHECK, never assume.",
+    "",
+    `Ticket TCK-${ticket.ticket_seq}: "${ticket.subject}"`,
+    `Type: ${ticket.ticket_type} | Area: ${ticket.area} | Priority: ${ticket.priority}`,
+    `Description (including any admin notes and decisions already made): ${ticket.description}`,
+    "",
+  ];
+  const prev = ticket.previousProposal;
+  if (prev && prev.payload) {
+    lines.push(
+      `This is a REVISION. The admin read version ${prev.version} of your proposal and asked for a change.`,
+      `Admin comment: ${prev.admin_comment || "(none)"}`,
+      "Previous proposal (JSON):",
+      JSON.stringify(prev.payload).slice(0, 12000),
+      "Answer the admin's comment directly: change what they asked, keep what they did not.",
+      "",
+    );
+  }
+  lines.push(
+    "Rules:",
+    "1. GROUND EVERY CLAIM: every file path, function name, route and line number you mention must be one you actually opened or grepped in this session. Never cite from memory.",
+    "2. BLAST RADIUS: for each component, function or style you propose to change, grep for everywhere it is used or rendered (other pages, shared components, the global chat widget, the Targets/overview screens, custom targets, admin vs regular users). List those places in blastRadius. A change that would alter another screen must be scoped out or called out as a decision.",
+    "3. DECISIONS: list the real product/UX decisions (not technical trivia), each with 2 or 3 concrete options, EXACTLY ONE marked rec:true, and a one-sentence why. If the description or an admin note already settles a point, treat it as decided and do not ask again. Prefer the option consistent with how the app already behaves.",
+    '4. MOCKUPS: only when nature is ui_ux, otherwise []. 1 to 3 mockups, each ONE self-contained HTML document (inline CSS only, no scripts, no external resources or image URLs, under 12 KB) showing the proposed result with realistic content from the app (Hebrew text with dir="rtl" where the screen is Hebrew-facing). Draw it on a light app surface (white card, dark slate text): it is shown in an isolated frame.',
+    "5. BRIEF: the exact instructions the night coding agent will receive, as imperative numbered steps: which files and functions, exact behavior, every user-facing string in English AND Hebrew, what is OUT OF SCOPE, and how to verify (tsc and eslint, plus what to check). The agent can take screenshots with a headless browser but only as a non-admin test account with no data: say what cannot be verified. The brief must follow your recommended option for every decision. Never tell it to create records on any account.",
+    "6. PAIRING: set needsPairing true, and say why in pairingReason, when doing this unattended is risky: it changes core behavior across several screens, writes user data automatically, needs a visual check on a phone to be judged, depends on another unmerged ticket, or needs a database migration. Still write the best brief you can. Otherwise needsPairing false and pairingReason an empty string.",
+    "7. Keep the scope as small as the ticket allows. Do not propose changes to unrelated code.",
+    "",
+    "Output per the provided JSON schema.",
+  );
+  return lines.join("\n");
+}
+
+async function fetchAnalyzeQueue() {
+  const res = await fetch(`${DAFFY_BASE_URL}/api/admin/tickets/analyze-queue`, { headers: { "x-ticket-automation-secret": TICKET_SECRET } });
+  if (!res.ok) throw new Error(`Analyze queue fetch failed: HTTP ${res.status}`);
+  return (await res.json()).tickets || [];
+}
+
+async function analyzeTicket(ticket, budgetTracker) {
+  if (budgetTracker.spentUsd >= DAILY_BUDGET_USD_CAP) {
+    return { ticketSeq: ticket.ticket_seq, subject: ticket.subject, outcome: "skipped_budget" };
+  }
+  const worktreeDir = path.join(WORKTREE_BASE, `analyst-${ticket.ticket_seq}-${Date.now()}`);
+  try {
+    await gitWorktreeAdd(worktreeDir);
+    const run = await runClaudeHeadless({
+      cwd: worktreeDir,
+      prompt: buildAnalystPrompt(ticket),
+      tools: "Read,Grep,Glob",
+      restricted: true,
+      budget: ANALYST_MAX_BUDGET_USD,
+      timeoutMs: ANALYST_TIMEOUT_MS,
+      schema: ANALYST_RESULT_SCHEMA,
+    });
+    budgetTracker.spentUsd += run.costUsd;
+    const payload = { ...run.output, pairingReason: run.output.pairingReason || undefined };
+    await reportProposal(ticket.id, "proposal", payload, { strict: true });
+    return { ticketSeq: ticket.ticket_seq, subject: ticket.subject, outcome: "analyzed", needsPairing: Boolean(run.output.needsPairing), decisions: run.output.decisions.length, mockups: run.output.mockups.length };
+  } catch (err) {
+    // The ticket stays 'S', so the next analysis run tries again.
+    return { ticketSeq: ticket.ticket_seq, subject: ticket.subject, outcome: "failed", error: err.message };
+  } finally {
+    await gitWorktreeRemove(worktreeDir);
+  }
+}
+
+async function runAnalysis() {
+  const tickets = await fetchAnalyzeQueue();
+  const budgetTracker = { spentUsd: 0 };
+  const results = [];
+  for (const ticket of tickets) results.push(await analyzeTicket(ticket, budgetTracker));
+  return {
+    processedAt: new Date().toISOString(),
+    totalRequested: tickets.length,
+    totalSpentUsd: Math.round(budgetTracker.spentUsd * 100) / 100,
+    analyzed: results.filter((r) => r.outcome === "analyzed"),
+    failed: results.filter((r) => r.outcome === "failed"),
+    skipped: results.filter((r) => r.outcome === "skipped_budget"),
+  };
+}
+
 
 async function runAll() {
   const tickets = await fetchQueue();
@@ -604,29 +892,75 @@ async function runAll() {
 
 fs.mkdirSync(WORKTREE_BASE, { recursive: true });
 
-const server = http.createServer((req, res) => {
-  if (req.method !== "POST" || req.url !== "/run") {
-    res.writeHead(404, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Not found. POST /run to trigger a batch." }));
-    return;
+let runInProgress = false;
+
+function sendJson(res, status, body) {
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(body));
+}
+
+function readJsonBody(req) {
+  return new Promise((resolve) => {
+    let raw = "";
+    req.on("data", (chunk) => {
+      raw += chunk;
+      if (raw.length > 100000) req.destroy();
+    });
+    req.on("end", () => {
+      try {
+        resolve(raw ? JSON.parse(raw) : {});
+      } catch {
+        resolve(null);
+      }
+    });
+  });
+}
+
+let analysisInProgress = false;
+
+const server = http.createServer(async (req, res) => {
+  const known = ["/run", "/analyze", "/merge"];
+  if (req.method !== "POST" || !known.includes(req.url)) {
+    return sendJson(res, 404, { error: "Not found. POST /run, /analyze or /merge." });
   }
   if (req.headers["x-bridge-secret"] !== LOCAL_SECRET) {
-    res.writeHead(401, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Unauthorized." }));
-    return;
+    return sendJson(res, 401, { error: "Unauthorized." });
   }
-  runAll()
-    .then((summary) => {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(summary));
-    })
-    .catch((err) => {
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: err.message }));
-    });
+
+  if (req.url === "/merge") {
+    const body = await readJsonBody(req);
+    if (!body || !Number.isInteger(Number(body.ticketSeq))) return sendJson(res, 400, { error: "ticketSeq is required." });
+    return sendJson(res, 200, await mergeBranch(body.ticketSeq));
+  }
+
+  if (req.url === "/analyze") {
+    if (analysisInProgress) return sendJson(res, 200, { skipped: true, reason: "An analysis is already running." });
+    analysisInProgress = true;
+    try {
+      return sendJson(res, 200, await runAnalysis());
+    } catch (err) {
+      return sendJson(res, 500, { error: err.message });
+    } finally {
+      analysisInProgress = false;
+    }
+  }
+
+  // Two triggers (Windows task + n8n schedule) can overlap; a second batch would
+  // re-pick still-queued tickets and fight over the dev-server port.
+  if (runInProgress) {
+    return sendJson(res, 200, { skipped: true, reason: "A batch is already running." });
+  }
+  runInProgress = true;
+  try {
+    return sendJson(res, 200, await runAll());
+  } catch (err) {
+    return sendJson(res, 500, { error: err.message });
+  } finally {
+    runInProgress = false;
+  }
 });
 
 server.listen(PORT, "127.0.0.1", () => {
-  console.log(`Auto Ticket Handling bridge listening on http://127.0.0.1:${PORT} (POST /run to trigger)`);
+  console.log(`Auto Ticket Handling bridge listening on http://127.0.0.1:${PORT} (POST /run, /analyze, /merge)`);
   console.log(`Phase 2: ${PHASE2_ENABLED ? "enabled" : "disabled"}`);
 });

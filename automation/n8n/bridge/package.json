@@ -1,0 +1,8 @@
+{
+  "name": "daffy-auto-ticket-bridge",
+  "private": true,
+  "description": "Local bridge for Auto Ticket Handling. Only dependency: playwright-core, used by tools/shot.js for screenshots.",
+  "dependencies": {
+    "playwright-core": "1.63.0"
+  }
+}
