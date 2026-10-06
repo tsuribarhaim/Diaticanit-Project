@@ -1403,14 +1403,14 @@ export function computeProfileDiff(before: ProfileForTargets, after: ProfileForT
   addIfChanged(
     "Medical condition details",
     "פרטי מצב רפואי",
-    before.medical_conditions_details ?? tr(locale, "None", "ללא"),
-    after.medical_conditions_details ?? tr(locale, "None", "ללא"),
+    before.medical_conditions_details?.trim() ? before.medical_conditions_details : tr(locale, "None", "ללא"),
+    after.medical_conditions_details?.trim() ? after.medical_conditions_details : tr(locale, "None", "ללא"),
   );
   addIfChanged(
     "Medications",
     "תרופות",
-    before.regular_medications_details ?? tr(locale, "None", "ללא"),
-    after.regular_medications_details ?? tr(locale, "None", "ללא"),
+    before.regular_medications_details?.trim() ? before.regular_medications_details : tr(locale, "None", "ללא"),
+    after.regular_medications_details?.trim() ? after.regular_medications_details : tr(locale, "None", "ללא"),
   );
   addIfChanged("Allergies", "אלרגיות", joinedOrNone(before.allergies, locale), joinedOrNone(after.allergies, locale));
   addIfChanged(
