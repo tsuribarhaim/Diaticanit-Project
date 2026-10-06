@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition, type ReactNode } from "react";
+import { useEffect, useState, useTransition, type ReactNode } from "react";
 
 import {
   answerQuestionsAction,
@@ -145,6 +145,17 @@ function DecisionList({
       ))}
     </div>
   );
+}
+
+/** While something is waiting on the laptop (a requested merge or analysis), re-read the page on its own so
+ * the spinner turns into the result without the admin reloading. */
+function useAutoRefresh(active: boolean, everyMs = 8000) {
+  const router = useRouter();
+  useEffect(() => {
+    if (!active) return;
+    const id = setInterval(() => router.refresh(), everyMs);
+    return () => clearInterval(id);
+  }, [active, everyMs, router]);
 }
 
 function useReviewAction(locale: AppLocale) {
@@ -354,6 +365,7 @@ export function FixPanel({
 }) {
   const [comment, setComment] = useState("");
   const { pending, which, error, run } = useReviewAction(locale);
+  useAutoRefresh(mergeRequested);
   return (
     <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
       <div className="space-y-4">
@@ -414,7 +426,7 @@ export function FixPanel({
           ) : mergeRequested ? (
             <p className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
               <Spinner className="h-4 w-4 animate-spin" />
-              {tr(locale, "Merge requested - waiting for your laptop to do it.", "המיזוג התבקש - ממתין שהמחשב הנייד יבצע אותו.")}
+              {tr(locale, "Merge requested - waiting for your laptop to do it (about a minute). This page updates by itself.", "המיזוג התבקש - ממתין שהמחשב הנייד יבצע אותו (בערך דקה). הדף מתעדכן מעצמו.")}
             </p>
           ) : (
             <>
@@ -457,6 +469,7 @@ export function RunAnalysisButton({ locale, disabled, requested }: { locale: App
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
+  useAutoRefresh(requested);
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
       <ActionButton
