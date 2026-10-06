@@ -6,6 +6,7 @@ import {
   type SavedListIngredient,
 } from "@/app/app/daily-report/defaults/actions";
 import { IngredientRowsFieldset, type IngredientRowValue } from "@/components/ingredient-rows-fieldset";
+import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { SavedItemRowActions } from "@/components/saved-item-row-actions";
 import { formatDefaultItemKind, formatDefaultItemName, formatDefaultUnit, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
@@ -121,9 +122,9 @@ export default async function DailyReportDefaultsPage({
                 "טיפ: עבור פריט בודד, יש למלא שורת מרכיב אחת ולהשאיר את שם הפריט ריק - ייעשה שימוש בשם המרכיב עצמו.",
               )}
             </p>
-            <button type="submit" className="rounded-lg border border-emerald-300 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-400 dark:hover:bg-emerald-950/30">
+            <PendingSubmitButton className="rounded-lg border border-emerald-300 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-400 dark:hover:bg-emerald-950/30">
               {tr(locale, "Add item to Saved List", "הוספת פריט לרשימה השמורה")}
-            </button>
+            </PendingSubmitButton>
           </div>
         </form>
       </section>
@@ -190,9 +191,9 @@ export default async function DailyReportDefaultsPage({
 
                     <IngredientRowsFieldset locale={locale} initialRows={editRows} />
 
-                    <button type="submit" className="rounded-lg border border-teal-300 px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 dark:border-teal-700 dark:text-teal-400 dark:hover:bg-teal-950/40">
+                    <PendingSubmitButton className="rounded-lg border border-teal-300 px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 dark:border-teal-700 dark:text-teal-400 dark:hover:bg-teal-950/40">
                       {tr(locale, "Save", "שמירה")}
-                    </button>
+                    </PendingSubmitButton>
                   </form>
                 </details>
               );

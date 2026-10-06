@@ -19,6 +19,7 @@ import {
   MedicationsRow,
 } from "@/components/profile-health-detail-rows";
 import { LocalDateTime } from "@/components/local-time";
+import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { ProfileHeaderCard } from "@/components/profile-header-card";
 import { ExpandableRow, ProfileRow, ProfileRowGroup, ProfileSectionTitle, QuickBooleanFieldRow, QuickScalarFieldRow } from "@/components/profile-quick-edit";
 import { LanguageToggle } from "@/components/language-toggle";
@@ -380,15 +381,15 @@ export default async function ProfilePage({
                         </Link>
                         <form action={openOriginalDocumentAction}>
                           <input type="hidden" name="document_id" value={doc.id} />
-                          <button type="submit" className="rounded-lg border border-sky-300 px-3 py-2 text-xs font-semibold text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-400 dark:hover:bg-sky-950/40">
+                          <PendingSubmitButton className="rounded-lg border border-sky-300 px-3 py-2 text-xs font-semibold text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-400 dark:hover:bg-sky-950/40">
                             {tr(locale, "Original file", "קובץ מקור")}
-                          </button>
+                          </PendingSubmitButton>
                         </form>
                         <form action={deleteDocumentAction}>
                           <input type="hidden" name="document_id" value={doc.id} />
-                          <button type="submit" className="rounded-lg border border-rose-300 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950/40">
+                          <PendingSubmitButton className="rounded-lg border border-rose-300 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950/40">
                             {tr(locale, "Delete", "מחיקה")}
-                          </button>
+                          </PendingSubmitButton>
                         </form>
                       </div>
                     </div>
@@ -440,12 +441,12 @@ export default async function ProfilePage({
       </div>
 
       <form action={signOutAction}>
-        <button
-          type="submit"
+        <PendingSubmitButton
           className="w-full rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3.5 text-center text-sm font-bold text-rose-700 hover:bg-rose-100 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-400 dark:hover:bg-rose-950/50"
+          spinnerClassName="h-4 w-4"
         >
           {tr(locale, "Log Out", "התנתקות")}
-        </button>
+        </PendingSubmitButton>
       </form>
     </main>
   );
