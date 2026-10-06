@@ -632,7 +632,11 @@ function SubmitButton({ locale, canSubmit }: { locale: AppLocale; canSubmit: boo
     <button
       type="submit"
       disabled={pending || !canSubmit}
-      className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-5 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+      className={`inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold ${
+        !canSubmit && !pending
+          ? "cursor-not-allowed bg-slate-300 text-slate-500 dark:bg-slate-700 dark:text-slate-400"
+          : "bg-teal-700 text-white disabled:cursor-not-allowed disabled:opacity-70 enabled:hover:bg-teal-800 dark:bg-teal-600 dark:enabled:hover:bg-teal-500"
+      }`}
     >
       {pending ? tr(locale, "Saving profile...", "שומר פרופיל...") : tr(locale, "Complete setup", "סיום הגדרה")}
     </button>

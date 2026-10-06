@@ -258,7 +258,11 @@ export function OnboardingTargetsStep({
             type="button"
             onClick={() => void handleSendMessage()}
             disabled={isSending || !chatInput.trim()}
-            className="shrink-0 rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+            className={`shrink-0 rounded-xl px-4 py-2 text-sm font-semibold ${
+              !chatInput.trim() && !isSending
+                ? "cursor-not-allowed bg-slate-300 text-slate-500 dark:bg-slate-700 dark:text-slate-400"
+                : "bg-teal-700 text-white disabled:cursor-not-allowed disabled:opacity-70 enabled:hover:bg-teal-800 dark:bg-teal-600 dark:enabled:hover:bg-teal-500"
+            }`}
           >
             {tr(locale, "Send", "שליחה")}
           </button>
