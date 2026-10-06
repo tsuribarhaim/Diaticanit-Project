@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 
 import { adjustDailyReportItemQuantitiesAction } from "@/app/app/daily-report/actions";
+import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { formatDefaultUnit, formatMeasurementUnit, tr, trGendered, type AppLocale } from "@/lib/locale";
 
 type EditableFoodItem = { index: number; name: string; quantity: number; unit: string };
@@ -298,12 +299,11 @@ export function DailyReportEntryEditForm({
       ) : null}
 
       <div className="flex items-center gap-2">
-        <button
-          type="submit"
+        <PendingSubmitButton
           className="rounded-lg border border-teal-300 px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 dark:border-teal-700 dark:text-teal-400 dark:hover:bg-teal-950/40"
         >
           {tr(locale, "Save", "שמור")}
-        </button>
+        </PendingSubmitButton>
         <button
           type="button"
           onClick={handleCancel}
