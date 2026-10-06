@@ -149,7 +149,7 @@ export default async function NotificationsPage() {
                         href={`/app/targets?concern=${notification.id}`}
                         className="inline-flex items-center rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
                       >
-                        {tr(locale, "Discuss with AI coach", "לדון עם מאמן ה-AI")}
+                        {tr(locale, "Discuss with AI coach", "לדון עם מאמנת ה-AI")}
                       </Link>
                     ) : null}
                     {!isRead ? <MarkNotificationReadButton locale={locale} notificationId={notification.id} /> : null}
