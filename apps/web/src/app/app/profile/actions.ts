@@ -36,7 +36,8 @@ import {
 import { normalizeLocale, tr } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
-import { computeProfileDiff, parseProfileSnapshot, type ProfileDiffRow, type ProfileForTargets } from "@/lib/targets";
+import type { ProfileDiffRow } from "@/lib/targets";
+import { resyncTargetsReviewFlag } from "@/lib/targets-review-flag";
 
 export type ProfileUpdateActionState = {
   error?: string;
@@ -598,45 +599,14 @@ export async function updateProfileAction(
   });
 
   // Reuses the exact same snapshot-diff mechanism that already powers the
-  // "your profile changed" banner on the Targets page (see
-  // computeProfileDiff/parseProfileSnapshot) - if this save changed any of
-  // the fields that feed target generation, flag it via a one-time query
-  // param so the profile page can prompt the user to go review their
+  // "your profile changed" banner on the Targets page - if this save changed
+  // any of the fields that feed target generation, flag it via a one-time
+  // query param so the profile page can prompt the user to go review their
   // targets, instead of only surfacing it if/when they happen to visit
-  // Targets on their own.
-  const { data: activeTargetProfileForDiff } = await supabase
-    .from("user_target_profiles")
-    .select("profile_snapshot")
-    .eq("user_id", user.id)
-    .eq("is_active", true)
-    .maybeSingle();
-
-  let targetsStale = false;
-  if (activeTargetProfileForDiff) {
-    const snapshot = parseProfileSnapshot(activeTargetProfileForDiff.profile_snapshot);
-    if (snapshot) {
-      const updatedProfileForTargets: ProfileForTargets = {
-        age: calculatedAge,
-        gender: payload.gender,
-        biological_sex: payload.biological_sex,
-        height_cm: payload.height_cm,
-        weight_kg: payload.weight_kg,
-        activity_level: payload.activity_level,
-        allergies: payload.allergies,
-        medical_conditions: payload.medical_conditions,
-        medical_conditions_details: payload.medical_conditions_details,
-        regular_medications_details: payload.regular_medications_details,
-        dietary_preference: payload.dietary_preference ?? null,
-        exercise_modalities: payload.exercise_modalities,
-        exercise_other_activities: payload.exercise_other_activities,
-        exercise_schedule_by_modality: payload.exercise_schedule_by_modality,
-        habits: payload.habits,
-        pregnancy_lactation_status: payload.pregnancy_lactation_status,
-        hot_climate_or_heavy_sweating: payload.hot_climate_or_heavy_sweating,
-      };
-      targetsStale = computeProfileDiff(snapshot, updatedProfileForTargets, locale).length > 0;
-    }
-  }
+  // Targets on their own. The same call also resyncs Daffy's reminder flag
+  // (ticket #70) - see resyncTargetsReviewFlag. Must run before redirect(),
+  // which throws.
+  const targetsStale = Boolean(await resyncTargetsReviewFlag(supabase, user.id, locale));
 
   redirect(targetsStale ? "/app/profile?targetsStale=1" : "/app/profile");
 }
@@ -672,41 +642,6 @@ export type QuickEditState = {
    * surface it through instead. */
   targetsStaleChanges?: ProfileDiffRow[];
 };
-
-const PROFILE_FOR_TARGETS_COLUMNS =
-  "age, gender, biological_sex, height_cm, weight_kg, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, habits, pregnancy_lactation_status, hot_climate_or_heavy_sweating";
-
-async function loadProfileForTargetsDiff(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string,
-): Promise<ProfileForTargets | null> {
-  const { data } = await supabase
-    .from("user_profile")
-    .select(PROFILE_FOR_TARGETS_COLUMNS)
-    .eq("user_id", userId)
-    .maybeSingle();
-  if (!data) return null;
-
-  return {
-    age: Number(data.age ?? 0),
-    gender: data.gender ?? null,
-    biological_sex: data.biological_sex ?? null,
-    height_cm: Number(data.height_cm ?? 0),
-    weight_kg: Number(data.weight_kg ?? 0),
-    activity_level: data.activity_level,
-    allergies: Array.isArray(data.allergies) ? data.allergies : [],
-    medical_conditions: Array.isArray(data.medical_conditions) ? data.medical_conditions : [],
-    medical_conditions_details: data.medical_conditions_details ?? null,
-    regular_medications_details: data.regular_medications_details ?? null,
-    dietary_preference: data.dietary_preference ?? null,
-    exercise_modalities: Array.isArray(data.exercise_modalities) ? data.exercise_modalities : [],
-    exercise_other_activities: Array.isArray(data.exercise_other_activities) ? data.exercise_other_activities : [],
-    exercise_schedule_by_modality: data.exercise_schedule_by_modality ?? null,
-    habits: Array.isArray(data.habits) ? data.habits : [],
-    pregnancy_lactation_status: data.pregnancy_lactation_status ?? null,
-    hot_climate_or_heavy_sweating: Boolean(data.hot_climate_or_heavy_sweating),
-  };
-}
 
 /**
  * Shared "write one small patch, then report back" tail for every quick-edit
@@ -745,51 +680,14 @@ export async function applyProfilePatchAndFlagTargets({
   revalidatePath("/app/profile");
   revalidatePath("/app/targets");
 
-  const { data: activeTargetProfileForDiff } = await supabase
-    .from("user_target_profiles")
-    .select("profile_snapshot")
-    .eq("user_id", userId)
-    .eq("is_active", true)
-    .maybeSingle();
+  // Always resync Daffy's "your profile changed" reminder (ticket #10) to a
+  // freshly-computed diff against the true baseline (the active target
+  // profile's locked-in snapshot) - ticket #70: a flag that was only ever
+  // set, never cleared, kept citing a change that had since been reverted.
+  // See resyncTargetsReviewFlag, which every target-feeding write now ends in.
+  const diffRows = await resyncTargetsReviewFlag(supabase, userId, locale);
 
-  let targetsStale = false;
-  let targetsStaleChanges: ProfileDiffRow[] | undefined;
-  if (activeTargetProfileForDiff) {
-    const storedSnapshot = parseProfileSnapshot(activeTargetProfileForDiff.profile_snapshot);
-    if (storedSnapshot) {
-      const updatedProfile = await loadProfileForTargetsDiff(supabase, userId);
-      if (updatedProfile) {
-        const diffRows = computeProfileDiff(storedSnapshot, updatedProfile, locale);
-        targetsStale = diffRows.length > 0;
-        if (targetsStale) targetsStaleChanges = diffRows;
-
-        // Always resync Daffy's "your profile changed" reminder (ticket #10)
-        // to this freshly-computed diff, on every save that touches a
-        // target-feeding field - not just when this specific save produced
-        // a new one. Confirmed live as a real bug (ticket #70): the
-        // previous design only ever SET this flag (from TargetsStaleModal's
-        // acknowledge, or the profile chat's own apply step) and never
-        // cleared it, so reverting a change back to the locked baseline
-        // (e.g. an out-of-range weight edit, then undoing it) left a
-        // stale, no-longer-true comparison sitting there indefinitely -
-        // Daffy kept citing a change that no longer exists. Since this
-        // diff is recomputed against the true baseline (the target
-        // profile's own locked-in snapshot) on every relevant save
-        // regardless of which field that save touched, writing it here
-        // unconditionally keeps the flag always in sync with reality.
-        await supabase
-          .from("user_profile")
-          .update({
-            targets_review_pending: targetsStale,
-            targets_review_changes: targetsStale ? diffRows : null,
-            targets_review_flagged_at: targetsStale ? new Date().toISOString() : null,
-          })
-          .eq("user_id", userId);
-      }
-    }
-  }
-
-  return { success: true, targetsStale, targetsStaleChanges };
+  return { success: true, targetsStale: Boolean(diffRows), targetsStaleChanges: diffRows ?? undefined };
 }
 
 /** First/last name + date of birth - the header "Edit Profile" button's own
