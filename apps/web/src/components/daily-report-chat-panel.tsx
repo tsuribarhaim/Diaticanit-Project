@@ -117,19 +117,6 @@ function NewChatIcon({ className }: { className: string }) {
   );
 }
 
-/** A plain horizontal line - the universal "minimize window" glyph, chosen
- * specifically to NOT be an "X": testers kept tapping the old X-shaped
- * close icon expecting it to clear the chat, when it only ever hid the
- * sheet (the exact same behavior this button still has - see setIsOpen's
- * own call site). */
-function MinimizeIcon({ className }: { className: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
-      <path d="M5 12h14" />
-    </svg>
-  );
-}
-
 function ChatBubbleBadgeIcon({ className }: { className: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -973,7 +960,7 @@ export function DailyReportChatPanel({
   }
 
   /** The missing fourth option, alongside Save, New chat (clears, stays
-   * open), and Minimize (closes, keeps everything) - "forget about it and
+   * open), and the floating bubble's X (closes, keeps everything) - "forget about it and
    * close", reported as absent once those other three existed. Shares the
    * exact same confirm dialog and clear logic as New chat - the only
    * difference is closeAfterClear, which tells confirmClearChat to also
@@ -1132,9 +1119,9 @@ export function DailyReportChatPanel({
         <p className="flex-1 truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Chat about your day", "צ'אט על היום שלך")}</p>
         {/* gap-3.5: same "keep two adjacent icons comfortably apart"
             reasoning already applied to the entry-row quick actions -
-            minimizing sits right next to a destructive-ish action (New
-            chat clears, after confirming), so a mis-tap here is worth
-            avoiding the same way. */}
+            New chat and Discard-and-close are two adjacent destructive-ish
+            actions (both clear, after confirming), so a mis-tap here is
+            worth avoiding the same way. */}
         <div className="flex shrink-0 items-center gap-3.5">
           <button
             type="button"
@@ -1146,12 +1133,12 @@ export function DailyReportChatPanel({
             <NewChatIcon className="h-4 w-4" />
           </button>
           {/* The missing fourth option, alongside Save, New chat (clears,
-              stays open), and Minimize (closes, keeps everything) -
-              "forget about it and close". Grouped next to New chat (both
-              are "clear the conversation" variants, just with a different
-              outcome afterward) rather than next to Minimize, keeping the
-              one safe, non-destructive control at the outer edge on its
-              own. */}
+              stays open), and the floating bubble's X (closes, keeps
+              everything) - "forget about it and close". Grouped next to
+              New chat (both are "clear the conversation" variants, just
+              with a different outcome afterward). Closing without clearing
+              is done through the floating bubble's X, not a header
+              button (TCK-89 removed the duplicate Minimize). */}
           <button
             type="button"
             onClick={handleDiscardAndCloseClick}
@@ -1160,15 +1147,6 @@ export function DailyReportChatPanel({
             className="flex h-7 w-7 items-center justify-center rounded-full text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/40"
           >
             <TrashIcon className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setIsOpen(false)}
-            aria-label={tr(locale, "Minimize chat", "מזעור הצ'אט")}
-            title={tr(locale, "Minimize chat", "מזעור הצ'אט")}
-            className="flex h-7 w-7 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
-          >
-            <MinimizeIcon className="h-4 w-4" />
           </button>
         </div>
       </div>
@@ -1542,7 +1520,7 @@ export function DailyReportChatPanel({
           same small surface instead of an always-visible full-width
           desktop card or a large percentage-of-viewport mobile sheet. No
           dimming backdrop either, to match that widget - tap the bubble
-          again (or Minimize in the header) to close, rather than tapping
+          (X) again to close, rather than tapping
           outside. */}
       {isMounted && createPortal(
         // dir set explicitly here - the app only applies dir="rtl"/"ltr"
