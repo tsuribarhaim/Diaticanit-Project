@@ -1,6 +1,7 @@
 import { NavLink as Link } from "@/components/nav-link";
 
 import { formatMeasurementUnit, formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
+import { getMetricTone, RING_STROKE_CLASS, RING_TEXT_CLASS } from "@/lib/metric-tone";
 
 export type RingMetric = {
   id: string;
@@ -24,7 +25,7 @@ export type RingMetric = {
    * specific field (see docs/design/targets-save-performance-redesign.md's
    * notification system) - shows a small warning icon linking to
    * Notifications. Deliberately not a color change: red already means
-   * "over your limit" in this same ring system (see ringColorClass below),
+   * "over your limit" in this same ring system (see lib/metric-tone.ts),
    * so reusing it here would give one color two conflicting meanings. */
   flagged?: boolean;
   /**
@@ -58,51 +59,22 @@ export type RingMetric = {
    * left out of the red "Over today's target" list below.
    */
   exceedingIsPositive?: boolean;
+  /**
+   * TCK-104: for "lower is better" nutrients (sodium, added sugar,
+   * saturated fat, cholesterol) - staying well under the limit is rewarded
+   * (blue near zero, light green up to the limit) instead of reading as the
+   * neutral "not there yet" color. See lib/metric-tone.ts.
+   */
+  lowerIsBetter?: boolean;
+  /**
+   * TCK-104: opt-in for the built-in nutrient goals (protein, fiber,
+   * vitamins/minerals...) - the color steps through orange/amber/lime as
+   * the total approaches min instead of staying one flat color until it's
+   * reached. Custom targets, exercise, day counts and calories don't set
+   * this. See lib/metric-tone.ts.
+   */
+  goalProgress?: boolean;
 };
-
-type RingStatus = "under" | "met" | "exceededPositive" | "exceededNegative";
-
-function ringStatus(total: number, min: number, max: number, neverOverLimit?: boolean, exceedingIsPositive?: boolean): RingStatus {
-  if (max > 0 && total > max) {
-    if (neverOverLimit) return "met";
-    return exceedingIsPositive ? "exceededPositive" : "exceededNegative";
-  }
-  if (neverOverLimit && max > 0 && total >= max) return "met";
-  if (min > 0 && total >= min) return "met";
-  return "under";
-}
-
-/**
- * Progress percent is measured against the range's max (the "ceiling"),
- * consistent with how a value over max is always flagged as over-target
- * regardless of which nutrient it is - unless the metric opts out via
- * neverOverLimit or exceedingIsPositive.
- */
-function ringColorClass(total: number, min: number, max: number, neverOverLimit?: boolean, exceedingIsPositive?: boolean): string {
-  switch (ringStatus(total, min, max, neverOverLimit, exceedingIsPositive)) {
-    case "exceededNegative":
-      return "text-rose-500 dark:text-rose-400";
-    case "exceededPositive":
-      return "text-blue-500 dark:text-blue-400";
-    case "met":
-      return "text-emerald-500 dark:text-emerald-400";
-    default:
-      return "text-teal-500 dark:text-teal-400";
-  }
-}
-
-function textColorClass(total: number, min: number, max: number, neverOverLimit?: boolean, exceedingIsPositive?: boolean): string {
-  switch (ringStatus(total, min, max, neverOverLimit, exceedingIsPositive)) {
-    case "exceededNegative":
-      return "text-rose-700 dark:text-rose-400";
-    case "exceededPositive":
-      return "text-blue-700 dark:text-blue-400";
-    case "met":
-      return "text-emerald-700 dark:text-emerald-400";
-    default:
-      return "text-teal-700 dark:text-teal-400";
-  }
-}
 
 function clampPercent(value: number): number {
   return Math.min(100, Math.max(0, value));
@@ -168,8 +140,9 @@ export function DailyReportProgressRings({ locale, metrics }: { locale: AppLocal
           const percent = metric.max > 0 ? (metric.total / metric.max) * 100 : 0;
           const grossPercent =
             metric.grossTotal !== undefined && metric.max > 0 ? (metric.grossTotal / metric.max) * 100 : undefined;
-          const ringColor = ringColorClass(metric.total, metric.min, metric.max, metric.neverOverLimit, metric.exceedingIsPositive);
-          const labelColor = textColorClass(metric.total, metric.min, metric.max, metric.neverOverLimit, metric.exceedingIsPositive);
+          const tone = getMetricTone(metric);
+          const ringColor = RING_STROKE_CLASS[tone];
+          const labelColor = RING_TEXT_CLASS[tone];
           const burnedAmount =
             metric.grossTotal !== undefined && metric.grossTotal !== metric.total
               ? metric.grossTotal - metric.total
