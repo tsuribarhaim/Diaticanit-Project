@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AdminStatusDropdown } from "@/components/admin-status-dropdown";
 import { AutoHandlePill } from "@/components/auto-handle-pill";
 import { LocalDate } from "@/components/local-time";
+import { QuickAutomationMark } from "@/components/quick-automation-mark";
 import { formatTicketArea, formatTicketAutoHandle, formatTicketPriority, formatTicketStatus, formatTicketType, tr, type AppLocale } from "@/lib/locale";
 import {
   ticketAreaOptions,
@@ -591,7 +592,13 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
                     <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">{typeLabel(ticket.ticket_type, locale)}</td>
                     <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">{areaLabel(ticket.area, locale)}</td>
                     <td className={`py-3 pe-3 ${priorityTextClass[ticket.priority]}`}>{formatTicketPriority(ticket.priority, locale)}</td>
-                    <td className="py-3 pe-3"><AutoHandlePill locale={locale} value={ticket.auto_handle} settled={FINAL_TICKET_STATUSES.includes(ticket.status)} /></td>
+                    <td className="py-3 pe-3">
+                      {ticket.auto_handle === null && !FINAL_TICKET_STATUSES.includes(ticket.status) ? (
+                        <QuickAutomationMark locale={locale} ticketId={ticket.id} />
+                      ) : (
+                        <AutoHandlePill locale={locale} value={ticket.auto_handle} settled={FINAL_TICKET_STATUSES.includes(ticket.status)} />
+                      )}
+                    </td>
                     <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">
                       <LocalDate value={ticket.created_at} locale={locale} />
                     </td>
