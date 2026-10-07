@@ -59,6 +59,7 @@ const envFilePath = path.resolve(process.argv[2] || path.join(__dirname, ".env.l
 process.env.BRIDGE_ENV_FILE = envFilePath;
 const env = loadEnvLocal(envFilePath);
 
+const { runPromote } = require("./promote");
 const PORT = Number(env.BRIDGE_PORT || 7891);
 const LOCAL_SECRET = env.BRIDGE_LOCAL_SECRET;
 const DAFFY_BASE_URL = env.DAFFY_BASE_URL;
@@ -80,6 +81,11 @@ const PHASE2_ENABLED = env.PHASE2_ENABLED !== "false";
 // When true, a committed fix is merged into main on the dev repo right away - but only after the gates
 // in autoMergeToDev pass. Off by default: the fix then just waits on its branch for "Merge to dev".
 const AUTO_MERGE_TO_DEV = env.AUTO_MERGE_TO_DEV === "true";
+// "Promote to production" (see promote.js): only runs when this is explicitly true, and only for the
+// real bridge - the dev test bridge leaves it off.
+const PROMOTE_ENABLED = env.PROMOTE_ENABLED === "true";
+const STAGING_PATH = env.STAGING_PATH;
+const PUBLIC_APP_URL = env.PUBLIC_APP_URL || "https://daffy-pilot.vercel.app";
 const PHASE2_MAX_BUDGET_USD = env.PHASE2_MAX_BUDGET_USD_PER_TICKET || "5.00";
 const PHASE2_TIMEOUT_MS = Number(env.PHASE2_TIMEOUT_MS || 1200000);
 const DAILY_BUDGET_USD_CAP = Number(env.DAILY_BUDGET_USD_CAP || 20);
@@ -1047,11 +1053,12 @@ function readJsonBody(req) {
 }
 
 let analysisInProgress = false;
+let promoteInProgress = false;
 
 const server = http.createServer(async (req, res) => {
-  const known = ["/run", "/analyze", "/merge", "/revert"];
+  const known = ["/run", "/analyze", "/merge", "/revert", "/promote"];
   if (req.method !== "POST" || !known.includes(req.url)) {
-    return sendJson(res, 404, { error: "Not found. POST /run, /analyze, /merge or /revert." });
+    return sendJson(res, 404, { error: "Not found. POST /run, /analyze, /merge, /revert or /promote." });
   }
   if (req.headers["x-bridge-secret"] !== LOCAL_SECRET) {
     return sendJson(res, 401, { error: "Unauthorized." });
@@ -1068,6 +1075,43 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, await mergeBranch(body.ticketSeq));
   }
 
+  if (req.url === "/promote") {
+    const body = await readJsonBody(req);
+    const dryRun = Boolean(body && body.dryRun === true);
+    if (!PROMOTE_ENABLED && !dryRun) return sendJson(res, 200, { ok: false, report: null, result: "Promote is switched off on this bridge (PROMOTE_ENABLED)." });
+    if (!STAGING_PATH) return sendJson(res, 200, { ok: false, report: null, result: "STAGING_PATH is not configured on this bridge." });
+    if (!body || !Array.isArray(body.tickets) || body.tickets.length === 0) return sendJson(res, 400, { error: "tickets is required." });
+    if (promoteInProgress) return sendJson(res, 200, { ok: false, report: null, result: "A promotion is already running." });
+    promoteInProgress = true;
+    const releaseAwake = keepAwake();
+    try {
+      // A night run or an analysis may still be going: wait for it (up to 30 minutes) instead of racing it.
+      for (let waited = 0; (runInProgress || analysisInProgress) && waited < 30 * 60 * 1000; waited += 10000) await new Promise((r) => setTimeout(r, 10000));
+      if (runInProgress || analysisInProgress) return sendJson(res, 200, { ok: false, report: null, result: "A night run or analysis was still running after 30 minutes, so nothing was promoted. Request it again." });
+      const report = await runPromote({
+        tickets: body.tickets,
+        dryRun,
+        cfg: { stagingPath: STAGING_PATH, webSubdir: WEB_APP_SUBDIR, publicUrl: PUBLIC_APP_URL, dbPushScript: path.join(STAGING_PATH, "scripts", "supabase-db-push.ps1") },
+        appCall: async (apiPath, payload) => {
+          const r = await fetch(`${DAFFY_BASE_URL}${apiPath}`, { method: "POST", headers: { "x-ticket-automation-secret": TICKET_SECRET, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+          if (!r.ok) throw new Error(`HTTP ${r.status} - ${(await r.text()).slice(0, 200)}`);
+          return r.json();
+        },
+      });
+      const picked = report.tickets.filter((t) => t.status !== "skipped").length;
+      return sendJson(res, 200, {
+        ok: report.ok,
+        report,
+        result: report.ok ? `Version ${report.version}: ${picked} fix(es) promoted.` : `Promotion stopped: ${(report.steps[report.steps.length - 1] || {}).detail || "see the report"}`,
+      });
+    } catch (err) {
+      return sendJson(res, 500, { error: err.message });
+    } finally {
+      releaseAwake();
+      promoteInProgress = false;
+    }
+  }
+
   if (req.url === "/revert") {
     const body = await readJsonBody(req);
     if (!body || !Number.isInteger(Number(body.ticketSeq))) return sendJson(res, 400, { error: "ticketSeq is required." });
@@ -1075,7 +1119,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.url === "/analyze") {
-    if (analysisInProgress) return sendJson(res, 200, { skipped: true, reason: "An analysis is already running." });
+    if (analysisInProgress || promoteInProgress) return sendJson(res, 200, { skipped: true, reason: "An analysis or a promotion is already running." });
     analysisInProgress = true;
     const releaseAwake = keepAwake();
     try {
@@ -1090,8 +1134,8 @@ const server = http.createServer(async (req, res) => {
 
   // Two triggers (Windows task + n8n schedule) can overlap; a second batch would
   // re-pick still-queued tickets and fight over the dev-server port.
-  if (runInProgress) {
-    return sendJson(res, 200, { skipped: true, reason: "A batch is already running." });
+  if (runInProgress || promoteInProgress) {
+    return sendJson(res, 200, { skipped: true, reason: "A batch or a promotion is already running." });
   }
   runInProgress = true;
   const releaseAwake = keepAwake();

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { checkAutomationSecret } from "@/lib/automation-auth";
 import { logServerError } from "@/lib/server-log";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { renderPromotionEmail, type PromoteReport } from "@/lib/promotion-email";
 import { appendTicketDescriptionEntry } from "@/lib/tickets";
 
 export const dynamic = "force-dynamic";
@@ -49,12 +50,24 @@ export async function POST(request: Request) {
   }
   const { id, action, result, ok, report } = body;
   if (typeof id !== "string" || !id) return NextResponse.json({ error: "id is required." }, { status: 400 });
-  if (action !== "claim" && action !== "complete") {
-    return NextResponse.json({ error: "action must be claim or complete." }, { status: 400 });
+  if (action !== "claim" && action !== "complete" && action !== "email") {
+    return NextResponse.json({ error: "action must be claim, complete or email." }, { status: 400 });
   }
 
   const adminClient = createAdminClient();
   const now = new Date().toISOString();
+  if (action === "email") {
+    // The confirmation email for a finished promote request: the poller sends what this returns.
+    const { data: row } = await adminClient.from("automation_requests").select("kind, requested_at, result, details").eq("id", id).maybeSingle();
+    if (!row || row.kind !== "promote") return NextResponse.json({ error: "Not a promote request." }, { status: 404 });
+    const report = ((row.details ?? {}) as { report?: PromoteReport }).report ?? null;
+    const { data: admins } = await adminClient.from("user_profile").select("user_id").eq("is_admin", true);
+    const adminEmails = (
+      await Promise.all(((admins ?? []) as { user_id: string }[]).map(async (admin) => (await adminClient.auth.admin.getUserById(admin.user_id)).data.user?.email ?? null))
+    ).filter((email): email is string => Boolean(email));
+    const email = renderPromotionEmail({ report, requestedAt: row.requested_at, resultText: row.result, publicUrl: "https://daffy-pilot.vercel.app" });
+    return NextResponse.json({ subject: email.subject, html: email.html, adminEmails }, { headers: { "Cache-Control": "no-store" } });
+  }
   if (action === "claim") {
     // Only one poller can win: the update only matches a row nobody claimed yet.
     const { data, error } = await adminClient
