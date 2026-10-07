@@ -20,13 +20,15 @@ export async function POST(request: Request) {
   const denied = checkAutomationSecret(request, "adminProposalResult");
   if (denied) return denied;
 
-  let body: { ticketId?: unknown; kind?: unknown; payload?: unknown };
+  let body: { ticketId?: unknown; kind?: unknown; payload?: unknown; status?: unknown };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
-  const { ticketId, kind, payload } = body;
+  const { ticketId, kind, payload, status } = body;
+  // A fix the night run already merged into dev (gated auto-merge) is stored as "merged" and flags the ticket M.
+  const mergedFix = kind === "fix" && status === "merged";
   if (typeof ticketId !== "string" || !ticketId) {
     return NextResponse.json({ error: "ticketId is required." }, { status: 400 });
   }
@@ -61,12 +63,20 @@ export async function POST(request: Request) {
 
   const { data: inserted, error } = await adminClient
     .from("ticket_proposals")
-    .insert({ ticket_id: ticketId, kind, version, status: "pending", payload })
+    .insert({ ticket_id: ticketId, kind, version, status: mergedFix ? "merged" : "pending", payload })
     .select("id")
     .single();
   if (error || !inserted) {
     logServerError("adminProposalResult", "insert_failed", { ticketId, kind, error: error?.message });
     return NextResponse.json({ error: "Failed to save." }, { status: 500 });
+  }
+
+  if (mergedFix) {
+    const { error: flagError } = await adminClient.from("tickets").update({ auto_handle: "M" }).eq("id", ticketId);
+    if (flagError) {
+      logServerError("adminProposalResult", "flag_update_failed", { ticketId, error: flagError.message });
+      return NextResponse.json({ error: "Saved, but the ticket flag could not be updated." }, { status: 500 });
+    }
   }
 
   if (kind === "proposal") {

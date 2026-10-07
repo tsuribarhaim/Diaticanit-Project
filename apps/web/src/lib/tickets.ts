@@ -53,7 +53,7 @@ export type TicketStatus = (typeof ticketStatusOptions)[number];
  * (db/migrations/048_phase22_ticket_admin.sql) already grants admins free-
  * column update access, same protection technical_response/fix_description
  * already rely on. */
-export const ticketAutoHandleOptions = ["Y", "P", "D", "S", "A"] as const;
+export const ticketAutoHandleOptions = ["Y", "P", "D", "S", "A", "M", "R"] as const;
 export type TicketAutoHandle = (typeof ticketAutoHandleOptions)[number];
 
 /** An analyst's proposal lives in auto_handle_notes (admin-only, so a pending

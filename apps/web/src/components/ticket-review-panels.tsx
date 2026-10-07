@@ -5,13 +5,17 @@ import { useEffect, useState, useTransition, type ReactNode } from "react";
 
 import {
   answerQuestionsAction,
+  approveForProductionAction,
   approveProposalAction,
   rejectProposalAction,
   requestAnalysisAction,
   requestChangeAction,
   requestMergeAction,
+  requestPromoteAction,
   returnFixAction,
+  sendBackFixAction,
   takeOutOfAutomationAction,
+  withdrawApprovalAction,
 } from "@/app/app/tickets/review-actions";
 import { Spinner } from "@/components/spinner";
 import { tr, type AppLocale } from "@/lib/locale";
@@ -352,20 +356,25 @@ export function FixPanel({
   locale,
   proposalId,
   payload,
-  merged,
+  stage,
   mergeRequested,
   mergeResult,
+  revertRequested = false,
+  revertResult = null,
 }: {
   locale: AppLocale;
   proposalId: string;
   payload: FixPayload;
-  merged: boolean;
+  /** branch: built on a local branch (flag D); dev: merged on dev, waiting for the admin's test (M); approved: ready for the next promote (R). */
+  stage: "branch" | "dev" | "approved";
   mergeRequested: boolean;
   mergeResult: string | null;
+  revertRequested?: boolean;
+  revertResult?: string | null;
 }) {
   const [comment, setComment] = useState("");
   const { pending, which, error, run } = useReviewAction(locale);
-  useAutoRefresh(mergeRequested);
+  useAutoRefresh(mergeRequested || revertRequested);
   return (
     <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
       <div className="space-y-4">
@@ -381,6 +390,21 @@ export function FixPanel({
             ))}
           </ul>
         </div>
+        {stage !== "branch" && (payload.testSteps?.length ?? 0) > 0 ? (
+          <div className={cardClass}>
+            <h3 className={headingClass}>{tr(locale, "Try this on dev (localhost:3000)", "לנסות בפיתוח (localhost:3000)")}</h3>
+            <ul className="space-y-1.5 text-sm text-slate-800 dark:text-slate-200">
+              {payload.testSteps!.map((step, i) => (
+                <li key={i}>
+                  <label className="flex cursor-pointer items-start gap-2">
+                    <input type="checkbox" className="mt-1 accent-teal-700" />
+                    <span dir="auto">{step}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         <div className={cardClass}>
           <h3 className={headingClass}>{tr(locale, "Verification", "אימות")}</h3>
           <ul className="space-y-1.5 text-sm">
@@ -421,8 +445,43 @@ export function FixPanel({
         ) : null}
         <div className={cardClass}>
           <h3 className={headingClass}>{tr(locale, "Your answer", "התשובה שלך")}</h3>
-          {merged ? (
-            <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">{tr(locale, "Merged on dev.", "מוזג בפיתוח.")}</p>
+          {revertRequested ? (
+            <p className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+              <Spinner className="h-4 w-4 animate-spin" />
+              {tr(locale, "Revert requested - waiting for your laptop to undo the merge (about a minute). This page updates by itself.", "ביטול המיזוג התבקש - ממתין שהמחשב הנייד יבטל אותו (בערך דקה). הדף מתעדכן מעצמו.")}
+            </p>
+          ) : stage === "dev" || stage === "approved" ? (
+            <>
+              <p className="mb-2 text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+                {stage === "dev"
+                  ? tr(locale, "Merged on dev. Test it, then decide.", "מוזג בפיתוח. יש לבדוק ואז להחליט.")
+                  : tr(locale, "Approved for production. It ships with the next promote.", "אושר לייצור. הוא יעלה עם ההעלאה הבאה.")}
+              </p>
+              <textarea
+                value={comment}
+                onChange={(event) => setComment(event.target.value)}
+                rows={3}
+                maxLength={2000}
+                aria-label={tr(locale, "Comment", "הערה")}
+                placeholder={tr(locale, "What is wrong? Required to send it back", "מה לא תקין? חובה כדי להחזיר")}
+                className={inputClass}
+              />
+              {error ? <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{error}</p> : null}
+              <div className="mt-3 flex flex-wrap gap-2">
+                {stage === "dev" ? (
+                  <ActionButton variant="primary" pending={pending && which === "approve"} disabled={pending} onClick={() => run("approve", () => approveForProductionAction(proposalId))}>
+                    {tr(locale, "Approve for production", "אישור לייצור")}
+                  </ActionButton>
+                ) : (
+                  <ActionButton pending={pending && which === "withdraw"} disabled={pending} onClick={() => run("withdraw", () => withdrawApprovalAction(proposalId))}>
+                    {tr(locale, "Withdraw approval", "ביטול האישור")}
+                  </ActionButton>
+                )}
+                <ActionButton variant="danger" pending={pending && which === "sendback"} disabled={pending} onClick={() => run("sendback", () => sendBackFixAction(proposalId, comment), "stay")}>
+                  {tr(locale, "Send back", "החזרה")}
+                </ActionButton>
+              </div>
+            </>
           ) : mergeRequested ? (
             <p className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
               <Spinner className="h-4 w-4 animate-spin" />
@@ -451,11 +510,12 @@ export function FixPanel({
             </>
           )}
           {mergeResult ? <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{mergeResult}</p> : null}
+          {revertResult ? <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">{revertResult}</p> : null}
           <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
             {tr(
               locale,
-              "Merge to dev only changes your dev copy. Promoting to production stays a separate step you ask for.",
-              "מיזוג לפיתוח משנה רק את עותק הפיתוח שלך. העלאה לייצור נשארת צעד נפרד שאתה מבקש.",
+              "Nothing reaches production until you press Promote to production on the review page.",
+              "שום דבר לא מגיע לייצור עד שתלחץ על 'העלאה לייצור' בדף הסקירה.",
             )}
           </p>
         </div>
@@ -488,5 +548,105 @@ export function RunAnalysisButton({ locale, disabled, requested }: { locale: App
       </ActionButton>
       {message ? <span role="status" className="text-xs text-slate-600 dark:text-slate-400">{message}</span> : null}
     </span>
+  );
+}
+
+/** The "Promote to production" bar: only rendered when at least one fix is approved. It fires the
+ * request and returns - the laptop does the work and a confirmation email reports the outcome. */
+export function PromoteBar({
+  locale,
+  approved,
+  running,
+  tickets,
+  hasMigration,
+}: {
+  locale: AppLocale;
+  approved: number;
+  running: boolean;
+  tickets: { seq: number; subject: string }[];
+  hasMigration: boolean;
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [open, setOpen] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  useAutoRefresh(running);
+  if (running) {
+    return (
+      <div role="status" className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200">
+        <span>
+          <span className="font-semibold">{tr(locale, "Promotion requested or running.", "העלאה לייצור התבקשה או רצה.")}</span>{" "}
+          {tr(locale, "A confirmation email follows when it ends. You can leave this page.", "מייל אישור יישלח בסיומה. אפשר לעזוב את הדף.")}
+        </span>
+      </div>
+    );
+  }
+  if (approved === 0) return null;
+  return (
+    <>
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-teal-700 px-4 py-3 text-white dark:bg-teal-600">
+        <span className="text-sm font-semibold">
+          {tr(locale, `${approved} fix${approved === 1 ? "" : "es"} approved for production`, approved === 1 ? "תיקון אחד אושר לייצור" : `${approved} תיקונים אושרו לייצור`)}
+        </span>
+        <button type="button" onClick={() => setOpen(true)} className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-teal-800 hover:bg-teal-50">
+          {tr(locale, "Promote to production", "העלאה לייצור")}
+        </button>
+      </div>
+      {message ? <p role="status" className="mb-4 text-sm text-slate-700 dark:text-slate-300">{message}</p> : null}
+      {open ? (
+        <div role="dialog" aria-modal="true" aria-label={tr(locale, "Promote to production", "העלאה לייצור")} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="max-h-[90vh] w-full max-w-lg overflow-auto rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">{tr(locale, "Promote to production?", "להעלות לייצור?")}</h2>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                aria-label={tr(locale, "Close", "סגירה")}
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+                  <path d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              </button>
+            </div>
+            <p className="mt-2 text-sm text-slate-700 dark:text-slate-300">{tr(locale, "Only these tickets ship:", "רק הפניות האלה יעלו:")}</p>
+            <ul className="mt-1 list-disc space-y-0.5 ps-5 text-sm text-slate-800 dark:text-slate-200">
+              {tickets.map((ticket) => (
+                <li key={ticket.seq} dir="auto">
+                  TCK-{ticket.seq} - {ticket.subject}
+                </li>
+              ))}
+            </ul>
+            {hasMigration ? (
+              <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                {tr(locale, "A database migration is applied to production first.", "מיגרציית מסד נתונים מוחלת קודם על הייצור.")}
+              </p>
+            ) : null}
+            <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+              {tr(locale, "The request is sent and you can leave. A confirmation email goes to you and Orit when it ends.", "הבקשה נשלחת ואפשר לעזוב. מייל אישור יישלח אליך ולאורית בסיומה.")}
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <ActionButton
+                variant="primary"
+                pending={pending}
+                onClick={() =>
+                  startTransition(async () => {
+                    const result = await requestPromoteAction();
+                    setMessage(result.error ?? result.success ?? null);
+                    setOpen(false);
+                    router.refresh();
+                  })
+                }
+              >
+                {tr(locale, "Send request", "שליחת הבקשה")}
+              </ActionButton>
+              <ActionButton onClick={() => setOpen(false)} pending={false} disabled={pending}>
+                {tr(locale, "Cancel", "ביטול")}
+              </ActionButton>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }

@@ -13,7 +13,8 @@ export type ProposalStatus =
   | "answered"
   | "taken_out"
   | "merged"
-  | "returned";
+  | "returned"
+  | "released";
 
 export type ProposalOption = { label: string; rec?: boolean };
 export type ProposalDecision = { q: string; options: ProposalOption[]; why?: string };
@@ -48,6 +49,8 @@ export type FixPayload = {
   checks: { ok: boolean; text: string }[];
   /** The agent's own account of how it checked its work (what it could and could not verify). */
   verification?: string;
+  /** What the admin should click through on dev to judge the fix (optional; the night run may omit it). */
+  testSteps?: string[];
   shots: { label: string; dataUrl: string }[];
 };
 
@@ -133,7 +136,9 @@ export const AUTO_HANDLE_PILL_CLASS: Record<string, string> = {
   Y: "bg-indigo-100 text-indigo-800 dark:bg-indigo-950/50 dark:text-indigo-300",
   P: "bg-rose-100 text-rose-800 dark:bg-rose-950/50 dark:text-rose-300",
   D: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300",
+  M: "bg-blue-100 text-blue-800 dark:bg-blue-950/50 dark:text-blue-300",
+  R: "bg-teal-100 text-teal-800 dark:bg-teal-950/50 dark:text-teal-300",
 };
 
 /** States that are waiting on the admin - they get a "needs you" hint and count in the banner. */
-export const AUTO_HANDLE_NEEDS_ADMIN = ["A", "P", "D"] as const;
+export const AUTO_HANDLE_NEEDS_ADMIN = ["A", "P", "D", "M"] as const;

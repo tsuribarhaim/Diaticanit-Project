@@ -46,6 +46,22 @@ const uuid = () => crypto.randomUUID();
 
 const ANALYST_NAME = "Daffy - Spec Analyst";
 const POLLER_NAME = "Daffy - Review Requests Poller";
+const PROMOTE_NAME = "Daffy - Promote to Production";
+
+const promoteFinishJs = `// The bridge's answer (or its error), then close the request in the app and build the confirmation email.
+const APP_URL = '${cfg.appUrl}';
+const appHeaders = { 'x-ticket-automation-secret': '${cfg.appSecret}' };
+const call = (opts) => this.helpers.httpRequest({ json: true, timeout: 60000, ...opts });
+const started = $('Promote Webhook').first().json.body || {};
+const res = $input.first().json || {};
+const failedToReach = res.error !== undefined && res.report === undefined;
+const report = res.report || null;
+const ok = res.ok === true;
+const result = res.result || (failedToReach ? 'The bridge could not be reached: ' + (typeof res.error === 'string' ? res.error : JSON.stringify(res.error)).slice(0, 300) : 'No answer from the bridge.');
+await call({ method: 'POST', url: APP_URL + '/api/admin/automation-requests', headers: appHeaders, body: { id: started.requestId, action: 'complete', ok, result, report } });
+const mail = await call({ method: 'POST', url: APP_URL + '/api/admin/automation-requests', headers: appHeaders, body: { id: started.requestId, action: 'email' } });
+return [{ json: { ok, result, emailSubject: mail.subject, emailBody: mail.html, adminEmails: mail.adminEmails || [] } }];
+`;
 
 const analystSummaryJs = `// The bridge answers {skipped:true} when an analysis is already running - send no email for that.
 const data = $input.first().json;
@@ -87,6 +103,7 @@ const APP_URL = '${cfg.appUrl}';
 const APP_SECRET = '${cfg.appSecret}';
 const BRIDGE_URL = '${cfg.bridgeUrl}';
 const BRIDGE_SECRET = '${cfg.bridgeSecret}';
+const PROMOTE_WEBHOOK = 'http://localhost:5678/webhook/daffy-promote';
 const appHeaders = { 'x-ticket-automation-secret': APP_SECRET };
 const call = (opts) => this.helpers.httpRequest({ json: true, timeout: 30000, ...opts });
 
@@ -104,6 +121,16 @@ for (const r of (list.requests || [])) {
       result = res.skipped === true ? 'An analysis was already running.' : (res.analyzed ? res.analyzed.length + ' proposal(s) ready' + (res.failed && res.failed.length ? ', ' + res.failed.length + ' failed' : '') : (res.error || 'done'));
     } else if (r.kind === 'merge') {
       const res = await call({ method: 'POST', url: BRIDGE_URL + '/merge', headers: { 'x-bridge-secret': BRIDGE_SECRET }, body: { ticketSeq: r.ticketSeq } });
+      ok = res.ok === true;
+      result = res.result || '';
+    } else if (r.kind === 'promote') {
+      // Starts the "Daffy - Promote to Production" workflow and moves on: that workflow waits for the
+      // bridge (minutes), completes this request itself and sends the confirmation email.
+      await call({ method: 'POST', url: PROMOTE_WEBHOOK, body: { requestId: r.id, tickets: (r.details && r.details.tickets) || [] } });
+      done.push({ id: r.id, kind: r.kind, ok: true, result: 'promotion started' });
+      continue;
+    } else if (r.kind === 'revert') {
+      const res = await call({ method: 'POST', url: BRIDGE_URL + '/revert', headers: { 'x-bridge-secret': BRIDGE_SECRET }, body: { ticketSeq: r.ticketSeq } });
       ok = res.ok === true;
       result = res.result || '';
     } else {
@@ -191,8 +218,44 @@ async function upsert(name, nodes, connections, settings = { executionOrder: "v1
     // Runs every minute, so successful (usually empty) runs are not stored; failures still are.
     { executionOrder: "v1", saveDataSuccessExecution: "none" });
 
-  console.log(`mode=${mode}  analyst=${analystId}  poller=${pollerId}`);
-  for (const [id, name] of [[analystId, ANALYST_NAME], [pollerId, POLLER_NAME]]) {
+  // ---------- Promote to Production: webhook (from the poller) -> bridge /promote -> finish + email ----------
+  const promoteHook = {
+    id: uuid(), name: "Promote Webhook", type: "n8n-nodes-base.webhook", typeVersion: 2, position: [0, 0], webhookId: uuid(),
+    parameters: { httpMethod: "POST", path: "daffy-promote", responseMode: "onReceived", options: {} },
+  };
+  const promoteRun = JSON.parse(JSON.stringify(run));
+  promoteRun.id = uuid();
+  promoteRun.name = "Run Promote";
+  promoteRun.position = [240, 0];
+  delete promoteRun.webhookId;
+  promoteRun.onError = "continueErrorOutput";
+  promoteRun.parameters = {
+    method: "POST", url: `${cfg.bridgeUrl}/promote`, sendHeaders: true,
+    headerParameters: { parameters: [{ name: "x-bridge-secret", value: cfg.bridgeSecret }] },
+    sendBody: true, specifyBody: "json", jsonBody: "={{ JSON.stringify({ tickets: $json.body.tickets }) }}",
+    options: { timeout: 3600000 },
+  };
+  const promoteFinish = {
+    id: uuid(), name: "Finish and build email", type: "n8n-nodes-base.code", typeVersion: 2, position: [480, 0],
+    parameters: { jsCode: promoteFinishJs },
+  };
+  const promoteMail = JSON.parse(JSON.stringify(sendSummary));
+  promoteMail.id = uuid();
+  promoteMail.name = "Send Promotion Email";
+  promoteMail.position = [720, 0];
+  promoteMail.parameters = {
+    resource: "message", operation: "send",
+    sendTo: '={{ [...new Set([...($json.adminEmails || []), "tsuri.barhaim@gmail.com", "shenhar.orit@gmail.com"])].join(",") }}',
+    subject: "={{ $json.emailSubject }}", emailType: "html", message: "={{ $json.emailBody }}", options: { appendAttribution: false },
+  };
+  const promoteId = await upsert(PROMOTE_NAME, [promoteHook, promoteRun, promoteFinish, promoteMail], {
+    [promoteHook.name]: { main: [[{ node: promoteRun.name, type: "main", index: 0 }]] },
+    [promoteRun.name]: { main: [[{ node: promoteFinish.name, type: "main", index: 0 }], [{ node: promoteFinish.name, type: "main", index: 0 }]] },
+    [promoteFinish.name]: { main: [[{ node: promoteMail.name, type: "main", index: 0 }]] },
+  });
+
+  console.log(`mode=${mode}  analyst=${analystId}  poller=${pollerId}  promote=${promoteId}`);
+  for (const [id, name] of [[analystId, ANALYST_NAME], [pollerId, POLLER_NAME], [promoteId, PROMOTE_NAME]]) {
     if (action === "activate") await api("POST", `/workflows/${id}/publish`, {});
     if (action === "deactivate") await api("POST", `/workflows/${id}/deactivate`, {}).catch((e) => console.log("deactivate:", e.message));
     const w = await api("GET", `/workflows/${id}`);

@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { checkAutomationSecret } from "@/lib/automation-auth";
 import { logServerError } from "@/lib/server-log";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { renderPromotionEmail, type PromoteReport } from "@/lib/promotion-email";
+import { appendTicketDescriptionEntry } from "@/lib/tickets";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +21,7 @@ export async function GET(request: Request) {
   const adminClient = createAdminClient();
   const { data, error } = await adminClient
     .from("automation_requests")
-    .select("id, kind, ticket_id, requested_at, tickets(ticket_seq)")
+    .select("id, kind, ticket_id, requested_at, details, tickets(ticket_seq)")
     .is("picked_at", null)
     .is("completed_at", null)
     .order("requested_at", { ascending: true })
@@ -31,7 +33,7 @@ export async function GET(request: Request) {
   const requests = (data ?? []).map((row) => {
     const joined = row.tickets as { ticket_seq?: number } | { ticket_seq?: number }[] | null;
     const ticketSeq = Array.isArray(joined) ? joined[0]?.ticket_seq : joined?.ticket_seq;
-    return { id: row.id, kind: row.kind, ticketId: row.ticket_id, ticketSeq: ticketSeq ?? null, requestedAt: row.requested_at };
+    return { id: row.id, kind: row.kind, ticketId: row.ticket_id, ticketSeq: ticketSeq ?? null, requestedAt: row.requested_at, details: row.details ?? {} };
   });
   return NextResponse.json({ requests }, { headers: { "Cache-Control": "no-store" } });
 }
@@ -40,20 +42,32 @@ export async function POST(request: Request) {
   const denied = checkAutomationSecret(request, "adminAutomationRequests");
   if (denied) return denied;
 
-  let body: { id?: unknown; action?: unknown; result?: unknown; ok?: unknown };
+  let body: { id?: unknown; action?: unknown; result?: unknown; ok?: unknown; report?: unknown };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
-  const { id, action, result, ok } = body;
+  const { id, action, result, ok, report } = body;
   if (typeof id !== "string" || !id) return NextResponse.json({ error: "id is required." }, { status: 400 });
-  if (action !== "claim" && action !== "complete") {
-    return NextResponse.json({ error: "action must be claim or complete." }, { status: 400 });
+  if (action !== "claim" && action !== "complete" && action !== "email") {
+    return NextResponse.json({ error: "action must be claim, complete or email." }, { status: 400 });
   }
 
   const adminClient = createAdminClient();
   const now = new Date().toISOString();
+  if (action === "email") {
+    // The confirmation email for a finished promote request: the poller sends what this returns.
+    const { data: row } = await adminClient.from("automation_requests").select("kind, requested_at, result, details").eq("id", id).maybeSingle();
+    if (!row || row.kind !== "promote") return NextResponse.json({ error: "Not a promote request." }, { status: 404 });
+    const report = ((row.details ?? {}) as { report?: PromoteReport }).report ?? null;
+    const { data: admins } = await adminClient.from("user_profile").select("user_id").eq("is_admin", true);
+    const adminEmails = (
+      await Promise.all(((admins ?? []) as { user_id: string }[]).map(async (admin) => (await adminClient.auth.admin.getUserById(admin.user_id)).data.user?.email ?? null))
+    ).filter((email): email is string => Boolean(email));
+    const email = renderPromotionEmail({ report, requestedAt: row.requested_at, resultText: row.result, publicUrl: "https://daffy-pilot.vercel.app" });
+    return NextResponse.json({ subject: email.subject, html: email.html, adminEmails }, { headers: { "Cache-Control": "no-store" } });
+  }
   if (action === "claim") {
     // Only one poller can win: the update only matches a row nobody claimed yet.
     const { data, error } = await adminClient
@@ -78,9 +92,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Failed to complete." }, { status: 500 });
   }
 
-  // A merge that went through: the ticket's fix card now reads "Merged on dev".
   if (ok === true) {
-    const { data: done } = await adminClient.from("automation_requests").select("kind, ticket_id").eq("id", id).maybeSingle();
+    const { data: done } = await adminClient.from("automation_requests").select("kind, ticket_id, details").eq("id", id).maybeSingle();
+    // A merge that went through: the fix is on dev and waits for the admin's test (flag M).
     if (done?.kind === "merge" && done.ticket_id) {
       await adminClient
         .from("ticket_proposals")
@@ -88,7 +102,37 @@ export async function POST(request: Request) {
         .eq("ticket_id", done.ticket_id)
         .eq("kind", "fix")
         .eq("status", "pending");
+      await adminClient.from("tickets").update({ auto_handle: "M" }).eq("id", done.ticket_id).eq("auto_handle", "D");
     }
+    // A revert that went through ("Send back"): the merge is undone on dev, so the ticket goes back to
+    // the night run with the admin's comment in its log (where the agent reads decisions from).
+    if (done?.kind === "revert" && done.ticket_id) {
+      const details = (done.details ?? {}) as { comment?: string };
+      const { data: ticket } = await adminClient.from("tickets").select("description, created_by, ticket_seq").eq("id", done.ticket_id).maybeSingle();
+      if (ticket) {
+        const note = `Admin sent the fix back after testing it on dev (the merge was reverted, a fresh attempt is needed). What needs to change: ${details.comment ?? "(no comment)"}`;
+        await adminClient
+          .from("tickets")
+          .update({
+            description: appendTicketDescriptionEntry({ currentDescription: ticket.description ?? "", changeLines: [], note, authoredBySupport: true }),
+            auto_handle: "Y",
+            status: "open",
+          })
+          .eq("id", done.ticket_id);
+        await adminClient
+          .from("ticket_proposals")
+          .update({ status: "returned", admin_comment: details.comment ?? null, decided_at: now })
+          .eq("ticket_id", done.ticket_id)
+          .eq("kind", "fix")
+          .in("status", ["merged", "approved"]);
+      }
+    }
+  }
+  // A promote reports itself in `report` (see the bridge's /promote): stored on the request for the
+  // confirmation email and the review screen.
+  if (report && typeof report === "object") {
+    const { data: current } = await adminClient.from("automation_requests").select("details").eq("id", id).maybeSingle();
+    await adminClient.from("automation_requests").update({ details: { ...((current?.details as object | null) ?? {}), report } }).eq("id", id);
   }
   return NextResponse.json({ success: true }, { headers: { "Cache-Control": "no-store" } });
 }

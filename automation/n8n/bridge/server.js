@@ -59,6 +59,7 @@ const envFilePath = path.resolve(process.argv[2] || path.join(__dirname, ".env.l
 process.env.BRIDGE_ENV_FILE = envFilePath;
 const env = loadEnvLocal(envFilePath);
 
+const { runPromote } = require("./promote");
 const PORT = Number(env.BRIDGE_PORT || 7891);
 const LOCAL_SECRET = env.BRIDGE_LOCAL_SECRET;
 const DAFFY_BASE_URL = env.DAFFY_BASE_URL;
@@ -77,6 +78,14 @@ const CLAUDE_CLI_PATH = env.CLAUDE_CLI_PATH;
 
 // Phase 2 config.
 const PHASE2_ENABLED = env.PHASE2_ENABLED !== "false";
+// When true, a committed fix is merged into main on the dev repo right away - but only after the gates
+// in autoMergeToDev pass. Off by default: the fix then just waits on its branch for "Merge to dev".
+const AUTO_MERGE_TO_DEV = env.AUTO_MERGE_TO_DEV === "true";
+// "Promote to production" (see promote.js): only runs when this is explicitly true, and only for the
+// real bridge - the dev test bridge leaves it off.
+const PROMOTE_ENABLED = env.PROMOTE_ENABLED === "true";
+const STAGING_PATH = env.STAGING_PATH;
+const PUBLIC_APP_URL = env.PUBLIC_APP_URL || "https://daffy-pilot.vercel.app";
 const PHASE2_MAX_BUDGET_USD = env.PHASE2_MAX_BUDGET_USD_PER_TICKET || "5.00";
 const PHASE2_TIMEOUT_MS = Number(env.PHASE2_TIMEOUT_MS || 1200000);
 const DAILY_BUDGET_USD_CAP = Number(env.DAILY_BUDGET_USD_CAP || 20);
@@ -196,6 +205,7 @@ const PHASE2_RESULT_SCHEMA = JSON.stringify({
     fixSummary: { type: ["string", "null"] },
     testSummary: { type: ["string", "null"] },
     filesChanged: { type: "array", items: { type: "string" } },
+    testSteps: { type: "array", items: { type: "string" } },
     screenshotPages: {
       type: "array",
       items: {
@@ -206,7 +216,7 @@ const PHASE2_RESULT_SCHEMA = JSON.stringify({
       },
     },
   },
-  required: ["reproduced", "nature", "classification", "reproductionSummary", "diagnosis", "fixSummary", "testSummary", "filesChanged", "screenshotPages"],
+  required: ["reproduced", "nature", "classification", "reproductionSummary", "diagnosis", "fixSummary", "testSummary", "filesChanged", "testSteps", "screenshotPages"],
   additionalProperties: false,
 });
 
@@ -265,6 +275,10 @@ function buildPhase2Prompt(ticket, phase1Output, port, shotsDir) {
       `${MAX_SHOTS} pages that best show the change (path without a leading slash, a short label, mobile true or false, and full true when the part that shows your change is below the first screen) - the bridge ` +
       "captures them itself after you finish. Use an empty array if no page shows the change.",
     "",
+    "TEST STEPS: in `testSteps` write 2 to 5 short, plain steps a person can follow on the dev app (localhost:3000) to see " +
+      "that your change works, for example 'Open Profile, switch the app to Hebrew, check the arrows point the other way'. Name the " +
+      "page, say what to click and what they should see. Use an empty array if you did not change anything.",
+    "",
     "You do NOT have git access (no commits, no branches) and no access to npm install or any dev-server control - the " +
       "bridge handles all of that separately after you finish. Just edit files and verify. Output your findings per the " +
       "provided JSON schema.",
@@ -283,12 +297,12 @@ async function fetchQueue() {
 /** Hand the admin something to decide on or review (see the proposal-result route). With
  * strict:false a failure is only logged: a bridge pointed at an app that does not have the route
  * yet must keep working exactly as before. */
-async function reportProposal(ticketId, kind, payload, { strict = false } = {}) {
+async function reportProposal(ticketId, kind, payload, { strict = false, status } = {}) {
   try {
     const res = await fetch(`${DAFFY_BASE_URL}/api/admin/tickets/proposal-result`, {
       method: "POST",
       headers: { "x-ticket-automation-secret": TICKET_SECRET, "Content-Type": "application/json" },
-      body: JSON.stringify({ ticketId, kind, payload }),
+      body: JSON.stringify({ ticketId, kind, payload, status }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status} - ${(await res.text()).slice(0, 200)}`);
   } catch (err) {
@@ -357,6 +371,95 @@ async function mergeBranch(ticketSeq) {
     await runGit(["merge", "--abort"], REPO_PATH).catch(() => {});
     return { ok: false, result: "Merge failed and was undone - nothing was changed. The branch most likely conflicts with newer changes on main, or with uncommitted changes in your dev copy. Merge it by hand: git merge " + branch };
   }
+}
+
+/** "Send back": undo a fix's merge on dev. The merge commit is reverted (a new commit, history is
+ * kept and nothing is pushed) and the old branch is renamed out of the way, so the next night run can
+ * create a fresh auto-fix/tck-<n>. A revert that conflicts is aborted so nothing is left half-done. */
+async function revertMerge(ticketSeq) {
+  if (!Number.isInteger(Number(ticketSeq))) return { ok: false, result: "Invalid ticket number." };
+  const branch = `auto-fix/tck-${Number(ticketSeq)}`;
+  try {
+    const current = await runGit(["branch", "--show-current"], REPO_PATH);
+    if (current !== "main") return { ok: false, result: `The dev repo is on "${current}", not main - nothing was reverted.` };
+    const sha = (await runGit(["log", "main", "--first-parent", "--merges", "--format=%H", "-n", "1", `--grep=^Merge ${branch}$`], REPO_PATH)).trim();
+    if (!sha) return { ok: false, result: `Could not find the merge of ${branch} on main - nothing was reverted. Undo it by hand if needed.` };
+    await runGit(["revert", "-m", "1", "--no-edit", sha], REPO_PATH);
+    const exists = await runGit(["rev-parse", "--verify", "--quiet", branch], REPO_PATH).catch(() => "");
+    if (exists) await runGit(["branch", "-m", branch, `${branch}-reverted-${Date.now()}`], REPO_PATH);
+    return { ok: true, result: `Reverted the merge of ${branch} on dev (not pushed). The ticket goes back to the night run.` };
+  } catch (err) {
+    await runGit(["revert", "--abort"], REPO_PATH).catch(() => {});
+    return { ok: false, result: "Revert failed and was undone - nothing was changed. Later commits on main probably touch the same code, or your dev copy has uncommitted changes. Undo it by hand: git revert -m 1 <merge commit>" };
+  }
+}
+
+/** The gates a fix must pass before the night run merges it into main on dev by itself. Anything
+ * that is not a plain code change (migrations, dependencies, env files, middleware) stays on its
+ * branch for a human, and so does anything that breaks the type check or lint once merged. The
+ * check runs in a throwaway copy of main, so the dev copy is not touched until everything passed.
+ * Returns { merged, reason } - reason is shown to the admin when the fix was NOT merged. */
+async function autoMergeToDev(ticketSeq, files, { force = false } = {}) {
+  if (!AUTO_MERGE_TO_DEV && !force) return { merged: false, reason: null };
+  const branch = `auto-fix/tck-${Number(ticketSeq)}`;
+  const touches = (re) => files.find((file) => re.test(file.replace(/\\/g, "/")));
+  const blocked =
+    (touches(/(^|\/)(db|supabase)\/migrations\//) && "it includes a database migration") ||
+    (touches(/(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$/) && "it changes dependencies") ||
+    (touches(/(^|\/)\.env/) && "it touches an env file") ||
+    (touches(/(^|\/)middleware\.ts$/) && "it touches the middleware");
+  if (blocked) return { merged: false, reason: `Not merged automatically: ${blocked}. Merge it by hand once you have looked.` };
+  try {
+    const current = await runGit(["branch", "--show-current"], REPO_PATH);
+    if (current !== "main") return { merged: false, reason: `Not merged automatically: the dev repo is on "${current}", not main.` };
+    const dirty = await runGit(["status", "--porcelain", "--untracked-files=no"], REPO_PATH);
+    if (dirty) return { merged: false, reason: "Not merged automatically: your dev copy has uncommitted changes." };
+  } catch (err) {
+    return { merged: false, reason: `Not merged automatically: could not read the dev repo (${err.message}).` };
+  }
+
+  const checkDir = path.join(WORKTREE_BASE, `merge-check-${Number(ticketSeq)}-${Date.now()}`);
+  const junctions = [];
+  let failure = null;
+  try {
+    await gitWorktreeAdd(checkDir);
+    try {
+      await runGit(["merge", "--no-ff", "-m", `Merge ${branch}`, branch], checkDir);
+    } catch {
+      failure = "it conflicts with newer changes on main";
+    }
+    if (!failure) {
+      // Reuse the dev repo's installed packages instead of a fresh npm install per ticket.
+      for (const sub of ["", WEB_APP_SUBDIR]) {
+        const source = path.join(REPO_PATH, sub, "node_modules");
+        const target = path.join(checkDir, sub, "node_modules");
+        if (fs.existsSync(source) && !fs.existsSync(target)) {
+          fs.symlinkSync(source, target, "junction");
+          junctions.push(target);
+        }
+      }
+      const webDir = path.join(checkDir, WEB_APP_SUBDIR);
+      await runNpx(["next", "typegen"], webDir, 180000);
+      const tsc = await runNpx(["tsc", "--noEmit"], webDir, 300000);
+      const eslint = await runNpx(["eslint", "."], webDir, 300000);
+      if (!tsc.ok || !eslint.ok) failure = `the merged result fails the checks (type check ok=${tsc.ok}, lint ok=${eslint.ok})`;
+    }
+  } catch (err) {
+    failure = `the check could not run (${err.message})`;
+  } finally {
+    // rmdir (not rm -r) so removing a junction never touches the packages it points at.
+    for (const target of junctions) {
+      try {
+        fs.rmdirSync(target);
+      } catch {
+        /* the worktree removal below will report anything left over */
+      }
+    }
+    await gitWorktreeRemove(checkDir);
+  }
+  if (failure) return { merged: false, reason: `Not merged automatically: ${failure}. The fix stays on its branch.` };
+  const merge = await mergeBranch(ticketSeq);
+  return merge.ok ? { merged: true, reason: null } : { merged: false, reason: `Not merged automatically: ${merge.result}` };
 }
 
 async function reportResult(ticketId, autoHandle, notes, status) {
@@ -572,7 +675,9 @@ function stopDevServer(proc) {
  * a worktree that's about to be deleted. */
 async function verifyAndCommitFix(worktreeDir, ticket, phase2Output) {
   const webDir = path.join(worktreeDir, WEB_APP_SUBDIR);
-  const changedFiles = await runGit(["diff", "--name-only"], worktreeDir);
+  // Stage first so brand-new files count too (a plain `git diff` leaves untracked files out).
+  await runGit(["add", "-A"], worktreeDir);
+  const changedFiles = await runGit(["diff", "--cached", "--name-only"], worktreeDir);
   if (!changedFiles) {
     return { committed: false, branch: null, reason: "Agent reported a fix but no files actually changed." };
   }
@@ -714,7 +819,9 @@ async function processTicket(ticket, budgetTracker) {
     devServerProc = null;
 
     const commitResult = await verifyAndCommitFix(worktreeDir, ticket, phase2.output);
-    const finalAutoHandle = commitResult.committed ? "D" : "P";
+    // Night-run auto-merge: gated, and a no-op while AUTO_MERGE_TO_DEV is off.
+    const mergeResult = commitResult.committed ? await autoMergeToDev(ticket.ticket_seq, commitResult.files || []) : { merged: false, reason: null };
+    const finalAutoHandle = commitResult.committed ? (mergeResult.merged ? "M" : "D") : "P";
     const finalStatus = commitResult.committed ? "fixed" : "in_progress";
     await reportResult(ticket.id, finalAutoHandle, formatPhase2Notes(phase2.output, commitResult), finalStatus);
     if (commitResult.committed) {
@@ -725,10 +832,13 @@ async function processTicket(ticket, budgetTracker) {
         checks: [
           { ok: true, text: "Type check passes (run by the bridge, not taken from the agent)" },
           { ok: true, text: "Lint passes with 0 errors (run by the bridge)" },
+          ...(mergeResult.merged ? [{ ok: true, text: "Merged into dev after type check and lint passed on the merged result" }] : []),
+          ...(mergeResult.reason ? [{ ok: false, text: mergeResult.reason }] : []),
         ],
         verification: phase2.output.testSummary || "",
+        testSteps: phase2.output.testSteps || [],
         shots,
-      });
+      }, { status: mergeResult.merged ? "merged" : undefined });
     } else {
       await reportProposal(ticket.id, "questions", {
         why: [phase2.output.diagnosis, commitResult.reason ? `Not committed: ${commitResult.reason}` : ""].filter(Boolean).join("\n\n"),
@@ -743,6 +853,8 @@ async function processTicket(ticket, budgetTracker) {
       phase2Classification: phase2.output.classification,
       committed: commitResult.committed,
       branch: commitResult.branch,
+      mergedToDev: mergeResult.merged,
+      mergeNote: mergeResult.reason,
     };
   } catch (err) {
     // Deliberately does NOT call reportResult here - auto_handle stays at
@@ -941,11 +1053,12 @@ function readJsonBody(req) {
 }
 
 let analysisInProgress = false;
+let promoteInProgress = false;
 
 const server = http.createServer(async (req, res) => {
-  const known = ["/run", "/analyze", "/merge"];
+  const known = ["/run", "/analyze", "/merge", "/revert", "/promote"];
   if (req.method !== "POST" || !known.includes(req.url)) {
-    return sendJson(res, 404, { error: "Not found. POST /run, /analyze or /merge." });
+    return sendJson(res, 404, { error: "Not found. POST /run, /analyze, /merge, /revert or /promote." });
   }
   if (req.headers["x-bridge-secret"] !== LOCAL_SECRET) {
     return sendJson(res, 401, { error: "Unauthorized." });
@@ -954,11 +1067,59 @@ const server = http.createServer(async (req, res) => {
   if (req.url === "/merge") {
     const body = await readJsonBody(req);
     if (!body || !Number.isInteger(Number(body.ticketSeq))) return sendJson(res, 400, { error: "ticketSeq is required." });
+    // gated:true runs the night run's checks first (used to test them without a real run).
+    if (body.gated === true) {
+      const gated = await autoMergeToDev(body.ticketSeq, Array.isArray(body.files) ? body.files : [], { force: true });
+      return sendJson(res, 200, { ok: gated.merged, result: gated.merged ? "Merged after the gates passed." : gated.reason });
+    }
     return sendJson(res, 200, await mergeBranch(body.ticketSeq));
   }
 
+  if (req.url === "/promote") {
+    const body = await readJsonBody(req);
+    const dryRun = Boolean(body && body.dryRun === true);
+    if (!PROMOTE_ENABLED && !dryRun) return sendJson(res, 200, { ok: false, report: null, result: "Promote is switched off on this bridge (PROMOTE_ENABLED)." });
+    if (!STAGING_PATH) return sendJson(res, 200, { ok: false, report: null, result: "STAGING_PATH is not configured on this bridge." });
+    if (!body || !Array.isArray(body.tickets) || body.tickets.length === 0) return sendJson(res, 400, { error: "tickets is required." });
+    if (promoteInProgress) return sendJson(res, 200, { ok: false, report: null, result: "A promotion is already running." });
+    promoteInProgress = true;
+    const releaseAwake = keepAwake();
+    try {
+      // A night run or an analysis may still be going: wait for it (up to 30 minutes) instead of racing it.
+      for (let waited = 0; (runInProgress || analysisInProgress) && waited < 30 * 60 * 1000; waited += 10000) await new Promise((r) => setTimeout(r, 10000));
+      if (runInProgress || analysisInProgress) return sendJson(res, 200, { ok: false, report: null, result: "A night run or analysis was still running after 30 minutes, so nothing was promoted. Request it again." });
+      const report = await runPromote({
+        tickets: body.tickets,
+        dryRun,
+        cfg: { stagingPath: STAGING_PATH, webSubdir: WEB_APP_SUBDIR, publicUrl: PUBLIC_APP_URL, dbPushScript: path.join(STAGING_PATH, "scripts", "supabase-db-push.ps1") },
+        appCall: async (apiPath, payload) => {
+          const r = await fetch(`${DAFFY_BASE_URL}${apiPath}`, { method: "POST", headers: { "x-ticket-automation-secret": TICKET_SECRET, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+          if (!r.ok) throw new Error(`HTTP ${r.status} - ${(await r.text()).slice(0, 200)}`);
+          return r.json();
+        },
+      });
+      const picked = report.tickets.filter((t) => t.status !== "skipped").length;
+      return sendJson(res, 200, {
+        ok: report.ok,
+        report,
+        result: report.ok ? `Version ${report.version}: ${picked} fix(es) promoted.` : `Promotion stopped: ${(report.steps[report.steps.length - 1] || {}).detail || "see the report"}`,
+      });
+    } catch (err) {
+      return sendJson(res, 500, { error: err.message });
+    } finally {
+      releaseAwake();
+      promoteInProgress = false;
+    }
+  }
+
+  if (req.url === "/revert") {
+    const body = await readJsonBody(req);
+    if (!body || !Number.isInteger(Number(body.ticketSeq))) return sendJson(res, 400, { error: "ticketSeq is required." });
+    return sendJson(res, 200, await revertMerge(body.ticketSeq));
+  }
+
   if (req.url === "/analyze") {
-    if (analysisInProgress) return sendJson(res, 200, { skipped: true, reason: "An analysis is already running." });
+    if (analysisInProgress || promoteInProgress) return sendJson(res, 200, { skipped: true, reason: "An analysis or a promotion is already running." });
     analysisInProgress = true;
     const releaseAwake = keepAwake();
     try {
@@ -973,8 +1134,8 @@ const server = http.createServer(async (req, res) => {
 
   // Two triggers (Windows task + n8n schedule) can overlap; a second batch would
   // re-pick still-queued tickets and fight over the dev-server port.
-  if (runInProgress) {
-    return sendJson(res, 200, { skipped: true, reason: "A batch is already running." });
+  if (runInProgress || promoteInProgress) {
+    return sendJson(res, 200, { skipped: true, reason: "A batch or a promotion is already running." });
   }
   runInProgress = true;
   const releaseAwake = keepAwake();
