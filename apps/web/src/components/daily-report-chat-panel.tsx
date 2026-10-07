@@ -1266,15 +1266,6 @@ export function DailyReportChatPanel({
               before the first message, same as before. */}
           {messages.length === 0 ? (
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              {/* TCK-38: the disclaimer sentence up front, every time a
-                  fresh conversation starts (this whole block resets on New
-                  chat - see confirmClearChat) - not gendered like the rest
-                  of this sentence since it's about Daffy, not the user. */}
-              {tr(
-                locale,
-                "Daffy is an AI companion, not a substitute for professional medical or nutrition advice. ",
-                "דפי היא מלווה מבוססת AI ואינה תחליף לייעוץ רפואי או תזונתי מקצועי. ",
-              )}
               {/* Singular, gender-correct Hebrew (את/אתה + matching verb
                   forms) - see buildInitialMessages' own comment on why the
                   original plural/formal conjugations were wrong here.
@@ -1450,9 +1441,9 @@ export function DailyReportChatPanel({
           </button>
 
           {/* TCK-38's standing disclaimer, now also the short save reminder
-              for every turn after the first (see buildInitialMessages'
-              own comment above, in the same vein, for the fuller one-time
-              version shown before any message exists). Deliberately no
+              for every turn after the first. This footer is the only place
+              the disclaimer appears in this panel - per the admin's request
+              it was removed from the welcome text. Deliberately no
               directional wording ("above"/"below") - which spot in the
               text this reads next to isn't fixed relative to the icon
               once the thread scrolls, so a direction would sometimes be
