@@ -632,7 +632,11 @@ function SubmitButton({ locale, canSubmit }: { locale: AppLocale; canSubmit: boo
     <button
       type="submit"
       disabled={pending || !canSubmit}
-      className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-5 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+      className={`inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold ${
+        !canSubmit && !pending
+          ? "cursor-not-allowed bg-slate-300 text-slate-500 dark:bg-slate-700 dark:text-slate-400"
+          : "bg-teal-700 text-white disabled:cursor-not-allowed disabled:opacity-70 enabled:hover:bg-teal-800 dark:bg-teal-600 dark:enabled:hover:bg-teal-500"
+      }`}
     >
       {pending ? tr(locale, "Saving profile...", "שומר פרופיל...") : tr(locale, "Complete setup", "סיום הגדרה")}
     </button>
@@ -2039,7 +2043,7 @@ export function OnboardingProfileForm({
             {tr(
               effectiveLocale,
               "Last step - right after this, your AI coach will put together your first daily targets.",
-              "השלב האחרון - מיד לאחר מכן, מאמן ה-AI שלכם יכין עבורכם את היעדים היומיים הראשונים.",
+              "השלב האחרון - מיד לאחר מכן, מאמנת ה-AI שלכם תכין עבורכם את היעדים היומיים הראשונים.",
             )}
           </p>
 
@@ -2118,7 +2122,7 @@ export function OnboardingProfileForm({
               placeholder={tr(
                 effectiveLocale,
                 "Tell us anything else your AI coach should consider (allergies, sleep, constraints).",
-                "שתפו כל מידע נוסף שהמאמן הדיגיטלי צריך לדעת (אלרגיות, שינה, מגבלות).",
+                "שתפו כל מידע נוסף שהמאמנת הדיגיטלית צריכה לדעת (אלרגיות, שינה, מגבלות).",
               )}
               className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("additional_information")}`}
             />
@@ -2220,7 +2224,7 @@ export function OnboardingProfileForm({
             {tr(
               effectiveLocale,
               "A recent lab result or report helps your AI coach factor in things like blood markers. This uploads and processes on its own - feel free to keep going without waiting for it.",
-              "תוצאת בדיקת מעבדה או דוח רפואי עדכני עוזרים למאמן ה-AI שלכם לקחת בחשבון דברים כמו סמנים בדם. ההעלאה והעיבוד מתבצעים באופן עצמאי - אפשר להמשיך הלאה בלי להמתין.",
+              "תוצאת בדיקת מעבדה או דוח רפואי עדכני עוזרים למאמנת ה-AI שלכם לקחת בחשבון דברים כמו סמנים בדם. ההעלאה והעיבוד מתבצעים באופן עצמאי - אפשר להמשיך הלאה בלי להמתין.",
             )}
           </p>
           <DocumentUploadForm locale={effectiveLocale} />

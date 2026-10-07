@@ -1403,14 +1403,14 @@ export function computeProfileDiff(before: ProfileForTargets, after: ProfileForT
   addIfChanged(
     "Medical condition details",
     "פרטי מצב רפואי",
-    before.medical_conditions_details ?? tr(locale, "None", "ללא"),
-    after.medical_conditions_details ?? tr(locale, "None", "ללא"),
+    before.medical_conditions_details?.trim() ? before.medical_conditions_details : tr(locale, "None", "ללא"),
+    after.medical_conditions_details?.trim() ? after.medical_conditions_details : tr(locale, "None", "ללא"),
   );
   addIfChanged(
     "Medications",
     "תרופות",
-    before.regular_medications_details ?? tr(locale, "None", "ללא"),
-    after.regular_medications_details ?? tr(locale, "None", "ללא"),
+    before.regular_medications_details?.trim() ? before.regular_medications_details : tr(locale, "None", "ללא"),
+    after.regular_medications_details?.trim() ? after.regular_medications_details : tr(locale, "None", "ללא"),
   );
   addIfChanged("Allergies", "אלרגיות", joinedOrNone(before.allergies, locale), joinedOrNone(after.allergies, locale));
   addIfChanged(
@@ -1533,6 +1533,6 @@ export function evaluateCustomTargetQuickApplySafety(
   return tr(
     locale,
     `A target of ${formatNumberForLocale(value, locale, { maximumFractionDigits: 1 })} ${range.labelEn} is outside a plausible range for that goal. This wasn't applied automatically - please review it with the AI coach.`,
-    `יעד של ${formatNumberForLocale(value, locale, { maximumFractionDigits: 1 })} ${range.labelHe} חורג מטווח סביר עבור יעד מסוג זה. השינוי לא הוחל אוטומטית - נא לבדוק זאת עם מאמן ה-AI.`,
+    `יעד של ${formatNumberForLocale(value, locale, { maximumFractionDigits: 1 })} ${range.labelHe} חורג מטווח סביר עבור יעד מסוג זה. השינוי לא הוחל אוטומטית - נא לבדוק זאת עם מאמנת ה-AI.`,
   );
 }

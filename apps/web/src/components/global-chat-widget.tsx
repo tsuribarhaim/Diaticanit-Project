@@ -11,6 +11,7 @@ import { routeChatMessageAction, type ChatRouterResult } from "@/app/app/chat/ac
 import { submitTicketFromChatAction } from "@/app/app/tickets/chat-actions";
 import { SAVE_TOAST_DURATION_MS } from "@/components/daily-report-form";
 import { DailyReportSuccessToast } from "@/components/daily-report-success-toast";
+import { formatProfileDiffText, ProfileDiffValue } from "@/components/profile-diff-value";
 import { SavedListQuickPicker } from "@/components/saved-list-quick-picker";
 import { formatDefaultItemName, formatDefaultUnit, formatTicketArea, formatTicketPriority, formatTicketType, tr, trGendered, type AppLocale } from "@/lib/locale";
 import type { ChatDomain } from "@/lib/ai/chat-router";
@@ -187,6 +188,30 @@ export function GlobalChatWidget({
   // chat is actually opened - see targets-page-client.tsx's own former
   // comment on this (identical reasoning, just no longer Targets-specific).
   const [hasShownReviewPrompt, setHasShownReviewPrompt] = useState(false);
+
+  // Ticket #70: the server recomputes the reminder flag on every
+  // target-feeding profile write (see lib/targets-review-flag.ts), so the
+  // prop can change - or clear - while a reminder citing the old values is
+  // still sitting unanswered in this chat. Drop such a stale reminder and
+  // let the next chat open inject a fresh one with the current values (if
+  // any). Done while rendering on a prop change rather than in an effect
+  // (react-hooks/set-state-in-effect). Answered reminders are left alone.
+  const reviewChangesKey = JSON.stringify(pendingReviewChanges ?? null);
+  const [previousReviewChangesKey, setPreviousReviewChangesKey] = useState(reviewChangesKey);
+  if (reviewChangesKey !== previousReviewChangesKey) {
+    setPreviousReviewChangesKey(reviewChangesKey);
+    const isStaleReviewPrompt = (message: ChatMessage) =>
+      message.reviewPrompt?.status === "pending" && JSON.stringify(message.reviewPrompt.changes) !== reviewChangesKey;
+    if (messages.some(isStaleReviewPrompt)) {
+      setMessages((previous) => previous.filter((message) => !isStaleReviewPrompt(message)));
+      setHasShownReviewPrompt(false);
+    }
+    if (pendingReviewChanges) {
+      setHasUnread(true);
+    } else if (!pendingClarification) {
+      setHasUnread(false);
+    }
+  }
 
   if (pathname?.startsWith("/app/daily-report") || pathname?.startsWith("/app/onboarding")) {
     return null;
@@ -556,7 +581,7 @@ export function GlobalChatWidget({
           if (!hasShownReviewPrompt && pendingReviewChanges && pendingReviewChanges.length > 0) {
             setHasShownReviewPrompt(true);
             const summary = pendingReviewChanges
-              .map((row) => `${tr(locale, row.labelEn, row.labelHe)} (${row.before} → ${row.after})`)
+              .map((row) => formatProfileDiffText(row, locale))
               .join(", ");
             setMessages((previous) => [
               ...previous,
@@ -599,20 +624,12 @@ export function GlobalChatWidget({
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" /></svg>
             </span>
             <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-              {tr(locale, "Chat with Daffy — your AI coach", "צ'אט עם Daffy - מאמן ה-AI שלך")}
+              {tr(locale, "Chat with Daffy — your AI coach", "צ'אט עם Daffy - מאמנת ה-AI שלך")}
             </p>
           </div>
           <div className="min-h-[6rem] flex-1 space-y-2.5 overflow-y-auto p-3">
             {messages.length === 0 ? (
               <p className="text-sm text-slate-500 dark:text-slate-400">
-                {/* TCK-38: not gendered like the rest of this sentence -
-                    it's about Daffy, not the user. Resets with the rest of
-                    this empty state whenever the conversation clears. */}
-                {tr(
-                  locale,
-                  "Daffy is an AI companion, not a substitute for professional medical or nutrition advice. ",
-                  "דפי היא מלווה מבוססת AI ואינה תחליף לייעוץ רפואי או תזונתי מקצועי. ",
-                )}
                 {trGendered(
                   locale,
                   userGender,
@@ -678,20 +695,11 @@ export function GlobalChatWidget({
                       {message.pendingProfileChange.diffRows.map((row, rowIndex) => (
                         <div key={rowIndex} className="flex flex-wrap items-baseline gap-x-1">
                           <span className="font-medium">{tr(locale, row.labelEn, row.labelHe)}:</span>
-                          {/* Separate flex items, not one dir="ltr" text run mixing
-                              Hebrew words with the arrow - a single run reorders
-                              under the browser's own bidi algorithm regardless of
-                              dir (reported as "arrow direction reversed" - e.g.
-                              allergies going from None to Penicillin displayed
-                              backwards), the same bug already found and fixed this
-                              same way for the gained/burned calorie display. Flex
-                              item position is decided by DOM order, which bidi
-                              text reordering cannot touch. */}
-                          <div dir="ltr" className="flex flex-wrap items-baseline gap-x-1">
-                            <span>{row.before}</span>
-                            <span aria-hidden="true">→</span>
-                            <span>{row.after}</span>
-                          </div>
+                          {/* TCK-18: before/after follows the page direction (in
+                              Hebrew "ללא ← פניצילין") as separate flex items - see
+                              ProfileDiffValue. The earlier dir="ltr" wrapper made
+                              Hebrew read backwards. */}
+                          <ProfileDiffValue before={row.before} after={row.after} locale={locale} />
                         </div>
                       ))}
                     </div>
@@ -868,15 +876,18 @@ export function GlobalChatWidget({
               type="button"
               onClick={() => void handleSendMessage()}
               disabled={isSending || !chatInput.trim()}
-              className="shrink-0 rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+              className={`shrink-0 rounded-xl px-4 py-2 text-sm font-semibold ${
+                !chatInput.trim() && !isSending
+                  ? "cursor-not-allowed bg-slate-300 text-slate-500 dark:bg-slate-700 dark:text-slate-400"
+                  : "bg-teal-700 text-white disabled:cursor-not-allowed disabled:opacity-70 enabled:hover:bg-teal-800 dark:bg-teal-600 dark:enabled:hover:bg-teal-500"
+              }`}
             >
               {tr(locale, "Send", "שליחה")}
             </button>
           </div>
 
-          {/* TCK-38: always visible while this widget is open, not just on
-              a fresh chat like the paragraph above - the short standing
-              form of the same disclaimer, same spot AI chat products
+          {/* TCK-38: the only place the disclaimer is shown, always visible
+              while this widget is open - same spot AI chat products
               commonly put "AI can make mistakes". */}
           <p className="border-t border-slate-200 px-3 py-1.5 text-center text-[11px] text-slate-400 dark:border-slate-800 dark:text-slate-500">
             {tr(

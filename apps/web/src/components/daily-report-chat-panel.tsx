@@ -1266,15 +1266,6 @@ export function DailyReportChatPanel({
               before the first message, same as before. */}
           {messages.length === 0 ? (
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              {/* TCK-38: the disclaimer sentence up front, every time a
-                  fresh conversation starts (this whole block resets on New
-                  chat - see confirmClearChat) - not gendered like the rest
-                  of this sentence since it's about Daffy, not the user. */}
-              {tr(
-                locale,
-                "Daffy is an AI companion, not a substitute for professional medical or nutrition advice. ",
-                "דפי היא מלווה מבוססת AI ואינה תחליף לייעוץ רפואי או תזונתי מקצועי. ",
-              )}
               {/* Singular, gender-correct Hebrew (את/אתה + matching verb
                   forms) - see buildInitialMessages' own comment on why the
                   original plural/formal conjugations were wrong here.
@@ -1444,15 +1435,19 @@ export function DailyReportChatPanel({
             disabled={isStreaming || !inputValue.trim()}
             onClick={() => void sendMessage(inputValue)}
             onMouseDown={(event) => event.preventDefault()}
-            className="flex w-full items-center justify-center rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+            className={`flex w-full items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold ${
+              !isStreaming && !inputValue.trim()
+                ? "cursor-not-allowed bg-slate-300 text-slate-500 dark:bg-slate-700 dark:text-slate-400"
+                : "bg-teal-700 text-white disabled:cursor-not-allowed disabled:opacity-70 enabled:hover:bg-teal-800 dark:bg-teal-600 dark:enabled:hover:bg-teal-500"
+            }`}
           >
             {isStreaming ? <Spinner className="h-4 w-4 animate-spin" /> : tr(locale, "Send", "שליחה")}
           </button>
 
           {/* TCK-38's standing disclaimer, now also the short save reminder
-              for every turn after the first (see buildInitialMessages'
-              own comment above, in the same vein, for the fuller one-time
-              version shown before any message exists). Deliberately no
+              for every turn after the first. This footer is the only place
+              the disclaimer appears in this panel - per the admin's request
+              it was removed from the welcome text. Deliberately no
               directional wording ("above"/"below") - which spot in the
               text this reads next to isn't fixed relative to the icon
               once the thread scrolls, so a direction would sometimes be

@@ -240,14 +240,14 @@ function OverviewView({ locale, range, overview }: { locale: AppLocale; range: H
       </div>
 
       <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "✨ AI Coach", "✨ מאמן AI")}</p>
+        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "✨ AI Coach", "✨ מאמנת AI")}</p>
         {overview.coachNarrative ? (
           <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-slate-700 dark:text-slate-300">{overview.coachNarrative}</p>
         ) : (
           <p className="mt-3 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600 dark:border-slate-700 dark:text-slate-400">
             {!overview.aiCoachConfigured
-              ? tr(locale, "AI Coach is not available in this environment.", "מאמן ה-AI אינו זמין בסביבה זו.")
-              : tr(locale, "The AI Coach couldn't generate a summary right now. Try again later.", "מאמן ה-AI לא הצליח ליצור סיכום כרגע. נסו שוב מאוחר יותר.")}
+              ? tr(locale, "AI Coach is not available in this environment.", "מאמנת ה-AI אינה זמינה בסביבה זו.")
+              : tr(locale, "The AI Coach couldn't generate a summary right now. Try again later.", "מאמנת ה-AI לא הצליחה ליצור סיכום כרגע. נסו שוב מאוחר יותר.")}
           </p>
         )}
       </div>

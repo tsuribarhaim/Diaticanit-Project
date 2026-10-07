@@ -28,6 +28,7 @@ import { buildBmiWarningMessage } from "@/lib/bmi";
 import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
+import { resyncTargetsReviewFlag } from "@/lib/targets-review-flag";
 import { computeProfileDiff, normalizeUserTargetsJson, parseProfileSnapshot, type ProfileDiffRow, type ProfileForTargets } from "@/lib/targets";
 
 export type DailyReportActionState = {
@@ -165,6 +166,7 @@ function buildDailyReportRedirectPath(params: { notice?: string; error?: string;
 async function resyncProfileWeightFromReports(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
+  locale: AppLocale,
 ): Promise<number | null> {
   const { data: latest } = await supabase
     .from("user_daily_reports")
@@ -199,6 +201,10 @@ async function resyncProfileWeightFromReports(
     });
     return null;
   }
+
+  // weight_kg feeds targets - keep Daffy's "your profile changed" reminder
+  // in sync with it (ticket #70).
+  await resyncTargetsReviewFlag(supabase, userId, locale);
 
   return latestWeightKg;
 }
@@ -1134,7 +1140,7 @@ export async function saveDailyReportAction(
   let bmiWarning: string | undefined;
 
   if ((reportedWeightKg !== null || isEditing) && !reportedWeightNotPersisted) {
-    const syncedWeightKg = await resyncProfileWeightFromReports(supabase, user.id);
+    const syncedWeightKg = await resyncProfileWeightFromReports(supabase, user.id, locale);
 
     // Only surface BMI/targets-stale messaging when this save's own weight
     // is what's now actually current - editing an older entry's weight
@@ -1268,7 +1274,8 @@ export async function deleteDailyReportAction(formData: FormData): Promise<void>
   }
 
   if (deletedReport?.reported_weight_kg != null) {
-    await resyncProfileWeightFromReports(supabase, user.id);
+    const locale = await resolveDailyReportLocale(supabase, user.id);
+    await resyncProfileWeightFromReports(supabase, user.id, locale);
   }
 
   revalidatePath("/app/daily-report");
@@ -1796,7 +1803,7 @@ export async function adjustDailyReportItemQuantitiesAction(formData: FormData):
     // for the explicit "Delete entry" button. Best-effort: a failure here
     // shouldn't undo the deletion that already succeeded.
     if (reportRow.reported_weight_kg != null) {
-      await resyncProfileWeightFromReports(supabase, user.id);
+      await resyncProfileWeightFromReports(supabase, user.id, locale);
     }
 
     revalidatePath("/app/daily-report");
@@ -1888,7 +1895,7 @@ export async function adjustDailyReportItemQuantitiesAction(formData: FormData):
   // a genuinely more recent weigh-in. Best-effort, after the write already
   // succeeded.
   if (weightChanged) {
-    await resyncProfileWeightFromReports(supabase, user.id);
+    await resyncProfileWeightFromReports(supabase, user.id, locale);
   }
 
   revalidatePath("/app/daily-report");

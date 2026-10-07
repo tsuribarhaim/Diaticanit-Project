@@ -23,7 +23,11 @@ function SaveButton({ locale, disabled, isDraft }: { locale: AppLocale; disabled
       name="intent"
       value="save"
       disabled={pending || disabled}
-      className="flex-1 rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+      className={`flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold ${
+        disabled && !pending
+          ? "cursor-not-allowed bg-slate-300 text-slate-500 dark:bg-slate-700 dark:text-slate-400"
+          : "bg-teal-700 text-white disabled:cursor-not-allowed disabled:opacity-60 enabled:hover:bg-teal-800 dark:bg-teal-600 dark:enabled:hover:bg-teal-500"
+      }`}
     >
       {pending ? tr(locale, "Saving...", "שומר...") : isDraft ? tr(locale, "Save", "שמירה") : tr(locale, "Save changes", "שמירת שינויים")}
     </button>

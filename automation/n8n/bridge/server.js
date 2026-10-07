@@ -894,6 +894,30 @@ fs.mkdirSync(WORKTREE_BASE, { recursive: true });
 
 let runInProgress = false;
 
+/** While a long run is going, ask Windows not to sleep (SetThreadExecutionState - the call video players use).
+ * Overnight nobody touches the laptop, and a sleep in the middle of a run would freeze everything. A hidden
+ * PowerShell child holds the request and is killed when the run ends; if it cannot start, the run just goes
+ * ahead without it. Returns the function that releases it. */
+function keepAwake() {
+  if (process.platform !== "win32") return () => {};
+  try {
+    const script =
+      "Add-Type -Namespace W -Name P -MemberDefinition '[DllImport(\"kernel32.dll\")] public static extern uint SetThreadExecutionState(uint f);'; " +
+      "[W.P]::SetThreadExecutionState([uint32]2147483649) | Out-Null; while ($true) { Start-Sleep -Seconds 30 }";
+    const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script], { stdio: "ignore", windowsHide: true });
+    child.on("error", () => {});
+    return () => {
+      try {
+        child.kill();
+      } catch {
+        // already gone
+      }
+    };
+  } catch {
+    return () => {};
+  }
+}
+
 function sendJson(res, status, body) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(body));
@@ -936,11 +960,13 @@ const server = http.createServer(async (req, res) => {
   if (req.url === "/analyze") {
     if (analysisInProgress) return sendJson(res, 200, { skipped: true, reason: "An analysis is already running." });
     analysisInProgress = true;
+    const releaseAwake = keepAwake();
     try {
       return sendJson(res, 200, await runAnalysis());
     } catch (err) {
       return sendJson(res, 500, { error: err.message });
     } finally {
+      releaseAwake();
       analysisInProgress = false;
     }
   }
@@ -951,11 +977,13 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, { skipped: true, reason: "A batch is already running." });
   }
   runInProgress = true;
+  const releaseAwake = keepAwake();
   try {
     return sendJson(res, 200, await runAll());
   } catch (err) {
     return sendJson(res, 500, { error: err.message });
   } finally {
+    releaseAwake();
     runInProgress = false;
   }
 });

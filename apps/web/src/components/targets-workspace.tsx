@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 
 import { dismissProfileChangeAction, generateTargetsAction, lockTargetsAction, type TargetsActionState } from "@/app/app/targets/actions";
 import { TargetsSectionTabs, type TargetsHistoryInfo } from "@/components/targets-section-tabs";
+import { ProfileDiffValue } from "@/components/profile-diff-value";
 import { TargetsDiffTable } from "@/components/targets-diff-table";
 import { useUnsavedPreview } from "@/components/unsaved-preview-context";
 import { tr, type AppLocale } from "@/lib/locale";
@@ -174,7 +175,7 @@ export function TargetsWorkspace({
           <ul className="mt-2 space-y-1 text-sm text-amber-800 dark:text-amber-400">
             {profileChanges.map((row) => (
               <li key={row.labelEn}>
-                <span className="font-medium">{tr(locale, row.labelEn, row.labelHe)}:</span> {row.before} → {row.after}
+                <span className="font-medium">{tr(locale, row.labelEn, row.labelHe)}:</span> <ProfileDiffValue before={row.before} after={row.after} locale={locale} />
               </li>
             ))}
           </ul>

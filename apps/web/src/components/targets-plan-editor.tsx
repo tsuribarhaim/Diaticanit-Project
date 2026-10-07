@@ -199,7 +199,7 @@ function BannerView({
           {tr(
             locale,
             "Want Daffy to check what this changes elsewhere in your plan?",
-            "רוצה ש-Daffy יבדוק מה זה משנה בשאר התכנית?",
+            "רוצה ש-Daffy תבדוק מה זה משנה בשאר התכנית?",
           )}
         </p>
         <div className="mt-2 flex gap-2">
@@ -408,27 +408,28 @@ export function TargetsPlanEditor({
           <td className="px-4 py-2 font-medium text-slate-800 dark:text-slate-200">
             <span className="inline-flex items-center gap-1.5">{label}</span>
           </td>
-          <td className="px-4 py-2 text-end font-bold text-teal-800 dark:text-teal-300">
-            <span className="flex w-full items-center justify-end gap-1">
-              <EditableValue
-                state={state}
-                locale={locale}
-                value={value}
-                unit={formatMeasurementUnit(unit, locale)}
-                decimals={decimals}
-                variant="row"
-                onStartEdit={() => startEdit(key, value)}
-                onDraftChange={(draft) => patchState(key, { draft })}
-                onConfirm={() => void confirmEdit(key, field, decimals)}
-                onCancel={() => cancelEdit(key)}
-              />
-              <span className="text-xs font-normal text-slate-500">{formatMeasurementUnit(unit, locale)}</span>
-            </span>
+          {/* Physical text-right on purpose (see the nutrient rows below). */}
+          <td className="w-px whitespace-nowrap py-2 ps-4 pe-1 text-right font-bold text-teal-800 dark:text-teal-300">
+            <EditableValue
+              state={state}
+              locale={locale}
+              value={value}
+              unit={formatMeasurementUnit(unit, locale)}
+              decimals={decimals}
+              variant="row"
+              onStartEdit={() => startEdit(key, value)}
+              onDraftChange={(draft) => patchState(key, { draft })}
+              onConfirm={() => void confirmEdit(key, field, decimals)}
+              onCancel={() => cancelEdit(key)}
+            />
+          </td>
+          <td className="w-px whitespace-nowrap py-2 ps-1 pe-4 text-start text-xs font-normal text-slate-500">
+            {formatMeasurementUnit(unit, locale)}
           </td>
         </tr>
         {state.banner ? (
           <tr>
-            <td colSpan={2} className="px-4 pb-3">
+            <td colSpan={3} className="px-4 pb-3">
               <BannerView
                 banner={state.banner}
                 locale={locale}
@@ -454,7 +455,7 @@ export function TargetsPlanEditor({
         <table className="w-full text-sm">
           <tbody>
             <tr>
-              <td colSpan={2} className={`${sectionRowClassName} border-t-0`}>
+              <td colSpan={3} className={`${sectionRowClassName} border-t-0`}>
                 {tr(locale, "Personal targets", "יעדים אישיים")}
               </td>
             </tr>
@@ -463,7 +464,7 @@ export function TargetsPlanEditor({
             {standingRow("steps", { kind: "steps" }, stepsLabel, parseNumericOrNull(stepsEntry?.value), "steps", 0)}
 
             <tr>
-              <td colSpan={2} className={sectionRowClassName}>
+              <td colSpan={3} className={sectionRowClassName}>
                 {tr(locale, "Daily nutrition targets", "יעדי תזונה יומיים")}
               </td>
             </tr>
@@ -477,7 +478,7 @@ export function TargetsPlanEditor({
                 text-end and needed no change. */}
             <tr className="text-start text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
               <td className="px-4 py-2">{tr(locale, "Nutrient", "רכיב תזונתי")}</td>
-              <td className="px-4 py-2 text-end">{tr(locale, "Target", "יעד")}</td>
+              <td colSpan={2} className="px-4 py-2 text-end">{tr(locale, "Target", "יעד")}</td>
             </tr>
             {ORDERED_NUTRIENT_FIELDS.map((field) => {
               const min = payload[field.minKey] as number;
@@ -532,39 +533,33 @@ export function TargetsPlanEditor({
                         <span className="inline-flex items-center gap-1.5">{tr(locale, field.labelEn, field.labelHe)}</span>
                       )}
                     </td>
-                    <td className="px-4 py-2 text-end font-bold text-teal-800 dark:text-teal-300">
-                      {/* TCK-64: block-level flex with an explicit
-                          justify-end, not inline-flex relying on the td's
-                          own text-end - an inline-flex box here sat flush
-                          against the cell's LEFT edge regardless of content
-                          width (confirmed live via getBoundingClientRect:
-                          every row's left edge landed at the same x, while
-                          the right edge - where the actual digits are -
-                          drifted per row's own digit count), so numbers
-                          across rows never lined up into a real column.
-                          w-full + justify-end pins the whole cluster to the
-                          cell's right edge explicitly, independent of
-                          whatever text-align inside a table cell was doing. */}
-                      <span className="flex w-full items-center justify-end gap-1">
-                        <EditableValue
-                          state={state}
-                          locale={locale}
-                          value={singleValue}
-                          unit={formatMeasurementUnit(field.unit, locale)}
-                          decimals={0}
-                          variant="row"
-                          onStartEdit={() => startEdit(fieldKey, singleValue)}
-                          onDraftChange={(draft) => patchState(fieldKey, { draft })}
-                          onConfirm={() => void confirmEdit(fieldKey, fieldRef, 0)}
-                          onCancel={() => cancelEdit(fieldKey)}
-                        />
-                        <span className="text-xs font-normal text-slate-500">{formatMeasurementUnit(field.unit, locale)}</span>
-                      </span>
+                    {/* TCK-64: number and unit are separate columns, so a
+                        unit's width (מ"ל vs מק"ג vs צעדים) can't shift its
+                        number. Physical text-right, not text-end: digits are
+                        always LTR, so the ones digit must sit on the physical
+                        right in both Hebrew and English (text-end/justify-end
+                        mean the LEFT edge in RTL). */}
+                    <td className="w-px whitespace-nowrap py-2 ps-4 pe-1 text-right font-bold text-teal-800 dark:text-teal-300">
+                      <EditableValue
+                        state={state}
+                        locale={locale}
+                        value={singleValue}
+                        unit={formatMeasurementUnit(field.unit, locale)}
+                        decimals={0}
+                        variant="row"
+                        onStartEdit={() => startEdit(fieldKey, singleValue)}
+                        onDraftChange={(draft) => patchState(fieldKey, { draft })}
+                        onConfirm={() => void confirmEdit(fieldKey, fieldRef, 0)}
+                        onCancel={() => cancelEdit(fieldKey)}
+                      />
+                    </td>
+                    <td className="w-px whitespace-nowrap py-2 ps-1 pe-4 text-start text-xs font-normal text-slate-500">
+                      {formatMeasurementUnit(field.unit, locale)}
                     </td>
                   </tr>
                   {state.banner ? (
                     <tr>
-                      <td colSpan={2} className="px-4 pb-3">
+                      <td colSpan={3} className="px-4 pb-3">
                         <BannerView
                           banner={state.banner}
                           locale={locale}

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { ProfileDiffValue } from "@/components/profile-diff-value";
 import { tr, type AppLocale } from "@/lib/locale";
 import type { ProfileDiffRow } from "@/lib/targets";
 
@@ -88,7 +89,7 @@ export function TargetsStaleModal({
           <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto text-sm text-slate-700 dark:text-slate-300">
             {changes.map((row) => (
               <li key={row.labelEn}>
-                <span className="font-medium">{tr(locale, row.labelEn, row.labelHe)}:</span> {row.before} → {row.after}
+                <span className="font-medium">{tr(locale, row.labelEn, row.labelHe)}:</span> <ProfileDiffValue before={row.before} after={row.after} locale={locale} />
               </li>
             ))}
           </ul>
