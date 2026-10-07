@@ -1533,6 +1533,6 @@ export function evaluateCustomTargetQuickApplySafety(
   return tr(
     locale,
     `A target of ${formatNumberForLocale(value, locale, { maximumFractionDigits: 1 })} ${range.labelEn} is outside a plausible range for that goal. This wasn't applied automatically - please review it with the AI coach.`,
-    `יעד של ${formatNumberForLocale(value, locale, { maximumFractionDigits: 1 })} ${range.labelHe} חורג מטווח סביר עבור יעד מסוג זה. השינוי לא הוחל אוטומטית - נא לבדוק זאת עם מאמן ה-AI.`,
+    `יעד של ${formatNumberForLocale(value, locale, { maximumFractionDigits: 1 })} ${range.labelHe} חורג מטווח סביר עבור יעד מסוג זה. השינוי לא הוחל אוטומטית - נא לבדוק זאת עם מאמנת ה-AI.`,
   );
 }

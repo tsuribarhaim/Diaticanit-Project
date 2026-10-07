@@ -2039,7 +2039,7 @@ export function OnboardingProfileForm({
             {tr(
               effectiveLocale,
               "Last step - right after this, your AI coach will put together your first daily targets.",
-              "השלב האחרון - מיד לאחר מכן, מאמן ה-AI שלכם יכין עבורכם את היעדים היומיים הראשונים.",
+              "השלב האחרון - מיד לאחר מכן, מאמנת ה-AI שלכם תכין עבורכם את היעדים היומיים הראשונים.",
             )}
           </p>
 
@@ -2118,7 +2118,7 @@ export function OnboardingProfileForm({
               placeholder={tr(
                 effectiveLocale,
                 "Tell us anything else your AI coach should consider (allergies, sleep, constraints).",
-                "שתפו כל מידע נוסף שהמאמן הדיגיטלי צריך לדעת (אלרגיות, שינה, מגבלות).",
+                "שתפו כל מידע נוסף שהמאמנת הדיגיטלית צריכה לדעת (אלרגיות, שינה, מגבלות).",
               )}
               className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("additional_information")}`}
             />
@@ -2220,7 +2220,7 @@ export function OnboardingProfileForm({
             {tr(
               effectiveLocale,
               "A recent lab result or report helps your AI coach factor in things like blood markers. This uploads and processes on its own - feel free to keep going without waiting for it.",
-              "תוצאת בדיקת מעבדה או דוח רפואי עדכני עוזרים למאמן ה-AI שלכם לקחת בחשבון דברים כמו סמנים בדם. ההעלאה והעיבוד מתבצעים באופן עצמאי - אפשר להמשיך הלאה בלי להמתין.",
+              "תוצאת בדיקת מעבדה או דוח רפואי עדכני עוזרים למאמנת ה-AI שלכם לקחת בחשבון דברים כמו סמנים בדם. ההעלאה והעיבוד מתבצעים באופן עצמאי - אפשר להמשיך הלאה בלי להמתין.",
             )}
           </p>
           <DocumentUploadForm locale={effectiveLocale} />

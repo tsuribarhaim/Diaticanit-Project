@@ -199,7 +199,7 @@ function BannerView({
           {tr(
             locale,
             "Want Daffy to check what this changes elsewhere in your plan?",
-            "רוצה ש-Daffy יבדוק מה זה משנה בשאר התכנית?",
+            "רוצה ש-Daffy תבדוק מה זה משנה בשאר התכנית?",
           )}
         </p>
         <div className="mt-2 flex gap-2">
