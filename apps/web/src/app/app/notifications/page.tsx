@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import { LocalDateTime } from "@/components/local-time";
 import { MarkAllNotificationsReadButton } from "@/components/mark-all-notifications-read-button";
 import { MarkNotificationReadButton } from "@/components/mark-notification-read-button";
-import { listNotifications, markAllNotificationsRead } from "@/lib/notifications";
+import { NotificationsCloseButton } from "@/components/notifications-close-button";
+import { listNotifications } from "@/lib/notifications";
 import { normalizeLocale, tr } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 
@@ -18,9 +19,9 @@ export const dynamic = "force-dynamic";
  * concern links back into the Targets page with itself marked read on
  * arrival (see targets/page.tsx's own ?concern=/?viewed= handling).
  *
- * Ticket #77: added a back link (this page has no natural "parent" list
- * the way e.g. a ticket detail page does, so it goes to Home rather than
- * a specific section) and a "mark all as read" bulk action, and reworded
+ * Ticket #77: added a round close (x) in the title row that closes back to
+ * the previous screen (Daily Report if there's no history), and a "mark
+ * all as read" bulk action, and reworded
  * the intro below - this list already carries more than AI-flagged
  * concerns (ticket status updates too), and is expected to carry periodic
  * report insights soon, so "concerns your AI coach flagged" undersold what
@@ -42,32 +43,19 @@ export default async function NotificationsPage() {
   const notifications = await listNotifications({ supabase, userId: user.id });
   const hasUnread = notifications.some((notification) => !notification.read_at);
 
-  // TCK-96: "entered the note" is itself enough to count as read now, not
-  // just an explicit tap - this render still shows every row's PRE-mark
-  // state (notifications was already fetched above), so nothing here looks
-  // different on this exact load; it only changes what the nav badge (and
-  // this page) shows the NEXT time. Done as a plain write rather than a
-  // Server Action - revalidateNavChrome()/revalidatePath are restricted to
-  // Server Actions and Route Handlers, but nav-chrome's own cache already
-  // tolerates up to 10s staleness by design, which comfortably covers a
-  // user reading this page for longer than that before navigating away.
-  if (hasUnread) {
-    await markAllNotificationsRead({ supabase, userId: user.id });
-  }
+  // TCK-77 reverses TCK-96's mark-on-open - otherwise the "Mark all as read"
+  // button never has anything to act on. Reading is now explicit: "Mark all
+  // as read", a per-row mark, or opening the item (Targets ?concern=/?viewed=,
+  // ticket page), which already mark it read on arrival.
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-10">
-      <div className="mb-4">
-        {/* TCK-22: Daily Report, not the unlinked Home dashboard, is where
-            every other back/default link in the app points now. */}
-        <Link href="/app/daily-report" className="text-sm font-semibold text-teal-700 dark:text-teal-400">
-          {tr(locale, "← Daily Report", "← דיווח יומי")}
-        </Link>
-      </div>
-
       <div className="flex flex-wrap items-start justify-between gap-3">
         <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">{tr(locale, "Notifications", "התראות")}</h1>
-        {hasUnread ? <MarkAllNotificationsReadButton locale={locale} /> : null}
+        <div className="flex items-center gap-2">
+          {hasUnread ? <MarkAllNotificationsReadButton locale={locale} /> : null}
+          <NotificationsCloseButton locale={locale} />
+        </div>
       </div>
       <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
         {tr(
