@@ -1,8 +1,9 @@
 import type { AiExtractionConfig } from "@/lib/ai/env";
 import { ASSISTANT_PERSONA_INSTRUCTIONS } from "@/lib/ai/persona";
 import { streamAiChatCompletion } from "@/lib/ai/provider-client";
-import type { DailyReportMetrics, TodaysLoggedItems } from "@/lib/daily-report";
+import type { DailyReportMetrics, RecentDaysLoggedFoodItems, TodaysLoggedItems } from "@/lib/daily-report";
 import type { AppLocale } from "@/lib/locale";
+import { addDaysToDateString } from "@/lib/timezone";
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
@@ -125,9 +126,7 @@ function buildTodaysLoggedItemsSummary(items: TodaysLoggedItems): string {
   const lines: string[] = [];
 
   for (const item of items.foodItems) {
-    lines.push(
-      `- ${item.name} (${item.quantity} ${item.unit}): ${item.caloriesKcal} kcal, protein ${item.proteinG}g, carbs ${item.carbsG}g, fat ${item.fatG}g, fiber ${item.fiberG}g, added sugar ${item.addedSugarG}g, sodium ${item.sodiumMg}mg, water ${item.waterMl}ml, sat fat ${item.satFatG}g, magnesium ${item.magnesiumMg}mg, potassium ${item.potassiumMg}mg, calcium ${item.calciumMg}mg, iron ${item.ironMg}mg, zinc ${item.zincMg}mg, vit C ${item.vitCMg}mg, vit B12 ${item.vitB12Mcg}mcg, vit D ${item.vitDMcg}mcg, omega-3 ${item.omega3G}g, cholesterol ${item.cholesterolMg}mg`,
-    );
+    lines.push(`- ${formatFoodItemLine(item)}`);
   }
 
   for (const item of items.exerciseItems) {
@@ -139,6 +138,36 @@ function buildTodaysLoggedItemsSummary(items: TodaysLoggedItems): string {
   }
 
   return lines.join("\n");
+}
+
+/** One food item's name, portion and full per-item nutrient breakdown -
+ * shared by today's and recent days' item summaries. */
+function formatFoodItemLine(item: TodaysLoggedItems["foodItems"][number]): string {
+  return `${item.name} (${item.quantity} ${item.unit}): ${item.caloriesKcal} kcal, protein ${item.proteinG}g, carbs ${item.carbsG}g, fat ${item.fatG}g, fiber ${item.fiberG}g, added sugar ${item.addedSugarG}g, sodium ${item.sodiumMg}mg, water ${item.waterMl}ml, sat fat ${item.satFatG}g, magnesium ${item.magnesiumMg}mg, potassium ${item.potassiumMg}mg, calcium ${item.calciumMg}mg, iron ${item.ironMg}mg, zinc ${item.zincMg}mg, vit C ${item.vitCMg}mg, vit B12 ${item.vitB12Mcg}mcg, vit D ${item.vitDMcg}mcg, omega-3 ${item.omega3G}g, cholesterol ${item.cholesterolMg}mg`;
+}
+
+const RECENT_DAY_LABELS: Record<number, string> = { 1: "yesterday", 2: "2 days ago", 3: "3 days ago" };
+
+/**
+ * TCK-69: food/drink logged on the days before today, one line per item
+ * prefixed with an English-only day label (model input only, never shown
+ * to the user) plus the weekday, so the model can say "yesterday" / "on
+ * Sunday" without working out the weekday from a date on its own.
+ */
+function buildRecentDaysLoggedItemsSummary(items: RecentDaysLoggedFoodItems, todayLocalDate: string): string {
+  if (!items.length) {
+    return "nothing logged in the previous 3 days";
+  }
+
+  return items
+    .map((item) => {
+      let daysAgo = 1;
+      while (daysAgo < 31 && addDaysToDateString(todayLocalDate, -daysAgo) > item.localDate) daysAgo += 1;
+      const label = RECENT_DAY_LABELS[daysAgo] ?? `${daysAgo} days ago`;
+      const weekday = new Date(`${item.localDate}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
+      return `- [${label}, ${weekday} ${item.localDate}] ${formatFoodItemLine(item)}`;
+    })
+    .join("\n");
 }
 
 /**
@@ -165,6 +194,8 @@ export async function openDailyReportChatReplyStream({
   targets,
   todaysTotals,
   todaysLoggedItems,
+  recentDaysLoggedItems,
+  todayLocalDate,
   isEditingExistingEntry,
 }: {
   config: AiExtractionConfig;
@@ -183,6 +214,14 @@ export async function openDailyReportChatReplyStream({
    * WHY a total is high/low by naming the specific item, not just repeat
    * the aggregate number back. */
   todaysLoggedItems: TodaysLoggedItems;
+  /** TCK-69: food/drink logged on the few local days before today (see
+   * getRecentDaysLoggedFoodItems) - reference only, so the model can
+   * recognize "another portion of yesterday's lasagna". Never part of
+   * today's totals. The block is left out of the prompt when omitted. */
+  recentDaysLoggedItems?: RecentDaysLoggedFoodItems;
+  /** The user's local "today" (YYYY-MM-DD) - only used to label
+   * recentDaysLoggedItems as yesterday / 2 days ago / 3 days ago. */
+  todayLocalDate?: string;
   /** True when chatHistory is the restored conversation of a report the
    * user already saved and is now revising (see "Edit in chat" on the
    * daily-report list), not a fresh one being composed. Turns on the
@@ -202,6 +241,12 @@ export async function openDailyReportChatReplyStream({
     buildTodaysTotalsSummary(todaysTotals),
     "todays_logged_items (the individual entries behind the totals above, already logged today - use these to explain WHAT specifically contributed to a total instead of asking the user to redescribe it):",
     buildTodaysLoggedItemsSummary(todaysLoggedItems),
+    ...(recentDaysLoggedItems && todayLocalDate
+      ? [
+          "recent_days_logged_items (food/drink the user logged on the 3 days BEFORE today - reference only, NOT part of today's totals or todays_logged_items):",
+          buildRecentDaysLoggedItemsSummary(recentDaysLoggedItems, todayLocalDate),
+        ]
+      : []),
     "user_message:",
     userMessage.slice(0, 1000) || "(no text, see attached photo)",
   ].join("\n");
@@ -220,6 +265,7 @@ export async function openDailyReportChatReplyStream({
           "You are a warm, concise assistant helping a user log what they ate, drank, exercised, or weighed today in Daffy, a personal AI health companion app, and helping them plan the rest of their day to meet their targets. This is a conversation only - your reply never saves anything by itself; the user saves whenever they choose using a separate report icon.",
           ...ASSISTANT_PERSONA_INSTRUCTIONS,
           "CONTEXT: every message includes user_profile_summary (dietary preference, allergies, medical conditions, pregnancy/lactation status, first name, gender - see ADDRESSING THE USER above), daily_targets_summary (this user's single absolute target for each nutrient - always exactly one number, e.g. \"water: 2900 ml\"), todays_logged_totals_summary (their aggregate totals so far, computed by the app), and todays_logged_items (the individual food/exercise/weigh-in entries behind those totals, each with its own nutrient breakdown). Always use this context instead of asking the user to repeat it - e.g. if they ask what to eat for lunch, compute their remaining needs yourself from daily_targets_summary minus todays_logged_totals_summary and suggest something concrete that fits, taking dietary_preference and allergies/medical_conditions into account. If they ask WHY a total is high/low or where it came from, look through todays_logged_items yourself and name the specific item(s) responsible (e.g. \"most of your added sugar today came from the chocolate cake slice you logged\") - never ask them to describe what they ate again when todays_logged_items already answers it. When more than one logged item meaningfully contributed, list them one per line (item: amount) instead of naming them all in one run-on sentence - same one-line-per-item convention as NUTRITION INFO & COMPARISON FORMAT below.",
+          "RECALLING EARLIER DAYS: when the message includes recent_days_logged_items and the user refers back to a dish from an earlier day (e.g. 'another portion of the lasagna from yesterday', 'leftovers of Sunday's soup', 'same as I had two days ago', or in Hebrew 'עוד מנה מהלזניה של אתמול', 'שאריות מהמרק'), find it in recent_days_logged_items. When found, reuse that item's logged nutrition, scaled to the portion the user describes now (the same portion if they don't say). In the reply, name the dish and when it was logged - say 'yesterday' / 'אתמול', 'two days ago' / 'שלשום', or the weekday for 3 days ago (e.g. 'on Sunday' / 'ביום ראשון') - and never show the raw bracketed date label or the words recent_days_logged_items. State the resulting estimate for this new portion, so it is logged as today's item when they save. If entries from more than one day match (e.g. the soup was logged on two different days), always ask which day they mean, naming those days, before estimating. Only use this list when the user refers back to an earlier meal (again / another portion / leftovers / same as before) - never bring up past days unprompted. Never add these items to today's totals, and never use them to explain today's totals or nutrient-exceeded alerts - todays_logged_items and todays_logged_totals_summary remain the only source for today. Today's own matches still take priority: if the dish was logged today, behave exactly as before. If nothing matches, treat it as a new item and ask for the quantity as usual (CLARIFYING QUESTIONS rule). In edit mode, recent_days_logged_items is also unrelated to the entry being edited.",
           "TARGETS ARE ONE NUMBER, NOT A RANGE: always phrase progress against daily_targets_summary as \"current out of target\" using its single number (e.g. \"your water is at 2350 out of your 2900 ml target\") - never invent or state a range (e.g. never say something like \"2350 out of 1920-2370\"). There is no min/max to reference here; daily_targets_summary only ever gives you the one number to compare against.",
           "SCOPE: in scope is (a) logging what the user ate/drank/exercised/weighed, (b) nutrition information questions - the nutrient breakdown of any specific food, or comparing two or more foods/products against each other - answer these directly and fully with real numbers every single time, even when the food is hypothetical, not something the user has eaten, and not something they're currently planning to eat. This is the user gathering information to help them decide what to eat - never require them to frame it as 'today's food' or something they already logged before answering; refusing or deflecting a plain nutrition-info or comparison question is wrong, and (c) planning/suggestion questions about nutrition, meals, hydration, or exercise for the rest of today, grounded in the context above. If the user asks about something unrelated to nutrition/exercise/health (e.g. a career goal, general chit-chat, changing their targets), warmly redirect them to describe something they ate/drank/did, or ask a nutrition/exercise planning question instead.",
           "NUTRIENT-EXCEEDED ALERTS: if the item(s) described in THIS message push a nutrient over its daily target, you may note that plainly in this same reply (factually, per the TONE rule above - never scold or moralize about it) - but only in the reply for the report that actually caused it. Do NOT repeat that same alert again on a later, unrelated turn (e.g. the user then logs a glass of water) just because the total is still over - they already saw it once, and the goal bars on the page itself keep showing the current status at a glance regardless. Only mention it again if a LATER report pushes that same nutrient even further over target than it already was. If that nutrient was ALREADY over its target before this message (compare daily_targets_summary with todays_logged_totals_summary), say plainly that the user is already over and that this item adds to how far over they are - never phrase it as bringing them closer to (or nearing) their limit.",
