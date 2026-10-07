@@ -50,12 +50,20 @@ export async function POST(request: Request) {
   }
   const { id, action, result, ok, report } = body;
   if (typeof id !== "string" || !id) return NextResponse.json({ error: "id is required." }, { status: 400 });
-  if (action !== "claim" && action !== "complete" && action !== "email") {
-    return NextResponse.json({ error: "action must be claim, complete or email." }, { status: 400 });
+  if (action !== "claim" && action !== "complete" && action !== "email" && action !== "recipients") {
+    return NextResponse.json({ error: "action must be claim, complete, email or recipients." }, { status: 400 });
   }
 
   const adminClient = createAdminClient();
   const now = new Date().toISOString();
+  if (action === "recipients") {
+    // Who gets the e-mails the automation sends about its own work: every admin.
+    const { data: admins } = await adminClient.from("user_profile").select("user_id").eq("is_admin", true);
+    const adminEmails = (
+      await Promise.all(((admins ?? []) as { user_id: string }[]).map(async (admin) => (await adminClient.auth.admin.getUserById(admin.user_id)).data.user?.email ?? null))
+    ).filter((email): email is string => Boolean(email));
+    return NextResponse.json({ adminEmails }, { headers: { "Cache-Control": "no-store" } });
+  }
   if (action === "email") {
     // The confirmation email for a finished promote request: the poller sends what this returns.
     const { data: row } = await adminClient.from("automation_requests").select("kind, requested_at, result, details").eq("id", id).maybeSingle();

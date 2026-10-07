@@ -47,6 +47,7 @@ const uuid = () => crypto.randomUUID();
 const ANALYST_NAME = "Daffy - Spec Analyst";
 const POLLER_NAME = "Daffy - Review Requests Poller";
 const PROMOTE_NAME = "Daffy - Promote to Production";
+const LESSON_NAME = "Daffy - Lesson Learned";
 
 const promoteFinishJs = `// The bridge's answer (or its error), then close the request in the app and build the confirmation email.
 const APP_URL = '${cfg.appUrl}';
@@ -61,6 +62,38 @@ const result = res.result || (failedToReach ? 'The bridge could not be reached: 
 await call({ method: 'POST', url: APP_URL + '/api/admin/automation-requests', headers: appHeaders, body: { id: started.requestId, action: 'complete', ok, result, report } });
 const mail = await call({ method: 'POST', url: APP_URL + '/api/admin/automation-requests', headers: appHeaders, body: { id: started.requestId, action: 'email' } });
 return [{ json: { ok, result, emailSubject: mail.subject, emailBody: mail.html, adminEmails: mail.adminEmails || [] } }];
+`;
+
+const lessonFinishJs = `// The bridge's answer (a saved lesson, or "nothing general to learn"): close the request and tell the admin what happened.
+const APP_URL = '${cfg.appUrl}';
+const appHeaders = { 'x-ticket-automation-secret': '${cfg.appSecret}' };
+const PUBLIC_URL = '${cfg.publicUrl}';
+const call = (opts) => this.helpers.httpRequest({ json: true, timeout: 60000, ...opts });
+const esc = (t) => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const started = $('Lesson Webhook').first().json.body || {};
+const res = $input.first().json || {};
+const failed = res.error !== undefined && res.ok === undefined;
+const result = failed ? 'The bridge could not be reached.' : res.ok === false ? 'Learning failed: ' + (res.error || 'unknown') : res.saved ? 'Saved a lesson.' : 'No lesson: ' + (res.reason || '');
+await call({ method: 'POST', url: APP_URL + '/api/admin/automation-requests', headers: appHeaders, body: { id: started.requestId, action: 'complete', ok: !failed && res.ok !== false, result } });
+const ticket = 'TCK-' + started.ticketSeq;
+const when = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Jerusalem', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+const kind = ({ send_back: 'You sent the fix back', return_fix: 'You returned the fix', change_request: 'You asked for a change to the proposal' })[started.source] || 'You corrected the work';
+let subject, body;
+if (failed || res.ok === false) {
+  subject = 'Daffy could not learn from your correction on ' + ticket;
+  body = '<p>' + esc(kind) + ' on ' + ticket + ' (' + esc(when) + '). The automation tried to turn your comment into a lesson but it failed: ' + esc(result) + '</p><p>Nothing was changed in the instructions of the agents.</p>';
+} else if (res.saved) {
+  subject = 'Daffy learned a new lesson from your correction on ' + ticket;
+  body = '<h2 style="margin:0 0 6px">New lesson added</h2><p style="color:#5b6b78;margin:0 0 10px">' + esc(kind) + ' on ' + ticket + ' (' + esc(when) + ').</p>'
+    + '<p><b>Your comment:</b> ' + esc(started.comment) + '</p><p><b>What the agents now follow</b> (' + esc(res.agent === 'both' ? 'both agents' : res.agent === 'night' ? 'night-run agent' : 'analyst') + '):</p>'
+    + '<blockquote style="border-left:4px solid #0f766e;margin:6px 0;padding:4px 12px">' + esc(res.lesson) + '</blockquote>'
+    + '<p style="color:#5b6b78">Why: ' + esc(res.reason) + '</p><p>It is added to the instructions from the next run on. Switch it off any time on the <a href="' + PUBLIC_URL + '/app/tickets/automation">Ticket Automation page</a>.</p>';
+} else {
+  subject = 'Daffy looked at your correction on ' + ticket + ' - no new lesson';
+  body = '<p>' + esc(kind) + ' on ' + ticket + ' (' + esc(when) + '). The automation read your comment and decided there is nothing general to add to the instructions of the agents.</p><p><b>Your comment:</b> ' + esc(started.comment) + '</p><p style="color:#5b6b78">Why: ' + esc(res.reason) + '</p>';
+}
+const mail = await call({ method: 'POST', url: APP_URL + '/api/admin/automation-requests', headers: appHeaders, body: { id: started.requestId, action: 'recipients' } }).catch(() => ({ adminEmails: [] }));
+return [{ json: { emailSubject: subject, emailBody: '<div style="font-family:Arial,sans-serif;max-width:640px;color:#1a2530">' + body + '</div>', adminEmails: mail.adminEmails || [] } }];
 `;
 
 const analystSummaryJs = `// The bridge answers {skipped:true} when an analysis is already running - send no email for that.
@@ -104,6 +137,7 @@ const APP_SECRET = '${cfg.appSecret}';
 const BRIDGE_URL = '${cfg.bridgeUrl}';
 const BRIDGE_SECRET = '${cfg.bridgeSecret}';
 const PROMOTE_WEBHOOK = 'http://localhost:5678/webhook/daffy-promote';
+const LESSON_WEBHOOK = 'http://localhost:5678/webhook/daffy-lesson';
 const appHeaders = { 'x-ticket-automation-secret': APP_SECRET };
 const call = (opts) => this.helpers.httpRequest({ json: true, timeout: 30000, ...opts });
 
@@ -128,6 +162,12 @@ for (const r of (list.requests || [])) {
       // bridge (minutes), completes this request itself and sends the confirmation email.
       await call({ method: 'POST', url: PROMOTE_WEBHOOK, body: { requestId: r.id, tickets: (r.details && r.details.tickets) || [] } });
       done.push({ id: r.id, kind: r.kind, ok: true, result: 'promotion started' });
+      continue;
+    } else if (r.kind === 'learn') {
+      // Turning a correction into a lesson takes a few seconds and ends with an e-mail, which a code node
+      // cannot send: hand it to the "Lesson Learned" workflow, which completes this request itself.
+      await call({ method: 'POST', url: LESSON_WEBHOOK, body: { requestId: r.id, ticketSeq: (r.details && r.details.ticketSeq) || r.ticketSeq, source: r.details && r.details.source, comment: r.details && r.details.comment, context: r.details && r.details.context } });
+      done.push({ id: r.id, kind: r.kind, ok: true, result: 'learning started' });
       continue;
     } else if (r.kind === 'revert') {
       const res = await call({ method: 'POST', url: BRIDGE_URL + '/revert', headers: { 'x-bridge-secret': BRIDGE_SECRET }, body: { ticketSeq: r.ticketSeq } });
@@ -254,8 +294,41 @@ async function upsert(name, nodes, connections, settings = { executionOrder: "v1
     [promoteFinish.name]: { main: [[{ node: promoteMail.name, type: "main", index: 0 }]] },
   });
 
-  console.log(`mode=${mode}  analyst=${analystId}  poller=${pollerId}  promote=${promoteId}`);
-  for (const [id, name] of [[analystId, ANALYST_NAME], [pollerId, POLLER_NAME], [promoteId, PROMOTE_NAME]]) {
+  // ---------- Lesson Learned: webhook (from the poller) -> bridge /learn -> finish + e-mail ----------
+  const lessonHook = {
+    id: uuid(), name: "Lesson Webhook", type: "n8n-nodes-base.webhook", typeVersion: 2, position: [0, 0], webhookId: uuid(),
+    parameters: { httpMethod: "POST", path: "daffy-lesson", responseMode: "onReceived", options: {} },
+  };
+  const lessonRun = JSON.parse(JSON.stringify(run));
+  lessonRun.id = uuid();
+  lessonRun.name = "Run Learn";
+  lessonRun.position = [240, 0];
+  delete lessonRun.webhookId;
+  lessonRun.onError = "continueErrorOutput";
+  lessonRun.parameters = {
+    method: "POST", url: `${cfg.bridgeUrl}/learn`, sendHeaders: true,
+    headerParameters: { parameters: [{ name: "x-bridge-secret", value: cfg.bridgeSecret }] },
+    sendBody: true, specifyBody: "json", jsonBody: "={{ JSON.stringify({ ticketSeq: $json.body.ticketSeq, source: $json.body.source, comment: $json.body.comment, context: $json.body.context }) }}",
+    options: { timeout: 300000 },
+  };
+  const lessonFinish = { id: uuid(), name: "Finish and build email", type: "n8n-nodes-base.code", typeVersion: 2, position: [480, 0], parameters: { jsCode: lessonFinishJs } };
+  const lessonMail = JSON.parse(JSON.stringify(sendSummary));
+  lessonMail.id = uuid();
+  lessonMail.name = "Send Lesson Email";
+  lessonMail.position = [720, 0];
+  lessonMail.parameters = {
+    resource: "message", operation: "send",
+    sendTo: '={{ [...new Set([...($json.adminEmails || []), "tsuri.barhaim@gmail.com"])].join(",") }}',
+    subject: "={{ $json.emailSubject }}", emailType: "html", message: "={{ $json.emailBody }}", options: { appendAttribution: false },
+  };
+  const lessonId = await upsert(LESSON_NAME, [lessonHook, lessonRun, lessonFinish, lessonMail], {
+    [lessonHook.name]: { main: [[{ node: lessonRun.name, type: "main", index: 0 }]] },
+    [lessonRun.name]: { main: [[{ node: lessonFinish.name, type: "main", index: 0 }], [{ node: lessonFinish.name, type: "main", index: 0 }]] },
+    [lessonFinish.name]: { main: [[{ node: lessonMail.name, type: "main", index: 0 }]] },
+  });
+
+  console.log(`mode=${mode}  analyst=${analystId}  poller=${pollerId}  promote=${promoteId}  lesson=${lessonId}`);
+  for (const [id, name] of [[analystId, ANALYST_NAME], [pollerId, POLLER_NAME], [promoteId, PROMOTE_NAME], [lessonId, LESSON_NAME]]) {
     if (action === "activate") await api("POST", `/workflows/${id}/publish`, {});
     if (action === "deactivate") await api("POST", `/workflows/${id}/deactivate`, {}).catch((e) => console.log("deactivate:", e.message));
     const w = await api("GET", `/workflows/${id}`);

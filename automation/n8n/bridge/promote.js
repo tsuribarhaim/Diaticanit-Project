@@ -18,9 +18,12 @@ const path = require("path");
 
 function exec(cmd, args, { cwd, timeout = 600000, shell = false } = {}) {
   return new Promise((resolve) => {
-    execFile(cmd, args, { cwd, timeout, maxBuffer: 1024 * 1024 * 50, shell }, (err, stdout, stderr) => {
+    const child = execFile(cmd, args, { cwd, timeout, maxBuffer: 1024 * 1024 * 50, shell }, (err, stdout, stderr) => {
       resolve({ ok: !err, output: `${stdout || ""}${stderr || ""}`.trim() });
     });
+    // Close stdin at once: the Vercel CLI waits for piped input (a value to read) before it carries on,
+    // which hung the first real promotion on "env add" even though the value was given with --value.
+    if (child.stdin) child.stdin.end();
   });
 }
 const git = async (args, cwd) => {
@@ -63,9 +66,18 @@ async function runPromote({ tickets, dryRun = false, cfg, appCall }) {
 
   async function rollback(reason) {
     if (deployed && !dryRun) {
-      const rb = previousDeployment ? await exec("npx", ["vercel", "rollback", previousDeployment, "--yes"], { cwd: web, timeout: 600000, shell: true }) : { ok: false, output: "no previous deployment recorded" };
+      const rb = previousDeployment ? await exec("npx", ["vercel", "promote", previousDeployment, "--yes"], { cwd: web, timeout: 600000, shell: true }) : { ok: false, output: "no previous deployment recorded" };
       report.rolledBack = rb.ok;
-      step("Roll back to the previous deployment", rb.ok, rb.ok ? previousDeployment : rb.output.slice(0, 300));
+      step("Roll back: make the previous deployment live again", rb.ok, rb.ok ? previousDeployment : rb.output.slice(0, 300));
+      if (rb.ok && report.previousVersion) {
+        // The switch takes a little while to reach every visitor, so wait until the old version really answers.
+        let back = null;
+        for (let i = 0; i < 18 && back !== report.previousVersion; i++) {
+          back = await fetch(`${cfg.publicUrl}/api/version`, { cache: "no-store" }).then((r) => r.json()).then((j) => j.version).catch(() => null);
+          if (back !== report.previousVersion) await sleep(10000);
+        }
+        step("Confirm the previous version is live again", back === report.previousVersion, `live version is ${back}, expected ${report.previousVersion}`);
+      }
     }
     if (envChanged && !dryRun && report.previousVersion) {
       await exec("npx", ["vercel", "env", "rm", "NEXT_PUBLIC_APP_VERSION", "production", "--yes"], { cwd: web, shell: true });
@@ -132,11 +144,15 @@ async function runPromote({ tickets, dryRun = false, cfg, appCall }) {
     step("Migrations are additive", true, migrations.length ? migrations.join(", ") : "none");
 
     // ---- checks
-    await npx(["next", "typegen"], web, 180000);
-    const tsc = await npx(["tsc", "--noEmit"], web, 600000);
-    const lint = await npx(["eslint", "."], web, 600000);
-    step("Type check and lint on the release branch", tsc.ok && lint.ok, `type check ok=${tsc.ok}, lint ok=${lint.ok}`);
-    if (!tsc.ok || !lint.ok) throw new Error("The release branch fails the type check or lint, so nothing was deployed.");
+    if (cfg.skipChecks) {
+      step("Type check and lint on the release branch", true, "skipped (test project only)");
+    } else {
+      await npx(["next", "typegen"], web, 180000);
+      const tsc = await npx(["tsc", "--noEmit"], web, 600000);
+      const lint = await npx(["eslint", "."], web, 600000);
+      step("Type check and lint on the release branch", tsc.ok && lint.ok, `type check ok=${tsc.ok}, lint ok=${lint.ok}`);
+      if (!tsc.ok || !lint.ok) throw new Error("The release branch fails the type check or lint, so nothing was deployed.");
+    }
 
     if (dryRun) {
       step("Dry run: database, deploy, push and ticket update skipped", true, "nothing left this laptop");
@@ -161,6 +177,13 @@ async function runPromote({ tickets, dryRun = false, cfg, appCall }) {
     step("Deploy to production", deploy.ok, deploy.output.slice(-300));
     if (!deploy.ok) throw new Error("The Vercel deployment failed.");
     deployed = true;
+    // After a rollback Vercel stops pointing the live domain at new deployments until one is promoted by hand,
+    // so always promote this one explicitly (harmless when the domain already points at it).
+    const newUrl = ((deploy.output.match(/Production[^h]*(https:\/\/[a-z0-9.-]+\.vercel\.app)/i) || [])[1]) || null;
+    if (newUrl) {
+      const promote = await exec("npx", ["vercel", "promote", newUrl, "--yes"], { cwd: web, timeout: 300000, shell: true });
+      step("Make it the live production deployment", promote.ok || /already/i.test(promote.output), promote.output.split(String.fromCharCode(10)).pop().slice(0, 200));
+    }
 
     // ---- smoke test
     let live = null;

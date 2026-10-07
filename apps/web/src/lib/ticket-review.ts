@@ -52,6 +52,28 @@ function dbError(locale: AppLocale): ReviewResult {
   return { error: tr(locale, "Could not save. Please try again.", "לא ניתן היה לשמור. יש לנסות שוב.") };
 }
 
+/** Every correction the admin makes is a chance for the agents to learn. This only leaves a request; the laptop
+ * distils it into a lesson (or decides there is none), stores it and e-mails the admin what happened. Never blocks the action itself. */
+async function queueLearning(
+  supabase: Client,
+  adminId: string,
+  ticket: { id: string; ticket_seq: number },
+  source: "send_back" | "return_fix" | "change_request",
+  comment: string,
+  context: string,
+): Promise<void> {
+  try {
+    await supabase.from("automation_requests").insert({
+      kind: "learn",
+      ticket_id: ticket.id,
+      requested_by: adminId,
+      details: { ticketSeq: ticket.ticket_seq, source, comment: comment.slice(0, 2000), context: context.slice(0, 1500) },
+    });
+  } catch {
+    /* learning is a bonus - the correction itself must still go through */
+  }
+}
+
 async function decide(
   supabase: Client,
   proposalId: string,
@@ -103,6 +125,7 @@ export async function requestChange(
   const { error } = await supabase.from("tickets").update({ auto_handle: "S" }).eq("id", loaded.ticket.id);
   if (error) return dbError(locale);
   await decide(supabase, proposalId, adminId, "changes_requested", chosen, comment.trim());
+  await queueLearning(supabase, adminId, loaded.ticket, "change_request", comment.trim(), (loaded.proposal.payload as ProposalPayload).summary ?? "");
   return { success: tr(locale, "Sent back to the analyst with your comment. A new version appears after the next analysis run.", "הוחזר לאנליסט עם ההערה שלך. גרסה חדשה תופיע אחרי ריצת הניתוח הבאה.") };
 }
 
@@ -166,6 +189,7 @@ export async function returnFix(supabase: Client, adminId: string, locale: AppLo
   const { error } = await supabase.from("tickets").update(patch).eq("id", loaded.ticket.id);
   if (error) return dbError(locale);
   await decide(supabase, proposalId, adminId, "returned", null, comment.trim());
+  await queueLearning(supabase, adminId, loaded.ticket, "return_fix", comment.trim(), fix.summary ?? "");
   return { success: tr(locale, "Returned to the night run with your comment.", "הוחזר לריצת הלילה עם ההערה שלך.") };
 }
 
@@ -250,6 +274,7 @@ export async function sendBackFix(supabase: Client, adminId: string, locale: App
     .from("automation_requests")
     .insert({ kind: "revert", ticket_id: loaded.ticket.id, requested_by: adminId, details: { comment: comment.trim(), proposalId } });
   if (error) return dbError(locale);
+  await queueLearning(supabase, adminId, loaded.ticket, "send_back", comment.trim(), (loaded.proposal.payload as FixPayload).summary ?? "");
   return {
     success: tr(
       locale,
@@ -261,7 +286,7 @@ export async function sendBackFix(supabase: Client, adminId: string, locale: App
 
 /** "Promote to production": one request covering every fix approved right now. Fire and forget - the
  * laptop does the work and a confirmation email reports the outcome. */
-export async function requestPromote(supabase: Client, adminId: string, locale: AppLocale): Promise<ReviewResult> {
+export async function requestPromote(supabase: Client, adminId: string, locale: AppLocale, proposalIds?: string[]): Promise<ReviewResult> {
   const { data: open } = await supabase.from("automation_requests").select("id").eq("kind", "promote").is("completed_at", null).limit(1);
   if ((open ?? []).length > 0) return { success: tr(locale, "A promotion is already requested or running.", "העלאה לייצור כבר התבקשה או רצה כעת.") };
   const { data: approved } = await supabase
@@ -277,7 +302,9 @@ export async function requestPromote(supabase: Client, adminId: string, locale: 
         ? { proposalId: row.id as string, ticketId: row.ticket_id as string, ticketSeq: ticket.ticket_seq, subject: ticket.subject, branch: (row.payload as FixPayload).branch }
         : null;
     })
-    .filter((item): item is NonNullable<typeof item> => item !== null);
+    .filter((item): item is NonNullable<typeof item> => item !== null)
+    // The admin may untick fixes in the dialog; with no list at all, everything approved ships.
+    .filter((item) => !proposalIds || proposalIds.includes(item.proposalId));
   if (items.length === 0) return { error: tr(locale, "No fix is approved for production yet.", "אין עדיין תיקון שאושר לייצור.") };
   const { error } = await supabase.from("automation_requests").insert({ kind: "promote", requested_by: adminId, details: { tickets: items } });
   if (error) return dbError(locale);

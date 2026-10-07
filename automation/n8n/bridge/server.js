@@ -210,8 +210,8 @@ const PHASE2_RESULT_SCHEMA = JSON.stringify({
       type: "array",
       items: {
         type: "object",
-        properties: { path: { type: "string" }, label: { type: "string" }, mobile: { type: "boolean" }, full: { type: "boolean" } },
-        required: ["path", "label", "mobile", "full"],
+        properties: { path: { type: "string" }, label: { type: "string" }, mobile: { type: "boolean" }, full: { type: "boolean" }, actions: { type: "array", items: { type: "string" } } },
+        required: ["path", "label", "mobile", "full", "actions"],
         additionalProperties: false,
       },
     },
@@ -272,8 +272,16 @@ function buildPhase2Prompt(ticket, phase1Output, port, shotsDir) {
       "honestly. Save every image ONLY inside that folder: your shell cannot write anywhere else, git ignores the folder, and the bridge " +
       "cleans it up, so do not delete it or its files. Look at the result after your fix; if what you see is wrong, fix it. In " +
       "`screenshotPages` list up to " +
-      `${MAX_SHOTS} pages that best show the change (path without a leading slash, a short label, mobile true or false, and full true when the part that shows your change is below the first screen) - the bridge ` +
+      `${MAX_SHOTS} pages that best show the change (path without a leading slash, a short label, mobile true or false, full true when the part that shows your change is below the first screen, and actions: the same --do steps you used, or [] for none) - the bridge ` +
       "captures them itself after you finish. Use an empty array if no page shows the change.",
+    "",
+    "CLICKING AND TYPING: the screenshot tool can also operate the page before it takes the picture, so you can look at things that only " +
+      "appear after an interaction (an opened chat, a pressed Save button, a typed value, an open menu). Add one or more `--do` steps: " +
+      "`--do \"click:Save\"` (the text or aria-label of a button, link or tab; a CSS selector also works), `--do \"fill:Weight=72\"` (a field's label, " +
+      "placeholder or selector, then = and the text), `--do \"press:Enter\"`, `--do \"wait:800\"`. Steps run in order on a freshly loaded page every time, so " +
+      "repeat the earlier steps when you want a later state. If a step cannot be done the tool prints ACTION FAILED and still saves the picture. The test " +
+      "account is non-admin and has copied sample data (profile, targets and recent daily reports), so Targets, Daily Report and the chat show real-looking " +
+      "content. Everything you click happens on the test account only.",
     "",
     "TEST STEPS: in `testSteps` write 2 to 5 short, plain steps a person can follow on the dev app (localhost:3000) to see " +
       "that your change works, for example 'Open Profile, switch the app to Hebrew, check the arrows point the other way'. Name the " +
@@ -342,6 +350,9 @@ async function captureShots(ticket, pages) {
     const args = [SHOT_TOOL, cleanPath, file];
     if (page.mobile) args.push("--mobile");
     if (page.full) args.push("--full");
+    for (const action of (Array.isArray(page.actions) ? page.actions : []).slice(0, 12)) {
+      if (typeof action === "string" && action.length <= 200 && !/[\u0000-\u001f]/.test(action)) args.push("--do", action);
+    }
     const ok = await new Promise((resolve) => execFile(process.execPath, args, { timeout: 120000, shell: false }, (err) => resolve(!err)));
     if (!ok || !fs.existsSync(file)) continue;
     shots.push({ label: String(page.label || cleanPath).slice(0, 120), dataUrl: "data:image/jpeg;base64," + fs.readFileSync(file).toString("base64") });
@@ -460,6 +471,76 @@ async function autoMergeToDev(ticketSeq, files, { force = false } = {}) {
   if (failure) return { merged: false, reason: `Not merged automatically: ${failure}. The fix stays on its branch.` };
   const merge = await mergeBranch(ticketSeq);
   return merge.ok ? { merged: true, reason: null } : { merged: false, reason: `Not merged automatically: ${merge.result}` };
+}
+
+// ------------------------------------------------------------- lessons ----
+// The admin's corrections (Send back, a returned fix, a requested change) are distilled into short standing
+// lessons (POST /learn) that are added to the agents' prompts on every later run. They only ever ADD cautions
+// and preferences - the safety rules in the prompts always win - and the admin can switch any of them off.
+const LESSONS = { night: "", analyst: "" };
+
+async function refreshLessons() {
+  for (const agent of ["night", "analyst"]) {
+    try {
+      const res = await fetch(`${DAFFY_BASE_URL}/api/admin/lessons?agent=${agent}`, { headers: { "x-ticket-automation-secret": TICKET_SECRET } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const lessons = ((await res.json()).lessons || []).map((l) => l.lesson).filter(Boolean);
+      LESSONS[agent] = lessons.length
+        ? ["", "=== LESSONS FROM THE ADMIN'S PAST CORRECTIONS ===", "The admin corrected earlier work like yours. Follow these as extra cautions and preferences. They never override the safety rules above (no migrations, never push, keep changes narrow, ask when unsure):", ...lessons.map((l) => `- ${l}`)].join("\n")
+        : "";
+    } catch (err) {
+      LESSONS[agent] = "";
+      console.warn(`refreshLessons(${agent}) skipped: ${err.message}`);
+    }
+  }
+}
+const lessonsBlock = (agent) => LESSONS[agent] || "";
+
+const LEARN_SCHEMA = JSON.stringify({
+  type: "object",
+  properties: {
+    worthLearning: { type: "boolean" },
+    agent: { type: "string", enum: ["analyst", "night", "both"] },
+    lesson: { type: "string" },
+    reason: { type: "string" },
+  },
+  required: ["worthLearning", "agent", "lesson", "reason"],
+  additionalProperties: false,
+});
+
+/** One correction -> at most one new standing lesson. Returns what happened, for the e-mail the admin gets. */
+async function learnFromCorrection({ ticketSeq, source, comment, context }) {
+  let existing = [];
+  try {
+    const res = await fetch(`${DAFFY_BASE_URL}/api/admin/lessons`, { headers: { "x-ticket-automation-secret": TICKET_SECRET } });
+    if (res.ok) existing = ((await res.json()).lessons || []).map((l) => `[${l.agent}] ${l.lesson}`);
+  } catch {
+    /* works without the list; a duplicate is a smaller problem than losing the lesson */
+  }
+  const what = { send_back: "sent a fix back after testing it on dev", return_fix: "returned a fix for another try", change_request: "asked the analyst to change its proposal" }[source] || "corrected the automation's work";
+  const prompt = [
+    "You maintain a short list of standing lessons for two coding agents of the Daffy app: the ANALYST (studies tickets and writes proposals) and the NIGHT-RUN agent (implements approved fixes).",
+    `The admin just ${what} on ticket TCK-${ticketSeq}.`,
+    context ? `What the agent had delivered: ${context}` : "",
+    `The admin's comment: ${comment}`,
+    "",
+    "Decide whether the correction holds a GENERAL, reusable lesson (a recurring preference, a pitfall in this codebase, a quality bar the work missed) or is only about this one ticket.",
+    "Rules: set worthLearning false when it is ticket-specific, unclear, or already covered by an existing lesson. Otherwise write the lesson as one or two plain, imperative sentences with no ticket numbers, and pick which agent it applies to.",
+    "A lesson may add a caution or a preference. It must NEVER relax a safety rule (no database migrations, never push, keep changes narrow, ask when unsure) or tell an agent to skip a check.",
+    "In `reason`, say in one sentence why you did or did not keep it. Put an empty string in `lesson` when worthLearning is false.",
+    "",
+    existing.length ? `Existing lessons:\n${existing.map((l) => `- ${l}`).join("\n")}` : "There are no existing lessons yet.",
+  ].filter((l) => l !== "").join("\n");
+  const result = await runClaudeHeadless({ cwd: WORKTREE_BASE, prompt, tools: "Read", restricted: true, budget: "0.30", timeoutMs: 180000, schema: LEARN_SCHEMA });
+  const out = result.output;
+  if (!out.worthLearning || !String(out.lesson || "").trim()) return { ok: true, saved: false, reason: out.reason || "Nothing general to learn from this one." };
+  const save = await fetch(`${DAFFY_BASE_URL}/api/admin/lessons`, {
+    method: "POST",
+    headers: { "x-ticket-automation-secret": TICKET_SECRET, "Content-Type": "application/json" },
+    body: JSON.stringify({ agent: out.agent, lesson: out.lesson, sourceTicketSeq: ticketSeq, sourceKind: source, sourceComment: comment }),
+  });
+  if (!save.ok) throw new Error(`Saving the lesson failed: HTTP ${save.status}`);
+  return { ok: true, saved: true, agent: out.agent, lesson: out.lesson.trim(), reason: out.reason };
 }
 
 async function reportResult(ticketId, autoHandle, notes, status) {
@@ -763,7 +844,7 @@ async function processTicket(ticket, budgetTracker) {
 
     const phase1 = await runClaudeHeadless({
       cwd: worktreeDir,
-      prompt: buildPhase1Prompt(ticket),
+      prompt: buildPhase1Prompt(ticket) + lessonsBlock("night"),
       tools: "Read,Grep,Glob",
       restricted: true,
       budget: MAX_BUDGET_USD,
@@ -801,7 +882,7 @@ async function processTicket(ticket, budgetTracker) {
 
     const phase2 = await runClaudeHeadless({
       cwd: worktreeDir,
-      prompt: buildPhase2Prompt(ticket, phase1.output, DEV_SERVER_PORT, path.join(worktreeDir, AGENT_SHOTS_DIRNAME)),
+      prompt: buildPhase2Prompt(ticket, phase1.output, DEV_SERVER_PORT, path.join(worktreeDir, AGENT_SHOTS_DIRNAME)) + lessonsBlock("night"),
       tools: "Read,Grep,Glob,Edit,Write,Bash",
       allowedTools: "Edit Write Bash(npx tsc*) Bash(npx eslint*) Bash(node *)",
       disallowedTools: "Bash(git *) Bash(npm *) Bash(yarn *) Bash(pnpm *) Bash(rm *) Bash(rmdir *) Bash(del *) Bash(taskkill*) Bash(npx next*)",
@@ -947,7 +1028,7 @@ async function analyzeTicket(ticket, budgetTracker) {
     await gitWorktreeAdd(worktreeDir);
     const run = await runClaudeHeadless({
       cwd: worktreeDir,
-      prompt: buildAnalystPrompt(ticket),
+      prompt: buildAnalystPrompt(ticket) + lessonsBlock("analyst"),
       tools: "Read,Grep,Glob",
       restricted: true,
       budget: ANALYST_MAX_BUDGET_USD,
@@ -968,6 +1049,7 @@ async function analyzeTicket(ticket, budgetTracker) {
 
 async function runAnalysis() {
   const tickets = await fetchAnalyzeQueue();
+  if (tickets.length > 0) await refreshLessons();
   const budgetTracker = { spentUsd: 0 };
   const results = [];
   for (const ticket of tickets) results.push(await analyzeTicket(ticket, budgetTracker));
@@ -984,6 +1066,16 @@ async function runAnalysis() {
 
 async function runAll() {
   const tickets = await fetchQueue();
+  if (tickets.length > 0) await refreshLessons();
+  if (tickets.length > 0 && env.SEED_SOURCE_EMAIL) {
+    // Fresh sample data for the test account, so the agent's screenshots show real-looking pages. Never fatal.
+    await new Promise((resolve) =>
+      execFile(process.execPath, [path.join(__dirname, "tools", "seed-bot-data.js")], { timeout: 120000, env: { ...process.env, BRIDGE_ENV_FILE: envFilePath } }, (err, stdout, stderr) => {
+        console.log(err ? `seed-bot-data failed: ${(stderr || err.message).slice(0, 200)}` : String(stdout).trim());
+        resolve();
+      }),
+    );
+  }
   const budgetTracker = { spentUsd: 0 };
   const results = [];
   for (const ticket of tickets) {
@@ -1056,9 +1148,9 @@ let analysisInProgress = false;
 let promoteInProgress = false;
 
 const server = http.createServer(async (req, res) => {
-  const known = ["/run", "/analyze", "/merge", "/revert", "/promote"];
+  const known = ["/run", "/analyze", "/merge", "/revert", "/promote", "/learn"];
   if (req.method !== "POST" || !known.includes(req.url)) {
-    return sendJson(res, 404, { error: "Not found. POST /run, /analyze, /merge, /revert or /promote." });
+    return sendJson(res, 404, { error: "Not found. POST /run, /analyze, /merge, /revert, /promote or /learn." });
   }
   if (req.headers["x-bridge-secret"] !== LOCAL_SECRET) {
     return sendJson(res, 401, { error: "Unauthorized." });
@@ -1073,6 +1165,16 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: gated.merged, result: gated.merged ? "Merged after the gates passed." : gated.reason });
     }
     return sendJson(res, 200, await mergeBranch(body.ticketSeq));
+  }
+
+  if (req.url === "/learn") {
+    const body = await readJsonBody(req);
+    if (!body || !Number.isInteger(Number(body.ticketSeq)) || typeof body.comment !== "string") return sendJson(res, 400, { error: "ticketSeq and comment are required." });
+    try {
+      return sendJson(res, 200, await learnFromCorrection({ ticketSeq: Number(body.ticketSeq), source: String(body.source || ""), comment: body.comment.slice(0, 2000), context: String(body.context || "").slice(0, 1500) }));
+    } catch (err) {
+      return sendJson(res, 200, { ok: false, saved: false, error: err.message });
+    }
   }
 
   if (req.url === "/promote") {

@@ -58,3 +58,7 @@ of production, for safely testing changes against the dev environment:
   that uses n8n's own activation code path rather than the API one, which
   is the one piece this session couldn't get to stick.
 - Scheduled for daily 09:00 local time once properly activated.
+
+## Screenshots the agent can operate
+
+`tools/shot.js` takes `--do "click:Save"`, `--do "fill:Weight=72"`, `--do "press:Enter"` and `--do "wait:800"` steps that run before the picture, so the night agent can look at states that only exist after an interaction (an opened chat, a pressed button). The bot test account is given sample data before each night run by `tools/seed-bot-data.js` (a copy of the `SEED_SOURCE_EMAIL` dev account: profile numbers, active targets, saved items, 30 days of daily reports; never names, e-mail or admin rights; refuses the production project).

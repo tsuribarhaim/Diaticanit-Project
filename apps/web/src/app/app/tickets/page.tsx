@@ -86,12 +86,12 @@ export default async function TicketsPage({ searchParams }: { searchParams: Prom
   let autoHandleById = new Map<string, TicketAutoHandle | null>();
   // What is really waiting on the admin: a pending proposal / questions / fix row on a ticket that
   // is still live. (Old tickets carry a leftover "D" flag from before this existed.)
-  const waitingCounts = { waiting: 0, returned: 0, fixReady: 0, onDev: 0 };
+  const waitingCounts = { waiting: 0, returned: 0, fixReady: 0, onDev: 0, approved: 0 };
   if (isAdmin) {
     const { data: flags } = await supabase.from("tickets").select("id, auto_handle");
     autoHandleById = new Map((flags ?? []).map((row) => [row.id, row.auto_handle as TicketAutoHandle | null]));
     const liveIds = new Set((tickets ?? []).filter((ticket) => !["resolved", "closed", "cancelled", "duplicate"].includes(ticket.status)).map((ticket) => ticket.id));
-    const { data: pendingRows } = await supabase.from("ticket_proposals").select("ticket_id, kind, status").in("status", ["pending", "merged"]);
+    const { data: pendingRows } = await supabase.from("ticket_proposals").select("ticket_id, kind, status").in("status", ["pending", "merged", "approved"]);
     const seen = new Set<string>();
     for (const row of pendingRows ?? []) {
       const flag = autoHandleById.get(row.ticket_id);
@@ -102,6 +102,7 @@ export default async function TicketsPage({ searchParams }: { searchParams: Prom
       else if (row.kind === "questions" && flag === "P") waitingCounts.returned += 1;
       else if (row.kind === "fix" && flag === "D" && row.status === "pending") waitingCounts.fixReady += 1;
       else if (row.kind === "fix" && flag === "M" && row.status === "merged") waitingCounts.onDev += 1;
+      else if (row.kind === "fix" && flag === "R" && row.status === "approved") waitingCounts.approved += 1;
     }
   }
 
@@ -114,6 +115,7 @@ export default async function TicketsPage({ searchParams }: { searchParams: Prom
           returned={waitingCounts.returned}
           fixReady={waitingCounts.fixReady}
           onDev={waitingCounts.onDev}
+          approved={waitingCounts.approved}
         />
         <AdminTicketsTable
           locale={locale}

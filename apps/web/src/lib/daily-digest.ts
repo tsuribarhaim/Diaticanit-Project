@@ -317,7 +317,7 @@ export function renderDigest(input: {
 <h1 style="font-size:20px;margin:0 0 2px">${escapeHtml(greeting)}</h1>
 <p style="color:${muted};margin:0 0 18px;font-size:13.5px">Daffy Production &middot; ${escapeHtml(dateLabel)}</p>
 ${h2(`Needs you today${tag}`)}${needsHtml}
-<p style="margin:10px 0 0"><a href="${reviewUrl}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;font-weight:700;padding:8px 16px;border-radius:9px;font-size:13.5px">Open the spec review page</a></p>
+<p style="margin:10px 0 0"><a href="${reviewUrl}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;font-weight:700;padding:8px 16px;border-radius:9px;font-size:13.5px">Open review &amp; approvals</a></p>
 ${h2("Tickets")}
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>${tile(String(stats.total), "tickets in total")}${tile(String(stats.openCount), "still open")}${tile(String(stats.doneCount), "done (resolved or fixed)")}${tile(`${stats.createdLastDay} / ${stats.createdLastWeek}`, "new in the last day / week")}</tr></table>
 ${barHtml}

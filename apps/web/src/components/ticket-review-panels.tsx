@@ -14,12 +14,13 @@ import {
   requestPromoteAction,
   returnFixAction,
   sendBackFixAction,
+  setLessonActiveAction,
   takeOutOfAutomationAction,
   withdrawApprovalAction,
 } from "@/app/app/tickets/review-actions";
 import { Spinner } from "@/components/spinner";
 import { tr, type AppLocale } from "@/lib/locale";
-import { resolveChoices, type FixPayload, type ProposalDecision, type ProposalPayload, type QuestionsPayload } from "@/lib/ticket-proposals";
+import { buildPairingPrompt, resolveChoices, type FixPayload, type ProposalDecision, type ProposalPayload, type QuestionsPayload } from "@/lib/ticket-proposals";
 
 const REVIEW_HREF = "/app/tickets/review";
 const cardClass = "rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900";
@@ -185,7 +186,25 @@ function useReviewAction(locale: AppLocale) {
   return { pending, which, error, run, locale };
 }
 
-export function ProposalPanel({ locale, proposalId, payload }: { locale: AppLocale; proposalId: string; payload: ProposalPayload }) {
+/** Copies the analyst's notes as a ready prompt for a Claude Code session. Instant feedback, no waiting. */
+function CopyBriefButton({ locale, text }: { locale: AppLocale; text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <ActionButton
+      pending={false}
+      onClick={() => {
+        void navigator.clipboard.writeText(text).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2500);
+        });
+      }}
+    >
+      {copied ? tr(locale, "Copied - paste it into Claude Code", "הועתק - להדביק ב-Claude Code") : tr(locale, "Copy brief for Claude Code", "העתקת התקציר ל-Claude Code")}
+    </ActionButton>
+  );
+}
+
+export function ProposalPanel({ locale, proposalId, payload, ticketSeq, subject }: { locale: AppLocale; proposalId: string; payload: ProposalPayload; ticketSeq: number; subject: string }) {
   const [chosen, setChosen] = useState<number[]>(() => resolveChoices(payload.decisions ?? [], null));
   const [comment, setComment] = useState("");
   const { pending, which, error, run } = useReviewAction(locale);
@@ -202,6 +221,9 @@ export function ProposalPanel({ locale, proposalId, payload }: { locale: AppLoca
           <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
             <p className="font-semibold">{tr(locale, "The analyst suggests building this one together with you.", "האנליסט ממליץ לבנות את זה יחד איתך.")}</p>
             {payload.pairingReason ? <p dir="auto" className="mt-1">{payload.pairingReason}</p> : null}
+            <div className="mt-3">
+              <CopyBriefButton locale={locale} text={buildPairingPrompt({ ticketSeq, subject, payload, chosen })} />
+            </div>
           </div>
         ) : null}
         <div className={cardClass}>
@@ -558,18 +580,20 @@ export function PromoteBar({
   approved,
   running,
   tickets,
-  hasMigration,
 }: {
   locale: AppLocale;
   approved: number;
   running: boolean;
-  tickets: { seq: number; subject: string }[];
-  hasMigration: boolean;
+  tickets: { seq: number; subject: string; proposalId: string; migration: boolean }[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // Everything approved is ticked when the dialog opens; unticking leaves a fix for the next promote.
+  const [selected, setSelected] = useState<string[]>([]);
+  const chosenTickets = tickets.filter((ticket) => selected.includes(ticket.proposalId));
+  const hasMigration = chosenTickets.some((ticket) => ticket.migration);
   useAutoRefresh(running);
   if (running) {
     return (
@@ -588,7 +612,14 @@ export function PromoteBar({
         <span className="text-sm font-semibold">
           {tr(locale, `${approved} fix${approved === 1 ? "" : "es"} approved for production`, approved === 1 ? "תיקון אחד אושר לייצור" : `${approved} תיקונים אושרו לייצור`)}
         </span>
-        <button type="button" onClick={() => setOpen(true)} className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-teal-800 hover:bg-teal-50">
+        <button
+          type="button"
+          onClick={() => {
+            setSelected(tickets.map((ticket) => ticket.proposalId));
+            setOpen(true);
+          }}
+          className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-teal-800 hover:bg-teal-50"
+        >
           {tr(locale, "Promote to production", "העלאה לייצור")}
         </button>
       </div>
@@ -609,11 +640,26 @@ export function PromoteBar({
                 </svg>
               </button>
             </div>
-            <p className="mt-2 text-sm text-slate-700 dark:text-slate-300">{tr(locale, "Only these tickets ship:", "רק הפניות האלה יעלו:")}</p>
-            <ul className="mt-1 list-disc space-y-0.5 ps-5 text-sm text-slate-800 dark:text-slate-200">
+            <p className="mt-2 text-sm text-slate-700 dark:text-slate-300">
+              {tr(locale, "Tick the fixes that ship in this release. Untick one to keep it for the next.", "יש לסמן את התיקונים שיעלו בגרסה הזו. אפשר להסיר סימון כדי להשאיר תיקון לגרסה הבאה.")}
+            </p>
+            <ul className="mt-1 space-y-1 text-sm text-slate-800 dark:text-slate-200">
               {tickets.map((ticket) => (
-                <li key={ticket.seq} dir="auto">
-                  TCK-{ticket.seq} - {ticket.subject}
+                <li key={ticket.proposalId}>
+                  <label className="flex cursor-pointer items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(ticket.proposalId)}
+                      onChange={(event) =>
+                        setSelected((current) => (event.target.checked ? [...current, ticket.proposalId] : current.filter((id) => id !== ticket.proposalId)))
+                      }
+                      className="mt-1 accent-teal-700"
+                    />
+                    <span dir="auto">
+                      TCK-{ticket.seq} - {ticket.subject}
+                      {ticket.migration ? <span className="ms-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">{tr(locale, "Migration", "מיגרציה")}</span> : null}
+                    </span>
+                  </label>
                 </li>
               ))}
             </ul>
@@ -629,16 +675,17 @@ export function PromoteBar({
               <ActionButton
                 variant="primary"
                 pending={pending}
+                disabled={chosenTickets.length === 0}
                 onClick={() =>
                   startTransition(async () => {
-                    const result = await requestPromoteAction();
+                    const result = await requestPromoteAction(selected);
                     setMessage(result.error ?? result.success ?? null);
                     setOpen(false);
                     router.refresh();
                   })
                 }
               >
-                {tr(locale, "Send request", "שליחת הבקשה")}
+                {chosenTickets.length === 0 ? tr(locale, "Tick at least one fix", "יש לסמן לפחות תיקון אחד") : tr(locale, `Send request (${chosenTickets.length})`, `שליחת הבקשה (${chosenTickets.length})`)}
               </ActionButton>
               <ActionButton onClick={() => setOpen(false)} pending={false} disabled={pending}>
                 {tr(locale, "Cancel", "ביטול")}
@@ -648,5 +695,24 @@ export function PromoteBar({
         </div>
       ) : null}
     </>
+  );
+}
+
+/** Switches one learned lesson on or off (Ticket Automation page). */
+export function LessonToggle({ locale, lessonId, active }: { locale: AppLocale; lessonId: string; active: boolean }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  return (
+    <ActionButton
+      pending={pending}
+      onClick={() =>
+        startTransition(async () => {
+          await setLessonActiveAction(lessonId, !active);
+          router.refresh();
+        })
+      }
+    >
+      {active ? tr(locale, "Switch off", "כיבוי") : tr(locale, "Switch on again", "הפעלה מחדש")}
+    </ActionButton>
   );
 }

@@ -91,10 +91,10 @@ export default async function TicketReviewDetailPage({ params }: { params: Promi
 
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 py-10">
-      <ReviewNav locale={locale} backLabel={tr(locale, "Spec review", "סקירת אפיונים")} />
+      <ReviewNav locale={locale} backLabel={tr(locale, "Review & approvals", "סקירה ואישורים")} />
       {header}
       {proposal && proposal.kind === "proposal" ? (
-        <ProposalPanel locale={locale} proposalId={proposal.id} payload={proposal.payload as ProposalPayload} />
+        <ProposalPanel locale={locale} proposalId={proposal.id} payload={proposal.payload as ProposalPayload} ticketSeq={ticket.ticket_seq} subject={ticket.subject} />
       ) : proposal && proposal.kind === "questions" ? (
         <QuestionsPanel locale={locale} proposalId={proposal.id} payload={proposal.payload as QuestionsPayload} />
       ) : proposal && proposal.kind === "fix" ? (
