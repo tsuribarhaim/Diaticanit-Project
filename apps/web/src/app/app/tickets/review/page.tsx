@@ -167,9 +167,9 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
   return (
     <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col px-6 py-10">
       <ReviewNav locale={locale} backLabel={tr(locale, "All tickets", "כל הפניות")} />
-      <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">{tr(locale, "Spec review", "סקירת אפיונים")}</h1>
+      <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">{tr(locale, "Review & approvals", "סקירה ואישורים")}</h1>
       <p className="mb-4 mt-1 text-sm text-slate-600 dark:text-slate-400">
-        {tr(locale, "Everything the automation needs from you, in one place.", "כל מה שהאוטומציה צריכה ממך, במקום אחד.")}
+        {tr(locale, "Proposals to approve, fixes to test on dev, and what is ready to promote to production - in one place.", "הצעות לאישור, תיקונים לבדיקה בפיתוח, ומה שמוכן להעלאה לייצור - במקום אחד.")}
       </p>
       {notice ? (
         <p role="status" className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">

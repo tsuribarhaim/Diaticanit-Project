@@ -18,9 +18,12 @@ const path = require("path");
 
 function exec(cmd, args, { cwd, timeout = 600000, shell = false } = {}) {
   return new Promise((resolve) => {
-    execFile(cmd, args, { cwd, timeout, maxBuffer: 1024 * 1024 * 50, shell }, (err, stdout, stderr) => {
+    const child = execFile(cmd, args, { cwd, timeout, maxBuffer: 1024 * 1024 * 50, shell }, (err, stdout, stderr) => {
       resolve({ ok: !err, output: `${stdout || ""}${stderr || ""}`.trim() });
     });
+    // Close stdin at once: the Vercel CLI waits for piped input (a value to read) before it carries on,
+    // which hung the first real promotion on "env add" even though the value was given with --value.
+    if (child.stdin) child.stdin.end();
   });
 }
 const git = async (args, cwd) => {
