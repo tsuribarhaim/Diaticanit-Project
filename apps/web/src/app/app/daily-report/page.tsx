@@ -322,7 +322,7 @@ export default async function DailyReportPage({
     supabase
       .from("user_daily_reports")
       .select(
-        "id, raw_report_text, report_at, parse_confidence, requires_confirmation, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, sodium_mg, added_sugar_g, calcium_mg, vit_c_mg, vit_b12_mcg, vit_d_mcg, sat_fat_g, omega3_g, cholesterol_mg, exercise_minutes, estimated_burn_kcal, reported_weight_kg, parsed_items, parsed_exercises, custom_target_values, nutrient_overrides",
+        "id, raw_report_text, report_at, parse_confidence, requires_confirmation, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, sodium_mg, added_sugar_g, calcium_mg, vit_c_mg, vit_b12_mcg, vit_d_mcg, sat_fat_g, omega3_g, cholesterol_mg, exercise_minutes, estimated_burn_kcal, reported_weight_kg, parsed_items, parsed_exercises, selected_defaults, custom_target_values, nutrient_overrides",
       )
       .eq("user_id", user.id)
       .gte("report_at", selectedDayStartIso)
@@ -814,6 +814,7 @@ export default async function DailyReportPage({
         reported_weight_kg: number | null;
         parsed_items: unknown;
         parsed_exercises: unknown;
+        selected_defaults: unknown;
         custom_target_values: unknown;
         nutrient_overrides: unknown;
       }>
@@ -823,7 +824,7 @@ export default async function DailyReportPage({
     const reportsWithoutWeight = await supabase
       .from("user_daily_reports")
       .select(
-        "id, raw_report_text, report_at, parse_confidence, requires_confirmation, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, sodium_mg, added_sugar_g, calcium_mg, vit_c_mg, vit_b12_mcg, vit_d_mcg, sat_fat_g, omega3_g, cholesterol_mg, exercise_minutes, estimated_burn_kcal, parsed_items, parsed_exercises, custom_target_values, nutrient_overrides",
+        "id, raw_report_text, report_at, parse_confidence, requires_confirmation, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, water_ml, magnesium_mg, potassium_mg, iron_mg, zinc_mg, sodium_mg, added_sugar_g, calcium_mg, vit_c_mg, vit_b12_mcg, vit_d_mcg, sat_fat_g, omega3_g, cholesterol_mg, exercise_minutes, estimated_burn_kcal, parsed_items, parsed_exercises, selected_defaults, custom_target_values, nutrient_overrides",
       )
       .eq("user_id", user.id)
       .gte("report_at", selectedDayStartIso)
@@ -1116,6 +1117,24 @@ export default async function DailyReportPage({
               const hasFood = editableFoodItems.length > 0;
               const hasExercise = editableExerciseItems.length > 0;
               const hasWeight = report.reported_weight_kg !== null;
+
+              // TCK-45: an entry made purely from Saved List items shouldn't
+              // offer to be saved to the list again. Saved List items keep
+              // their name in parsed_items/parsed_exercises, so matching names
+              // against selected_defaults tells us whether every item came
+              // from the list - a mixed entry (some chat/photo items) keeps
+              // the link.
+              const savedListNames = new Set(
+                (Array.isArray(report.selected_defaults) ? (report.selected_defaults as Array<{ name?: unknown }>) : [])
+                  .map((item) => (item && typeof item.name === "string" ? item.name.trim().toLowerCase() : ""))
+                  .filter((name) => name.length > 0),
+              );
+              const isFromSavedListOnly =
+                savedListNames.size > 0
+                && editableFoodItems.length + editableExerciseItems.length > 0
+                && [...editableFoodItems, ...editableExerciseItems].every((item) =>
+                  savedListNames.has(item.name.trim().toLowerCase()),
+                );
 
               const reportCustomTargetValues =
                 report.custom_target_values
@@ -1482,8 +1501,11 @@ export default async function DailyReportPage({
                             weight-only or target-only entry has none of
                             those, so there'd be nothing meaningful to save
                             (a "default" of 0 calories representing a weigh-
-                            in doesn't mean anything as a reusable item). */}
-                        {hasFood || hasExercise ? (
+                            in doesn't mean anything as a reusable item). An
+                            entry built only from Saved List items is
+                            skipped too - its items are already in the list
+                            (TCK-45). */}
+                        {(hasFood || hasExercise) && !isFromSavedListOnly ? (
                           <details>
                             <summary className="cursor-pointer text-xs font-medium text-cyan-700 hover:text-cyan-800 dark:text-cyan-400 dark:hover:text-cyan-300">
                               {tr(locale, "Add to Saved List", "הוספה לרשימה השמורה")}
