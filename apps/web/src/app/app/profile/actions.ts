@@ -34,6 +34,7 @@ import {
   validateMedicationDetails,
 } from "@/lib/profile";
 import { normalizeLocale, tr } from "@/lib/locale";
+import { logProfileWeightAsWeighIn } from "@/lib/profile-weight-weigh-in";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
 import type { ProfileDiffRow } from "@/lib/targets";
@@ -524,6 +525,15 @@ export async function updateProfileAction(
     height_unit: "cm",
   };
 
+  // Read before the update so a weight change can also be logged as a Daily
+  // Report weigh-in below (ticket TCK-42).
+  const { data: profileBefore } = await supabase
+    .from("user_profile")
+    .select("weight_kg")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  const previousWeightKg = profileBefore?.weight_kg == null ? null : Number(profileBefore.weight_kg);
+
   const { error } = await supabase
     .from("user_profile")
     .update(payload)
@@ -562,6 +572,11 @@ export async function updateProfileAction(
         "עדכון הפרופיל נכשל. יש לנסות שוב.",
       ),
     };
+  }
+
+  if (previousWeightKg === null || Math.abs(parsed.data.weight_kg - previousWeightKg) > 1e-9) {
+    await logProfileWeightAsWeighIn(supabase, user.id, parsed.data.weight_kg);
+    revalidatePath("/app/daily-report");
   }
 
   const provider = aiConfig?.provider ?? "openai-compatible";
@@ -661,11 +676,36 @@ export async function applyProfilePatchAndFlagTargets({
   locale: "en" | "he";
   patch: Record<string, unknown>;
 }): Promise<QuickEditState> {
+  // A weight change here (inline row or profile chat) is also logged as a
+  // Daily Report weigh-in (ticket TCK-42) - needs the value from before the
+  // update to tell whether it actually changed.
+  const patchesWeight = "weight_kg" in patch;
+  let previousWeightKg: number | null = null;
+  if (patchesWeight) {
+    const { data: profileBefore } = await supabase
+      .from("user_profile")
+      .select("weight_kg")
+      .eq("user_id", userId)
+      .maybeSingle();
+    previousWeightKg = profileBefore?.weight_kg == null ? null : Number(profileBefore.weight_kg);
+  }
+
   const { error } = await supabase.from("user_profile").update(patch).eq("user_id", userId);
 
   if (error) {
     logServerError("profile.quick_edit", "update_failed", { userId, error: error.message });
     return { error: tr(locale, "Failed to save. Please try again.", "השמירה נכשלה. יש לנסות שוב.") };
+  }
+
+  if (patchesWeight) {
+    const newWeightKg = Number(patch.weight_kg);
+    if (
+      Number.isFinite(newWeightKg) &&
+      (previousWeightKg === null || Math.abs(newWeightKg - previousWeightKg) > 1e-9)
+    ) {
+      await logProfileWeightAsWeighIn(supabase, userId, newWeightKg);
+      revalidatePath("/app/daily-report");
+    }
   }
 
   // Unconditional even though only some callers (e.g. updateIdentityAction,
