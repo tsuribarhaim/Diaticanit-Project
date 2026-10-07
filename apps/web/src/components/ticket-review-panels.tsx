@@ -14,6 +14,7 @@ import {
   requestPromoteAction,
   returnFixAction,
   sendBackFixAction,
+  setLessonActiveAction,
   takeOutOfAutomationAction,
   withdrawApprovalAction,
 } from "@/app/app/tickets/review-actions";
@@ -694,5 +695,24 @@ export function PromoteBar({
         </div>
       ) : null}
     </>
+  );
+}
+
+/** Switches one learned lesson on or off (Ticket Automation page). */
+export function LessonToggle({ locale, lessonId, active }: { locale: AppLocale; lessonId: string; active: boolean }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  return (
+    <ActionButton
+      pending={pending}
+      onClick={() =>
+        startTransition(async () => {
+          await setLessonActiveAction(lessonId, !active);
+          router.refresh();
+        })
+      }
+    >
+      {active ? tr(locale, "Switch off", "כיבוי") : tr(locale, "Switch on again", "הפעלה מחדש")}
+    </ActionButton>
   );
 }

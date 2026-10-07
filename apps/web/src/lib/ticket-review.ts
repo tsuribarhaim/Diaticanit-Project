@@ -52,6 +52,28 @@ function dbError(locale: AppLocale): ReviewResult {
   return { error: tr(locale, "Could not save. Please try again.", "לא ניתן היה לשמור. יש לנסות שוב.") };
 }
 
+/** Every correction the admin makes is a chance for the agents to learn. This only leaves a request; the laptop
+ * distils it into a lesson (or decides there is none), stores it and e-mails the admin what happened. Never blocks the action itself. */
+async function queueLearning(
+  supabase: Client,
+  adminId: string,
+  ticket: { id: string; ticket_seq: number },
+  source: "send_back" | "return_fix" | "change_request",
+  comment: string,
+  context: string,
+): Promise<void> {
+  try {
+    await supabase.from("automation_requests").insert({
+      kind: "learn",
+      ticket_id: ticket.id,
+      requested_by: adminId,
+      details: { ticketSeq: ticket.ticket_seq, source, comment: comment.slice(0, 2000), context: context.slice(0, 1500) },
+    });
+  } catch {
+    /* learning is a bonus - the correction itself must still go through */
+  }
+}
+
 async function decide(
   supabase: Client,
   proposalId: string,
@@ -103,6 +125,7 @@ export async function requestChange(
   const { error } = await supabase.from("tickets").update({ auto_handle: "S" }).eq("id", loaded.ticket.id);
   if (error) return dbError(locale);
   await decide(supabase, proposalId, adminId, "changes_requested", chosen, comment.trim());
+  await queueLearning(supabase, adminId, loaded.ticket, "change_request", comment.trim(), (loaded.proposal.payload as ProposalPayload).summary ?? "");
   return { success: tr(locale, "Sent back to the analyst with your comment. A new version appears after the next analysis run.", "הוחזר לאנליסט עם ההערה שלך. גרסה חדשה תופיע אחרי ריצת הניתוח הבאה.") };
 }
 
@@ -166,6 +189,7 @@ export async function returnFix(supabase: Client, adminId: string, locale: AppLo
   const { error } = await supabase.from("tickets").update(patch).eq("id", loaded.ticket.id);
   if (error) return dbError(locale);
   await decide(supabase, proposalId, adminId, "returned", null, comment.trim());
+  await queueLearning(supabase, adminId, loaded.ticket, "return_fix", comment.trim(), fix.summary ?? "");
   return { success: tr(locale, "Returned to the night run with your comment.", "הוחזר לריצת הלילה עם ההערה שלך.") };
 }
 
@@ -250,6 +274,7 @@ export async function sendBackFix(supabase: Client, adminId: string, locale: App
     .from("automation_requests")
     .insert({ kind: "revert", ticket_id: loaded.ticket.id, requested_by: adminId, details: { comment: comment.trim(), proposalId } });
   if (error) return dbError(locale);
+  await queueLearning(supabase, adminId, loaded.ticket, "send_back", comment.trim(), (loaded.proposal.payload as FixPayload).summary ?? "");
   return {
     success: tr(
       locale,

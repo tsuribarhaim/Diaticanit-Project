@@ -76,6 +76,17 @@ export async function withdrawApprovalAction(proposalId: string): Promise<Review
 export async function sendBackFixAction(proposalId: string, comment: string): Promise<ReviewResult> {
   return withAdmin(({ supabase, adminId, locale }) => sendBackFix(supabase, adminId, locale, proposalId, comment));
 }
+export async function setLessonActiveAction(lessonId: string, active: boolean): Promise<ReviewResult> {
+  return withAdmin(async ({ supabase, adminId, locale }) => {
+    const { error } = await supabase
+      .from("automation_lessons")
+      .update({ active, disabled_at: active ? null : new Date().toISOString(), disabled_by: active ? null : adminId })
+      .eq("id", lessonId);
+    if (error) return { error: tr(locale, "Could not save. Please try again.", "לא ניתן היה לשמור. יש לנסות שוב.") };
+    revalidatePath("/app/tickets/automation");
+    return { success: active ? tr(locale, "Lesson switched on.", "הלקח הופעל.") : tr(locale, "Lesson switched off.", "הלקח כובה.") };
+  });
+}
 export async function requestPromoteAction(proposalIds: string[]): Promise<ReviewResult> {
   return withAdmin(({ supabase, adminId, locale }) => requestPromote(supabase, adminId, locale, proposalIds));
 }

@@ -1,7 +1,7 @@
 import { NavLink as Link } from "@/components/nav-link";
 import { redirect } from "next/navigation";
 
-import { ReviewNav } from "@/components/ticket-review-panels";
+import { LessonToggle, ReviewNav } from "@/components/ticket-review-panels";
 import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import type { PromoteReport } from "@/lib/promotion-email";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
@@ -50,6 +50,13 @@ export default async function TicketAutomationPage() {
     .order("requested_at", { ascending: false })
     .limit(30);
   const releases = (data ?? []) as ReleaseRow[];
+  const { data: lessonRows } = await supabase
+    .from("automation_lessons")
+    .select("id, agent, lesson, source_ticket_seq, source_kind, active, created_at")
+    .order("created_at", { ascending: false })
+    .limit(40);
+  const lessons = (lessonRows ?? []) as { id: string; agent: string; lesson: string; source_ticket_seq: number | null; source_kind: string | null; active: boolean; created_at: string }[];
+  const agentLabel = (agent: string) => (agent === "analyst" ? tr(locale, "Analyst", "האנליסט") : agent === "night" ? tr(locale, "Night run", "ריצת הלילה") : tr(locale, "Both agents", "שני הסוכנים"));
 
   return (
     <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col px-6 py-10">
@@ -73,6 +80,32 @@ export default async function TicketAutomationPage() {
           {tr(locale, "→", "←")}
         </span>
       </Link>
+
+      <section className="mb-8">
+        <h2 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{tr(locale, "What the agents have learned", "מה שהסוכנים למדו")}</h2>
+        <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">
+          {tr(locale, "Each Send back, returned fix or requested change is turned into a short standing lesson that is added to the agents' instructions. You get an e-mail every time. Switch any lesson off here.", "כל החזרה, תיקון שהוחזר או בקשת שינוי הופכים לקח קצר שנוסף להוראות הסוכנים. נשלח אליך מייל בכל פעם. אפשר לכבות כאן כל לקח.")}
+        </p>
+        {lessons.length === 0 ? (
+          <p className="text-sm text-slate-500 dark:text-slate-400">{tr(locale, "Nothing learned yet.", "עדיין לא נלמד דבר.")}</p>
+        ) : (
+          <ul className="space-y-2">
+            {lessons.map((lesson) => (
+              <li key={lesson.id} className={`flex flex-wrap items-start justify-between gap-3 rounded-xl border bg-white px-4 py-3 dark:bg-slate-900 ${lesson.active ? "border-slate-200 dark:border-slate-800" : "border-dashed border-slate-300 opacity-60 dark:border-slate-700"}`}>
+                <span className="min-w-0 flex-1">
+                  <span dir="auto" className="block text-sm text-slate-900 dark:text-slate-100">{lesson.lesson}</span>
+                  <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">
+                    {agentLabel(lesson.agent)} {"·"} {formatWhen(lesson.created_at, locale)}
+                    {lesson.source_ticket_seq ? ` · TCK-${lesson.source_ticket_seq}` : ""}
+                    {!lesson.active ? ` · ${tr(locale, "switched off", "כבוי")}` : ""}
+                  </span>
+                </span>
+                <LessonToggle locale={locale} lessonId={lesson.id} active={lesson.active} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <section>
         <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{tr(locale, "Release history", "היסטוריית שחרורים")}</h2>
