@@ -84,6 +84,40 @@ export function resolveChoices(decisions: ProposalDecision[], chosen: Record<str
   });
 }
 
+/** A ready-to-paste prompt for a Claude Code session that will work on the ticket together with the admin:
+ * everything the analyst found, the decisions with the admin's current picks, the brief and what is out of scope.
+ * English (it is read by Claude, not shown to users). */
+export function buildPairingPrompt({
+  ticketSeq,
+  subject,
+  payload,
+  chosen,
+}: {
+  ticketSeq: number;
+  subject: string;
+  payload: ProposalPayload;
+  chosen: number[];
+}): string {
+  const lines: string[] = [`Let's work on Daffy ticket TCK-${ticketSeq} together: "${subject}".`, "The analyst agent already studied it and wrote the notes below. Start from them, re-check anything that looks doubtful in the real code, and ask me before big decisions.", ""];
+  if (payload.pairingReason) lines.push(`Why it is better done together: ${payload.pairingReason}`, "");
+  if (payload.summary) lines.push("Summary:", payload.summary, "");
+  if (payload.findings?.length) lines.push("Findings:", ...payload.findings.map((f) => `- ${f}`), "");
+  if (payload.blastRadius?.length) lines.push("What else could be affected:", ...payload.blastRadius.map((f) => `- ${f}`), "");
+  if (payload.decisions?.length) {
+    lines.push("Decisions (my current pick first):");
+    payload.decisions.forEach((decision, index) => {
+      const pick = decision.options[chosen[index]]?.label ?? decision.options.find((option) => option.rec)?.label ?? decision.options[0]?.label ?? "(open)";
+      lines.push(`${index + 1}. ${decision.q} -> ${pick}`);
+      if (decision.why) lines.push(`   why: ${decision.why}`);
+    });
+    lines.push("");
+  }
+  if (payload.brief) lines.push("The analyst's brief:", payload.brief.trim(), "");
+  if (payload.outOfScope?.length) lines.push("Out of scope:", ...payload.outOfScope.map((f) => `- ${f}`), "");
+  if (payload.mockups?.length) lines.push(`The analyst also drew ${payload.mockups.length} mockup(s); they are on the review page of this ticket.`);
+  return lines.join("\n").trim();
+}
+
 /** The text that goes into the ticket's log (as a support entry) when a proposal is approved -
  * the night agent reads decisions from there. Stored in English, like every other history entry. */
 export function buildApprovedSpecEntry({

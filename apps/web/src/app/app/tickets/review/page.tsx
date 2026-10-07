@@ -51,14 +51,17 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
   // an old flag with nothing behind it is not a to-do. S and Y need no row.
   const hasRow = new Set<string>();
   const migrationByTicket = new Set<string>();
+  // Proposals the analyst says are better done together with the admin (shown in their own section).
+  const pairingTickets = new Set<string>();
   if (ids.length > 0) {
     const { data: rows } = await supabase
       .from("ticket_proposals")
-      .select("ticket_id, kind, status, files:payload->files")
+      .select("ticket_id, kind, status, files:payload->files, pairing:payload->needsPairing")
       .in("ticket_id", ids)
       .in("status", ["pending", "merged", "approved"]);
     for (const row of rows ?? []) {
       hasRow.add(`${row.ticket_id}:${row.kind}:${row.status}`);
+      if (row.kind === "proposal" && row.status === "pending" && row.pairing === true) pairingTickets.add(row.ticket_id);
       if (row.kind === "fix" && row.status === "merged") mergedByTicket.add(row.ticket_id);
       if (row.kind === "fix" && Array.isArray(row.files) && (row.files as unknown[]).some((file) => typeof file === "string" && /migrations\//.test(file))) {
         migrationByTicket.add(row.ticket_id);
@@ -92,13 +95,14 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
   const promoteRunning = (openRequests ?? []).some((request) => request.kind === "promote");
   const revertQueued = new Set((openRequests ?? []).filter((request) => request.kind === "revert" && request.ticket_id).map((request) => request.ticket_id as string));
 
-  const by = (flag: string) =>
+  const by = (flag: string, pairing?: boolean) =>
     tickets.filter(
       (ticket) =>
+        (flag !== "A" || pairing === undefined || pairingTickets.has(ticket.id) === pairing) &&
         ticket.auto_handle === flag && (!needsRow[flag] || needsRow[flag].statuses.some((status) => hasRow.has(`${ticket.id}:${needsRow[flag].kind}:${status}`))),
     );
-  const section = (title: string, flag: string, note?: string, extra?: ReactNode) => {
-    const list = by(flag);
+  const section = (title: string, flag: string, note?: string, extra?: ReactNode, pairing?: boolean) => {
+    const list = by(flag, pairing);
     return (
       <section className="mb-6">
         <h2 className="mb-2 flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
@@ -176,7 +180,14 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
           {notice}
         </p>
       ) : null}
-      {section(tr(locale, "Waiting for your approval", "ממתינות לאישורך"), "A", tr(locale, "Approve queues the ticket for the night run.", "אישור מכניס את הפנייה לתור של ריצת הלילה."))}
+      {section(
+        tr(locale, "Better done together with you", "עדיף לעשות יחד איתך"),
+        "A",
+        tr(locale, "The analyst says these are too big or too risky to run alone overnight. Open one, copy its brief and work on it with Claude Code.", "האנליסט מעריך שהפניות האלה גדולות או מסוכנות מדי לריצה לילית לבד. יש לפתוח, להעתיק את התקציר ולעבוד עליהן עם Claude Code."),
+        undefined,
+        true,
+      )}
+      {section(tr(locale, "Waiting for your approval", "ממתינות לאישורך"), "A", tr(locale, "Approve queues the ticket for the night run.", "אישור מכניס את הפנייה לתור של ריצת הלילה."), undefined, false)}
       {section(tr(locale, "Returned with questions", "חזרו עם שאלות"), "P", tr(locale, "The night run read the real code and stopped. Answer and re-queue.", "ריצת הלילה קראה את הקוד האמיתי ונעצרה. יש לענות ולהכניס לתור."))}
       {section(
         tr(locale, "On dev - waiting for your test", "בפיתוח - ממתינים לבדיקה שלך"),

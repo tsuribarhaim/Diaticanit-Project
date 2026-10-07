@@ -94,7 +94,7 @@ export default async function TicketReviewDetailPage({ params }: { params: Promi
       <ReviewNav locale={locale} backLabel={tr(locale, "Review & approvals", "סקירה ואישורים")} />
       {header}
       {proposal && proposal.kind === "proposal" ? (
-        <ProposalPanel locale={locale} proposalId={proposal.id} payload={proposal.payload as ProposalPayload} />
+        <ProposalPanel locale={locale} proposalId={proposal.id} payload={proposal.payload as ProposalPayload} ticketSeq={ticket.ticket_seq} subject={ticket.subject} />
       ) : proposal && proposal.kind === "questions" ? (
         <QuestionsPanel locale={locale} proposalId={proposal.id} payload={proposal.payload as QuestionsPayload} />
       ) : proposal && proposal.kind === "fix" ? (
