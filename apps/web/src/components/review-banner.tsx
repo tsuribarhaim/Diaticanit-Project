@@ -24,9 +24,12 @@ export function ReviewBanner({
   const total = waiting + returned + fixReady + onDev + approved;
   if (total === 0) {
     return (
-      <p className="mb-4 text-sm">
+      <p className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
         <Link href="/app/tickets/review" className="font-semibold text-teal-700 dark:text-teal-400">
           {tr(locale, "Open review & approvals", "פתיחת סקירה ואישורים")} {"→"}
+        </Link>
+        <Link href="/app/tickets/automation" className="font-semibold text-teal-700 dark:text-teal-400">
+          {tr(locale, "Ticket Automation", "אוטומציית פניות")} {"→"}
         </Link>
       </p>
     );
@@ -40,9 +43,14 @@ export function ReviewBanner({
   return (
     <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 border-s-4 border-s-amber-600 bg-amber-50 px-4 py-3 dark:border-amber-900 dark:border-s-amber-500 dark:bg-amber-950/30">
       <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">{parts.join(" · ")}</p>
-      <Link href="/app/tickets/review" className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500">
-        {tr(locale, "Open review & approvals", "פתיחת סקירה ואישורים")}
-      </Link>
+      <span className="flex flex-wrap items-center gap-3">
+        <Link href="/app/tickets/automation" className="text-sm font-semibold text-amber-900 underline dark:text-amber-200">
+          {tr(locale, "Ticket Automation", "אוטומציית פניות")}
+        </Link>
+        <Link href="/app/tickets/review" className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500">
+          {tr(locale, "Open review & approvals", "פתיחת סקירה ואישורים")}
+        </Link>
+      </span>
     </div>
   );
 }
