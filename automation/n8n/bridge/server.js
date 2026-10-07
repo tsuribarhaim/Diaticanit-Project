@@ -210,8 +210,8 @@ const PHASE2_RESULT_SCHEMA = JSON.stringify({
       type: "array",
       items: {
         type: "object",
-        properties: { path: { type: "string" }, label: { type: "string" }, mobile: { type: "boolean" }, full: { type: "boolean" } },
-        required: ["path", "label", "mobile", "full"],
+        properties: { path: { type: "string" }, label: { type: "string" }, mobile: { type: "boolean" }, full: { type: "boolean" }, actions: { type: "array", items: { type: "string" } } },
+        required: ["path", "label", "mobile", "full", "actions"],
         additionalProperties: false,
       },
     },
@@ -272,8 +272,16 @@ function buildPhase2Prompt(ticket, phase1Output, port, shotsDir) {
       "honestly. Save every image ONLY inside that folder: your shell cannot write anywhere else, git ignores the folder, and the bridge " +
       "cleans it up, so do not delete it or its files. Look at the result after your fix; if what you see is wrong, fix it. In " +
       "`screenshotPages` list up to " +
-      `${MAX_SHOTS} pages that best show the change (path without a leading slash, a short label, mobile true or false, and full true when the part that shows your change is below the first screen) - the bridge ` +
+      `${MAX_SHOTS} pages that best show the change (path without a leading slash, a short label, mobile true or false, full true when the part that shows your change is below the first screen, and actions: the same --do steps you used, or [] for none) - the bridge ` +
       "captures them itself after you finish. Use an empty array if no page shows the change.",
+    "",
+    "CLICKING AND TYPING: the screenshot tool can also operate the page before it takes the picture, so you can look at things that only " +
+      "appear after an interaction (an opened chat, a pressed Save button, a typed value, an open menu). Add one or more `--do` steps: " +
+      "`--do \"click:Save\"` (the text or aria-label of a button, link or tab; a CSS selector also works), `--do \"fill:Weight=72\"` (a field's label, " +
+      "placeholder or selector, then = and the text), `--do \"press:Enter\"`, `--do \"wait:800\"`. Steps run in order on a freshly loaded page every time, so " +
+      "repeat the earlier steps when you want a later state. If a step cannot be done the tool prints ACTION FAILED and still saves the picture. The test " +
+      "account is non-admin and has copied sample data (profile, targets and recent daily reports), so Targets, Daily Report and the chat show real-looking " +
+      "content. Everything you click happens on the test account only.",
     "",
     "TEST STEPS: in `testSteps` write 2 to 5 short, plain steps a person can follow on the dev app (localhost:3000) to see " +
       "that your change works, for example 'Open Profile, switch the app to Hebrew, check the arrows point the other way'. Name the " +
@@ -342,6 +350,9 @@ async function captureShots(ticket, pages) {
     const args = [SHOT_TOOL, cleanPath, file];
     if (page.mobile) args.push("--mobile");
     if (page.full) args.push("--full");
+    for (const action of (Array.isArray(page.actions) ? page.actions : []).slice(0, 12)) {
+      if (typeof action === "string" && action.length <= 200 && !/[\u0000-\u001f]/.test(action)) args.push("--do", action);
+    }
     const ok = await new Promise((resolve) => execFile(process.execPath, args, { timeout: 120000, shell: false }, (err) => resolve(!err)));
     if (!ok || !fs.existsSync(file)) continue;
     shots.push({ label: String(page.label || cleanPath).slice(0, 120), dataUrl: "data:image/jpeg;base64," + fs.readFileSync(file).toString("base64") });
@@ -984,6 +995,15 @@ async function runAnalysis() {
 
 async function runAll() {
   const tickets = await fetchQueue();
+  if (tickets.length > 0 && env.SEED_SOURCE_EMAIL) {
+    // Fresh sample data for the test account, so the agent's screenshots show real-looking pages. Never fatal.
+    await new Promise((resolve) =>
+      execFile(process.execPath, [path.join(__dirname, "tools", "seed-bot-data.js")], { timeout: 120000, env: { ...process.env, BRIDGE_ENV_FILE: envFilePath } }, (err, stdout, stderr) => {
+        console.log(err ? `seed-bot-data failed: ${(stderr || err.message).slice(0, 200)}` : String(stdout).trim());
+        resolve();
+      }),
+    );
+  }
   const budgetTracker = { spentUsd: 0 };
   const results = [];
   for (const ticket of tickets) {
