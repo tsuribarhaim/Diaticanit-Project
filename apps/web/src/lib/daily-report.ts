@@ -1,7 +1,13 @@
 import { z } from "zod";
 
 import type { createClient } from "@/lib/supabase/server";
-import { DEFAULT_TIMEZONE, getTodayLocalDayRangeUtc } from "@/lib/timezone";
+import {
+  addDaysToDateString,
+  DEFAULT_TIMEZONE,
+  getLocalDateString,
+  getLocalDayRangeUtc,
+  getTodayLocalDayRangeUtc,
+} from "@/lib/timezone";
 
 export const dailyReportInputSchema = z.object({
   reportText: z
@@ -373,6 +379,99 @@ export async function getTodaysLoggedItems({
   }
 
   return { foodItems, exerciseItems, weighIns };
+}
+
+export type RecentDaysLoggedFoodItems = Array<{ reportAt: string; localDate: string } & ParsedFoodItem>;
+
+const RECENT_DAYS_LOGGED_FOOD_ITEMS_CAP = 40;
+
+/**
+ * TCK-69: food/drink entries the user logged on the `days` local days
+ * BEFORE today (today itself is excluded - getTodaysLoggedItems already
+ * covers it), newest first, so the Daily Report chat assistant can
+ * recognize "another portion of yesterday's lasagna" and reuse its logged
+ * nutrition. Reference data only - never part of today's totals. Deduped
+ * per local day + name + unit (not across days), so a dish logged on two
+ * different days stays visible as two entries and the model can ask which
+ * day the user means.
+ */
+export async function getRecentDaysLoggedFoodItems({
+  supabase,
+  userId,
+  timeZone = DEFAULT_TIMEZONE,
+  days = 3,
+  excludeReportId,
+}: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  userId: string;
+  /** See getTodaysDailyReportTotals' own comment on this same param. */
+  timeZone?: string;
+  /** How many local days before today to look back. */
+  days?: number;
+  /** The report currently being edited, if any - left out like in
+   * getTodaysLoggedItems. */
+  excludeReportId?: string;
+}): Promise<RecentDaysLoggedFoodItems> {
+  const today = getLocalDateString(timeZone);
+  const firstDay = addDaysToDateString(today, -days);
+  const startIso = getLocalDayRangeUtc(firstDay, timeZone).startIso;
+  const endIso = getTodayLocalDayRangeUtc(timeZone).startIso;
+
+  let itemsQuery = supabase.from("user_daily_reports").select("report_at, parsed_items").eq("user_id", userId);
+  if (excludeReportId) itemsQuery = itemsQuery.neq("id", excludeReportId);
+
+  const { data: rows } = await itemsQuery
+    .gte("report_at", startIso)
+    .lt("report_at", endIso)
+    .order("report_at", { ascending: false });
+
+  const items: RecentDaysLoggedFoodItems = [];
+  const seen = new Set<string>();
+
+  for (const row of rows ?? []) {
+    if (!Array.isArray(row.parsed_items)) continue;
+    const reportAt = String(row.report_at);
+    const localDate = getLocalDateString(timeZone, new Date(reportAt));
+
+    for (const raw of row.parsed_items as Array<Record<string, unknown>>) {
+      const name = String(raw.name ?? "");
+      const unit = String(raw.unit ?? "");
+      const key = `${localDate}|${name.trim().toLowerCase()}|${unit}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      items.push({
+        reportAt,
+        localDate,
+        name,
+        quantity: Number(raw.quantity ?? 0),
+        unit,
+        caloriesKcal: Number(raw.caloriesKcal ?? 0),
+        proteinG: Number(raw.proteinG ?? 0),
+        carbsG: Number(raw.carbsG ?? 0),
+        fatG: Number(raw.fatG ?? 0),
+        fiberG: Number(raw.fiberG ?? 0),
+        waterMl: Number(raw.waterMl ?? 0),
+        magnesiumMg: Number(raw.magnesiumMg ?? 0),
+        potassiumMg: Number(raw.potassiumMg ?? 0),
+        ironMg: Number(raw.ironMg ?? 0),
+        zincMg: Number(raw.zincMg ?? 0),
+        sodiumMg: Number(raw.sodiumMg ?? 0),
+        addedSugarG: Number(raw.addedSugarG ?? 0),
+        calciumMg: Number(raw.calciumMg ?? 0),
+        vitCMg: Number(raw.vitCMg ?? 0),
+        vitB12Mcg: Number(raw.vitB12Mcg ?? 0),
+        vitDMcg: Number(raw.vitDMcg ?? 0),
+        satFatG: Number(raw.satFatG ?? 0),
+        omega3G: Number(raw.omega3G ?? 0),
+        cholesterolMg: Number(raw.cholesterolMg ?? 0),
+      });
+
+      if (items.length >= RECENT_DAYS_LOGGED_FOOD_ITEMS_CAP) return items;
+    }
+  }
+
+  return items;
 }
 
 /** Each custom target's value (by id) for the given range - the latest
