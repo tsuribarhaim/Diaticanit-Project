@@ -51,18 +51,20 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
   // an old flag with nothing behind it is not a to-do. S and Y need no row.
   const hasRow = new Set<string>();
   const migrationByTicket = new Set<string>();
+  const approvedFixByTicket = new Map<string, string>();
   // Proposals the analyst says are better done together with the admin (shown in their own section).
   const pairingTickets = new Set<string>();
   if (ids.length > 0) {
     const { data: rows } = await supabase
       .from("ticket_proposals")
-      .select("ticket_id, kind, status, files:payload->files, pairing:payload->needsPairing")
+      .select("id, ticket_id, kind, status, files:payload->files, pairing:payload->needsPairing")
       .in("ticket_id", ids)
       .in("status", ["pending", "merged", "approved"]);
     for (const row of rows ?? []) {
       hasRow.add(`${row.ticket_id}:${row.kind}:${row.status}`);
       if (row.kind === "proposal" && row.status === "pending" && row.pairing === true) pairingTickets.add(row.ticket_id);
       if (row.kind === "fix" && row.status === "merged") mergedByTicket.add(row.ticket_id);
+      if (row.kind === "fix" && row.status === "approved") approvedFixByTicket.set(row.ticket_id, row.id as string);
       if (row.kind === "fix" && Array.isArray(row.files) && (row.files as unknown[]).some((file) => typeof file === "string" && /migrations\//.test(file))) {
         migrationByTicket.add(row.ticket_id);
       }
@@ -198,8 +200,9 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
         locale={locale}
         approved={by("R").length}
         running={promoteRunning}
-        tickets={by("R").map((ticket) => ({ seq: ticket.ticket_seq, subject: ticket.subject }))}
-        hasMigration={by("R").some((ticket) => migrationByTicket.has(ticket.id))}
+        tickets={by("R")
+          .filter((ticket) => approvedFixByTicket.has(ticket.id))
+          .map((ticket) => ({ seq: ticket.ticket_seq, subject: ticket.subject, proposalId: approvedFixByTicket.get(ticket.id)!, migration: migrationByTicket.has(ticket.id) }))}
       />
       {section(
         tr(locale, "Approved for production", "אושרו לייצור"),

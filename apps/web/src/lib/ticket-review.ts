@@ -261,7 +261,7 @@ export async function sendBackFix(supabase: Client, adminId: string, locale: App
 
 /** "Promote to production": one request covering every fix approved right now. Fire and forget - the
  * laptop does the work and a confirmation email reports the outcome. */
-export async function requestPromote(supabase: Client, adminId: string, locale: AppLocale): Promise<ReviewResult> {
+export async function requestPromote(supabase: Client, adminId: string, locale: AppLocale, proposalIds?: string[]): Promise<ReviewResult> {
   const { data: open } = await supabase.from("automation_requests").select("id").eq("kind", "promote").is("completed_at", null).limit(1);
   if ((open ?? []).length > 0) return { success: tr(locale, "A promotion is already requested or running.", "העלאה לייצור כבר התבקשה או רצה כעת.") };
   const { data: approved } = await supabase
@@ -277,7 +277,9 @@ export async function requestPromote(supabase: Client, adminId: string, locale: 
         ? { proposalId: row.id as string, ticketId: row.ticket_id as string, ticketSeq: ticket.ticket_seq, subject: ticket.subject, branch: (row.payload as FixPayload).branch }
         : null;
     })
-    .filter((item): item is NonNullable<typeof item> => item !== null);
+    .filter((item): item is NonNullable<typeof item> => item !== null)
+    // The admin may untick fixes in the dialog; with no list at all, everything approved ships.
+    .filter((item) => !proposalIds || proposalIds.includes(item.proposalId));
   if (items.length === 0) return { error: tr(locale, "No fix is approved for production yet.", "אין עדיין תיקון שאושר לייצור.") };
   const { error } = await supabase.from("automation_requests").insert({ kind: "promote", requested_by: adminId, details: { tickets: items } });
   if (error) return dbError(locale);

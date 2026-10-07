@@ -76,6 +76,6 @@ export async function withdrawApprovalAction(proposalId: string): Promise<Review
 export async function sendBackFixAction(proposalId: string, comment: string): Promise<ReviewResult> {
   return withAdmin(({ supabase, adminId, locale }) => sendBackFix(supabase, adminId, locale, proposalId, comment));
 }
-export async function requestPromoteAction(): Promise<ReviewResult> {
-  return withAdmin(({ supabase, adminId, locale }) => requestPromote(supabase, adminId, locale));
+export async function requestPromoteAction(proposalIds: string[]): Promise<ReviewResult> {
+  return withAdmin(({ supabase, adminId, locale }) => requestPromote(supabase, adminId, locale, proposalIds));
 }
