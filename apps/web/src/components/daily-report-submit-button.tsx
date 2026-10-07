@@ -93,7 +93,10 @@ export function SubmitButton({
   size?: "lg" | "sm";
   /** Lets a caller disable this independently of the form's own pending
    * state - e.g. the floating save icon should read as inactive until
-   * something has actually changed, not just while a submit is in flight. */
+   * something has actually changed, not just while a submit is in flight.
+   * For variant="icon" this not-ready state renders as a faint dashed
+   * outline (with a tooltip saying why), clearly distinct from the
+   * teal-at-reduced-opacity look used while a submit is pending. */
   disabled?: boolean;
   /** A caller-tracked "this was just clicked, a submit is underway" signal,
    * shown in addition to (not instead of) useFormStatus's own `pending`.
@@ -132,6 +135,13 @@ export function SubmitButton({
 
   if (variant === "icon") {
     const isSmall = size === "sm";
+    // Disabled because there's nothing to save yet (as opposed to a submit
+    // being in flight) - drawn as a faint dashed outline so it can't be
+    // mistaken for a pressable button next to the solid teal one.
+    const isNotReady = disabled && !pending && !busy;
+    const notReadyTitle = isEditing
+      ? tr(locale, "No changes to save yet.", "אין שינויים לשמירה כרגע.")
+      : tr(locale, "Nothing to report yet.", "אין עדיין מה לדווח.");
     return (
       <button
         type="submit"
@@ -139,11 +149,13 @@ export function SubmitButton({
         disabled={isDisabled}
         onClick={onClick}
         aria-label={isBusy ? pendingLabel : idleLabel}
-        title={isBusy ? pendingLabel : idleLabel}
+        title={isNotReady ? notReadyTitle : isBusy ? pendingLabel : idleLabel}
         className={`flex ${isSmall ? "h-9 w-9 shadow-none" : "h-14 w-14 shadow-lg"} items-center justify-center rounded-full transition-colors ${
-          isDisabled
-            ? `cursor-not-allowed bg-slate-200 text-slate-400 dark:bg-slate-800 dark:text-slate-600${isSmall ? "" : " shadow-none"}`
-            : "bg-teal-700 text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+          isNotReady
+            ? `cursor-not-allowed border border-dashed border-slate-300 bg-white text-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-600${isSmall ? "" : " shadow-none"}`
+            : isDisabled
+              ? "cursor-not-allowed border border-transparent bg-teal-700 text-white opacity-70 dark:bg-teal-600"
+              : "border border-transparent bg-teal-700 text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
         }`}
       >
         {isBusy ? (
