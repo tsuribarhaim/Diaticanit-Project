@@ -8,11 +8,11 @@ import {
 } from "@/lib/ai/daily-report-chat";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { resolveUserGenderForAddressing } from "@/lib/ai/persona";
-import { getTodaysDailyReportTotals, getTodaysLoggedItems } from "@/lib/daily-report";
+import { getRecentDaysLoggedFoodItems, getTodaysDailyReportTotals, getTodaysLoggedItems } from "@/lib/daily-report";
 import { normalizeLocale, tr } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
-import { DEFAULT_TIMEZONE } from "@/lib/timezone";
+import { DEFAULT_TIMEZONE, getLocalDateString } from "@/lib/timezone";
 
 export const runtime = "nodejs";
 
@@ -99,8 +99,12 @@ export async function POST(request: NextRequest) {
   const targets: DailyReportChatTargets = targetRow ?? null;
 
   const timeZone = profileRow?.timezone ?? DEFAULT_TIMEZONE;
-  const todaysTotals = await getTodaysDailyReportTotals({ supabase, userId: user.id, timeZone, excludeReportId: editingReportId });
-  const todaysLoggedItems = await getTodaysLoggedItems({ supabase, userId: user.id, timeZone, excludeReportId: editingReportId });
+  const [todaysTotals, todaysLoggedItems, recentDaysLoggedItems] = await Promise.all([
+    getTodaysDailyReportTotals({ supabase, userId: user.id, timeZone, excludeReportId: editingReportId }),
+    getTodaysLoggedItems({ supabase, userId: user.id, timeZone, excludeReportId: editingReportId }),
+    getRecentDaysLoggedFoodItems({ supabase, userId: user.id, timeZone, excludeReportId: editingReportId }),
+  ]);
+  const todayLocalDate = getLocalDateString(timeZone);
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -116,6 +120,8 @@ export async function POST(request: NextRequest) {
           targets,
           todaysTotals,
           todaysLoggedItems,
+          recentDaysLoggedItems,
+          todayLocalDate,
           isEditingExistingEntry,
         });
 
