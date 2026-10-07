@@ -30,6 +30,8 @@ Endpoints (all `POST`, header `x-bridge-secret`):
 - `/analyze` - the analyst: every ticket flagged `S` becomes a proposal for the admin to approve.
 - `/merge` with `{"ticketSeq": N}` - merge branch `auto-fix/tck-N` into `main` of the dev repo
   (never pushed; a failed merge is aborted). Called by the poller when the admin clicks "Merge to dev".
+- `/revert` - "Send back": reverts the merge commit of `auto-fix/tck-N` on main of the dev repo (never pushed) and renames the old branch so the next run starts fresh.
+- With `AUTO_MERGE_TO_DEV=true` in `.env.local`, `/run` merges each passing fix into main itself, after gates: no migration / dependency / env / middleware change, merges cleanly into a throwaway copy of main, and tsc + eslint pass on that merged copy. Anything else stays on its branch (flag `D`) with the reason on the fix card. Off by default.
 
 `/run` and `/analyze` each refuse to overlap with themselves (they answer `{"skipped": true}`).
 
