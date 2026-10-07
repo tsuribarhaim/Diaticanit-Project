@@ -11,6 +11,7 @@ import { routeChatMessageAction, type ChatRouterResult } from "@/app/app/chat/ac
 import { submitTicketFromChatAction } from "@/app/app/tickets/chat-actions";
 import { SAVE_TOAST_DURATION_MS } from "@/components/daily-report-form";
 import { DailyReportSuccessToast } from "@/components/daily-report-success-toast";
+import { formatProfileDiffText, ProfileDiffValue } from "@/components/profile-diff-value";
 import { SavedListQuickPicker } from "@/components/saved-list-quick-picker";
 import { formatDefaultItemName, formatDefaultUnit, formatTicketArea, formatTicketPriority, formatTicketType, tr, trGendered, type AppLocale } from "@/lib/locale";
 import type { ChatDomain } from "@/lib/ai/chat-router";
@@ -556,7 +557,7 @@ export function GlobalChatWidget({
           if (!hasShownReviewPrompt && pendingReviewChanges && pendingReviewChanges.length > 0) {
             setHasShownReviewPrompt(true);
             const summary = pendingReviewChanges
-              .map((row) => `${tr(locale, row.labelEn, row.labelHe)} (${row.before} → ${row.after})`)
+              .map((row) => formatProfileDiffText(row, locale))
               .join(", ");
             setMessages((previous) => [
               ...previous,
@@ -678,20 +679,11 @@ export function GlobalChatWidget({
                       {message.pendingProfileChange.diffRows.map((row, rowIndex) => (
                         <div key={rowIndex} className="flex flex-wrap items-baseline gap-x-1">
                           <span className="font-medium">{tr(locale, row.labelEn, row.labelHe)}:</span>
-                          {/* Separate flex items, not one dir="ltr" text run mixing
-                              Hebrew words with the arrow - a single run reorders
-                              under the browser's own bidi algorithm regardless of
-                              dir (reported as "arrow direction reversed" - e.g.
-                              allergies going from None to Penicillin displayed
-                              backwards), the same bug already found and fixed this
-                              same way for the gained/burned calorie display. Flex
-                              item position is decided by DOM order, which bidi
-                              text reordering cannot touch. */}
-                          <div dir="ltr" className="flex flex-wrap items-baseline gap-x-1">
-                            <span>{row.before}</span>
-                            <span aria-hidden="true">→</span>
-                            <span>{row.after}</span>
-                          </div>
+                          {/* TCK-18: before/after follows the page direction (in
+                              Hebrew "ללא ← פניצילין") as separate flex items - see
+                              ProfileDiffValue. The earlier dir="ltr" wrapper made
+                              Hebrew read backwards. */}
+                          <ProfileDiffValue before={row.before} after={row.after} locale={locale} />
                         </div>
                       ))}
                     </div>
