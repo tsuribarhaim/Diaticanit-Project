@@ -189,6 +189,30 @@ export function GlobalChatWidget({
   // comment on this (identical reasoning, just no longer Targets-specific).
   const [hasShownReviewPrompt, setHasShownReviewPrompt] = useState(false);
 
+  // Ticket #70: the server recomputes the reminder flag on every
+  // target-feeding profile write (see lib/targets-review-flag.ts), so the
+  // prop can change - or clear - while a reminder citing the old values is
+  // still sitting unanswered in this chat. Drop such a stale reminder and
+  // let the next chat open inject a fresh one with the current values (if
+  // any). Done while rendering on a prop change rather than in an effect
+  // (react-hooks/set-state-in-effect). Answered reminders are left alone.
+  const reviewChangesKey = JSON.stringify(pendingReviewChanges ?? null);
+  const [previousReviewChangesKey, setPreviousReviewChangesKey] = useState(reviewChangesKey);
+  if (reviewChangesKey !== previousReviewChangesKey) {
+    setPreviousReviewChangesKey(reviewChangesKey);
+    const isStaleReviewPrompt = (message: ChatMessage) =>
+      message.reviewPrompt?.status === "pending" && JSON.stringify(message.reviewPrompt.changes) !== reviewChangesKey;
+    if (messages.some(isStaleReviewPrompt)) {
+      setMessages((previous) => previous.filter((message) => !isStaleReviewPrompt(message)));
+      setHasShownReviewPrompt(false);
+    }
+    if (pendingReviewChanges) {
+      setHasUnread(true);
+    } else if (!pendingClarification) {
+      setHasUnread(false);
+    }
+  }
+
   if (pathname?.startsWith("/app/daily-report") || pathname?.startsWith("/app/onboarding")) {
     return null;
   }
