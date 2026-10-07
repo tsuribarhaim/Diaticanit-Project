@@ -1370,7 +1370,10 @@ export default async function DailyReportPage({
                           their own relevant value(s) instead. */}
                       {hasFood || hasExercise ? (
                         <div className="grid gap-2 text-xs text-slate-700 dark:text-slate-300 sm:grid-cols-2 lg:grid-cols-4">
-                          <p>{tr(locale, "Reported weight", "משקל מדווח")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{report.reported_weight_kg === null ? tr(locale, "n/a", "לא זמין") : formatNumber(report.reported_weight_kg, locale, 1)}</span>{report.reported_weight_kg === null ? "" : ` ${formatMeasurementUnit("kg", locale)}`}</p>
+                          {/* TCK-46: only when this entry actually reported a weight. */}
+                          {hasWeight ? (
+                            <p>{tr(locale, "Reported weight", "משקל מדווח")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatNumber(report.reported_weight_kg, locale, 1)}</span> {formatMeasurementUnit("kg", locale)}</p>
+                          ) : null}
                           {/* Same nutrients the user selected in "Customize
                               charts", in the same order the bars above
                               show them - see selectedReportMetricIds' own
