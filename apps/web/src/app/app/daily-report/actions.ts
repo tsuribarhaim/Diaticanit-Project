@@ -1138,9 +1138,13 @@ export async function saveDailyReportAction(
   // failure here shouldn't undo an already-successful report save.
   let targetsStaleChanges: ProfileDiffRow[] | undefined;
   let bmiWarning: string | undefined;
+  // Whether the resync below actually changed the profile's weight - drives
+  // the "and profile updated" success message (ticket TCK-42).
+  let profileWeightUpdated = false;
 
   if ((reportedWeightKg !== null || isEditing) && !reportedWeightNotPersisted) {
     const syncedWeightKg = await resyncProfileWeightFromReports(supabase, user.id, locale);
+    profileWeightUpdated = syncedWeightKg !== null && Math.abs(syncedWeightKg - Number(profile.weight_kg ?? 0)) > 1e-9;
 
     // Only surface BMI/targets-stale messaging when this save's own weight
     // is what's now actually current - editing an older entry's weight
@@ -1216,8 +1220,12 @@ export async function saveDailyReportAction(
   // state.wasEditing.
   return {
     success: isEditing
-      ? tr(locale, "Daily report updated.", "הדיווח היומי עודכן.") + weightNotice
-      : tr(locale, "Daily report saved.", "הדיווח היומי נשמר.") + weightNotice,
+      ? (profileWeightUpdated
+          ? tr(locale, "Daily report and profile updated.", "הדיווח היומי והפרופיל עודכנו.")
+          : tr(locale, "Daily report updated.", "הדיווח היומי עודכן.")) + weightNotice
+      : (profileWeightUpdated
+          ? tr(locale, "Daily report saved and profile updated.", "הדיווח היומי נשמר והפרופיל עודכן.")
+          : tr(locale, "Daily report saved.", "הדיווח היומי נשמר.")) + weightNotice,
     // targetsStale/bmiWarning are only meaningful for a fresh save - an
     // edit's own weight, if changed, is still resynced above and still
     // updates the profile, but the Targets page independently re-checks
@@ -1894,8 +1902,16 @@ export async function adjustDailyReportItemQuantitiesAction(formData: FormData):
   // value, so an edit to an older, non-most-recent entry can never override
   // a genuinely more recent weigh-in. Best-effort, after the write already
   // succeeded.
+  let profileWeightUpdated = false;
   if (weightChanged) {
-    await resyncProfileWeightFromReports(supabase, user.id, locale);
+    const { data: profileBefore } = await supabase
+      .from("user_profile")
+      .select("weight_kg")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    const syncedWeightKg = await resyncProfileWeightFromReports(supabase, user.id, locale);
+    profileWeightUpdated =
+      syncedWeightKg !== null && Math.abs(syncedWeightKg - Number(profileBefore?.weight_kg ?? 0)) > 1e-9;
   }
 
   revalidatePath("/app/daily-report");
@@ -1903,7 +1919,9 @@ export async function adjustDailyReportItemQuantitiesAction(formData: FormData):
 
   redirect(
     buildDailyReportRedirectPath({
-      notice: tr(locale, "Quantities updated.", "הכמויות עודכנו."),
+      notice: profileWeightUpdated
+        ? tr(locale, "Quantities and profile updated.", "הכמויות והפרופיל עודכנו.")
+        : tr(locale, "Quantities updated.", "הכמויות עודכנו."),
       date: selectedDateParam,
     }),
   );
