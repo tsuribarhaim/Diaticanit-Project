@@ -7,13 +7,17 @@ import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { createClient } from "@/lib/supabase/server";
 import {
   answerQuestions,
+  approveForProduction,
   approveProposal,
   rejectProposal,
   requestAnalysis,
   requestChange,
   requestMerge,
+  requestPromote,
   returnFix,
+  sendBackFix,
   takeOutOfAutomation,
+  withdrawApproval,
   type ReviewResult,
 } from "@/lib/ticket-review";
 import { isCurrentUserAdmin } from "@/lib/tickets";
@@ -62,4 +66,16 @@ export async function requestAnalysisAction(): Promise<ReviewResult> {
 }
 export async function requestMergeAction(proposalId: string): Promise<ReviewResult> {
   return withAdmin(({ supabase, adminId, locale }) => requestMerge(supabase, adminId, locale, proposalId));
+}
+export async function approveForProductionAction(proposalId: string): Promise<ReviewResult> {
+  return withAdmin(({ supabase, adminId, locale }) => approveForProduction(supabase, adminId, locale, proposalId));
+}
+export async function withdrawApprovalAction(proposalId: string): Promise<ReviewResult> {
+  return withAdmin(({ supabase, adminId, locale }) => withdrawApproval(supabase, adminId, locale, proposalId));
+}
+export async function sendBackFixAction(proposalId: string, comment: string): Promise<ReviewResult> {
+  return withAdmin(({ supabase, adminId, locale }) => sendBackFix(supabase, adminId, locale, proposalId, comment));
+}
+export async function requestPromoteAction(): Promise<ReviewResult> {
+  return withAdmin(({ supabase, adminId, locale }) => requestPromote(supabase, adminId, locale));
 }

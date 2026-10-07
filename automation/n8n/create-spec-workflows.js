@@ -106,6 +106,10 @@ for (const r of (list.requests || [])) {
       const res = await call({ method: 'POST', url: BRIDGE_URL + '/merge', headers: { 'x-bridge-secret': BRIDGE_SECRET }, body: { ticketSeq: r.ticketSeq } });
       ok = res.ok === true;
       result = res.result || '';
+    } else if (r.kind === 'revert') {
+      const res = await call({ method: 'POST', url: BRIDGE_URL + '/revert', headers: { 'x-bridge-secret': BRIDGE_SECRET }, body: { ticketSeq: r.ticketSeq } });
+      ok = res.ok === true;
+      result = res.result || '';
     } else {
       result = 'Unknown request kind: ' + r.kind;
     }

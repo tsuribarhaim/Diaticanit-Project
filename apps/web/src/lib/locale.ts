@@ -387,6 +387,8 @@ export function formatTicketAutoHandle(value: string | null | undefined, locale:
   if (value === "S") return tr(locale, "Spec requested", "התבקש אפיון");
   if (value === "A") return tr(locale, "Awaiting your approval", "ממתין לאישורך");
   if (value === "P") return tr(locale, "Returned with questions", "חזר עם שאלות");
+  if (value === "M") return tr(locale, "On dev - waiting for your test", "בפיתוח - ממתין לבדיקה שלך");
+  if (value === "R") return tr(locale, "Approved for production", "אושר לייצור");
   if (value === "D") return tr(locale, "Fix ready - merge to dev", "תיקון מוכן - מיזוג לפיתוח");
   return tr(locale, "Not opted in", "לא סומנה לאוטומציה");
 }

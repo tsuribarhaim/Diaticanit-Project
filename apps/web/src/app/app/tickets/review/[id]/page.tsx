@@ -30,7 +30,7 @@ export default async function TicketReviewDetailPage({ params }: { params: Promi
     .maybeSingle();
   if (!ticket) notFound();
 
-  const wantedKind = ticket.auto_handle === "A" ? "proposal" : ticket.auto_handle === "P" ? "questions" : ticket.auto_handle === "D" ? "fix" : null;
+  const wantedKind = ticket.auto_handle === "A" ? "proposal" : ticket.auto_handle === "P" ? "questions" : (ticket.auto_handle === "D" || ticket.auto_handle === "M" || ticket.auto_handle === "R") ? "fix" : null;
   let proposal: TicketProposalRow | null = null;
   if (wantedKind) {
     const { data } = await supabase
@@ -38,7 +38,7 @@ export default async function TicketReviewDetailPage({ params }: { params: Promi
       .select("*")
       .eq("ticket_id", id)
       .eq("kind", wantedKind)
-      .in("status", wantedKind === "fix" ? ["pending", "merged"] : ["pending"])
+      .in("status", wantedKind === "fix" ? ["pending", "merged", "approved"] : ["pending"])
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -47,7 +47,20 @@ export default async function TicketReviewDetailPage({ params }: { params: Promi
 
   let mergeRequested = false;
   let mergeResult: string | null = null;
+  let revertRequested = false;
+  let revertResult: string | null = null;
   if (wantedKind === "fix") {
+    const { data: reverts } = await supabase
+      .from("automation_requests")
+      .select("completed_at, result")
+      .eq("kind", "revert")
+      .eq("ticket_id", id)
+      .order("requested_at", { ascending: false })
+      .limit(1);
+    const lastRevert = reverts?.[0];
+    revertRequested = Boolean(lastRevert && !lastRevert.completed_at);
+    // A finished revert that left the ticket on dev means it failed: show why.
+    revertResult = lastRevert?.completed_at && ticket.auto_handle !== "D" ? (lastRevert.result ?? null) : null;
     const { data: requests } = await supabase
       .from("automation_requests")
       .select("completed_at, result")
@@ -89,9 +102,11 @@ export default async function TicketReviewDetailPage({ params }: { params: Promi
           locale={locale}
           proposalId={proposal.id}
           payload={proposal.payload as FixPayload}
-          merged={proposal.status === "merged"}
+          stage={proposal.status === "approved" ? "approved" : proposal.status === "merged" ? "dev" : "branch"}
           mergeRequested={mergeRequested}
           mergeResult={mergeResult}
+          revertRequested={revertRequested}
+          revertResult={revertResult}
         />
       ) : (
         <p className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">

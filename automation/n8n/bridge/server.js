@@ -359,6 +359,27 @@ async function mergeBranch(ticketSeq) {
   }
 }
 
+/** "Send back": undo a fix's merge on dev. The merge commit is reverted (a new commit, history is
+ * kept and nothing is pushed) and the old branch is renamed out of the way, so the next night run can
+ * create a fresh auto-fix/tck-<n>. A revert that conflicts is aborted so nothing is left half-done. */
+async function revertMerge(ticketSeq) {
+  if (!Number.isInteger(Number(ticketSeq))) return { ok: false, result: "Invalid ticket number." };
+  const branch = `auto-fix/tck-${Number(ticketSeq)}`;
+  try {
+    const current = await runGit(["branch", "--show-current"], REPO_PATH);
+    if (current !== "main") return { ok: false, result: `The dev repo is on "${current}", not main - nothing was reverted.` };
+    const sha = (await runGit(["log", "main", "--first-parent", "--merges", "--format=%H", "-n", "1", `--grep=^Merge ${branch}$`], REPO_PATH)).trim();
+    if (!sha) return { ok: false, result: `Could not find the merge of ${branch} on main - nothing was reverted. Undo it by hand if needed.` };
+    await runGit(["revert", "-m", "1", "--no-edit", sha], REPO_PATH);
+    const exists = await runGit(["rev-parse", "--verify", "--quiet", branch], REPO_PATH).catch(() => "");
+    if (exists) await runGit(["branch", "-m", branch, `${branch}-reverted-${Date.now()}`], REPO_PATH);
+    return { ok: true, result: `Reverted the merge of ${branch} on dev (not pushed). The ticket goes back to the night run.` };
+  } catch (err) {
+    await runGit(["revert", "--abort"], REPO_PATH).catch(() => {});
+    return { ok: false, result: "Revert failed and was undone - nothing was changed. Later commits on main probably touch the same code, or your dev copy has uncommitted changes. Undo it by hand: git revert -m 1 <merge commit>" };
+  }
+}
+
 async function reportResult(ticketId, autoHandle, notes, status) {
   const res = await fetch(`${DAFFY_BASE_URL}/api/admin/tickets/auto-handle-result`, {
     method: "POST",
@@ -943,9 +964,9 @@ function readJsonBody(req) {
 let analysisInProgress = false;
 
 const server = http.createServer(async (req, res) => {
-  const known = ["/run", "/analyze", "/merge"];
+  const known = ["/run", "/analyze", "/merge", "/revert"];
   if (req.method !== "POST" || !known.includes(req.url)) {
-    return sendJson(res, 404, { error: "Not found. POST /run, /analyze or /merge." });
+    return sendJson(res, 404, { error: "Not found. POST /run, /analyze, /merge or /revert." });
   }
   if (req.headers["x-bridge-secret"] !== LOCAL_SECRET) {
     return sendJson(res, 401, { error: "Unauthorized." });
@@ -955,6 +976,12 @@ const server = http.createServer(async (req, res) => {
     const body = await readJsonBody(req);
     if (!body || !Number.isInteger(Number(body.ticketSeq))) return sendJson(res, 400, { error: "ticketSeq is required." });
     return sendJson(res, 200, await mergeBranch(body.ticketSeq));
+  }
+
+  if (req.url === "/revert") {
+    const body = await readJsonBody(req);
+    if (!body || !Number.isInteger(Number(body.ticketSeq))) return sendJson(res, 400, { error: "ticketSeq is required." });
+    return sendJson(res, 200, await revertMerge(body.ticketSeq));
   }
 
   if (req.url === "/analyze") {

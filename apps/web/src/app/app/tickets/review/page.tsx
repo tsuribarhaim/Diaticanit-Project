@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { AutoHandlePill } from "@/components/auto-handle-pill";
-import { ReviewNav, RunAnalysisButton } from "@/components/ticket-review-panels";
+import { PromoteBar, ReviewNav, RunAnalysisButton } from "@/components/ticket-review-panels";
 import { formatTicketArea, formatTicketPriority, formatTicketType, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 import { isCurrentUserAdmin } from "@/lib/tickets";
@@ -39,7 +39,7 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
   const { data: rows, error } = await supabase
     .from("tickets")
     .select("id, ticket_seq, subject, ticket_type, area, priority, status, auto_handle")
-    .in("auto_handle", ["S", "A", "P", "D", "Y"])
+    .in("auto_handle", ["S", "A", "P", "D", "Y", "M", "R"])
     .not("status", "in", "(resolved,closed,cancelled,duplicate)")
     .order("ticket_seq", { ascending: false });
   if (error) throw new Error(error.message);
@@ -50,14 +50,29 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
   // A / P / D only matter while there is a pending row to act on (or a fix that was just merged);
   // an old flag with nothing behind it is not a to-do. S and Y need no row.
   const hasRow = new Set<string>();
+  const migrationByTicket = new Set<string>();
   if (ids.length > 0) {
-    const { data: rows } = await supabase.from("ticket_proposals").select("ticket_id, kind, status").in("ticket_id", ids).in("status", ["pending", "merged"]);
+    const { data: rows } = await supabase
+      .from("ticket_proposals")
+      .select("ticket_id, kind, status, files:payload->files")
+      .in("ticket_id", ids)
+      .in("status", ["pending", "merged", "approved"]);
     for (const row of rows ?? []) {
-      hasRow.add(`${row.ticket_id}:${row.kind}`);
+      hasRow.add(`${row.ticket_id}:${row.kind}:${row.status}`);
       if (row.kind === "fix" && row.status === "merged") mergedByTicket.add(row.ticket_id);
+      if (row.kind === "fix" && Array.isArray(row.files) && (row.files as unknown[]).some((file) => typeof file === "string" && /migrations\//.test(file))) {
+        migrationByTicket.add(row.ticket_id);
+      }
     }
   }
-  const needsRow: Record<string, string> = { A: "proposal", P: "questions", D: "fix" };
+  // Which stored row must exist (and in which status) for a flag to be a real to-do.
+  const needsRow: Record<string, { kind: string; statuses: string[] }> = {
+    A: { kind: "proposal", statuses: ["pending"] },
+    P: { kind: "questions", statuses: ["pending"] },
+    D: { kind: "fix", statuses: ["pending", "merged"] },
+    M: { kind: "fix", statuses: ["merged"] },
+    R: { kind: "fix", statuses: ["approved"] },
+  };
 
   // Where each fix's "Merge to dev" request stands: queued (not finished yet), or finished.
   const latestMerge = new Map<string, { done: boolean }>();
@@ -72,11 +87,16 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
       if (!latestMerge.has(row.ticket_id)) latestMerge.set(row.ticket_id, { done: Boolean(row.completed_at) });
     }
   }
-  const { data: openRequests } = await supabase.from("automation_requests").select("id, kind").is("completed_at", null);
+  const { data: openRequests } = await supabase.from("automation_requests").select("id, kind, ticket_id").is("completed_at", null);
   const analysisRequested = (openRequests ?? []).some((request) => request.kind === "analyze");
+  const promoteRunning = (openRequests ?? []).some((request) => request.kind === "promote");
+  const revertQueued = new Set((openRequests ?? []).filter((request) => request.kind === "revert" && request.ticket_id).map((request) => request.ticket_id as string));
 
   const by = (flag: string) =>
-    tickets.filter((ticket) => ticket.auto_handle === flag && (!needsRow[flag] || hasRow.has(`${ticket.id}:${needsRow[flag]}`)));
+    tickets.filter(
+      (ticket) =>
+        ticket.auto_handle === flag && (!needsRow[flag] || needsRow[flag].statuses.some((status) => hasRow.has(`${ticket.id}:${needsRow[flag].kind}:${status}`))),
+    );
   const section = (title: string, flag: string, note?: string, extra?: ReactNode) => {
     const list = by(flag);
     return (
@@ -107,7 +127,20 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
                       {ticket.area ? formatTicketArea(ticket.area, locale) : tr(locale, "Not set yet", "טרם נבחר")} {"·"} {formatTicketPriority(ticket.priority, locale)}
                     </span>
                   </span>
-                  {flag === "D" && mergedByTicket.has(ticket.id) ? (
+                  {(flag === "M" || flag === "R") && revertQueued.has(ticket.id) ? (
+                    <span className="rounded-full bg-sky-100 px-2.5 py-0.5 text-xs font-semibold text-sky-800 dark:bg-sky-950/50 dark:text-sky-300">
+                      {tr(locale, "Revert queued", "ביטול מיזוג בתור")}
+                    </span>
+                  ) : flag === "M" || flag === "R" ? (
+                    <span className="inline-flex flex-wrap items-center gap-1.5">
+                      {migrationByTicket.has(ticket.id) ? (
+                        <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
+                          {tr(locale, "Migration", "מיגרציה")}
+                        </span>
+                      ) : null}
+                      <AutoHandlePill locale={locale} value={ticket.auto_handle} />
+                    </span>
+                  ) : flag === "D" && mergedByTicket.has(ticket.id) ? (
                     <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-600 dark:text-emerald-400">
                       {tr(locale, "Merged on dev", "מוזג בפיתוח")}
                     </span>
@@ -145,6 +178,23 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
       ) : null}
       {section(tr(locale, "Waiting for your approval", "ממתינות לאישורך"), "A", tr(locale, "Approve queues the ticket for the night run.", "אישור מכניס את הפנייה לתור של ריצת הלילה."))}
       {section(tr(locale, "Returned with questions", "חזרו עם שאלות"), "P", tr(locale, "The night run read the real code and stopped. Answer and re-queue.", "ריצת הלילה קראה את הקוד האמיתי ונעצרה. יש לענות ולהכניס לתור."))}
+      {section(
+        tr(locale, "On dev - waiting for your test", "בפיתוח - ממתינים לבדיקה שלך"),
+        "M",
+        tr(locale, "Merged on dev. Try it at localhost:3000, then approve for production or send it back.", "מוזג בפיתוח. יש לנסות ב-localhost:3000 ואז לאשר לייצור או להחזיר."),
+      )}
+      <PromoteBar
+        locale={locale}
+        approved={by("R").length}
+        running={promoteRunning}
+        tickets={by("R").map((ticket) => ({ seq: ticket.ticket_seq, subject: ticket.subject }))}
+        hasMigration={by("R").some((ticket) => migrationByTicket.has(ticket.id))}
+      />
+      {section(
+        tr(locale, "Approved for production", "אושרו לייצור"),
+        "R",
+        tr(locale, "These ship with the next Promote to production.", "אלה יעלו עם ההעלאה הבאה לייצור."),
+      )}
       {section(tr(locale, "Fix ready - merge to dev", "תיקון מוכן - מיזוג לפיתוח"), "D", tr(locale, "Built on a branch by the night run. Nothing is merged until you say so.", "נבנה בענף על ידי ריצת הלילה. שום דבר לא ימוזג עד שתאשר."))}
       {section(
         tr(locale, "Spec requested", "התבקש אפיון"),
