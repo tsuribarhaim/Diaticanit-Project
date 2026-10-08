@@ -29,7 +29,7 @@ const inputClass =
   "w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
 
 /** A button that shows a spinner and disables itself while its own action is running. */
-function ActionButton({
+export function ActionButton({
   onClick,
   pending,
   disabled,

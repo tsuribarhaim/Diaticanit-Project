@@ -8,7 +8,7 @@ import { ALLOWED_DOCUMENT_MIME_TYPES, MAX_DOCUMENT_SIZE_BYTES, sanitizeFileName 
 import { formatTicketArea, formatTicketPriority, formatTicketType, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
-import { approveProposal } from "@/lib/ticket-review";
+import { approveProposal, logAutomationEvent } from "@/lib/ticket-review";
 import {
   appendTicketDescriptionEntry,
   extractSpecBrief,
@@ -1000,6 +1000,7 @@ export async function updateTicketAutoHandleAdminAction(
     return { error: tr(locale, "Could not update. Please try again.", "לא ניתן היה לעדכן. יש לנסות שוב.") };
   }
 
+  if (autoHandle === "S") await logAutomationEvent(supabase, user.id, ticketId, "marked");
   revalidatePath("/app/tickets");
   revalidatePath(`/app/tickets/${ticketId}`);
   return {};

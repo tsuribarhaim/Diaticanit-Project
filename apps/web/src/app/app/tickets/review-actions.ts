@@ -17,6 +17,7 @@ import {
   returnFix,
   sendBackFix,
   takeOutOfAutomation,
+  takeTicketOut,
   withdrawApproval,
   type ReviewResult,
 } from "@/lib/ticket-review";
@@ -39,6 +40,7 @@ async function withAdmin(run: (ctx: { supabase: Awaited<ReturnType<typeof create
   if (!result.error) {
     revalidatePath("/app/tickets");
     revalidatePath("/app/tickets/review");
+    revalidatePath("/app/tickets/automation");
   }
   return result;
 }
@@ -75,6 +77,9 @@ export async function withdrawApprovalAction(proposalId: string): Promise<Review
 }
 export async function sendBackFixAction(proposalId: string, comment: string): Promise<ReviewResult> {
   return withAdmin(({ supabase, adminId, locale }) => sendBackFix(supabase, adminId, locale, proposalId, comment));
+}
+export async function takeTicketOutAction(ticketId: string): Promise<ReviewResult> {
+  return withAdmin(({ supabase, adminId, locale }) => takeTicketOut(supabase, adminId, locale, ticketId));
 }
 export async function setLessonActiveAction(lessonId: string, active: boolean): Promise<ReviewResult> {
   return withAdmin(async ({ supabase, adminId, locale }) => {

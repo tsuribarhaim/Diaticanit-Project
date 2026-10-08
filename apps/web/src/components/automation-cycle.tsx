@@ -1,8 +1,19 @@
 "use client";
 
 import { NavLink as Link } from "@/components/nav-link";
-import { useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { useState, useTransition, type ReactNode } from "react";
 
+import {
+  approveForProductionAction,
+  approveProposalAction,
+  rejectProposalAction,
+  requestChangeAction,
+  requestMergeAction,
+  sendBackFixAction,
+  takeTicketOutAction,
+} from "@/app/app/tickets/review-actions";
+import { ActionButton, PromoteBar } from "@/components/ticket-review-panels";
 import { tr, type AppLocale } from "@/lib/locale";
 import type { AutomationOverview, OverviewTicket, StationId, StationSub } from "@/lib/automation-overview";
 import { STATION_ORDER } from "@/lib/automation-overview";
@@ -114,10 +125,6 @@ function ActorIcon({ actor }: { actor: Actor }) {
       <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" />
     </svg>
   );
-}
-
-function ticketHref(ticket: OverviewTicket): string {
-  return ticket.station === "marked" || ticket.station === "analysis" || ticket.sub === "queued" ? `/app/tickets/${ticket.id}` : `/app/tickets/review/${ticket.id}`;
 }
 
 export function AutomationCycle({ locale, overview }: { locale: AppLocale; overview: AutomationOverview }) {
@@ -264,32 +271,224 @@ export function AutomationCycle({ locale, overview }: { locale: AppLocale; overv
         ) : (
           <ul className="space-y-2">
             {list.map((ticket) => (
-              <li key={ticket.id} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-800 dark:bg-slate-950/40">
-                <div className="flex flex-wrap items-baseline gap-x-2">
-                  <span className="font-mono text-xs text-slate-500 dark:text-slate-400">TCK-{ticket.seq}</span>
-                  <b dir="auto" className="text-sm font-semibold text-slate-900 dark:text-slate-100">{ticket.subject}</b>
-                  {ticket.ageDays >= 3 ? (
-                    <span className="text-xs font-semibold text-amber-700 dark:text-amber-400">{tr(locale, `waiting ${ticket.ageDays} days - needs a look`, `ממתינה ${ticket.ageDays} ימים - כדאי לבדוק`)}</span>
-                  ) : ticket.ageDays > 0 ? (
-                    <span className="text-xs text-slate-500 dark:text-slate-400">{tr(locale, `${ticket.ageDays} day${ticket.ageDays === 1 ? "" : "s"}`, `${ticket.ageDays} ימים`)}</span>
-                  ) : null}
-                </div>
-                <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-400">
-                  {ticket.pairing ? <span className="me-1.5 rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">{tr(locale, "Better done together", "עדיף לעשות יחד")}</span> : null}
-                  {ticket.hasMigration ? <span className="me-1.5 rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">{tr(locale, "Migration", "מיגרציה")}</span> : null}
-                  {subText(ticket.sub, locale)}
-                </p>
-                {ticket.summary ? <p dir="auto" className="mt-1 line-clamp-2 text-xs text-slate-500 dark:text-slate-400">{ticket.summary}</p> : null}
-                <div className="mt-2">
-                  <Link href={ticketHref(ticket)} className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
-                    {ticket.station === "marked" || ticket.station === "analysis" || ticket.sub === "queued" ? tr(locale, "Open ticket", "פתיחת הפנייה") : ticket.station === "approval" ? tr(locale, "Open proposal", "פתיחת ההצעה") : tr(locale, "Open review", "פתיחת הסקירה")}
-                  </Link>
-                </div>
-              </li>
+              <TicketRow key={ticket.id} locale={locale} ticket={ticket} />
             ))}
           </ul>
         )}
+        {selected === "promote" && list.length > 0 ? (
+          <div className="mt-4">
+            <PromoteBar
+              locale={locale}
+              approved={list.length}
+              running={overview.counts.release > 0}
+              tickets={list.filter((ticket) => ticket.proposalId).map((ticket) => ({ seq: ticket.seq, subject: ticket.subject, proposalId: ticket.proposalId as string, migration: ticket.hasMigration }))}
+            />
+          </div>
+        ) : null}
       </section>
+    </div>
+  );
+}
+
+type CommentMode = "change" | "reject" | "sendback";
+
+const linkButton =
+  "inline-flex items-center rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800";
+const linkButtonPrimary = `${linkButton} !border-teal-600 !text-teal-700 dark:!border-teal-500 dark:!text-teal-300`;
+
+/** One ticket in a station panel: what it is, who signed what off, and the buttons that move it on. Every button reuses the
+ * existing review step (lib/ticket-review.ts), so the dashboard and the review screens always agree. */
+function TicketRow({ locale, ticket }: { locale: AppLocale; ticket: OverviewTicket }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [which, setWhich] = useState<string | null>(null);
+  const [mode, setMode] = useState<CommentMode | null>(null);
+  const [comment, setComment] = useState("");
+  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
+
+  function run(name: string, action: () => Promise<{ error?: string; success?: string }>) {
+    setWhich(name);
+    startTransition(async () => {
+      const result = await action();
+      setMessage(result.error ? { text: result.error, error: true } : { text: result.success ?? "", error: false });
+      if (!result.error) {
+        setMode(null);
+        setComment("");
+        router.refresh();
+      }
+      setWhich(null);
+    });
+  }
+
+  const proposalId = ticket.proposalId;
+  const onTicketPage = ticket.station === "marked" || ticket.station === "analysis" || ticket.sub === "queued";
+  const openHref = onTicketPage ? `/app/tickets/${ticket.id}` : `/app/tickets/review/${ticket.id}`;
+  const openLabel = onTicketPage
+    ? tr(locale, "Open ticket", "פתיחת הפנייה")
+    : ticket.station === "approval"
+      ? tr(locale, "Open proposal", "פתיחת ההצעה")
+      : ticket.sub === "questions"
+        ? tr(locale, "Answer the questions", "מענה לשאלות")
+        : tr(locale, "Open fix card", "פתיחת כרטיס התיקון");
+  const takeOut = (
+    <ActionButton variant="danger" pending={pending && which === "out"} disabled={pending} onClick={() => run("out", () => takeTicketOutAction(ticket.id))}>
+      {tr(locale, "Take out of automation", "הוצאה מהאוטומציה")}
+    </ActionButton>
+  );
+  const commentButton = (kind: CommentMode, label: string, variant: "secondary" | "danger" = "secondary") => (
+    <ActionButton
+      variant={variant}
+      pending={false}
+      disabled={pending}
+      onClick={() => {
+        setMode(kind);
+        setMessage(null);
+      }}
+    >
+      {label}
+    </ActionButton>
+  );
+
+  return (
+    <li className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-800 dark:bg-slate-950/40">
+      <div className="flex flex-wrap items-baseline gap-x-2">
+        <span className="font-mono text-xs text-slate-500 dark:text-slate-400">TCK-{ticket.seq}</span>
+        <b dir="auto" className="text-sm font-semibold text-slate-900 dark:text-slate-100">{ticket.subject}</b>
+        {ticket.ageDays >= 3 ? (
+          <span className="text-xs font-semibold text-amber-700 dark:text-amber-400">{tr(locale, `waiting ${ticket.ageDays} days - needs a look`, `ממתינה ${ticket.ageDays} ימים - כדאי לבדוק`)}</span>
+        ) : ticket.ageDays > 0 ? (
+          <span className="text-xs text-slate-500 dark:text-slate-400">{tr(locale, `${ticket.ageDays} day${ticket.ageDays === 1 ? "" : "s"}`, `${ticket.ageDays} ימים`)}</span>
+        ) : null}
+      </div>
+      <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-400">
+        {ticket.pairing ? <span className="me-1.5 rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">{tr(locale, "Better done together", "עדיף לעשות יחד")}</span> : null}
+        {ticket.hasMigration ? <span className="me-1.5 rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">{tr(locale, "Migration", "מיגרציה")}</span> : null}
+        {subText(ticket.sub, locale)}
+      </p>
+      {ticket.summary ? <p dir="auto" className="mt-1 line-clamp-2 text-xs text-slate-500 dark:text-slate-400">{ticket.summary}</p> : null}
+      <SignoffChips locale={locale} signoffs={ticket.signoffs} />
+      <div className="mt-2 flex flex-wrap gap-2">
+        {ticket.station === "approval" && !ticket.pairing && proposalId ? (
+          <>
+            <ActionButton variant="primary" pending={pending && which === "approve"} disabled={pending} onClick={() => run("approve", () => approveProposalAction(proposalId, {}, ""))}>
+              {tr(locale, "Approve (recommended picks)", "אישור (הבחירות המומלצות)")}
+            </ActionButton>
+            <Link href={openHref} className={linkButton}>{openLabel}</Link>
+            {commentButton("change", tr(locale, "Request change", "בקשת שינוי"))}
+            {commentButton("reject", tr(locale, "Reject", "דחייה"), "danger")}
+          </>
+        ) : null}
+        {ticket.station === "approval" && ticket.pairing ? (
+          <>
+            <Link href={openHref} className={linkButtonPrimary}>{tr(locale, "Open proposal and copy the brief", "פתיחת ההצעה והעתקת התקציר")}</Link>
+            {takeOut}
+          </>
+        ) : null}
+        {ticket.station === "test" && ticket.sub === "branch" && proposalId ? (
+          <>
+            <ActionButton variant="primary" pending={pending && which === "merge"} disabled={pending} onClick={() => run("merge", () => requestMergeAction(proposalId))}>
+              {tr(locale, "Merge to dev", "מיזוג לפיתוח")}
+            </ActionButton>
+            <Link href={openHref} className={linkButton}>{openLabel}</Link>
+          </>
+        ) : null}
+        {ticket.station === "test" && ticket.sub === "dev" && proposalId ? (
+          <>
+            <ActionButton variant="primary" pending={pending && which === "toprod"} disabled={pending} onClick={() => run("toprod", () => approveForProductionAction(proposalId))}>
+              {tr(locale, "Approve for production", "אישור לייצור")}
+            </ActionButton>
+            <Link href={openHref} className={linkButton}>{openLabel}</Link>
+            {commentButton("sendback", tr(locale, "Send back", "החזרה"), "danger")}
+          </>
+        ) : null}
+        {ticket.station === "promote" && proposalId ? (
+          <>
+            <Link href={openHref} className={linkButton}>{openLabel}</Link>
+            {commentButton("sendback", tr(locale, "Send back", "החזרה"), "danger")}
+          </>
+        ) : null}
+        {ticket.station === "marked" || ticket.station === "fix" ? (
+          <>
+            <Link href={openHref} className={ticket.sub === "questions" ? linkButtonPrimary : linkButton}>{openLabel}</Link>
+            {takeOut}
+          </>
+        ) : null}
+        {ticket.station === "analysis" || ticket.station === "release" || (ticket.station === "test" && ticket.sub === "merging") ? <Link href={openHref} className={linkButton}>{openLabel}</Link> : null}
+      </div>
+      {mode && proposalId ? (
+        <div className="mt-2 rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-700 dark:bg-slate-900">
+          <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300" htmlFor={`c-${ticket.id}`}>
+            {mode === "change"
+              ? tr(locale, "What should the analyst change?", "מה האנליסט צריך לשנות?")
+              : mode === "reject"
+                ? tr(locale, "Why is it rejected? (saved on the ticket)", "למה נדחתה? (נשמר בפנייה)")
+                : tr(locale, "What is wrong? The merge on dev is reverted and the ticket goes back to the night run.", "מה לא תקין? המיזוג בפיתוח מבוטל והפנייה חוזרת לריצת הלילה.")}
+          </label>
+          <textarea
+            id={`c-${ticket.id}`}
+            value={comment}
+            onChange={(event) => setComment(event.target.value)}
+            rows={2}
+            maxLength={2000}
+            className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+          />
+          <div className="mt-1.5 flex gap-2">
+            <ActionButton
+              variant="primary"
+              pending={pending && which === "comment"}
+              disabled={pending || !comment.trim()}
+              onClick={() =>
+                run("comment", () =>
+                  mode === "change" ? requestChangeAction(proposalId, {}, comment) : mode === "reject" ? rejectProposalAction(proposalId, comment) : sendBackFixAction(proposalId, comment),
+                )
+              }
+            >
+              {tr(locale, "Confirm", "אישור")}
+            </ActionButton>
+            <ActionButton
+              pending={false}
+              disabled={pending}
+              onClick={() => {
+                setMode(null);
+                setComment("");
+              }}
+            >
+              {tr(locale, "Cancel", "ביטול")}
+            </ActionButton>
+          </div>
+        </div>
+      ) : null}
+      {message ? (
+        <p role="status" className={`mt-1.5 text-xs ${message.error ? "text-rose-600 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>
+          {message.text}
+        </p>
+      ) : null}
+    </li>
+  );
+}
+
+function fmtDay(iso: string, locale: AppLocale): string {
+  return new Date(iso).toLocaleDateString(locale === "he" ? "he-IL" : "en-GB", { day: "numeric", month: "short", timeZone: "Asia/Jerusalem" });
+}
+
+/** The proof that a person signed each step off: "You approved the spec - 5 Oct". */
+function SignoffChips({ locale, signoffs }: { locale: AppLocale; signoffs: OverviewTicket["signoffs"] }) {
+  const chips = [
+    signoffs.marked ? tr(locale, `You marked it · ${fmtDay(signoffs.marked, locale)}`, `סימנת · ${fmtDay(signoffs.marked, locale)}`) : null,
+    signoffs.spec ? tr(locale, `You approved the spec · ${fmtDay(signoffs.spec, locale)}`, `אישרת את האפיון · ${fmtDay(signoffs.spec, locale)}`) : null,
+    signoffs.production ? tr(locale, `You approved for production · ${fmtDay(signoffs.production, locale)}`, `אישרת לייצור · ${fmtDay(signoffs.production, locale)}`) : null,
+  ].filter((chip): chip is string => chip !== null);
+  if (chips.length === 0) return null;
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-1.5">
+      {chips.map((chip) => (
+        <span key={chip} className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-800 dark:bg-blue-950/60 dark:text-blue-300">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3z" />
+          </svg>
+          {chip}
+        </span>
+      ))}
     </div>
   );
 }

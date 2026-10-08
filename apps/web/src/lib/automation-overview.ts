@@ -58,6 +58,10 @@ export type OverviewTicket = {
   summary: string | null;
   ageDays: number;
   hasMigration: boolean;
+  /** The pending proposal / questions row, or the fix row, that the panel's buttons act on. */
+  proposalId: string | null;
+  /** When the admin signed each step off (from the automation_events trail). */
+  signoffs: { marked: string | null; spec: string | null; production: string | null };
 };
 
 export type AutomationOverview = {
@@ -71,7 +75,7 @@ export type AutomationOverview = {
 type Client = Awaited<ReturnType<typeof createClient>>;
 
 type RowTicket = { id: string; ticket_seq: number; subject: string; status: string; auto_handle: string | null; updated_at: string };
-type RowProposal = { ticket_id: string; kind: string; status: string; summary: string | null; why: string | null; pairing: boolean | null; files: unknown };
+type RowProposal = { id: string; ticket_id: string; kind: string; status: string; summary: string | null; why: string | null; pairing: boolean | null; files: unknown };
 type RowRequest = { kind: string; ticket_id: string | null; picked_at: string | null; details: { tickets?: { ticketId?: string }[] } | null };
 
 export async function getAutomationOverview(supabase: Client): Promise<AutomationOverview> {
@@ -89,13 +93,29 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
   if (ids.length > 0) {
     const { data } = await supabase
       .from("ticket_proposals")
-      .select("ticket_id, kind, status, summary:payload->summary, why:payload->why, pairing:payload->needsPairing, files:payload->files")
+      .select("id, ticket_id, kind, status, summary:payload->summary, why:payload->why, pairing:payload->needsPairing, files:payload->files")
       .in("ticket_id", ids)
       .in("status", ["pending", "merged", "approved"]);
     for (const row of (data ?? []) as unknown as RowProposal[]) {
       const list = proposalsByTicket.get(row.ticket_id) ?? [];
       list.push(row);
       proposalsByTicket.set(row.ticket_id, list);
+    }
+  }
+
+  const signoffsByTicket = new Map<string, { marked: string | null; spec: string | null; production: string | null }>();
+  if (ids.length > 0) {
+    const { data: events } = await supabase
+      .from("automation_events")
+      .select("ticket_id, kind, created_at")
+      .in("ticket_id", ids)
+      .in("kind", ["marked", "spec_approved", "approved_for_production"])
+      .order("created_at", { ascending: false });
+    for (const event of (events ?? []) as { ticket_id: string; kind: string; created_at: string }[]) {
+      const entry = signoffsByTicket.get(event.ticket_id) ?? { marked: null, spec: null, production: null };
+      const field = event.kind === "marked" ? "marked" : event.kind === "spec_approved" ? "spec" : "production";
+      if (!entry[field]) entry[field] = event.created_at; // newest first: keep the latest
+      signoffsByTicket.set(event.ticket_id, entry);
     }
   }
 
@@ -140,6 +160,8 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
       pairing: proposal?.pairing === true,
       summary: (proposal?.summary ?? questions?.why ?? fix?.summary ?? null) || null,
       ageDays: Math.max(0, Math.floor((now - new Date(ticket.updated_at).getTime()) / 86400000)),
+      proposalId: source?.id ?? null,
+      signoffs: signoffsByTicket.get(ticket.id) ?? { marked: null, spec: null, production: null },
       hasMigration: Array.isArray(source?.files) && (source!.files as unknown[]).some((file) => typeof file === "string" && /migrations\//.test(file)),
     });
   }
