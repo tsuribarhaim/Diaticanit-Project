@@ -473,6 +473,35 @@ async function autoMergeToDev(ticketSeq, files, { force = false } = {}) {
   return merge.ok ? { merged: true, reason: null } : { merged: false, reason: `Not merged automatically: ${merge.result}` };
 }
 
+// ------------------------------------------------------- dashboard hooks ----
+// The Ticket Automation dashboard (docs/design/ticket-automation-dashboard.md) needs three things from here: a health answer
+// the poller reports to the app, a Pause switch the admin sets in the app, and a record of every run that ends.
+
+/** The admin's Pause switch. Asked before the analyst or the night run starts; if the app cannot be reached the run goes ahead
+ * (the queue could not be fetched without the app anyway). */
+async function automationPaused() {
+  try {
+    const res = await fetch(`${DAFFY_BASE_URL}/api/admin/automation-status`, { headers: { "x-ticket-automation-secret": TICKET_SECRET } });
+    return res.ok ? Boolean((await res.json()).paused) : false;
+  } catch {
+    return false;
+  }
+}
+
+/** One line in the run history shown on the dashboard. Never fatal. */
+async function recordRun(kind, startedAt, result) {
+  try {
+    const res = await fetch(`${DAFFY_BASE_URL}/api/admin/automation-runs`, {
+      method: "POST",
+      headers: { "x-ticket-automation-secret": TICKET_SECRET, "Content-Type": "application/json" },
+      body: JSON.stringify({ kind, startedAt, finishedAt: new Date().toISOString(), ...result }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (err) {
+    console.warn(`recordRun(${kind}) skipped: ${err.message}`);
+  }
+}
+
 // ------------------------------------------------------------- lessons ----
 // The admin's corrections (Send back, a returned fix, a requested change) are distilled into short standing
 // lessons (POST /learn) that are added to the agents' prompts on every later run. They only ever ADD cautions
@@ -1148,9 +1177,9 @@ let analysisInProgress = false;
 let promoteInProgress = false;
 
 const server = http.createServer(async (req, res) => {
-  const known = ["/run", "/analyze", "/merge", "/revert", "/promote", "/learn"];
+  const known = ["/run", "/analyze", "/merge", "/revert", "/promote", "/learn", "/health"];
   if (req.method !== "POST" || !known.includes(req.url)) {
-    return sendJson(res, 404, { error: "Not found. POST /run, /analyze, /merge, /revert, /promote or /learn." });
+    return sendJson(res, 404, { error: "Not found. POST /run, /analyze, /merge, /revert, /promote, /learn or /health." });
   }
   if (req.headers["x-bridge-secret"] !== LOCAL_SECRET) {
     return sendJson(res, 401, { error: "Unauthorized." });
@@ -1165,6 +1194,10 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: gated.merged, result: gated.merged ? "Merged after the gates passed." : gated.reason });
     }
     return sendJson(res, 200, await mergeBranch(body.ticketSeq));
+  }
+
+  if (req.url === "/health") {
+    return sendJson(res, 200, { ok: true, runInProgress, analysisInProgress, promoteInProgress, autoMerge: AUTO_MERGE_TO_DEV, promoteEnabled: PROMOTE_ENABLED, reportedAt: new Date().toISOString() });
   }
 
   if (req.url === "/learn") {
@@ -1222,10 +1255,18 @@ const server = http.createServer(async (req, res) => {
 
   if (req.url === "/analyze") {
     if (analysisInProgress || promoteInProgress) return sendJson(res, 200, { skipped: true, reason: "An analysis or a promotion is already running." });
+    if (await automationPaused()) return sendJson(res, 200, { skipped: true, reason: "Automation is paused." });
     analysisInProgress = true;
     const releaseAwake = keepAwake();
+    const startedAt = new Date().toISOString();
     try {
-      return sendJson(res, 200, await runAnalysis());
+      const outcome = await runAnalysis();
+      const done = (outcome.analyzed || []).length;
+      const failed = (outcome.failed || []).length;
+      if (outcome.totalRequested > 0) {
+        await recordRun("analyst", startedAt, { ticketsCount: outcome.totalRequested, costUsd: outcome.totalSpentUsd, result: `${done} proposal(s) ready${failed ? `, ${failed} failed` : ""}` });
+      }
+      return sendJson(res, 200, outcome);
     } catch (err) {
       return sendJson(res, 500, { error: err.message });
     } finally {
@@ -1239,10 +1280,17 @@ const server = http.createServer(async (req, res) => {
   if (runInProgress || promoteInProgress) {
     return sendJson(res, 200, { skipped: true, reason: "A batch or a promotion is already running." });
   }
+  if (await automationPaused()) return sendJson(res, 200, { skipped: true, reason: "Automation is paused." });
   runInProgress = true;
   const releaseAwake = keepAwake();
+  const startedAt = new Date().toISOString();
   try {
-    return sendJson(res, 200, await runAll());
+    const outcome = await runAll();
+    if (outcome.totalEligible > 0) {
+      const fixed = (outcome.succeeded || []).filter((r) => r.committed).length;
+      await recordRun("night", startedAt, { ticketsCount: outcome.totalEligible, costUsd: outcome.totalSpentUsd, result: `${fixed} fixed, ${(outcome.failed || []).length} failed`, details: { merged: (outcome.succeeded || []).filter((r) => r.mergedToDev).length } });
+    }
+    return sendJson(res, 200, outcome);
   } catch (err) {
     return sendJson(res, 500, { error: err.message });
   } finally {

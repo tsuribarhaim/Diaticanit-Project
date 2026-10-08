@@ -64,7 +64,29 @@ export type OverviewTicket = {
   signoffs: { marked: string | null; spec: string | null; production: string | null };
 };
 
+export type RunInfo = { finishedAt: string | null; ticketsCount: number; costUsd: number | null; result: string | null };
+
+/** The laptop's side, as last reported by the poller's heartbeat, plus the Pause switch and the last runs. */
+export type AutomationStatus = {
+  paused: boolean;
+  bridgeOnline: boolean;
+  bridgeSeenAt: string | null;
+  analysisInProgress: boolean;
+  runInProgress: boolean;
+  promoteInProgress: boolean;
+  autoMerge: boolean;
+  lastNight: RunInfo | null;
+  lastAnalyst: RunInfo | null;
+  /** A "run it now" request that nobody has finished yet. */
+  requested: { analyze: boolean; night: boolean; digest: boolean };
+};
+
+export type RecentRelease = { version: string | null; at: string; ok: boolean; rolledBack: boolean; tickets: number };
+
 export type AutomationOverview = {
+  status: AutomationStatus;
+  /** The last few promotions, newest first (full history is on its own page). */
+  recentReleases: RecentRelease[];
   tickets: OverviewTicket[];
   counts: Record<StationId, number>;
   /** Tickets waiting on the admin: proposals, questions, fixes to test, fixes to promote. */
@@ -77,6 +99,9 @@ type Client = Awaited<ReturnType<typeof createClient>>;
 type RowTicket = { id: string; ticket_seq: number; subject: string; status: string; auto_handle: string | null; updated_at: string };
 type RowProposal = { id: string; ticket_id: string; kind: string; status: string; summary: string | null; why: string | null; pairing: boolean | null; files: unknown };
 type RowRequest = { kind: string; ticket_id: string | null; picked_at: string | null; details: { tickets?: { ticketId?: string }[] } | null };
+
+// Wrapped so the clock can be read in one place (the render must not call Date.now directly).
+const now = () => Date.now();
 
 export async function getAutomationOverview(supabase: Client): Promise<AutomationOverview> {
   const { data: ticketRows } = await supabase
@@ -121,7 +146,17 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
 
   const { data: requestRows } = await supabase.from("automation_requests").select("kind, ticket_id, picked_at, details").is("completed_at", null);
   const requests = (requestRows ?? []) as RowRequest[];
-  const analysisRunning = requests.some((request) => request.kind === "analyze" && request.picked_at !== null);
+
+  const { data: settingsRow } = await supabase.from("automation_settings").select("paused, bridge_seen_at, bridge_status").eq("id", true).maybeSingle();
+  const health = ((settingsRow?.bridge_status ?? {}) as { analysisInProgress?: boolean; runInProgress?: boolean; promoteInProgress?: boolean; autoMerge?: boolean });
+  const seenAt = (settingsRow?.bridge_seen_at as string | null) ?? null;
+  const bridgeOnline = seenAt !== null && now() - new Date(seenAt).getTime() < 3 * 60 * 1000;
+  const { data: runRows } = await supabase.from("automation_runs").select("kind, finished_at, tickets_count, cost_usd, result").order("started_at", { ascending: false }).limit(12);
+  const runOf = (kind: string): RunInfo | null => {
+    const row = ((runRows ?? []) as { kind: string; finished_at: string | null; tickets_count: number; cost_usd: number | null; result: string | null }[]).find((r) => r.kind === kind);
+    return row ? { finishedAt: row.finished_at, ticketsCount: row.tickets_count, costUsd: row.cost_usd === null ? null : Number(row.cost_usd), result: row.result } : null;
+  };
+  const analysisRunning = (bridgeOnline && Boolean(health.analysisInProgress)) || requests.some((request) => request.kind === "analyze" && request.picked_at !== null);
   const mergeTickets = new Set(requests.filter((request) => request.kind === "merge" && request.ticket_id).map((request) => request.ticket_id as string));
   const promoteTickets = new Set<string>();
   for (const request of requests) {
@@ -131,7 +166,7 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
 
   const counts: Record<StationId, number> = { marked: 0, analysis: 0, approval: 0, fix: 0, test: 0, promote: 0, release: 0 };
   const result: OverviewTicket[] = [];
-  const now = Date.now();
+  const nowMs = now();
   for (const ticket of tickets) {
     const rows = proposalsByTicket.get(ticket.id) ?? [];
     const proposal = rows.find((row) => row.kind === "proposal" && row.status === "pending");
@@ -159,12 +194,38 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
       sub: placed.sub,
       pairing: proposal?.pairing === true,
       summary: (proposal?.summary ?? questions?.why ?? fix?.summary ?? null) || null,
-      ageDays: Math.max(0, Math.floor((now - new Date(ticket.updated_at).getTime()) / 86400000)),
+      ageDays: Math.max(0, Math.floor((nowMs - new Date(ticket.updated_at).getTime()) / 86400000)),
       proposalId: source?.id ?? null,
       signoffs: signoffsByTicket.get(ticket.id) ?? { marked: null, spec: null, production: null },
       hasMigration: Array.isArray(source?.files) && (source!.files as unknown[]).some((file) => typeof file === "string" && /migrations\//.test(file)),
     });
   }
   const needsYou = counts.approval + counts.test + counts.promote + result.filter((ticket) => ticket.station === "fix" && ticket.sub === "questions").length;
-  return { tickets: result, counts, needsYou, total: result.length };
+  const { data: releaseRows } = await supabase
+    .from("automation_requests")
+    .select("requested_at, completed_at, report:details->report")
+    .eq("kind", "promote")
+    .not("completed_at", "is", null)
+    .order("requested_at", { ascending: false })
+    .limit(3);
+  const recentReleases: RecentRelease[] = ((releaseRows ?? []) as unknown as { requested_at: string; completed_at: string | null; report: { version?: string; ok?: boolean; rolledBack?: boolean; tickets?: { status?: string }[] } | null }[]).map((row) => ({
+    version: row.report?.version ?? null,
+    at: row.completed_at ?? row.requested_at,
+    ok: row.report?.ok === true,
+    rolledBack: row.report?.rolledBack === true,
+    tickets: (row.report?.tickets ?? []).filter((ticket) => ticket.status === "released" || ticket.status === "deployed").length,
+  }));
+  const status: AutomationStatus = {
+    paused: Boolean(settingsRow?.paused),
+    bridgeOnline,
+    bridgeSeenAt: seenAt,
+    analysisInProgress: bridgeOnline && Boolean(health.analysisInProgress),
+    runInProgress: bridgeOnline && Boolean(health.runInProgress),
+    promoteInProgress: bridgeOnline && Boolean(health.promoteInProgress),
+    autoMerge: Boolean(health.autoMerge),
+    lastNight: runOf("night"),
+    lastAnalyst: runOf("analyst"),
+    requested: { analyze: requests.some((r) => r.kind === "analyze"), night: requests.some((r) => r.kind === "night"), digest: requests.some((r) => r.kind === "digest") },
+  };
+  return { status, recentReleases, tickets: result, counts, needsYou, total: result.length };
 }

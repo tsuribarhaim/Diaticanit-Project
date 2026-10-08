@@ -138,8 +138,26 @@ const BRIDGE_URL = '${cfg.bridgeUrl}';
 const BRIDGE_SECRET = '${cfg.bridgeSecret}';
 const PROMOTE_WEBHOOK = 'http://localhost:5678/webhook/daffy-promote';
 const LESSON_WEBHOOK = 'http://localhost:5678/webhook/daffy-lesson';
+const ANALYST_WEBHOOK = 'http://localhost:5678/webhook/daffy-spec-analyst-manual';
+const NIGHT_WEBHOOK = 'http://localhost:5678/webhook/daffy-auto-ticket-handling-manual';
+const DIGEST_WEBHOOK = 'http://localhost:5678/webhook/daffy-daily-digest-manual';
+// Those three workflows answer only when they finish (minutes). The poller just starts them: a timeout here means "it is running".
+const fire = async (url) => {
+  try {
+    await this.helpers.httpRequest({ method: 'POST', url, body: {}, json: true, timeout: 8000 });
+  } catch (e) {
+    if (!/timeout|ETIMEDOUT|ECONNABORTED|ESOCKETTIMEDOUT/i.test(String(e && (e.code || e.message)))) throw e;
+  }
+};
 const appHeaders = { 'x-ticket-automation-secret': APP_SECRET };
 const call = (opts) => this.helpers.httpRequest({ json: true, timeout: 30000, ...opts });
+
+// Heartbeat: tell the app the bridge is alive (and which run is in progress). If the bridge is down the app simply stops
+// hearing from us, and the dashboard says "Bridge offline".
+try {
+  const health = await call({ method: 'POST', url: BRIDGE_URL + '/health', headers: { 'x-bridge-secret': BRIDGE_SECRET }, timeout: 8000 });
+  await call({ method: 'POST', url: APP_URL + '/api/admin/automation-status', headers: appHeaders, body: { health } });
+} catch (e) { /* offline: nothing to report */ }
 
 const list = await call({ method: 'GET', url: APP_URL + '/api/admin/automation-requests', headers: appHeaders });
 const done = [];
@@ -150,9 +168,17 @@ for (const r of (list.requests || [])) {
   let result = '';
   try {
     if (r.kind === 'analyze') {
-      const res = await call({ method: 'POST', url: BRIDGE_URL + '/analyze', headers: { 'x-bridge-secret': BRIDGE_SECRET }, timeout: 25 * 60 * 1000 });
-      ok = !res.error;
-      result = res.skipped === true ? 'An analysis was already running.' : (res.analyzed ? res.analyzed.length + ' proposal(s) ready' + (res.failed && res.failed.length ? ', ' + res.failed.length + ' failed' : '') : (res.error || 'done'));
+      await fire(ANALYST_WEBHOOK);
+      ok = true;
+      result = 'The analyst was started.';
+    } else if (r.kind === 'night') {
+      await fire(NIGHT_WEBHOOK);
+      ok = true;
+      result = 'The night run was started.';
+    } else if (r.kind === 'digest') {
+      await fire(DIGEST_WEBHOOK);
+      ok = true;
+      result = 'The daily digest was started.';
     } else if (r.kind === 'merge') {
       const res = await call({ method: 'POST', url: BRIDGE_URL + '/merge', headers: { 'x-bridge-secret': BRIDGE_SECRET }, body: { ticketSeq: r.ticketSeq } });
       ok = res.ok === true;

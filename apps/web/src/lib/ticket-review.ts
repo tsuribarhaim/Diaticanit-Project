@@ -348,3 +348,30 @@ export async function requestPromote(supabase: Client, adminId: string, locale: 
     ),
   };
 }
+
+export type AgentRunKind = "analyze" | "night" | "digest";
+
+/** The dashboard's "run it now" buttons: leave a request the laptop's poller picks up within a minute (it starts the same
+ * workflow the schedule uses). Refused while automation is paused; a second press while one is waiting does nothing. */
+export async function requestAgentRun(supabase: Client, adminId: string, locale: AppLocale, kind: AgentRunKind): Promise<ReviewResult> {
+  if (kind !== "digest") {
+    const { data: settings } = await supabase.from("automation_settings").select("paused").eq("id", true).maybeSingle();
+    if (settings?.paused) return { error: tr(locale, "Automation is paused - resume it first.", "האוטומציה מושהית - יש לחדש אותה קודם.") };
+  }
+  const { data: open } = await supabase.from("automation_requests").select("id").eq("kind", kind).is("completed_at", null).limit(1);
+  if ((open ?? []).length > 0) return { success: tr(locale, "It is already requested.", "זה כבר התבקש.") };
+  const { error } = await supabase.from("automation_requests").insert({ kind, requested_by: adminId });
+  if (error) return dbError(locale);
+  const what = kind === "analyze" ? tr(locale, "The analyst", "האנליסט") : kind === "night" ? tr(locale, "The night run", "ריצת הלילה") : tr(locale, "The daily digest", "הסיכום היומי");
+  return { success: tr(locale, `${what} starts within about a minute (while your laptop is on). An email follows when it ends.`, `${what} יתחיל תוך כדקה (כל עוד המחשב הנייד דלוק). מייל יישלח בסיומו.`) };
+}
+
+/** The Pause switch: stops ONLY the two AI agents (scheduled and manual starts). Your own actions are never blocked. */
+export async function setAutomationPaused(supabase: Client, adminId: string, locale: AppLocale, paused: boolean): Promise<ReviewResult> {
+  const { error } = await supabase
+    .from("automation_settings")
+    .update({ paused, paused_by: paused ? adminId : null, paused_at: paused ? new Date().toISOString() : null, updated_at: new Date().toISOString() })
+    .eq("id", true);
+  if (error) return dbError(locale);
+  return { success: paused ? tr(locale, "Automation paused: the analyst and the night run will not start until you resume.", "האוטומציה הושהתה: האנליסט וריצת הלילה לא יתחילו עד שתחדש.") : tr(locale, "Automation resumed.", "האוטומציה חודשה.") };
+}

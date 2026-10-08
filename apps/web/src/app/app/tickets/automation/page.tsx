@@ -1,7 +1,7 @@
 import { NavLink as Link } from "@/components/nav-link";
 import { redirect } from "next/navigation";
 
-import { AutomationCycle } from "@/components/automation-cycle";
+import { AutomationCycle, DigestCard } from "@/components/automation-cycle";
 import { ReviewNav } from "@/components/ticket-review-panels";
 import { getAutomationOverview } from "@/lib/automation-overview";
 import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
@@ -66,6 +66,31 @@ export default async function TicketAutomationPage() {
 
       <AutomationCycle locale={locale} overview={overview} />
 
+      {overview.recentReleases.length > 0 ? (
+        <>
+          <h2 className="mb-2 mt-8 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{tr(locale, "Recently released", "שוחרר לאחרונה")}</h2>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {overview.recentReleases.map((release, index) => (
+              <Link key={`${release.at}-${index}`} href="/app/tickets/automation/releases" className="rounded-xl border border-slate-200 bg-white px-4 py-3 hover:border-teal-600 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-teal-500">
+                <span className="flex items-baseline justify-between gap-3">
+                  <span className="font-mono text-sm font-semibold text-slate-900 dark:text-slate-100">{release.version ? `v${release.version}` : tr(locale, "No version", "ללא גרסה")}</span>
+                  <span className="text-xs font-semibold text-teal-700 dark:text-teal-400">
+                    {new Date(release.at).toLocaleDateString(locale === "he" ? "he-IL" : "en-GB", { day: "numeric", month: "short", timeZone: "Asia/Jerusalem" })}
+                  </span>
+                </span>
+                <span className={`mt-0.5 block text-xs ${release.ok ? "text-slate-500 dark:text-slate-400" : "font-semibold text-amber-700 dark:text-amber-400"}`}>
+                  {release.ok
+                    ? tr(locale, `${release.tickets} fix${release.tickets === 1 ? "" : "es"} released`, `${release.tickets} תיקונים שוחררו`)
+                    : release.rolledBack
+                      ? tr(locale, "Rolled back - nothing changed for users", "הוחזר לאחור - דבר לא השתנה למשתמשים")
+                      : tr(locale, "Stopped - nothing changed in production", "נעצר - דבר לא השתנה בייצור")}
+                </span>
+              </Link>
+            ))}
+          </div>
+        </>
+      ) : null}
+
       <h2 className="mb-2 mt-8 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{tr(locale, "Everything about it", "הכל על זה")}</h2>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {cards.map((card) => (
@@ -77,6 +102,7 @@ export default async function TicketAutomationPage() {
             <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">{card.note}</span>
           </Link>
         ))}
+        <DigestCard locale={locale} digestRequested={overview.status.requested.digest} />
       </div>
 
       <div className="mt-8">
