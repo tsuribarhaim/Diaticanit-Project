@@ -119,6 +119,26 @@ async function runPromote({ tickets, dryRun = false, cfg, appCall }) {
       const subject = await git(["log", "-1", "--format=%s", tip], sp);
       const parents = (await git(["rev-list", "--parents", "-n", "1", tip], sp)).split(" ").length - 1;
       if (!subject.startsWith(`fix: TCK-${t.ticketSeq}`) || parents !== 1) { entry.reason = "the branch tip is not a single fix commit"; continue; }
+      // A fix must be built on exactly the code that is live. New fixes say so in their commit ("Built-on-production: <sha>"); the
+      // promotion applies one only while production is still that commit - if anything was released since, it must be built again.
+      const message = await git(["log", "-1", "--format=%B", tip], sp);
+      const declared = (message.match(/^Built-on-production:\s*([0-9a-f]{7,40})\s*$/im) || [])[1] || null;
+      const base = await git(["rev-parse", `${tip}^`], sp);
+      if (declared) {
+        if (base !== preSha) {
+          entry.reason = `production has changed since this fix was built (built on ${base.slice(0, 7)}, production is now ${preSha.slice(0, 7)}) - send it back so it is built again on the current production`;
+          continue;
+        }
+      } else {
+        // An older fix (built on main before this rule): the best that can be checked is whether it touched files that an unreleased
+        // change also touched. --cherry-pick leaves out changes that are already in production under another id.
+        const fixFiles = (await git(["show", "--name-only", "--format=", tip], sp)).split("\n").filter(Boolean);
+        const builtOn = (await git(["log", "--cherry-pick", "--right-only", "--no-merges", "--format=%h %s", `HEAD...${base}`, "--", ...fixFiles], sp)).split("\n").filter(Boolean);
+        if (builtOn.length > 0) {
+          entry.reason = `it was built on changes that are not in production yet (${builtOn.slice(0, 3).join("; ")}${builtOn.length > 3 ? `; and ${builtOn.length - 3} more` : ""}) - release those first`;
+          continue;
+        }
+      }
       const pick = await exec("git", ["cherry-pick", tip], { cwd: sp });
       if (!pick.ok) {
         await exec("git", ["cherry-pick", "--abort"], { cwd: sp });
@@ -153,6 +173,17 @@ async function runPromote({ tickets, dryRun = false, cfg, appCall }) {
       step("Type check and lint on the release branch", tsc.ok && lint.ok, `type check ok=${tsc.ok}, lint ok=${lint.ok}`);
       if (!tsc.ok || !lint.ok) throw new Error("The release branch fails the type check or lint, so nothing was deployed.");
     }
+
+    // Production must still be exactly what these fixes were built on: nothing else may have landed on the release branch, and
+    // nobody may have deployed, while this promotion was being prepared.
+    const ahead = Number(await git(["rev-list", "--count", `${preSha}..HEAD`], sp));
+    const intact = (await exec("git", ["merge-base", "--is-ancestor", preSha, "HEAD"], { cwd: sp })).ok;
+    if (!intact || ahead !== picked.length) throw new Error("The release branch changed while the promotion was being prepared, so nothing was deployed.");
+    if (!dryRun && report.previousVersion) {
+      const liveNow = await fetch(`${cfg.publicUrl}/api/version`, { cache: "no-store" }).then((r) => r.json()).then((j) => String(j.version)).catch(() => null);
+      if (liveNow !== report.previousVersion) throw new Error(`Production changed while the promotion was being prepared (it reported ${report.previousVersion}, now ${liveNow}), so nothing was deployed.`);
+    }
+    step("Production is unchanged since these fixes were built", true, `release/1.0 still at ${preSha.slice(0, 8)}${report.previousVersion ? `, live version ${report.previousVersion}` : ""}`);
 
     if (dryRun) {
       step("Dry run: database, deploy, push and ticket update skipped", true, "nothing left this laptop");

@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 
 import { updateTicketAutoHandleAdminAction } from "@/app/app/tickets/actions";
 import { formatTicketAutoHandle, tr, type AppLocale } from "@/lib/locale";
-import { type TicketAutoHandle } from "@/lib/tickets";
+import { canMarkForAutomation, type TicketAutoHandle } from "@/lib/tickets";
 
 const NOT_OPTED_IN = "none";
 
@@ -31,14 +31,18 @@ export function AdminAutoHandleControl({
   locale,
   ticketId,
   autoHandle,
+  status,
 }: {
   locale: AppLocale;
   ticketId: string;
   autoHandle: TicketAutoHandle | null;
+  status: string;
 }) {
   const [current, setCurrent] = useState<TicketAutoHandle | null>(autoHandle);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  // Not marked yet and not open / reopened: it cannot be a candidate, so the control is switched off.
+  const notEligible = current === null && !canMarkForAutomation(status);
 
   function handleChange(event: React.ChangeEvent<HTMLSelectElement>) {
     const raw = event.target.value;
@@ -60,7 +64,8 @@ export function AdminAutoHandleControl({
       <select
         value={current ?? NOT_OPTED_IN}
         onChange={handleChange}
-        disabled={isPending}
+        disabled={isPending || notEligible}
+        title={notEligible ? tr(locale, "Only open or reopened tickets can be marked for automation", "אפשר לסמן לאוטומציה רק פניות פתוחות או שנפתחו מחדש") : undefined}
         aria-label={tr(locale, "Auto-handle", "טיפול אוטומטי")}
         className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 outline-none ring-teal-600 focus:ring-2 disabled:cursor-wait disabled:opacity-60 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-400"
       >
@@ -76,6 +81,7 @@ export function AdminAutoHandleControl({
           </option>
         ) : null}
       </select>
+      {notEligible ? <span className="text-[11px] text-slate-500 dark:text-slate-400">{tr(locale, "Only open or reopened tickets", "רק פניות פתוחות או שנפתחו מחדש")}</span> : null}
       {error ? <span className="text-[11px] text-rose-600 dark:text-rose-400">{error}</span> : null}
     </div>
   );

@@ -53,6 +53,13 @@ export type TicketStatus = (typeof ticketStatusOptions)[number];
  * (db/migrations/048_phase22_ticket_admin.sql) already grants admins free-
  * column update access, same protection technical_response/fix_description
  * already rely on. */
+/** Only a ticket that is open (or reopened) can be marked for automation: one that is in progress, fixed, deferred, closed or
+ * cancelled is already past that point. Marking is the step from "no flag" to a flag; tickets already in automation keep
+ * working through their stages whatever their status says. */
+export function canMarkForAutomation(status: string): boolean {
+  return status === "open" || status === "reopened";
+}
+
 export const ticketAutoHandleOptions = ["Y", "P", "D", "S", "A", "M", "R"] as const;
 export type TicketAutoHandle = (typeof ticketAutoHandleOptions)[number];
 
