@@ -74,6 +74,27 @@ async function queueLearning(
   }
 }
 
+/** The audit trail of the admin's sign-offs and hand-offs (automation_events): who did what to which ticket, and when.
+ * It feeds the "You approved the spec - 5 Oct" chips on the Ticket Automation dashboard. Never blocks the action itself. */
+export async function logAutomationEvent(supabase: Client, adminId: string, ticketId: string, kind: string, detail: Record<string, unknown> = {}): Promise<void> {
+  try {
+    await supabase.from("automation_events").insert({ ticket_id: ticketId, kind, actor: adminId, detail });
+  } catch {
+    /* the trail is a record, not a gate */
+  }
+}
+
+/** Takes any ticket out of automation (from any station), whatever is pending on it. */
+export async function takeTicketOut(supabase: Client, adminId: string, locale: AppLocale, ticketId: string): Promise<ReviewResult> {
+  const { data: ticket } = await supabase.from("tickets").select("id, ticket_seq").eq("id", ticketId).maybeSingle();
+  if (!ticket) return notFound(locale);
+  const { error } = await supabase.from("tickets").update({ auto_handle: null }).eq("id", ticketId);
+  if (error) return dbError(locale);
+  await supabase.from("ticket_proposals").update({ status: "taken_out", decided_at: new Date().toISOString(), decided_by: adminId }).eq("ticket_id", ticketId).eq("status", "pending");
+  await logAutomationEvent(supabase, adminId, ticketId, "taken_out");
+  return { success: tr(locale, `TCK-${ticket.ticket_seq} is out of automation. It stays open for you.`, `TCK-${ticket.ticket_seq} יצאה מהאוטומציה. היא נשארת פתוחה עבורך.`) };
+}
+
 async function decide(
   supabase: Client,
   proposalId: string,
@@ -107,6 +128,7 @@ export async function approveProposal(
   const { error } = await supabase.from("tickets").update(patch).eq("id", loaded.ticket.id);
   if (error) return dbError(locale);
   await decide(supabase, proposalId, adminId, "approved", chosen, comment);
+  await logAutomationEvent(supabase, adminId, loaded.ticket.id, "spec_approved");
   return { success: tr(locale, `TCK-${loaded.ticket.ticket_seq} approved and queued for the night run.`, `פנייה TCK-${loaded.ticket.ticket_seq} אושרה ונכנסה לתור של ריצת הלילה.`) };
 }
 
@@ -125,6 +147,7 @@ export async function requestChange(
   const { error } = await supabase.from("tickets").update({ auto_handle: "S" }).eq("id", loaded.ticket.id);
   if (error) return dbError(locale);
   await decide(supabase, proposalId, adminId, "changes_requested", chosen, comment.trim());
+  await logAutomationEvent(supabase, adminId, loaded.ticket.id, "change_requested");
   await queueLearning(supabase, adminId, loaded.ticket, "change_request", comment.trim(), (loaded.proposal.payload as ProposalPayload).summary ?? "");
   return { success: tr(locale, "Sent back to the analyst with your comment. A new version appears after the next analysis run.", "הוחזר לאנליסט עם ההערה שלך. גרסה חדשה תופיע אחרי ריצת הניתוח הבאה.") };
 }
@@ -140,6 +163,7 @@ export async function rejectProposal(supabase: Client, adminId: string, locale: 
     .eq("id", loaded.ticket.id);
   if (error) return dbError(locale);
   await decide(supabase, proposalId, adminId, "rejected", null, comment.trim());
+  await logAutomationEvent(supabase, adminId, loaded.ticket.id, "rejected");
   return { success: tr(locale, `TCK-${loaded.ticket.ticket_seq} deferred with your reason.`, `פנייה TCK-${loaded.ticket.ticket_seq} נדחתה עם הסיבה שלך.`) };
 }
 
@@ -165,6 +189,7 @@ export async function answerQuestions(
   const { error } = await supabase.from("tickets").update(patch).eq("id", loaded.ticket.id);
   if (error) return dbError(locale);
   await decide(supabase, proposalId, adminId, "answered", chosen, comment);
+  await logAutomationEvent(supabase, adminId, loaded.ticket.id, "answered");
   return { success: tr(locale, `Answers saved in the ticket. TCK-${loaded.ticket.ticket_seq} runs again tonight.`, `התשובות נשמרו בפנייה. TCK-${loaded.ticket.ticket_seq} תרוץ שוב הלילה.`) };
 }
 
@@ -175,6 +200,7 @@ export async function takeOutOfAutomation(supabase: Client, adminId: string, loc
   const { error } = await supabase.from("tickets").update({ auto_handle: null }).eq("id", loaded.ticket.id);
   if (error) return dbError(locale);
   await decide(supabase, proposalId, adminId, "taken_out", null, null);
+  await logAutomationEvent(supabase, adminId, loaded.ticket.id, "taken_out");
   return { success: tr(locale, `TCK-${loaded.ticket.ticket_seq} is out of automation. It stays open for you.`, `TCK-${loaded.ticket.ticket_seq} יצאה מהאוטומציה. היא נשארת פתוחה עבורך.`) };
 }
 
@@ -189,6 +215,7 @@ export async function returnFix(supabase: Client, adminId: string, locale: AppLo
   const { error } = await supabase.from("tickets").update(patch).eq("id", loaded.ticket.id);
   if (error) return dbError(locale);
   await decide(supabase, proposalId, adminId, "returned", null, comment.trim());
+  await logAutomationEvent(supabase, adminId, loaded.ticket.id, "returned");
   await queueLearning(supabase, adminId, loaded.ticket, "return_fix", comment.trim(), fix.summary ?? "");
   return { success: tr(locale, "Returned to the night run with your comment.", "הוחזר לריצת הלילה עם ההערה שלך.") };
 }
@@ -219,6 +246,7 @@ export async function requestMerge(supabase: Client, adminId: string, locale: Ap
   if ((pending ?? []).length > 0) return { success: tr(locale, "A merge is already requested.", "מיזוג כבר התבקש.") };
   const { error } = await supabase.from("automation_requests").insert({ kind: "merge", ticket_id: loaded.ticket.id, requested_by: adminId });
   if (error) return dbError(locale);
+  await logAutomationEvent(supabase, adminId, loaded.ticket.id, "merge_requested");
   return { success: tr(locale, `Merge queued for TCK-${loaded.ticket.ticket_seq}. It runs within about a minute while your laptop is on.`, `המיזוג של TCK-${loaded.ticket.ticket_seq} נכנס לתור. הוא ירוץ תוך בערך דקה כל עוד המחשב הנייד דלוק.`) };
 }
 
@@ -241,6 +269,7 @@ export async function approveForProduction(supabase: Client, adminId: string, lo
     .update({ status: "approved", decided_at: new Date().toISOString(), decided_by: adminId })
     .eq("id", proposalId)
     .eq("status", "merged");
+  await logAutomationEvent(supabase, adminId, loaded.ticket.id, "approved_for_production");
   return { success: tr(locale, `TCK-${loaded.ticket.ticket_seq} approved for production. It ships with the next promote.`, `TCK-${loaded.ticket.ticket_seq} אושרה לייצור. היא תעלה עם ההעלאה הבאה.`) };
 }
 
@@ -252,6 +281,7 @@ export async function withdrawApproval(supabase: Client, adminId: string, locale
   const { error } = await supabase.from("tickets").update({ auto_handle: "M" }).eq("id", loaded.ticket.id);
   if (error) return dbError(locale);
   await supabase.from("ticket_proposals").update({ status: "merged", decided_at: null, decided_by: null }).eq("id", proposalId).eq("status", "approved");
+  await logAutomationEvent(supabase, adminId, loaded.ticket.id, "approval_withdrawn");
   return { success: tr(locale, "Approval withdrawn. The fix is back on dev, waiting for your test.", "האישור בוטל. התיקון חזר לפיתוח וממתין לבדיקה שלך.") };
 }
 
@@ -274,6 +304,7 @@ export async function sendBackFix(supabase: Client, adminId: string, locale: App
     .from("automation_requests")
     .insert({ kind: "revert", ticket_id: loaded.ticket.id, requested_by: adminId, details: { comment: comment.trim(), proposalId } });
   if (error) return dbError(locale);
+  await logAutomationEvent(supabase, adminId, loaded.ticket.id, "sent_back");
   await queueLearning(supabase, adminId, loaded.ticket, "send_back", comment.trim(), (loaded.proposal.payload as FixPayload).summary ?? "");
   return {
     success: tr(
@@ -308,6 +339,7 @@ export async function requestPromote(supabase: Client, adminId: string, locale: 
   if (items.length === 0) return { error: tr(locale, "No fix is approved for production yet.", "אין עדיין תיקון שאושר לייצור.") };
   const { error } = await supabase.from("automation_requests").insert({ kind: "promote", requested_by: adminId, details: { tickets: items } });
   if (error) return dbError(locale);
+  for (const item of items) await logAutomationEvent(supabase, adminId, item.ticketId, "promote_requested");
   return {
     success: tr(
       locale,
