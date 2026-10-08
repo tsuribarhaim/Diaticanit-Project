@@ -162,7 +162,16 @@ const beat = async () => {
 };
 await beat();
 
-const list = await call({ method: 'GET', url: APP_URL + '/api/admin/automation-requests', headers: appHeaders });
+let list;
+try {
+  list = await call({ method: 'GET', url: APP_URL + '/api/admin/automation-requests', headers: appHeaders });
+} catch (e) {
+  // No network for a moment (DNS, connection refused, timeout): nothing to do until the next minute. The dashboard shows
+  // "Bridge offline" when the heartbeat stops arriving, so an outage is not hidden - it just stops filling n8n with errors.
+  // A real answer from the app that is an error (HTTP status) is not matched here and still fails loudly.
+  if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ESOCKETTIMEDOUT|getaddrinfo|timeout/i.test(String((e && (e.code || e.message)) || ''))) return [];
+  throw e;
+}
 const done = [];
 for (const r of (list.requests || [])) {
   const claim = await call({ method: 'POST', url: APP_URL + '/api/admin/automation-requests', headers: appHeaders, body: { id: r.id, action: 'claim' } });

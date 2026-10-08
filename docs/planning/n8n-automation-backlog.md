@@ -125,3 +125,16 @@ instance later without rework.
   in one place would give Tsuri, as the human in the loop, real visibility
   into what the AI is catching - especially relevant given these are
   medical/health targets.
+
+## Ticket Automation - improvements logged for later (not scheduled)
+
+Logged 2026-10-08 while building the Ticket Automation dashboard (docs/design/ticket-automation-dashboard.md).
+
+- **Rebuild stale fixes automatically.** Fixes are built on the production code and the promotion refuses one when production has
+  changed since (docs/design/auto-ticket-handling.md, "Fixes are built on production"). Today the admin sends such a fix back by
+  hand. Instead, when a release lands, every approved-but-unpromoted fix (and every fix waiting on dev) should be re-queued for the
+  night run automatically, with a note saying it is being rebuilt on the new production, and the admin told in the digest.
+- **Cloud fallback / "laptop offline" alert** (candidate #5 of the life-cycle document): the dashboard already shows "Bridge
+  offline"; an e-mail when a scheduled run did not start would close the gap.
+- **Behavioural dependencies** the file-overlap and production-base checks cannot see (a fix that relies on another change in a
+  different file) still depend on the type check, the smoke test and the rollback.
