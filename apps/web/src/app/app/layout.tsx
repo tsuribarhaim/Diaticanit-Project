@@ -101,15 +101,16 @@ export default async function ProtectedAppLayout({
             notificationCount={unresolvedNotificationCount}
           />
         ) : null}
-        {/* Reserves space for AppBottomNav's fixed height below `sm`, where
-            it replaces AppNav - zeroed out above that breakpoint, where
+        {/* Reserves space for AppBottomNav's fixed height outside the
+            `nav-desktop` variant (width >= 40rem and height >= 30rem),
+            where it replaces AppNav - zeroed out inside that variant, where
             AppNav (not fixed-positioned) needs no such reservation. Adds
             env(safe-area-inset-bottom) on top of the nav's own ~52px base
             height (icon + label + padding) rather than a flat guess, since
             AppBottomNav grows taller by that same inset on notched phones -
             a fixed px value would undershoot there and the nav would cover
             the page's last few pixels of content. */}
-        <div className="pb-[calc(3.25rem+env(safe-area-inset-bottom))] sm:pb-0">{children}</div>
+        <div className="pb-[calc(3.25rem+env(safe-area-inset-bottom))] nav-desktop:pb-0">{children}</div>
         {user ? (
           <AppBottomNav
             locale={locale}
