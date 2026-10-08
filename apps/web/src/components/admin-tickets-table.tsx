@@ -4,9 +4,8 @@ import { NavLink as Link } from "@/components/nav-link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AdminStatusDropdown } from "@/components/admin-status-dropdown";
-import { AutoHandlePill } from "@/components/auto-handle-pill";
 import { LocalDate } from "@/components/local-time";
-import { QuickAutomationMark } from "@/components/quick-automation-mark";
+import { AutomationCheckbox } from "@/components/quick-automation-mark";
 import { formatTicketArea, formatTicketAutoHandle, formatTicketPriority, formatTicketStatus, formatTicketType, tr, type AppLocale } from "@/lib/locale";
 import {
   ticketAreaOptions,
@@ -569,7 +568,7 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
                   <th className="pe-3">{sortHeaderButton("ticket_type", tr(locale, "Type", "סוג"))}</th>
                   <th className="pe-3">{sortHeaderButton("area", tr(locale, "Area", "אזור"))}</th>
                   <th className="pe-3">{sortHeaderButton("priority", tr(locale, "Priority", "עדיפות"))}</th>
-                  <th className="pe-3">{tr(locale, "Auto-handle", "טיפול אוטומטי")}</th>
+                  <th className="w-px whitespace-nowrap pe-3" title={tr(locale, "Tick to mark a ticket for automation", "לסמן פנייה לאוטומציה")}>{tr(locale, "Automation", "אוטומציה")}</th>
                   <th className="pe-3">{sortHeaderButton("created_at", tr(locale, "Date", "תאריך"))}</th>
                   <th className="py-2 pe-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                     {tr(locale, "Status", "סטטוס")}
@@ -592,12 +591,8 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
                     <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">{typeLabel(ticket.ticket_type, locale)}</td>
                     <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">{areaLabel(ticket.area, locale)}</td>
                     <td className={`py-3 pe-3 ${priorityTextClass[ticket.priority]}`}>{formatTicketPriority(ticket.priority, locale)}</td>
-                    <td className="py-3 pe-3">
-                      {ticket.auto_handle === null && !FINAL_TICKET_STATUSES.includes(ticket.status) ? (
-                        <QuickAutomationMark locale={locale} ticketId={ticket.id} />
-                      ) : (
-                        <AutoHandlePill locale={locale} value={ticket.auto_handle} settled={FINAL_TICKET_STATUSES.includes(ticket.status)} />
-                      )}
+                    <td className="w-px whitespace-nowrap py-3 pe-3">
+                      <AutomationCheckbox locale={locale} ticketId={ticket.id} autoHandle={ticket.auto_handle} settled={FINAL_TICKET_STATUSES.includes(ticket.status)} />
                     </td>
                     <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">
                       <LocalDate value={ticket.created_at} locale={locale} />
