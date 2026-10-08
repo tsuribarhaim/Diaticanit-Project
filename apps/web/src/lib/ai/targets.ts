@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { AiExtractionConfig } from "@/lib/ai/env";
+import { DAFFY_HEBREW_GENDER_RULE } from "@/lib/ai/persona";
 import { callAiChatCompletionWithProgress } from "@/lib/ai/provider-client";
 import { BMI_GOOD_MAX, BMI_GOOD_MIN, classifyBmi, computeBmi } from "@/lib/bmi";
 import type { AppLocale } from "@/lib/locale";
@@ -493,6 +494,7 @@ export async function generateTargetsWithAi({
           `- Write every text field (ai_adjustment_note, habit_instruction, rationale, global_coaching_explanation, user_targets label/value/unit) entirely in ${languageName}, EXCEPT user_targets id which must stay ASCII snake_case regardless of reply language. Do not mix languages within a field.`,
           "- Address the user directly in second person (\"you\"/\"your\") in every text field. Never refer to the user in third person (\"he\", \"she\", \"his\", \"her\", or the user's inferred gender) even when their biological_sex is known.",
           "- In Hebrew specifically, prefer gender-neutral or mixed-form second-person phrasing (e.g. \"שלך\", \"את/ה\") over a gendered third-person construction like \"בשל מצבו הרפואי\" or \"בשל מצבה הרפואי\" — write \"בשל המצב הרפואי שלך\" instead.",
+          ...(locale === "he" ? [`- ${DAFFY_HEBREW_GENDER_RULE}`] : []),
           ...adjustmentContextLines,
           ...explicitFieldRequestLines,
           ...customTargetLoggingContextLines,
