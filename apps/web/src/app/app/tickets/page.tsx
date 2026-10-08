@@ -34,7 +34,7 @@ export default async function TicketsPage({ searchParams }: { searchParams: Prom
   // a plain user's query stays scoped to their own, exactly as before.
   let ticketsQuery = supabase
     .from("tickets")
-    .select("id, ticket_seq, subject, status, created_at, ticket_type, area, priority, created_by")
+    .select("id, ticket_seq, subject, description, status, created_at, ticket_type, area, priority, created_by")
     .order("created_at", { ascending: false });
   if (!isAdmin) {
     ticketsQuery = ticketsQuery.eq("created_by", user.id);

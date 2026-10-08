@@ -24,6 +24,8 @@ type AdminTicketRow = {
   id: string;
   ticket_seq: number;
   subject: string;
+  // Drafts can still have no description (see migration 062).
+  description: string | null;
   status: TicketStatus;
   created_at: string;
   ticket_type: TicketType | null;
@@ -41,6 +43,12 @@ function typeLabel(value: TicketType | null, locale: AppLocale): string {
 
 function areaLabel(value: TicketArea | null, locale: AppLocale): string {
   return value ? formatTicketArea(value, locale) : tr(locale, "Not set yet", "טרם נבחר");
+}
+
+/** True when every (already lowercased) term appears in the subject or description. */
+function matchesKeywords(ticket: AdminTicketRow, terms: string[]): boolean {
+  const text = `${ticket.subject} ${ticket.description ?? ""}`.toLocaleLowerCase();
+  return terms.every((term) => text.includes(term));
 }
 
 const priorityTextClass: Record<TicketPriority, string> = {
@@ -215,6 +223,8 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
   const [userFilter, setUserFilter] = useState("");
   // Not saved between visits on purpose: typing a ticket number is a one-off lookup.
   const [numberFilter, setNumberFilter] = useState("");
+  // Like the ticket number, the keyword is not saved between visits.
+  const [keywordFilter, setKeywordFilter] = useState("");
   const [multiFilters, setMultiFilters] = useState<MultiFilterState>(EMPTY_MULTI_FILTERS);
   const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
   const [openFilter, setOpenFilter] = useState<MultiFilterKey | null>(null);
@@ -293,6 +303,17 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
     return digits ? Number(digits) : null;
   }, [numberFilter]);
 
+  // Every word must appear in the subject or description, in any order.
+  const keywordTerms = useMemo(
+    () =>
+      keywordFilter
+        .toLocaleLowerCase()
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean),
+    [keywordFilter],
+  );
+
   const filtered = useMemo(
     () =>
       // A ticket number overrides every other filter: it shows that one ticket if it exists.
@@ -305,9 +326,10 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
               (multiFilters.priority.length === 0 || multiFilters.priority.includes(ticket.priority)) &&
               (multiFilters.type.length === 0 || (ticket.ticket_type !== null && multiFilters.type.includes(ticket.ticket_type))) &&
               (multiFilters.area.length === 0 || (ticket.area !== null && multiFilters.area.includes(ticket.area))) &&
-              (multiFilters.autoHandle.length === 0 || multiFilters.autoHandle.includes(ticket.auto_handle ?? AUTO_HANDLE_NONE)),
+              (multiFilters.autoHandle.length === 0 || multiFilters.autoHandle.includes(ticket.auto_handle ?? AUTO_HANDLE_NONE)) &&
+              (keywordTerms.length === 0 || matchesKeywords(ticket, keywordTerms)),
           ),
-    [tickets, userFilter, multiFilters, numberQuery],
+    [tickets, userFilter, multiFilters, numberQuery, keywordTerms],
   );
 
   const sorted = useMemo(() => {
@@ -345,6 +367,7 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
   const hasActiveFilters = Boolean(
     userFilter ||
       numberFilter ||
+      keywordFilter ||
       multiFilters.status.length ||
       multiFilters.priority.length ||
       multiFilters.type.length ||
@@ -355,6 +378,7 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
   function clearFilters() {
     setUserFilter("");
     setNumberFilter("");
+    setKeywordFilter("");
     setMultiFilters(EMPTY_MULTI_FILTERS);
   }
 
@@ -420,6 +444,21 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
       ) : null}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+        <label className="block mb-3">
+          <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            {tr(locale, "Search", "חיפוש")}
+          </span>
+          <input
+            type="search"
+            value={keywordFilter}
+            onChange={(event) => setKeywordFilter(event.target.value)}
+            placeholder={tr(locale, "Search subject and description…", "חיפוש בנושא ובתיאור…")}
+            aria-label={tr(locale, "Search tickets", "חיפוש בפניות")}
+            dir="auto"
+            className={selectClassName}
+            style={isDarkTheme ? { backgroundColor: "#020617", color: "#f1f5f9" } : undefined}
+          />
+        </label>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           <label className="block">
             <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
@@ -555,7 +594,9 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
           <p className="rounded-lg border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
             {numberQuery !== null
               ? tr(locale, `No ticket TCK-${numberQuery} exists.`, `לא קיימת פנייה TCK-${numberQuery}.`)
-              : tr(locale, "No tickets match these filters.", "אין פניות התואמות את הסינון הזה.")}
+              : keywordTerms.length > 0
+                ? tr(locale, `No tickets match "${keywordFilter.trim()}".`, `אין פניות התואמות את "${keywordFilter.trim()}".`)
+                : tr(locale, "No tickets match these filters.", "אין פניות התואמות את הסינון הזה.")}
           </p>
         ) : (
           <div className="overflow-x-auto">
