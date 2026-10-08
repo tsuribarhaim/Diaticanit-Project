@@ -2,7 +2,7 @@
 
 import { NavLink as Link } from "@/components/nav-link";
 import { useRouter } from "next/navigation";
-import { useState, useTransition, type ReactNode } from "react";
+import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 
 import {
   approveForProductionAction,
@@ -10,9 +10,11 @@ import {
   rejectProposalAction,
   requestChangeAction,
   requestMergeAction,
+  searchAutomationTicketsAction,
   sendBackFixAction,
   takeTicketOutAction,
 } from "@/app/app/tickets/review-actions";
+import { type AutomationSearchHit } from "@/app/app/tickets/review-actions";
 import { ActionButton, PromoteBar } from "@/components/ticket-review-panels";
 import { tr, type AppLocale } from "@/lib/locale";
 import type { AutomationOverview, OverviewTicket, StationId, StationSub } from "@/lib/automation-overview";
@@ -130,6 +132,38 @@ function ActorIcon({ actor }: { actor: Actor }) {
 export function AutomationCycle({ locale, overview }: { locale: AppLocale; overview: AutomationOverview }) {
   const first = STATION_ORDER.find((id) => ticketsAt(overview, id).some((t) => needsAdmin(t))) ?? "approval";
   const [selected, setSelected] = useState<StationId>(first);
+  // Search: type a number or words, pick a ticket, and the station it is at lights up and its card opens.
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [found, setFound] = useState<{ q: string; hits: AutomationSearchHit[] }>({ q: "", hits: [] });
+  // Only results that belong to what is typed NOW (a slow answer to an older query must not show).
+  const outside = found.q === query.trim() ? found.hits : [];
+  const searchDone = found.q === query.trim();
+  const [focus, setFocus] = useState<{ ticket: OverviewTicket | null; hit: AutomationSearchHit | null } | null>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const inCycle = query.trim()
+    ? overview.tickets.filter((ticket) => {
+        const q = query.trim().toLowerCase();
+        const digits = q.replace(/\D/g, "");
+        return (/^(tck)?[-\s]?\d+$/.test(q) && digits ? String(ticket.seq) === digits || String(ticket.seq).startsWith(digits) : ticket.subject.toLowerCase().includes(q));
+      })
+    : [];
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) return;
+    const timer = setTimeout(() => {
+      void searchAutomationTicketsAction(q).then((hits) => setFound({ q, hits: hits.filter((hit) => !overview.tickets.some((ticket) => ticket.id === hit.id)) }));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [query, overview.tickets]);
+  useEffect(() => {
+    function onDown(event: MouseEvent) {
+      if (boxRef.current && !boxRef.current.contains(event.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, []);
+  const focusStation: StationId | null = focus?.ticket ? focus.ticket.station : focus?.hit?.releasedAt ? "release" : null;
 
   const nodes = STATION_ORDER.map((id, index) => {
     const angle = rad(-90 + index * STEP);
@@ -146,6 +180,62 @@ export function AutomationCycle({ locale, overview }: { locale: AppLocale; overv
   return (
     <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
       <div>
+        <div ref={boxRef} className="relative mx-auto mb-3 max-w-[600px]">
+          <svg className="pointer-events-none absolute start-3.5 top-3 h-[18px] w-[18px] text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="6.5" />
+            <path d="M16 16l5 5" />
+          </svg>
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setOpen(true);
+            }}
+            onFocus={() => setOpen(true)}
+            placeholder={tr(locale, "Find a ticket - number or words", "חיפוש פנייה - מספר או מילים")}
+            aria-label={tr(locale, "Find a ticket", "חיפוש פנייה")}
+            className="w-full rounded-full border border-slate-300 bg-white py-2.5 pe-4 ps-10 text-sm text-slate-900 outline-none ring-teal-600 focus:ring-2 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+          />
+          {open && query.trim() ? (
+            <ul className="absolute z-20 mt-1 w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900">
+              {inCycle.slice(0, 6).map((ticket) => (
+                <li key={ticket.id}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFocus({ ticket, hit: null });
+                      setSelected(ticket.station);
+                      setOpen(false);
+                    }}
+                    className="flex w-full items-baseline gap-3 border-b border-slate-100 px-4 py-2 text-start text-sm hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800"
+                  >
+                    <span className="font-mono text-xs text-slate-500">TCK-{ticket.seq}</span>
+                    <span dir="auto" className="min-w-0 flex-1 truncate">{ticket.subject}</span>
+                    <em className="whitespace-nowrap text-xs font-semibold not-italic text-teal-700 dark:text-teal-400">{stationText(ticket.station, locale).name}</em>
+                  </button>
+                </li>
+              ))}
+              {outside.slice(0, 6).map((hit) => (
+                <li key={hit.id}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFocus({ ticket: null, hit });
+                      setOpen(false);
+                    }}
+                    className="flex w-full items-baseline gap-3 border-b border-slate-100 px-4 py-2 text-start text-sm hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800"
+                  >
+                    <span className="font-mono text-xs text-slate-500">TCK-{hit.seq}</span>
+                    <span dir="auto" className="min-w-0 flex-1 truncate">{hit.subject}</span>
+                    <em className="whitespace-nowrap text-xs font-semibold not-italic text-slate-500">{hit.releasedAt ? tr(locale, "released", "שוחררה") : tr(locale, "not in automation", "לא באוטומציה")}</em>
+                  </button>
+                </li>
+              ))}
+              {inCycle.length === 0 && outside.length === 0 && searchDone ? <li className="px-4 py-3 text-sm text-slate-500">{tr(locale, "No ticket matches.", "לא נמצאה פנייה.")}</li> : null}
+            </ul>
+          ) : null}
+        </div>
         <div className="relative mx-auto aspect-square w-full max-w-[600px]">
           <svg viewBox="0 0 600 600" className="absolute inset-0 h-full w-full" aria-hidden="true">
             <defs>
@@ -221,7 +311,7 @@ export function AutomationCycle({ locale, overview }: { locale: AppLocale; overv
                   aria-pressed={selected === node.id}
                   className={`absolute flex aspect-square w-[15.5%] -translate-x-1/2 -translate-y-1/2 items-center justify-center border-2 p-0 transition-transform hover:scale-105 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-[3px] focus-visible:outline-teal-500 ${actorShape[actor]} ${
                     selected === node.id ? "ring-[5px] ring-teal-500/30 !border-teal-500" : ""
-                  }`}
+                  } ${focusStation === node.id ? "!border-amber-500 ring-[6px] ring-amber-500/40 motion-safe:animate-pulse" : ""}`}
                   style={{ left: `${node.px}%`, top: `${node.py}%` }}
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="h-[44%] w-[44%]" aria-hidden="true">
@@ -266,12 +356,13 @@ export function AutomationCycle({ locale, overview }: { locale: AppLocale; overv
           </span>
         </div>
         <p className="mb-3 mt-1 text-sm text-slate-600 dark:text-slate-400">{selectedText.desc}</p>
+        {focus ? <FoundCard locale={locale} focus={focus} onClear={() => { setFocus(null); setQuery(""); }} /> : null}
         {list.length === 0 ? (
           <p className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">{tr(locale, "Nothing here right now.", "אין כאן כלום כרגע.")}</p>
         ) : (
           <ul className="space-y-2">
             {list.map((ticket) => (
-              <TicketRow key={ticket.id} locale={locale} ticket={ticket} />
+              <TicketRow key={ticket.id} locale={locale} ticket={ticket} highlighted={focus?.ticket?.id === ticket.id} />
             ))}
           </ul>
         )}
@@ -298,7 +389,7 @@ const linkButtonPrimary = `${linkButton} !border-teal-600 !text-teal-700 dark:!b
 
 /** One ticket in a station panel: what it is, who signed what off, and the buttons that move it on. Every button reuses the
  * existing review step (lib/ticket-review.ts), so the dashboard and the review screens always agree. */
-function TicketRow({ locale, ticket }: { locale: AppLocale; ticket: OverviewTicket }) {
+function TicketRow({ locale, ticket, highlighted = false }: { locale: AppLocale; ticket: OverviewTicket; highlighted?: boolean }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [which, setWhich] = useState<string | null>(null);
@@ -350,7 +441,7 @@ function TicketRow({ locale, ticket }: { locale: AppLocale; ticket: OverviewTick
   );
 
   return (
-    <li className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-800 dark:bg-slate-950/40">
+    <li className={`rounded-xl border px-3 py-2.5 ${highlighted ? "border-amber-500 bg-amber-50 ring-2 ring-amber-500/40 dark:bg-amber-950/20" : "border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950/40"}`}>
       <div className="flex flex-wrap items-baseline gap-x-2">
         <span className="font-mono text-xs text-slate-500 dark:text-slate-400">TCK-{ticket.seq}</span>
         <b dir="auto" className="text-sm font-semibold text-slate-900 dark:text-slate-100">{ticket.subject}</b>
@@ -489,6 +580,36 @@ function SignoffChips({ locale, signoffs }: { locale: AppLocale; signoffs: Overv
           {chip}
         </span>
       ))}
+    </div>
+  );
+}
+
+/** What the search found, and where it stands: the station, the sign-offs so far, and a way in. */
+function FoundCard({ locale, focus, onClear }: { locale: AppLocale; focus: { ticket: OverviewTicket | null; hit: AutomationSearchHit | null }; onClear: () => void }) {
+  const ticket = focus.ticket;
+  const hit = focus.hit;
+  const seq = ticket?.seq ?? hit?.seq ?? 0;
+  const subject = ticket?.subject ?? hit?.subject ?? "";
+  const id = ticket?.id ?? hit?.id ?? "";
+  const where = ticket
+    ? tr(locale, `Now at: ${stationText(ticket.station, locale).name} - ${subText(ticket.sub, locale)}`, `כעת ב: ${stationText(ticket.station, locale).name} - ${subText(ticket.sub, locale)}`)
+    : hit?.releasedAt
+      ? tr(locale, `Done - released on ${fmtDay(hit.releasedAt, locale)} (it left the cycle)`, `הסתיים - שוחררה ב-${fmtDay(hit.releasedAt, locale)} (יצאה מהמחזור)`)
+      : hit && ["resolved", "closed", "cancelled", "duplicate"].includes(hit.status)
+        ? tr(locale, "Closed - not in the cycle", "סגורה - לא במחזור")
+        : tr(locale, "Not in automation", "לא באוטומציה");
+  return (
+    <div className="mb-3 rounded-xl border border-amber-500 bg-amber-50 p-3 dark:bg-amber-950/20">
+      <p className="text-sm font-bold text-slate-900 dark:text-slate-100">
+        <span className="me-2 font-mono text-xs font-normal text-slate-500">TCK-{seq}</span>
+        <span dir="auto">{subject}</span>
+      </p>
+      <p className="mt-0.5 text-sm font-bold text-amber-800 dark:text-amber-300">{where}</p>
+      {ticket ? <SignoffChips locale={locale} signoffs={ticket.signoffs} /> : null}
+      <div className="mt-2 flex flex-wrap gap-2">
+        <Link href={`/app/tickets/${id}`} className={linkButton}>{tr(locale, "Open ticket", "פתיחת הפנייה")}</Link>
+        <ActionButton pending={false} onClick={onClear}>{tr(locale, "Clear", "ניקוי")}</ActionButton>
+      </div>
     </div>
   );
 }
