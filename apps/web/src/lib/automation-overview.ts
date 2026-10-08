@@ -81,8 +81,12 @@ export type AutomationStatus = {
   requested: { analyze: boolean; night: boolean; digest: boolean };
 };
 
+export type RecentRelease = { version: string | null; at: string; ok: boolean; rolledBack: boolean; tickets: number };
+
 export type AutomationOverview = {
   status: AutomationStatus;
+  /** The last few promotions, newest first (full history is on its own page). */
+  recentReleases: RecentRelease[];
   tickets: OverviewTicket[];
   counts: Record<StationId, number>;
   /** Tickets waiting on the admin: proposals, questions, fixes to test, fixes to promote. */
@@ -197,6 +201,20 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
     });
   }
   const needsYou = counts.approval + counts.test + counts.promote + result.filter((ticket) => ticket.station === "fix" && ticket.sub === "questions").length;
+  const { data: releaseRows } = await supabase
+    .from("automation_requests")
+    .select("requested_at, completed_at, report:details->report")
+    .eq("kind", "promote")
+    .not("completed_at", "is", null)
+    .order("requested_at", { ascending: false })
+    .limit(3);
+  const recentReleases: RecentRelease[] = ((releaseRows ?? []) as unknown as { requested_at: string; completed_at: string | null; report: { version?: string; ok?: boolean; rolledBack?: boolean; tickets?: { status?: string }[] } | null }[]).map((row) => ({
+    version: row.report?.version ?? null,
+    at: row.completed_at ?? row.requested_at,
+    ok: row.report?.ok === true,
+    rolledBack: row.report?.rolledBack === true,
+    tickets: (row.report?.tickets ?? []).filter((ticket) => ticket.status === "released" || ticket.status === "deployed").length,
+  }));
   const status: AutomationStatus = {
     paused: Boolean(settingsRow?.paused),
     bridgeOnline,
@@ -209,5 +227,5 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
     lastAnalyst: runOf("analyst"),
     requested: { analyze: requests.some((r) => r.kind === "analyze"), night: requests.some((r) => r.kind === "night"), digest: requests.some((r) => r.kind === "digest") },
   };
-  return { status, tickets: result, counts, needsYou, total: result.length };
+  return { status, recentReleases, tickets: result, counts, needsYou, total: result.length };
 }
