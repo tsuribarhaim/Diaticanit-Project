@@ -64,7 +64,7 @@ export function AllergiesFieldRow({ locale, allergies }: { locale: AppLocale; al
     <>
       <ProfileRow
         label={tr(locale, "Allergies", "אלרגיות")}
-        value={allergies.length ? allergies.join(", ") : tr(locale, "None", "ללא")}
+        value={allergies.length ? allergies.join(", ") : tr(locale, "No", "לא")}
         onClick={() => {
           setDraft(allergies.join(", "));
           setIsOpen(true);
@@ -154,12 +154,12 @@ export function ExercisePreferencesRow({
 
   const summaryValue =
     selected.length === 0 || selected.includes("none")
-      ? tr(locale, "None", "ללא")
+      ? tr(locale, "No", "לא")
       : selected
           .filter((modality) => modality !== "other")
           .map((modality) => formatExerciseModality(modality, locale))
           .concat(others.map((activity) => activity.name).filter(Boolean))
-          .join(", ") || tr(locale, "None", "ללא");
+          .join(", ") || tr(locale, "No", "לא");
 
   return (
     <>
@@ -459,7 +459,7 @@ export function HabitsRow({
 
   const packsPerDay = cigarettes.trim() === "" ? "" : String(Number(cigarettes) / CIGARETTES_PER_PACK);
   const summary =
-    selected.length === 0 || selected.includes("none") ? tr(locale, "None", "ללא") : selected.map((habit) => formatHabit(habit, locale)).join(", ");
+    selected.length === 0 || selected.includes("none") ? tr(locale, "No", "לא") : selected.map((habit) => formatHabit(habit, locale)).join(", ");
 
   return (
     <>

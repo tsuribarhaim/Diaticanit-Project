@@ -339,7 +339,7 @@ export default async function ProfilePage({
             label={tr(locale, "Additional information", "מידע נוסף")}
             field="additional_information"
             value={profile.additional_information ?? ""}
-            displayValue={profile.additional_information || tr(locale, "None", "ללא")}
+            displayValue={profile.additional_information || tr(locale, "No", "לא")}
             kind="textarea"
             maxLength={1000}
           />
