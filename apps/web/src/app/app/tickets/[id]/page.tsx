@@ -2,8 +2,8 @@ import { NavLink as Link } from "@/components/nav-link";
 import { notFound, redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
-import { AdminAutoHandleControl } from "@/components/admin-auto-handle-control";
 import { AdminStatusDropdown } from "@/components/admin-status-dropdown";
+import { AutomationCheckbox } from "@/components/quick-automation-mark";
 import { ReviewCallout } from "@/components/review-banner";
 import { CancelTicketDialog } from "@/components/cancel-ticket-dialog";
 import { EditTicketDialog } from "@/components/edit-ticket-dialog";
@@ -183,10 +183,7 @@ export default async function TicketDetailPage({
             <h1 className="mt-0.5 text-xl font-bold text-slate-900 dark:text-slate-100" dir="auto">{ticket.subject}</h1>
           </div>
           {isAdmin ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <AdminStatusDropdown locale={locale} ticketId={ticket.id} status={status} size="md" />
-              <AdminAutoHandleControl locale={locale} ticketId={ticket.id} autoHandle={ticket.auto_handle as TicketAutoHandle | null} status={status} />
-            </div>
+            <AdminStatusDropdown locale={locale} ticketId={ticket.id} status={status} size="md" />
           ) : (
             <span className="rounded-full border border-slate-300 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
               {formatTicketStatus(status, locale)}
@@ -202,6 +199,12 @@ export default async function TicketDetailPage({
           <DetailRow label={tr(locale, "Priority", "עדיפות")} value={formatTicketPriority(ticket.priority, locale)} />
           <DetailRow label={tr(locale, "Submitted", "נשלח")} value={<LocalDateTime value={ticket.created_at} locale={locale} />} />
           {isAdmin && submittedByName ? <DetailRow label={tr(locale, "Submitted by", "נשלח על ידי")} value={submittedByName} /> : null}
+          {isAdmin ? (
+            <DetailRow
+              label={tr(locale, "Automation", "אוטומציה")}
+              value={<AutomationCheckbox locale={locale} ticketId={ticket.id} autoHandle={ticket.auto_handle} settled={["resolved", "closed", "cancelled", "duplicate"].includes(status)} status={status} withText />}
+            />
+          ) : null}
         </div>
 
         {status !== "draft" || ticket.description ? (
