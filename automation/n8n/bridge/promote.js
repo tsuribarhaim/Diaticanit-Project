@@ -119,6 +119,17 @@ async function runPromote({ tickets, dryRun = false, cfg, appCall }) {
       const subject = await git(["log", "-1", "--format=%s", tip], sp);
       const parents = (await git(["rev-list", "--parents", "-n", "1", tip], sp)).split(" ").length - 1;
       if (!subject.startsWith(`fix: TCK-${t.ticketSeq}`) || parents !== 1) { entry.reason = "the branch tip is not a single fix commit"; continue; }
+      // The fix was written on top of main, which may hold changes that are NOT in production (manual work, or another ticket's
+      // fix that was merged but not approved). A fix that touched the same files as such a change may rely on it: applying it
+      // alone could compile and still behave wrongly. Refuse it and say which changes it was built on. (--cherry-pick leaves out
+      // commits whose change is already in production under another id, e.g. an earlier promoted fix.)
+      const fixFiles = (await git(["show", "--name-only", "--format=", tip], sp)).split("\n").filter(Boolean);
+      const base = await git(["rev-parse", `${tip}^`], sp);
+      const builtOn = (await git(["log", "--cherry-pick", "--right-only", "--no-merges", "--format=%h %s", `HEAD...${base}`, "--", ...fixFiles], sp)).split("\n").filter(Boolean);
+      if (builtOn.length > 0) {
+        entry.reason = `it was built on changes that are not in production yet (${builtOn.slice(0, 3).join("; ")}${builtOn.length > 3 ? `; and ${builtOn.length - 3} more` : ""}) - release those first`;
+        continue;
+      }
       const pick = await exec("git", ["cherry-pick", tip], { cwd: sp });
       if (!pick.ok) {
         await exec("git", ["cherry-pick", "--abort"], { cwd: sp });
