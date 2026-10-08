@@ -96,6 +96,7 @@ function EditableValue({
           type="number"
           step={decimals > 0 ? 10 ** -decimals : 1}
           value={state.draft}
+          placeholder={value === null ? undefined : formatNumberForLocale(value, locale, { maximumFractionDigits: decimals })}
           autoFocus
           readOnly={state.saving}
           onChange={(event) => onDraftChange(event.target.value)}
@@ -104,7 +105,7 @@ function EditableValue({
             if (event.key === "Enter") onConfirm();
             if (event.key === "Escape") onCancel();
           }}
-          className={`rounded-lg border border-teal-600 bg-white px-2 py-1 text-sm font-bold outline-none ring-teal-600 focus:ring-2 dark:bg-slate-900 dark:text-slate-100 ${variant === "card" ? "w-24" : "w-20 text-end"}`}
+          className={`rounded-lg border border-teal-600 bg-white px-2 py-1 text-sm font-bold outline-none ring-teal-600 focus:ring-2 placeholder:text-slate-400 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 ${variant === "card" ? "w-24" : "w-20 text-end"}`}
         />
         <button
           type="button"
@@ -296,8 +297,12 @@ export function TargetsPlanEditor({
     setFieldStates((previous) => ({ ...previous, [key]: { ...(previous[key] ?? emptyFieldState), ...patch } }));
   }
 
-  function startEdit(key: string, currentValue: number | null) {
-    patchState(key, { editing: true, draft: currentValue === null ? "" : String(currentValue), banner: null });
+  /** Always opens with an empty draft so the user can type the new number
+   * straight away instead of deleting the old one first (TCK-52) - the
+   * current value is still visible as the input's placeholder, and
+   * confirming an empty field just cancels (see confirmEdit), keeping it. */
+  function startEdit(key: string) {
+    patchState(key, { editing: true, draft: "", banner: null });
   }
   function cancelEdit(key: string) {
     patchState(key, { editing: false, draft: "" });
@@ -417,7 +422,7 @@ export function TargetsPlanEditor({
               unit={formatMeasurementUnit(unit, locale)}
               decimals={decimals}
               variant="row"
-              onStartEdit={() => startEdit(key, value)}
+              onStartEdit={() => startEdit(key)}
               onDraftChange={(draft) => patchState(key, { draft })}
               onConfirm={() => void confirmEdit(key, field, decimals)}
               onCancel={() => cancelEdit(key)}
@@ -547,7 +552,7 @@ export function TargetsPlanEditor({
                         unit={formatMeasurementUnit(field.unit, locale)}
                         decimals={0}
                         variant="row"
-                        onStartEdit={() => startEdit(fieldKey, singleValue)}
+                        onStartEdit={() => startEdit(fieldKey)}
                         onDraftChange={(draft) => patchState(fieldKey, { draft })}
                         onConfirm={() => void confirmEdit(fieldKey, fieldRef, 0)}
                         onCancel={() => cancelEdit(fieldKey)}
