@@ -232,3 +232,13 @@ table.
 - How/when `auto_handle='P'` with a plan actually transitions into Phase 2
   implementation - automatically on a later daily run, or only when Tsuri
   explicitly asks for it per ticket.
+
+## Fixes are built on production (rule of 2026-10-08)
+
+The night run and the analyst work in a copy of `release/1.0` (what is live), never of `main` (PRODUCTION_REF in the bridge's
+env). Every fix commit records the production commit it was built on (`Built-on-production: <sha>`). The promotion applies a
+fix only while `release/1.0` is still exactly that commit, and checks again just before the deploy that nothing landed on the
+release branch and that the live version is the one it started from; otherwise the fix is reported as "production has changed
+since this fix was built" and must be sent back to be built again. Fixes made before this rule (no trailer) are checked by file
+overlap with unreleased changes instead. A fix built on production can conflict on dev (main moved on): the auto-merge leaves it on
+its branch and the admin sees it in the dev test - that never reaches production.

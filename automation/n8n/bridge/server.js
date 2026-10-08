@@ -84,6 +84,9 @@ const AUTO_MERGE_TO_DEV = env.AUTO_MERGE_TO_DEV === "true";
 // "Promote to production" (see promote.js): only runs when this is explicitly true, and only for the
 // real bridge - the dev test bridge leaves it off.
 const PROMOTE_ENABLED = env.PROMOTE_ENABLED === "true";
+// Fixes (and the analysis behind them) are built on what is LIVE, never on main: the branch that holds production's code.
+// A fix can then only depend on code production already has, and the promotion refuses it if production moved since.
+const PRODUCTION_REF = env.PRODUCTION_REF || "release/1.0";
 const STAGING_PATH = env.STAGING_PATH;
 const PUBLIC_APP_URL = env.PUBLIC_APP_URL || "https://daffy-pilot.vercel.app";
 const PHASE2_MAX_BUDGET_USD = env.PHASE2_MAX_BUDGET_USD_PER_TICKET || "5.00";
@@ -433,7 +436,7 @@ async function autoMergeToDev(ticketSeq, files, { force = false } = {}) {
   const junctions = [];
   let failure = null;
   try {
-    await gitWorktreeAdd(checkDir);
+    await gitWorktreeAdd(checkDir, "main");
     try {
       await runGit(["merge", "--no-ff", "-m", `Merge ${branch}`, branch], checkDir);
     } catch {
@@ -634,9 +637,9 @@ function runClaudeHeadless({ cwd, prompt, tools, allowedTools, disallowedTools, 
   });
 }
 
-function gitWorktreeAdd(dir) {
+function gitWorktreeAdd(dir, ref = "main") {
   return new Promise((resolve, reject) => {
-    execFile("git", ["worktree", "add", "--detach", dir, "main"], { cwd: REPO_PATH }, (err, stdout, stderr) => {
+    execFile("git", ["worktree", "add", "--detach", dir, ref], { cwd: REPO_PATH }, (err, stdout, stderr) => {
       if (err) return reject(new Error(`git worktree add failed: ${err.message} | ${stderr}`));
       resolve();
     });
@@ -808,13 +811,14 @@ async function verifyAndCommitFix(worktreeDir, ticket, phase2Output) {
   }
 
   const branch = `auto-fix/tck-${ticket.ticket_seq}`;
+  const builtOn = await runGit(["rev-parse", "HEAD"], worktreeDir);
   await runGit(["checkout", "-b", branch], worktreeDir);
   await runGit(["add", "-A"], worktreeDir);
   await runGit(
     [
       "commit",
       "-m",
-      `fix: TCK-${ticket.ticket_seq} - ${ticket.subject}\n\nAuto-fixed by the Auto Ticket Handling bridge (Phase 2).\nNever pushed; review before merging.\n\nCo-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>`,
+      `fix: TCK-${ticket.ticket_seq} - ${ticket.subject}\n\nAuto-fixed by the Auto Ticket Handling bridge (Phase 2).\nNever pushed; review before merging.\nBuilt-on-production: ${builtOn}\n\nCo-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>`,
     ],
     worktreeDir,
   );
@@ -869,7 +873,7 @@ async function processTicket(ticket, budgetTracker) {
   const worktreeDir = path.join(WORKTREE_BASE, `ticket-${ticket.ticket_seq}-${Date.now()}`);
   let devServerProc = null;
   try {
-    await gitWorktreeAdd(worktreeDir);
+    await gitWorktreeAdd(worktreeDir, PRODUCTION_REF);
 
     const phase1 = await runClaudeHeadless({
       cwd: worktreeDir,
@@ -1054,7 +1058,7 @@ async function analyzeTicket(ticket, budgetTracker) {
   }
   const worktreeDir = path.join(WORKTREE_BASE, `analyst-${ticket.ticket_seq}-${Date.now()}`);
   try {
-    await gitWorktreeAdd(worktreeDir);
+    await gitWorktreeAdd(worktreeDir, PRODUCTION_REF);
     const run = await runClaudeHeadless({
       cwd: worktreeDir,
       prompt: buildAnalystPrompt(ticket) + lessonsBlock("analyst"),
