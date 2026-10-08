@@ -143,16 +143,22 @@ export function NewTicketForm({ locale }: { locale: AppLocale }) {
             addFiles(renamed);
           }}
         />
-        <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-400 dark:text-slate-500">
+      </label>
+
+      <div>
+        <TicketAttachmentsField locale={locale} attachments={attachments} flash={flash} onAdd={addFiles} onRemove={removeFile} />
+        <p className="mt-1.5 flex items-center gap-1.5 text-xs text-slate-400 dark:text-slate-500">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <rect x="9" y="2" width="6" height="4" rx="1" />
             <path d="M9 4H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-3" />
           </svg>
-          {tr(locale, "Tip: you can paste a screenshot directly into this box.", "טיפ: אפשר להדביק צילום מסך ישירות לתוך התיבה הזו.")}
+          {tr(
+            locale,
+            "Tip: you can paste a screenshot directly into the Description box above.",
+            "טיפ: אפשר להדביק צילום מסך ישירות לתוך תיבת התיאור שלמעלה.",
+          )}
         </p>
-      </label>
-
-      <TicketAttachmentsField locale={locale} attachments={attachments} flash={flash} onAdd={addFiles} onRemove={removeFile} />
+      </div>
 
       {state.error ? (
         <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-400">
