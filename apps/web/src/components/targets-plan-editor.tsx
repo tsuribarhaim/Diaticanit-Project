@@ -113,12 +113,12 @@ function EditableValue({
           disabled={state.saving}
           aria-busy={state.saving}
           aria-label={tr(locale, "Save", "שמירה")}
-          className="flex h-7 w-7 items-center justify-center rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
+          className="flex h-7 w-7 items-center justify-center rounded-lg border-2 border-emerald-500 text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-emerald-500 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
         >
           {state.saving ? (
             <Spinner className="h-3.5 w-3.5 animate-spin" />
           ) : (
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
           )}
         </button>
         <button
@@ -126,7 +126,7 @@ function EditableValue({
           onClick={onCancel}
           disabled={state.saving}
           aria-label={tr(locale, "Cancel", "ביטול")}
-          className="flex h-7 w-7 items-center justify-center rounded-lg border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950/40"
+          className="ms-1.5 flex h-7 w-7 items-center justify-center rounded-lg border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950/40"
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="M6 6l12 12" /></svg>
         </button>
