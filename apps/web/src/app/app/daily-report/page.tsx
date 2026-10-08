@@ -1201,10 +1201,11 @@ export default async function DailyReportPage({
               // (e.g. "Strength training (60 min)") displayed "0 kcal" even
               // though real burn had been estimated and counted toward the
               // day's totals - reported as "the number of calories does not
-              // change" when logging exercise. hasFood still wins when an
-              // entry has both (matching entryKind's own meal-first
-              // priority above) since calories eaten is the more relevant
-              // headline number there. estimated_burn_kcal is shown as a
+              // change" when logging exercise. An entry with both food and
+              // exercise shows its net (eaten - burned), the same as the
+              // day's net calories ring - showing calories eaten alone made
+              // water or other zero-calorie food plus exercise read "0 kcal"
+              // (TCK-91). estimated_burn_kcal is shown as a
               // negative number with the plain "kcal" unit (e.g. "-220
               // kcal") rather than a positive number plus a "burned"
               // qualifier - reads at a glance as a deduction the same way an
@@ -1232,22 +1233,31 @@ export default async function DailyReportPage({
               // with the unit trailing to its left; English (LTR) reads
               // the same number-first order onto the left instead - both
               // exactly matching how each locale would order it naturally.
-              const valuePill: { number: string; unit: string } | null = hasFood
-                ? { number: formatNumber(report.calories_kcal, locale, 0), unit: tr(locale, "kcal", 'קק"ל') }
-                : hasExercise
-                  ? { number: formatNumber(-Math.abs(Number(report.estimated_burn_kcal ?? 0)), locale, 0), unit: tr(locale, "kcal", 'קק"ל') }
-                  : hasWeight
-                    ? { number: formatNumber(report.reported_weight_kg, locale, 1), unit: formatMeasurementUnit("kg", locale) }
-                    : reportCustomTargetRows.length === 1
-                      ? {
-                          number: formatNumberForLocale(reportCustomTargetRows[0].value, locale, {
-                            maximumFractionDigits: Number.isInteger(reportCustomTargetRows[0].value) ? 0 : 1,
-                          }),
-                          unit: formatMeasurementUnit(reportCustomTargetRows[0].target.unit, locale),
-                        }
-                      : Number(report.calories_kcal ?? 0) > 0
-                        ? { number: formatNumber(report.calories_kcal, locale, 0), unit: tr(locale, "kcal", 'קק"ל') }
-                        : null;
+              const valuePill: { number: string; unit: string } | null = hasFood && hasExercise
+                ? {
+                    number: formatNumber(
+                      Math.round(Number(report.calories_kcal ?? 0) - Math.abs(Number(report.estimated_burn_kcal ?? 0))),
+                      locale,
+                      0,
+                    ),
+                    unit: tr(locale, "kcal", 'קק"ל'),
+                  }
+                : hasFood
+                  ? { number: formatNumber(report.calories_kcal, locale, 0), unit: tr(locale, "kcal", 'קק"ל') }
+                  : hasExercise
+                    ? { number: formatNumber(-Math.abs(Number(report.estimated_burn_kcal ?? 0)), locale, 0), unit: tr(locale, "kcal", 'קק"ל') }
+                    : hasWeight
+                      ? { number: formatNumber(report.reported_weight_kg, locale, 1), unit: formatMeasurementUnit("kg", locale) }
+                      : reportCustomTargetRows.length === 1
+                        ? {
+                            number: formatNumberForLocale(reportCustomTargetRows[0].value, locale, {
+                              maximumFractionDigits: Number.isInteger(reportCustomTargetRows[0].value) ? 0 : 1,
+                            }),
+                            unit: formatMeasurementUnit(reportCustomTargetRows[0].target.unit, locale),
+                          }
+                        : Number(report.calories_kcal ?? 0) > 0
+                          ? { number: formatNumber(report.calories_kcal, locale, 0), unit: tr(locale, "kcal", 'קק"ל') }
+                          : null;
               // A report holding only a custom target value has nothing for
               // buildEntrySummary to describe (it only looks at parsed food/
               // exercise items), so the row's own custom target(s) become
