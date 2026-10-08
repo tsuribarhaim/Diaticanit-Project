@@ -13,10 +13,12 @@ import {
   requestAnalysis,
   requestChange,
   requestMerge,
+  requestAgentRun,
   requestPromote,
   returnFix,
   sendBackFix,
   takeOutOfAutomation,
+  setAutomationPaused,
   takeTicketOut,
   withdrawApproval,
   type ReviewResult,
@@ -120,4 +122,10 @@ export async function setLessonActiveAction(lessonId: string, active: boolean): 
 }
 export async function requestPromoteAction(proposalIds: string[]): Promise<ReviewResult> {
   return withAdmin(({ supabase, adminId, locale }) => requestPromote(supabase, adminId, locale, proposalIds));
+}
+export async function requestAgentRunAction(kind: "analyze" | "night" | "digest"): Promise<ReviewResult> {
+  return withAdmin(({ supabase, adminId, locale }) => requestAgentRun(supabase, adminId, locale, kind));
+}
+export async function setAutomationPausedAction(paused: boolean): Promise<ReviewResult> {
+  return withAdmin(({ supabase, adminId, locale }) => setAutomationPaused(supabase, adminId, locale, paused));
 }

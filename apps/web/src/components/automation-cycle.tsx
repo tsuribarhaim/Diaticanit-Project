@@ -9,15 +9,18 @@ import {
   approveProposalAction,
   rejectProposalAction,
   requestChangeAction,
+  requestAgentRunAction,
   requestMergeAction,
   searchAutomationTicketsAction,
+  setAutomationPausedAction,
   sendBackFixAction,
   takeTicketOutAction,
 } from "@/app/app/tickets/review-actions";
 import { type AutomationSearchHit } from "@/app/app/tickets/review-actions";
+import { Spinner } from "@/components/spinner";
 import { ActionButton, PromoteBar } from "@/components/ticket-review-panels";
 import { tr, type AppLocale } from "@/lib/locale";
-import type { AutomationOverview, OverviewTicket, StationId, StationSub } from "@/lib/automation-overview";
+import type { AutomationOverview, AutomationStatus, OverviewTicket, RunInfo, StationId, StationSub } from "@/lib/automation-overview";
 import { STATION_ORDER } from "@/lib/automation-overview";
 
 /** The Ticket Automation cycle (docs/design/ticket-automation-dashboard.md): seven stations around a ring, a number on
@@ -163,6 +166,13 @@ export function AutomationCycle({ locale, overview }: { locale: AppLocale; overv
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, []);
+  const router = useRouter();
+  const busy = overview.status.analysisInProgress || overview.status.runInProgress || overview.status.promoteInProgress || overview.status.requested.analyze || overview.status.requested.night || overview.status.requested.digest || overview.counts.release > 0;
+  useEffect(() => {
+    if (!busy) return;
+    const timer = setInterval(() => router.refresh(), 8000);
+    return () => clearInterval(timer);
+  }, [busy, router]);
   const focusStation: StationId | null = focus?.ticket ? focus.ticket.station : focus?.hit?.releasedAt ? "release" : null;
 
   const nodes = STATION_ORDER.map((id, index) => {
@@ -178,6 +188,8 @@ export function AutomationCycle({ locale, overview }: { locale: AppLocale; overv
   const list = ticketsAt(overview, selected);
 
   return (
+    <div className="space-y-4">
+      <StatusStrip locale={locale} status={overview.status} />
     <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
       <div>
         <div ref={boxRef} className="relative mx-auto mb-3 max-w-[600px]">
@@ -376,8 +388,182 @@ export function AutomationCycle({ locale, overview }: { locale: AppLocale; overv
             />
           </div>
         ) : null}
+        {selected === "marked" ? <AgentRunBar locale={locale} kind="analyze" tickets={ticketsAt(overview, "marked")} status={overview.status} /> : null}
+        {selected === "fix" ? <AgentRunBar locale={locale} kind="night" tickets={ticketsAt(overview, "fix").filter((ticket) => ticket.sub === "queued")} status={overview.status} /> : null}
       </section>
     </div>
+    </div>
+  );
+}
+
+const pillBase = "inline-flex items-center gap-1.5 rounded-full border px-3 py-0.5 text-xs";
+
+function fmtTime(iso: string, locale: AppLocale): string {
+  return new Date(iso).toLocaleString(locale === "he" ? "he-IL" : "en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Jerusalem" });
+}
+
+function runText(run: RunInfo | null, none: string, label: string, locale: AppLocale): string {
+  if (!run || !run.finishedAt) return none;
+  return `${label} ${fmtTime(run.finishedAt, locale)}${run.result ? ` · ${run.result}` : ""}${run.costUsd !== null ? ` · $${run.costUsd.toFixed(2)}` : ""}`;
+}
+
+/** What the laptop is doing, the last runs, and the Pause switch (stops only the two AI agents). */
+function StatusStrip({ locale, status }: { locale: AppLocale; status: AutomationStatus }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [message, setMessage] = useState<string | null>(null);
+  const running = status.analysisInProgress || status.runInProgress || status.promoteInProgress;
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`${pillBase} ${status.bridgeOnline ? "border-emerald-300 text-emerald-800 dark:border-emerald-800 dark:text-emerald-300" : "border-rose-300 bg-rose-50 font-semibold text-rose-800 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300"}`} title={tr(locale, "The program on your laptop that runs the agents. It must be on.", "התוכנה במחשב הנייד שמריצה את הסוכנים. היא חייבת להיות דלוקה.")}>
+          <span aria-hidden="true" className={`h-2 w-2 rounded-full ${status.bridgeOnline ? "bg-emerald-500" : "bg-rose-500"}`} />
+          {status.bridgeOnline
+            ? tr(locale, "Bridge online", "הגשר פעיל")
+            : tr(locale, `Bridge offline${status.bridgeSeenAt ? ` - last seen ${fmtTime(status.bridgeSeenAt, locale)}` : ""}`, `הגשר כבוי${status.bridgeSeenAt ? ` - נראה לאחרונה ${fmtTime(status.bridgeSeenAt, locale)}` : ""}`)}
+        </span>
+        {running ? (
+          <span className={`${pillBase} border-sky-300 font-semibold text-sky-800 dark:border-sky-800 dark:text-sky-300`}>
+            <Spinner className="h-3 w-3 animate-spin" />
+            {status.analysisInProgress ? tr(locale, "Analyst running now", "האנליסט רץ עכשיו") : status.runInProgress ? tr(locale, "Night run running now", "ריצת הלילה רצה עכשיו") : tr(locale, "A release is running now", "שחרור רץ עכשיו")}
+          </span>
+        ) : null}
+        <span className={`${pillBase} border-slate-300 text-slate-600 dark:border-slate-700 dark:text-slate-400`}>{runText(status.lastNight, tr(locale, "No night run recorded yet", "טרם נרשמה ריצת לילה"), tr(locale, "Last night run", "ריצת לילה אחרונה"), locale)}</span>
+        <span className={`${pillBase} border-slate-300 text-slate-600 dark:border-slate-700 dark:text-slate-400`}>{runText(status.lastAnalyst, tr(locale, "No analyst run recorded yet", "טרם נרשמה ריצת אנליסט"), tr(locale, "Last analyst run", "ריצת אנליסט אחרונה"), locale)}</span>
+        <span className={`${pillBase} border-slate-300 text-slate-600 dark:border-slate-700 dark:text-slate-400`}>{tr(locale, "Next: analyst 18:00 · night run 02:15", "הבא: אנליסט 18:00 · ריצת לילה 02:15")}</span>
+        {status.bridgeOnline ? <span className={`${pillBase} border-slate-300 text-slate-600 dark:border-slate-700 dark:text-slate-400`}>{tr(locale, `Auto-merge to dev: ${status.autoMerge ? "on" : "off"}`, `מיזוג אוטומטי לפיתוח: ${status.autoMerge ? "פעיל" : "כבוי"}`)}</span> : null}
+        <label className="ms-auto inline-flex cursor-pointer items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-200" title={tr(locale, "Stops only the analyst and the night run. Your own actions are never blocked.", "עוצר רק את האנליסט ואת ריצת הלילה. הפעולות שלך לא נחסמות.")}>
+          {pending ? <Spinner className="h-4 w-4 animate-spin" /> : <input type="checkbox" checked={status.paused} onChange={(event) => startTransition(async () => { const result = await setAutomationPausedAction(event.target.checked); setMessage(result.error ?? result.success ?? null); router.refresh(); })} className="h-[18px] w-[18px] accent-amber-600" />}
+          {tr(locale, "Pause the AI agents", "השהיית סוכני ה-AI")}
+        </label>
+      </div>
+      {status.paused ? (
+        <p role="status" className="rounded-xl bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-900 dark:bg-amber-950/50 dark:text-amber-200">
+          {tr(locale, "Automation is paused: the analyst and the night run will not start until you resume. Your tickets and sign-offs stay as they are, and you can still approve, merge and promote.", "האוטומציה מושהית: האנליסט וריצת הלילה לא יתחילו עד שתחדש. הפניות והאישורים שלך נשארים, ואפשר עדיין לאשר, למזג ולהעלות.")}
+        </p>
+      ) : message ? (
+        <p role="status" className="text-xs text-slate-500 dark:text-slate-400">{message}</p>
+      ) : null}
+    </div>
+  );
+}
+
+type RunKind = "analyze" | "night" | "digest";
+
+/** Asks for the admin's sign-off before it starts an agent: the press is the authorisation. */
+function RunDialog({ locale, kind, tickets, onClose }: { locale: AppLocale; kind: RunKind; tickets: OverviewTicket[]; onClose: () => void }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [result, setResult] = useState<{ text: string; error: boolean } | null>(null);
+  const title =
+    kind === "analyze" ? tr(locale, "Start the analyst now?", "להפעיל את האנליסט עכשיו?") : kind === "night" ? tr(locale, "Start the night run now?", "להפעיל את ריצת הלילה עכשיו?") : tr(locale, "Send the daily digest now?", "לשלוח את הסיכום היומי עכשיו?");
+  const text =
+    kind === "analyze"
+      ? tr(locale, "It reads the real code, writes a proposal for each ticket below and e-mails you a summary. About 10 to 20 minutes; at most $3 per ticket.", "הוא קורא את הקוד האמיתי, כותב הצעה לכל פנייה למטה ושולח לך סיכום במייל. כ-10 עד 20 דקות; עד $3 לפנייה.")
+      : kind === "night"
+        ? tr(locale, "It builds each approved fix below in a throwaway copy, re-checks it and, when every check passes, merges it into your dev app. About 10 to 30 minutes; the daily cap is $20.", "הוא בונה כל תיקון מאושר למטה בעותק זמני, בודק שוב וכשכל הבדיקות עוברות ממזג אותו לאפליקציית הפיתוח. כ-10 עד 30 דקות; תקרה יומית $20.")
+        : tr(locale, "The same e-mail as 07:00, to you and Orit, with today's numbers.", "אותו מייל של 07:00, אליך ואל אורית, עם המספרים של היום.");
+  return (
+    <div role="dialog" aria-modal="true" aria-label={title} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="max-h-[90vh] w-full max-w-lg overflow-auto rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">{title}</h2>
+          <button type="button" onClick={onClose} aria-label={tr(locale, "Close", "סגירה")} className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+        </div>
+        <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">{text}</p>
+        {tickets.length > 0 ? (
+          <ul className="mt-2 list-disc space-y-0.5 ps-5 text-sm text-slate-800 dark:text-slate-200">
+            {tickets.map((ticket) => (
+              <li key={ticket.id} dir="auto">TCK-{ticket.seq} - {ticket.subject}</li>
+            ))}
+          </ul>
+        ) : null}
+        <p className="mt-3 flex items-center gap-2 rounded-lg bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-800 dark:bg-blue-950/40 dark:text-blue-300">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3z" /><path d="M9 12l2.2 2.2L15.5 10" /></svg>
+          {tr(locale, "Pressing the button is your sign-off to start it", "הלחיצה היא האישור שלך להתחיל")}
+        </p>
+        {result ? <p role="status" className={`mt-2 text-sm ${result.error ? "text-rose-600 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{result.text}</p> : null}
+        <div className="mt-4 flex flex-wrap gap-2">
+          {result && !result.error ? (
+            <ActionButton variant="primary" pending={false} onClick={onClose}>{tr(locale, "Done", "סיום")}</ActionButton>
+          ) : (
+            <>
+              <ActionButton
+                variant="primary"
+                pending={pending}
+                onClick={() =>
+                  startTransition(async () => {
+                    const response = await requestAgentRunAction(kind);
+                    setResult(response.error ? { text: response.error, error: true } : { text: response.success ?? "", error: false });
+                    if (!response.error) router.refresh();
+                  })
+                }
+              >
+                {tr(locale, "Yes, start it", "כן, להתחיל")}
+              </ActionButton>
+              <ActionButton pending={false} disabled={pending} onClick={onClose}>{tr(locale, "Cancel", "ביטול")}</ActionButton>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** The run button of a station, in the same teal bar as Promote. */
+function AgentRunBar({ locale, kind, tickets, status }: { locale: AppLocale; kind: "analyze" | "night"; tickets: OverviewTicket[]; status: AutomationStatus }) {
+  const [open, setOpen] = useState(false);
+  const running = kind === "analyze" ? status.analysisInProgress : status.runInProgress;
+  const requested = kind === "analyze" ? status.requested.analyze : status.requested.night;
+  const count = tickets.length;
+  const reason = status.paused
+    ? tr(locale, "Automation is paused - resume it first", "האוטומציה מושהית - יש לחדש אותה קודם")
+    : !status.bridgeOnline
+      ? tr(locale, "The bridge is offline - your laptop must be on", "הגשר כבוי - המחשב הנייד חייב להיות דלוק")
+      : running
+        ? tr(locale, "Running now - an e-mail follows when it ends", "רץ עכשיו - מייל יישלח בסיומו")
+        : requested
+          ? tr(locale, "Requested - it starts within a minute", "התבקש - יתחיל תוך דקה")
+          : count === 0
+            ? tr(locale, "Nothing is waiting for it", "אין מה לעבד")
+            : null;
+  const label = kind === "analyze" ? tr(locale, "Run the analyst now", "הפעלת האנליסט עכשיו") : tr(locale, "Run the night run now", "הפעלת ריצת הלילה עכשיו");
+  const summary =
+    kind === "analyze"
+      ? tr(locale, `${count} ticket${count === 1 ? "" : "s"} will be analysed (it runs every day at 18:00)`, `${count} פניות ינותחו (הוא רץ כל יום ב-18:00)`)
+      : tr(locale, `${count} approved ticket${count === 1 ? "" : "s"} will be built (it runs every night at 02:15)`, `${count} פניות מאושרות ייבנו (הוא רץ כל לילה ב-02:15)`);
+  return (
+    <>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-teal-700 px-4 py-3 text-white dark:bg-teal-600">
+        <span className="text-sm font-semibold">{reason && (running || requested) ? <span className="inline-flex items-center gap-2"><Spinner className="h-4 w-4 animate-spin" />{reason}</span> : (reason && count === 0) || status.paused || !status.bridgeOnline ? reason : summary}</span>
+        <button type="button" disabled={reason !== null} onClick={() => setOpen(true)} className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-teal-800 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-60">
+          {label}
+        </button>
+      </div>
+      {open ? <RunDialog locale={locale} kind={kind} tickets={tickets} onClose={() => setOpen(false)} /> : null}
+    </>
+  );
+}
+
+/** "Send the daily digest now" - a link card on the dashboard. */
+export function DigestCard({ locale, digestRequested }: { locale: AppLocale; digestRequested: boolean }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
+        <span className="flex items-baseline justify-between gap-3">
+          <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Daily digest", "סיכום יומי")}</span>
+          <span className="text-xs font-bold text-teal-700 dark:text-teal-400">07:00</span>
+        </span>
+        <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">{tr(locale, "The morning e-mail to you and Orit - or send it now.", "המייל של הבוקר אליך ואל אורית - או לשלוח עכשיו.")}</span>
+        <div className="mt-2">
+          <ActionButton pending={false} disabled={digestRequested} onClick={() => setOpen(true)}>{digestRequested ? tr(locale, "Requested", "התבקש") : tr(locale, "Send now", "שליחה עכשיו")}</ActionButton>
+        </div>
+      </div>
+      {open ? <RunDialog locale={locale} kind="digest" tickets={[]} onClose={() => setOpen(false)} /> : null}
+    </>
   );
 }
 

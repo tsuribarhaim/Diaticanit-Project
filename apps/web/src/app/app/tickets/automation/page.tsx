@@ -1,7 +1,7 @@
 import { NavLink as Link } from "@/components/nav-link";
 import { redirect } from "next/navigation";
 
-import { AutomationCycle } from "@/components/automation-cycle";
+import { AutomationCycle, DigestCard } from "@/components/automation-cycle";
 import { ReviewNav } from "@/components/ticket-review-panels";
 import { getAutomationOverview } from "@/lib/automation-overview";
 import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
@@ -77,6 +77,7 @@ export default async function TicketAutomationPage() {
             <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">{card.note}</span>
           </Link>
         ))}
+        <DigestCard locale={locale} digestRequested={overview.status.requested.digest} />
       </div>
 
       <div className="mt-8">
