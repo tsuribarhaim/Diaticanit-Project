@@ -592,7 +592,7 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
                     <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">{areaLabel(ticket.area, locale)}</td>
                     <td className={`py-3 pe-3 ${priorityTextClass[ticket.priority]}`}>{formatTicketPriority(ticket.priority, locale)}</td>
                     <td className="w-px whitespace-nowrap py-3 pe-3">
-                      <AutomationCheckbox locale={locale} ticketId={ticket.id} autoHandle={ticket.auto_handle} settled={FINAL_TICKET_STATUSES.includes(ticket.status)} />
+                      <AutomationCheckbox locale={locale} ticketId={ticket.id} autoHandle={ticket.auto_handle} settled={FINAL_TICKET_STATUSES.includes(ticket.status)} status={ticket.status} />
                     </td>
                     <td className="py-3 pe-3 text-slate-600 dark:text-slate-400">
                       <LocalDate value={ticket.created_at} locale={locale} />

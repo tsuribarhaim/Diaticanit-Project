@@ -185,7 +185,7 @@ export default async function TicketDetailPage({
           {isAdmin ? (
             <div className="flex flex-wrap items-center gap-2">
               <AdminStatusDropdown locale={locale} ticketId={ticket.id} status={status} size="md" />
-              <AdminAutoHandleControl locale={locale} ticketId={ticket.id} autoHandle={ticket.auto_handle as TicketAutoHandle | null} />
+              <AdminAutoHandleControl locale={locale} ticketId={ticket.id} autoHandle={ticket.auto_handle as TicketAutoHandle | null} status={status} />
             </div>
           ) : (
             <span className="rounded-full border border-slate-300 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">

@@ -7,6 +7,7 @@ import { takeTicketOutAction } from "@/app/app/tickets/review-actions";
 import { updateTicketAutoHandleAdminAction } from "@/app/app/tickets/actions";
 import { Spinner } from "@/components/spinner";
 import { formatTicketAutoHandle, tr, type AppLocale } from "@/lib/locale";
+import { canMarkForAutomation } from "@/lib/tickets";
 
 /** The little box in the admin ticket list's Automation column. Unticked = not in automation: tick it and the ticket is
  * marked for automation (the analyst picks it up at its next run), without opening the ticket. A ticked box means it is in
@@ -24,7 +25,7 @@ const DOT: Record<string, string> = {
   R: "bg-teal-500",
 };
 
-export function AutomationCheckbox({ locale, ticketId, autoHandle, settled }: { locale: AppLocale; ticketId: string; autoHandle: string | null; settled: boolean }) {
+export function AutomationCheckbox({ locale, ticketId, autoHandle, settled, status }: { locale: AppLocale; ticketId: string; autoHandle: string | null; settled: boolean; status: string }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -41,9 +42,13 @@ export function AutomationCheckbox({ locale, ticketId, autoHandle, settled }: { 
   }
 
   const marked = autoHandle !== null;
+  // Only open / reopened tickets can become candidates: the box is switched off for any other status.
+  const notEligible = !marked && !canMarkForAutomation(status);
   const canUntick = autoHandle === "S";
   const stage = formatTicketAutoHandle(autoHandle, locale);
-  const label = marked
+  const label = notEligible
+    ? tr(locale, "Only open or reopened tickets can be marked for automation", "אפשר לסמן לאוטומציה רק פניות פתוחות או שנפתחו מחדש")
+    : marked
     ? canUntick
       ? tr(locale, `In automation: ${stage}. Untick to take it out.`, `באוטומציה: ${stage}. להסיר סימון כדי להוציא.`)
       : tr(locale, `In automation: ${stage}. Manage it on the Ticket Automation page.`, `באוטומציה: ${stage}. מנהלים בדף אוטומציית פניות.`)
@@ -57,7 +62,7 @@ export function AutomationCheckbox({ locale, ticketId, autoHandle, settled }: { 
         <input
           type="checkbox"
           checked={marked}
-          disabled={marked && !canUntick}
+          disabled={notEligible || (marked && !canUntick)}
           aria-label={label}
           onChange={(event) => {
             setError(null);

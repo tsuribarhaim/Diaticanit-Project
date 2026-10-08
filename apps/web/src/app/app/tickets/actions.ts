@@ -19,6 +19,7 @@ import {
   isSubmittableTicketStatus,
   MAX_TICKET_ATTACHMENTS,
   ticketAreaOptions,
+  canMarkForAutomation,
   ticketAutoHandleOptions,
   ticketPriorityOptions,
   ticketStatusOptions,
@@ -947,6 +948,14 @@ export async function updateTicketAutoHandleAdminAction(
   const isAdmin = await isCurrentUserAdmin(supabase, user.id);
   if (!isAdmin) {
     return { error: tr(locale, "Not authorized.", "אין הרשאה.") };
+  }
+
+  // Marking (from "no flag" to a flag) is only for tickets that are open or reopened - on the list, on the ticket and here.
+  if (autoHandle !== null) {
+    const { data: current } = await supabase.from("tickets").select("status, auto_handle").eq("id", ticketId).maybeSingle();
+    if (current && current.auto_handle === null && !canMarkForAutomation(current.status)) {
+      return { error: tr(locale, "Only open or reopened tickets can be marked for automation.", "אפשר לסמן לאוטומציה רק פניות פתוחות או שנפתחו מחדש.") };
+    }
   }
 
   const patch: Record<string, unknown> = { auto_handle: autoHandle };
