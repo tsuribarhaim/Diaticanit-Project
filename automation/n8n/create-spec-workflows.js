@@ -154,10 +154,13 @@ const call = (opts) => this.helpers.httpRequest({ json: true, timeout: 30000, ..
 
 // Heartbeat: tell the app the bridge is alive (and which run is in progress). If the bridge is down the app simply stops
 // hearing from us, and the dashboard says "Bridge offline".
-try {
-  const health = await call({ method: 'POST', url: BRIDGE_URL + '/health', headers: { 'x-bridge-secret': BRIDGE_SECRET }, timeout: 8000 });
-  await call({ method: 'POST', url: APP_URL + '/api/admin/automation-status', headers: appHeaders, body: { health } });
-} catch (e) { /* offline: nothing to report */ }
+const beat = async () => {
+  try {
+    const health = await call({ method: 'POST', url: BRIDGE_URL + '/health', headers: { 'x-bridge-secret': BRIDGE_SECRET }, timeout: 8000 });
+    await call({ method: 'POST', url: APP_URL + '/api/admin/automation-status', headers: appHeaders, body: { health } });
+  } catch (e) { /* offline: nothing to report */ }
+};
+await beat();
 
 const list = await call({ method: 'GET', url: APP_URL + '/api/admin/automation-requests', headers: appHeaders });
 const done = [];
@@ -207,6 +210,11 @@ for (const r of (list.requests || [])) {
   }
   await call({ method: 'POST', url: APP_URL + '/api/admin/automation-requests', headers: appHeaders, body: { id: r.id, action: 'complete', ok, result } });
   done.push({ id: r.id, kind: r.kind, ok, result });
+}
+// A run was just started: tell the app again in a few seconds, so the dashboard shows it running without waiting for the next minute.
+if (done.some((d) => ['analyze', 'night'].includes(d.kind))) {
+  await new Promise((resolve) => setTimeout(resolve, 5000));
+  await beat();
 }
 return done.map((d) => ({ json: d }));
 `;

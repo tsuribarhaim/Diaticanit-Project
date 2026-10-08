@@ -54,7 +54,7 @@ export default async function TicketDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ edit?: string; reopen?: string }>;
+  searchParams: Promise<{ edit?: string; reopen?: string; from?: string }>;
 }) {
   const { id } = await params;
   const resolvedSearchParams = await searchParams;
@@ -167,7 +167,7 @@ export default async function TicketDetailPage({
             since NavLink always puts `relative` on the link itself. */}
         <div className="absolute end-3 top-3">
           <Link
-            href="/app/tickets"
+            href={resolvedSearchParams.from === "automation" ? "/app/tickets/automation" : "/app/tickets"}
             aria-label={tr(locale, "Close", "סגירה")}
             title={tr(locale, "Close", "סגירה")}
             className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 dark:text-slate-400 dark:hover:bg-slate-800"
