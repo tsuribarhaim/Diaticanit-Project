@@ -7,6 +7,7 @@ import {
   answerQuestionsAction,
   approveForProductionAction,
   approveProposalAction,
+  handledByHandAction,
   rejectProposalAction,
   requestAnalysisAction,
   requestChangeAction,
@@ -186,6 +187,66 @@ function useReviewAction(locale: AppLocale) {
   return { pending, which, error, run, locale };
 }
 
+/** "I handled this myself": a "better done together" ticket that was settled outside the automation leaves it (and can be
+ * marked resolved) instead of waiting in a queue the night run would pick up. */
+export function HandledByHand({ locale, ticketId, after = "refresh" }: { locale: AppLocale; ticketId: string; after?: "refresh" | "list" }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const [pending, startTransition] = useTransition();
+  const [which, setWhich] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const link = "inline-flex items-center gap-1.5 text-sm font-semibold hover:underline disabled:cursor-not-allowed disabled:opacity-60";
+  function run(resolve: boolean) {
+    setWhich(resolve ? "resolve" : "out");
+    setMessage(null);
+    startTransition(async () => {
+      const result = await handledByHandAction(ticketId, resolve, note);
+      if (result.error) setMessage(result.error);
+      else if (after === "list") router.push(`${REVIEW_HREF}?notice=${encodeURIComponent(result.success ?? "")}`);
+      else router.refresh();
+      setWhich(null);
+    });
+  }
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className={`${link} text-slate-700 dark:text-slate-300`}>
+        {tr(locale, "I handled this myself", "טיפלתי בזה בעצמי")}
+      </button>
+    );
+  }
+  return (
+    <div className="w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-700 dark:bg-slate-900">
+      <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+        {tr(locale, "It leaves automation, so the night run will not pick it up. Mark it resolved too?", "היא יוצאת מהאוטומציה, כך שריצת הלילה לא תיקח אותה. לסמן אותה גם כנפתרה?")}
+      </p>
+      <textarea
+        value={note}
+        onChange={(event) => setNote(event.target.value)}
+        rows={2}
+        maxLength={1000}
+        aria-label={tr(locale, "How it was fixed (optional)", "איך תוקן (אופציונלי)")}
+        placeholder={tr(locale, "How it was fixed (optional, saved on the ticket)", "איך תוקן (אופציונלי, נשמר בפנייה)")}
+        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+      />
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
+        <button type="button" disabled={pending} onClick={() => run(true)} className={`${link} text-teal-700 dark:text-teal-400`}>
+          {pending && which === "resolve" ? <Spinner className="h-3.5 w-3.5 animate-spin" /> : null}
+          {tr(locale, "Take out and mark resolved", "הוצאה וסימון כנפתרה")}
+        </button>
+        <button type="button" disabled={pending} onClick={() => run(false)} className={`${link} text-slate-700 dark:text-slate-300`}>
+          {pending && which === "out" ? <Spinner className="h-3.5 w-3.5 animate-spin" /> : null}
+          {tr(locale, "Only take out", "הוצאה בלבד")}
+        </button>
+        <button type="button" disabled={pending} onClick={() => setOpen(false)} className={`${link} text-slate-500 dark:text-slate-400`}>
+          {tr(locale, "Cancel", "ביטול")}
+        </button>
+      </div>
+      {message ? <p role="status" className="mt-1 text-xs text-rose-600 dark:text-rose-400">{message}</p> : null}
+    </div>
+  );
+}
+
 /** Copies the analyst's notes as a ready prompt for a Claude Code session. Instant feedback, no waiting. */
 function CopyBriefButton({ locale, text }: { locale: AppLocale; text: string }) {
   const [copied, setCopied] = useState(false);
@@ -204,9 +265,10 @@ function CopyBriefButton({ locale, text }: { locale: AppLocale; text: string }) 
   );
 }
 
-export function ProposalPanel({ locale, proposalId, payload, ticketSeq, subject }: { locale: AppLocale; proposalId: string; payload: ProposalPayload; ticketSeq: number; subject: string }) {
+export function ProposalPanel({ locale, proposalId, ticketId, payload, ticketSeq, subject }: { locale: AppLocale; proposalId: string; ticketId: string; payload: ProposalPayload; ticketSeq: number; subject: string }) {
   const [chosen, setChosen] = useState<number[]>(() => resolveChoices(payload.decisions ?? [], null));
   const [comment, setComment] = useState("");
+  const [confirmPairing, setConfirmPairing] = useState(false);
   const { pending, which, error, run } = useReviewAction(locale);
   const chosenMap = Object.fromEntries(chosen.map((value, index) => [String(index), value]));
   return (
@@ -222,7 +284,10 @@ export function ProposalPanel({ locale, proposalId, payload, ticketSeq, subject 
             <p className="font-semibold">{tr(locale, "The analyst suggests building this one together with you.", "האנליסט ממליץ לבנות את זה יחד איתך.")}</p>
             {payload.pairingReason ? <p dir="auto" className="mt-1">{payload.pairingReason}</p> : null}
             <div className="mt-3">
-              <CopyBriefButton locale={locale} text={buildPairingPrompt({ ticketSeq, subject, payload, chosen })} />
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <CopyBriefButton locale={locale} text={buildPairingPrompt({ ticketSeq, subject, payload, chosen })} />
+                <HandledByHand locale={locale} ticketId={ticketId} after="list" />
+              </div>
             </div>
           </div>
         ) : null}
@@ -295,9 +360,14 @@ export function ProposalPanel({ locale, proposalId, payload, ticketSeq, subject 
             className={inputClass}
           />
           {error ? <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{error}</p> : null}
+          {payload.needsPairing && confirmPairing ? (
+            <p role="alert" className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+              {tr(locale, "The analyst says this is better done together with you. Queue it for the unattended night run anyway?", "האנליסט מעריך שעדיף לעשות את זה יחד איתך. להכניס אותה בכל זאת לריצת הלילה ללא פיקוח?")}
+            </p>
+          ) : null}
           <div className="mt-3 flex flex-wrap gap-2">
-            <ActionButton variant="primary" pending={pending && which === "approve"} disabled={pending} onClick={() => run("approve", () => approveProposalAction(proposalId, chosenMap, comment))}>
-              {tr(locale, "Approve and queue", "אישור והכנסה לתור")}
+            <ActionButton variant="primary" pending={pending && which === "approve"} disabled={pending} onClick={() => (payload.needsPairing && !confirmPairing ? setConfirmPairing(true) : run("approve", () => approveProposalAction(proposalId, chosenMap, comment)))}>
+              {payload.needsPairing && confirmPairing ? tr(locale, "Yes, queue it anyway", "כן, להכניס לתור בכל זאת") : tr(locale, "Approve and queue", "אישור והכנסה לתור")}
             </ActionButton>
             <ActionButton pending={pending && which === "change"} disabled={pending} onClick={() => run("change", () => requestChangeAction(proposalId, chosenMap, comment))}>
               {tr(locale, "Request a change", "בקשת שינוי")}

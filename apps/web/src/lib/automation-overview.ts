@@ -7,7 +7,7 @@ import type { createClient } from "@/lib/supabase/server";
 export type StationId = "marked" | "analysis" | "approval" | "fix" | "test" | "promote" | "release";
 export const STATION_ORDER: StationId[] = ["marked", "analysis", "approval", "fix", "test", "promote", "release"];
 
-export type StationSub = "waiting" | "analysing" | "proposal" | "queued" | "questions" | "branch" | "merging" | "dev" | "approved" | "releasing";
+export type StationSub = "waiting" | "analysing" | "proposal" | "queued" | "questions" | "branch" | "merging" | "dev" | "approved" | "releasing" | "stopped";
 
 const FINAL_STATUSES = ["resolved", "closed", "cancelled", "duplicate"];
 
@@ -97,7 +97,7 @@ export type AutomationOverview = {
 type Client = Awaited<ReturnType<typeof createClient>>;
 
 type RowTicket = { id: string; ticket_seq: number; subject: string; status: string; auto_handle: string | null; updated_at: string };
-type RowProposal = { id: string; ticket_id: string; kind: string; status: string; summary: string | null; why: string | null; pairing: boolean | null; files: unknown };
+type RowProposal = { questions: unknown; id: string; ticket_id: string; kind: string; status: string; summary: string | null; why: string | null; pairing: boolean | null; files: unknown };
 type RowRequest = { kind: string; ticket_id: string | null; picked_at: string | null; details: { tickets?: { ticketId?: string }[] } | null };
 
 // Wrapped so the clock can be read in one place (the render must not call Date.now directly).
@@ -118,7 +118,7 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
   if (ids.length > 0) {
     const { data } = await supabase
       .from("ticket_proposals")
-      .select("id, ticket_id, kind, status, summary:payload->summary, why:payload->why, pairing:payload->needsPairing, files:payload->files")
+      .select("id, ticket_id, kind, status, summary:payload->summary, why:payload->why, pairing:payload->needsPairing, files:payload->files, questions:payload->questions")
       .in("ticket_id", ids)
       .in("status", ["pending", "merged", "approved"]);
     for (const row of (data ?? []) as unknown as RowProposal[]) {
@@ -192,6 +192,8 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
       mergeRequested: mergeTickets.has(ticket.id),
     });
     if (!placed) continue;
+    // The night run can stop with nothing to ask (it ran into a limit): that is "stopped", not "questions for you".
+    if (placed.sub === "questions" && Array.isArray(questions?.questions) && (questions?.questions as unknown[]).length === 0) placed.sub = "stopped";
     counts[placed.station] += 1;
     const source = proposal ?? questions ?? fix;
     result.push({
@@ -208,7 +210,7 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
       hasMigration: Array.isArray(source?.files) && (source!.files as unknown[]).some((file) => typeof file === "string" && /migrations\//.test(file)),
     });
   }
-  const needsYou = counts.approval + counts.test + counts.promote + result.filter((ticket) => ticket.station === "fix" && ticket.sub === "questions").length;
+  const needsYou = counts.approval + counts.test + counts.promote + result.filter((ticket) => ticket.station === "fix" && (ticket.sub === "questions" || ticket.sub === "stopped")).length;
   const { data: releaseRows } = await supabase
     .from("automation_requests")
     .select("requested_at, completed_at, report:details->report")

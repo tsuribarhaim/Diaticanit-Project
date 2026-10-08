@@ -13,6 +13,7 @@ import {
   requestAnalysis,
   requestChange,
   requestMerge,
+  handledByHand,
   requestAgentRun,
   requestPromote,
   returnFix,
@@ -128,4 +129,7 @@ export async function requestAgentRunAction(kind: "analyze" | "night" | "digest"
 }
 export async function setAutomationPausedAction(paused: boolean): Promise<ReviewResult> {
   return withAdmin(({ supabase, adminId, locale }) => setAutomationPaused(supabase, adminId, locale, paused));
+}
+export async function handledByHandAction(ticketId: string, resolve: boolean, note: string): Promise<ReviewResult> {
+  return withAdmin(({ supabase, adminId, locale }) => handledByHand(supabase, adminId, locale, ticketId, resolve, note));
 }

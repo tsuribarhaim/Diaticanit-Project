@@ -18,7 +18,7 @@ import {
 } from "@/app/app/tickets/review-actions";
 import { type AutomationSearchHit } from "@/app/app/tickets/review-actions";
 import { Spinner } from "@/components/spinner";
-import { ActionButton, PromoteBar } from "@/components/ticket-review-panels";
+import { ActionButton, HandledByHand, PromoteBar } from "@/components/ticket-review-panels";
 import { tr, type AppLocale } from "@/lib/locale";
 import type { AutomationOverview, AutomationStatus, OverviewTicket, RunInfo, StationId, StationSub } from "@/lib/automation-overview";
 import { STATION_ORDER } from "@/lib/automation-overview";
@@ -72,6 +72,8 @@ function subText(sub: StationSub, locale: AppLocale): string {
       return tr(locale, "Queued for the night run (02:15)", "בתור לריצת הלילה (02:15)");
     case "questions":
       return tr(locale, "The night run stopped: questions for you", "ריצת הלילה נעצרה: שאלות אליך");
+    case "stopped":
+      return tr(locale, "The night run stopped before it finished - open it to see why", "ריצת הלילה נעצרה לפני שסיימה - לפתוח כדי לראות למה");
     case "branch":
       return tr(locale, "Fix ready on its branch - merge it into dev", "תיקון מוכן בענף - למזג לפיתוח");
     case "merging":
@@ -184,6 +186,23 @@ export function AutomationCycle({ locale, overview }: { locale: AppLocale; overv
     const shiftX = ({ 1: 3, 2: 4, 5: -6, 6: -5 } as Record<number, number>)[index] ?? 0;
     return { id, px, py, labelX: px + shiftX, labelY: py + (above ? -12.3 : 12.3) };
   });
+
+  const fixTickets = ticketsAt(overview, "fix");
+  const fixQueued = fixTickets.filter((ticket) => ticket.sub === "queued").length;
+  const fixStopped = fixTickets.filter((ticket) => ticket.sub === "questions" || ticket.sub === "stopped").length;
+  /** The line under a station's name: what it is doing right now, not what it is for. */
+  function caption(id: StationId, fallback: string): string {
+    if (id === "fix") {
+      if (overview.status.runInProgress) return tr(locale, "building the fixes now", "בונה את התיקונים עכשיו");
+      const parts = [
+        fixQueued > 0 ? tr(locale, `${fixQueued} queued for 02:15`, `${fixQueued} בתור ל-02:15`) : null,
+        fixStopped > 0 ? tr(locale, `${fixStopped} stopped`, `${fixStopped} נעצרו`) : null,
+      ].filter((part): part is string => part !== null);
+      return parts.length > 0 ? parts.join(" · ") : tr(locale, "waits for 02:15", "ממתין ל-02:15");
+    }
+    if (id === "analysis") return overview.status.analysisInProgress ? tr(locale, "writing proposals now", "כותב הצעות עכשיו") : tr(locale, "runs at 18:00", "רץ ב-18:00");
+    return fallback;
+  }
 
   const selectedText = stationText(selected, locale);
   const list = ticketsAt(overview, selected);
@@ -344,7 +363,7 @@ export function AutomationCycle({ locale, overview }: { locale: AppLocale; overv
                 <div className="pointer-events-none absolute w-[22%] -translate-x-1/2 -translate-y-1/2 text-center" style={{ left: `${node.labelX}%`, top: `${node.labelY}%` }}>
                   <b className="block text-[clamp(11px,2.1vw,14.5px)] text-slate-900 dark:text-slate-100">{text.name}</b>
                   <span className={`block text-[clamp(9.5px,1.7vw,12px)] font-bold ${actorLabel[actor]}`}>{text.who}</span>
-                  <span className="block text-[clamp(9.5px,1.7vw,12px)] leading-tight text-slate-500 dark:text-slate-400">{text.sub}</span>
+                  <span className="block text-[clamp(9.5px,1.7vw,12px)] leading-tight text-slate-500 dark:text-slate-400">{caption(node.id, text.sub)}</span>
                 </div>
               </div>
             );
@@ -630,9 +649,11 @@ function TicketRow({ locale, ticket, highlighted = false }: { locale: AppLocale;
     ? tr(locale, "Open ticket", "פתיחת הפנייה")
     : ticket.station === "approval"
       ? tr(locale, "Open proposal", "פתיחת ההצעה")
-      : ticket.sub === "questions"
-        ? tr(locale, "Answer the questions", "מענה לשאלות")
-        : tr(locale, "Open fix card", "פתיחת כרטיס התיקון");
+      : ticket.sub === "stopped"
+        ? tr(locale, "See why it stopped", "לראות למה נעצרה")
+        : ticket.sub === "questions"
+          ? tr(locale, "Answer the questions", "מענה לשאלות")
+          : tr(locale, "Open fix card", "פתיחת כרטיס התיקון");
   const takeOut = (
     <LinkAction variant="danger" pending={pending && which === "out"} disabled={pending} onClick={() => run("out", () => takeTicketOutAction(ticket.id))}>
       {tr(locale, "Take out of automation", "הוצאה מהאוטומציה")}
@@ -684,6 +705,7 @@ function TicketRow({ locale, ticket, highlighted = false }: { locale: AppLocale;
         {ticket.station === "approval" && ticket.pairing ? (
           <>
             <Link href={openHref} className={linkButtonPrimary}>{tr(locale, "Open proposal and copy the brief", "פתיחת ההצעה והעתקת התקציר")}</Link>
+            <HandledByHand locale={locale} ticketId={ticket.id} />
             {takeOut}
           </>
         ) : null}
@@ -712,7 +734,7 @@ function TicketRow({ locale, ticket, highlighted = false }: { locale: AppLocale;
         ) : null}
         {ticket.station === "marked" || ticket.station === "fix" ? (
           <>
-            <Link href={openHref} className={ticket.sub === "questions" ? linkButtonPrimary : linkButton}>{openLabel}</Link>
+            <Link href={openHref} className={ticket.sub === "questions" || ticket.sub === "stopped" ? linkButtonPrimary : linkButton}>{openLabel}</Link>
             {takeOut}
           </>
         ) : null}
@@ -834,5 +856,5 @@ function ticketsAt(overview: AutomationOverview, station: StationId): OverviewTi
 function needsAdmin(ticket: OverviewTicket): boolean {
   if (ticket.station === "approval" || ticket.station === "promote") return true;
   if (ticket.station === "test") return ticket.sub !== "merging";
-  return ticket.station === "fix" && ticket.sub === "questions";
+  return ticket.station === "fix" && (ticket.sub === "questions" || ticket.sub === "stopped");
 }
