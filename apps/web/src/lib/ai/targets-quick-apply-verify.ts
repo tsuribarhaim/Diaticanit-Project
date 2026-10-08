@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { AiExtractionConfig } from "@/lib/ai/env";
+import { DAFFY_HEBREW_GENDER_RULE } from "@/lib/ai/persona";
 import { callAiChatCompletion } from "@/lib/ai/provider-client";
 import { parseJson } from "@/lib/ai/targets-quick-apply";
 import type { AppLocale } from "@/lib/locale";
@@ -73,6 +74,7 @@ export async function verifyQuickAppliedFieldSafety({
         locale === "he"
           ? 'In Hebrew specifically, prefer gender-neutral or mixed-form second-person phrasing (e.g. "שלך", "את/ה") over a gendered third-person construction.'
           : "",
+        locale === "he" ? `- ${DAFFY_HEBREW_GENDER_RULE}` : "",
         "",
         `The user just set "${fieldLabel}" to ${newValue} ${unit}.`,
         "",
