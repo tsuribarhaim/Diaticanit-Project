@@ -135,6 +135,7 @@ function ActorIcon({ actor }: { actor: Actor }) {
 export function AutomationCycle({ locale, overview }: { locale: AppLocale; overview: AutomationOverview }) {
   const first = STATION_ORDER.find((id) => ticketsAt(overview, id).some((t) => needsAdmin(t))) ?? "approval";
   const [selected, setSelected] = useState<StationId>(first);
+  const [legendOpen, setLegendOpen] = useState(false);
   // Search: type a number or words, pick a ticket, and the station it is at lights up and its card opens.
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -349,7 +350,18 @@ export function AutomationCycle({ locale, overview }: { locale: AppLocale; overv
             );
           })}
         </div>
-        <div className="mt-2 flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+        <div className="mt-2 flex justify-center sm:hidden">
+          <button
+            type="button"
+            onClick={() => setLegendOpen((open) => !open)}
+            aria-expanded={legendOpen}
+            className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-600 dark:border-slate-700 dark:text-slate-300"
+          >
+            <span aria-hidden="true" className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-sm font-bold text-slate-700 dark:bg-slate-700 dark:text-slate-100">?</span>
+            {tr(locale, "What do the shapes mean?", "מה המשמעות של הצורות?")}
+          </button>
+        </div>
+        <div className={`${legendOpen ? "flex" : "hidden"} mt-2 flex-wrap justify-center gap-x-4 gap-y-1 text-xs text-slate-500 sm:flex dark:text-slate-400`}>
           <span><span aria-hidden="true" className="me-1 inline-block h-3 w-3 rounded-full border-2 border-blue-500 align-[-1px]" />{tr(locale, "circle + person = you", "עיגול + אדם = את/ה")}</span>
           <span><span aria-hidden="true" className="me-1 inline-block h-3 w-3 rounded-[30%] border-2 border-teal-500 align-[-1px]" />{tr(locale, "rounded square + robot = AI agent", "ריבוע מעוגל + רובוט = סוכן AI")}</span>
           <span><span aria-hidden="true" className="me-1 inline-block h-3 w-3 rounded-full border-2 border-dashed border-slate-500 align-[-1px]" />{tr(locale, "dashed circle + gear = automation (no AI)", "עיגול מקווקו + גלגל שיניים = אוטומציה (ללא AI)")}</span>
@@ -388,11 +400,28 @@ export function AutomationCycle({ locale, overview }: { locale: AppLocale; overv
             />
           </div>
         ) : null}
-        {selected === "marked" ? <AgentRunBar locale={locale} kind="analyze" tickets={ticketsAt(overview, "marked")} status={overview.status} /> : null}
+        {selected === "marked" && list.length > 0 ? (
+          <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+            {tr(locale, "The analyst picks these up at 18:00. To start it now, use the ", "האנליסט לוקח אותן ב-18:00. כדי להפעיל אותו עכשיו, יש להשתמש בתחנת ")}
+            <button type="button" onClick={() => setSelected("analysis")} className="font-semibold text-teal-700 underline dark:text-teal-400">{tr(locale, "Analysis station", "הניתוח")}</button>.
+          </p>
+        ) : null}
+        {selected === "analysis" ? <AgentRunBar locale={locale} kind="analyze" tickets={ticketsAt(overview, "marked")} status={overview.status} /> : null}
         {selected === "fix" ? <AgentRunBar locale={locale} kind="night" tickets={ticketsAt(overview, "fix").filter((ticket) => ticket.sub === "queued")} status={overview.status} /> : null}
       </section>
     </div>
     </div>
+  );
+}
+
+/** A button that looks like a text link (colour keeps its meaning: teal = the main action, rose = take away, grey = the rest). */
+function LinkAction({ variant = "secondary", pending, disabled, onClick, children }: { variant?: "primary" | "secondary" | "danger"; pending: boolean; disabled?: boolean; onClick: () => void; children: ReactNode }) {
+  const color = variant === "primary" ? "text-teal-700 dark:text-teal-400" : variant === "danger" ? "text-rose-600 dark:text-rose-400" : "text-slate-700 dark:text-slate-300";
+  return (
+    <button type="button" onClick={onClick} disabled={pending || disabled} aria-busy={pending} className={`inline-flex items-center gap-1.5 text-sm font-semibold hover:underline disabled:cursor-not-allowed disabled:opacity-60 ${color}`}>
+      {pending ? <Spinner className="h-3.5 w-3.5 animate-spin" /> : null}
+      {children}
+    </button>
   );
 }
 
@@ -486,9 +515,7 @@ function RunDialog({ locale, kind, tickets, onClose }: { locale: AppLocale; kind
         </p>
         {result ? <p role="status" className={`mt-2 text-sm ${result.error ? "text-rose-600 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{result.text}</p> : null}
         <div className="mt-4 flex flex-wrap gap-2">
-          {result && !result.error ? (
-            <ActionButton variant="primary" pending={false} onClick={onClose}>{tr(locale, "Done", "סיום")}</ActionButton>
-          ) : (
+          {result && !result.error ? null : (
             <>
               <ActionButton
                 variant="primary"
@@ -559,7 +586,7 @@ export function DigestCard({ locale, digestRequested }: { locale: AppLocale; dig
         </span>
         <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">{tr(locale, "The morning e-mail to you and Orit - or send it now.", "המייל של הבוקר אליך ואל אורית - או לשלוח עכשיו.")}</span>
         <div className="mt-2">
-          <ActionButton pending={false} disabled={digestRequested} onClick={() => setOpen(true)}>{digestRequested ? tr(locale, "Requested", "התבקש") : tr(locale, "Send now", "שליחה עכשיו")}</ActionButton>
+          <LinkAction pending={false} disabled={digestRequested} onClick={() => setOpen(true)}>{digestRequested ? tr(locale, "Requested", "התבקש") : tr(locale, "Send now", "שליחה עכשיו")}</LinkAction>
         </div>
       </div>
       {open ? <RunDialog locale={locale} kind="digest" tickets={[]} onClose={() => setOpen(false)} /> : null}
@@ -569,9 +596,8 @@ export function DigestCard({ locale, digestRequested }: { locale: AppLocale; dig
 
 type CommentMode = "change" | "reject" | "sendback";
 
-const linkButton =
-  "inline-flex items-center rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800";
-const linkButtonPrimary = `${linkButton} !border-teal-600 !text-teal-700 dark:!border-teal-500 dark:!text-teal-300`;
+const linkButton = "text-sm font-semibold text-slate-700 hover:underline dark:text-slate-300";
+const linkButtonPrimary = "text-sm font-semibold text-teal-700 hover:underline dark:text-teal-400";
 
 /** One ticket in a station panel: what it is, who signed what off, and the buttons that move it on. Every button reuses the
  * existing review step (lib/ticket-review.ts), so the dashboard and the review screens always agree. */
@@ -599,7 +625,7 @@ function TicketRow({ locale, ticket, highlighted = false }: { locale: AppLocale;
 
   const proposalId = ticket.proposalId;
   const onTicketPage = ticket.station === "marked" || ticket.station === "analysis" || ticket.sub === "queued";
-  const openHref = onTicketPage ? `/app/tickets/${ticket.id}` : `/app/tickets/review/${ticket.id}`;
+  const openHref = onTicketPage ? `/app/tickets/${ticket.id}?from=automation` : `/app/tickets/review/${ticket.id}`;
   const openLabel = onTicketPage
     ? tr(locale, "Open ticket", "פתיחת הפנייה")
     : ticket.station === "approval"
@@ -608,12 +634,12 @@ function TicketRow({ locale, ticket, highlighted = false }: { locale: AppLocale;
         ? tr(locale, "Answer the questions", "מענה לשאלות")
         : tr(locale, "Open fix card", "פתיחת כרטיס התיקון");
   const takeOut = (
-    <ActionButton variant="danger" pending={pending && which === "out"} disabled={pending} onClick={() => run("out", () => takeTicketOutAction(ticket.id))}>
+    <LinkAction variant="danger" pending={pending && which === "out"} disabled={pending} onClick={() => run("out", () => takeTicketOutAction(ticket.id))}>
       {tr(locale, "Take out of automation", "הוצאה מהאוטומציה")}
-    </ActionButton>
+    </LinkAction>
   );
   const commentButton = (kind: CommentMode, label: string, variant: "secondary" | "danger" = "secondary") => (
-    <ActionButton
+    <LinkAction
       variant={variant}
       pending={false}
       disabled={pending}
@@ -623,7 +649,7 @@ function TicketRow({ locale, ticket, highlighted = false }: { locale: AppLocale;
       }}
     >
       {label}
-    </ActionButton>
+    </LinkAction>
   );
 
   return (
@@ -644,12 +670,12 @@ function TicketRow({ locale, ticket, highlighted = false }: { locale: AppLocale;
       </p>
       {ticket.summary ? <p dir="auto" className="mt-1 line-clamp-2 text-xs text-slate-500 dark:text-slate-400">{ticket.summary}</p> : null}
       <SignoffChips locale={locale} signoffs={ticket.signoffs} />
-      <div className="mt-2 flex flex-wrap gap-2">
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5">
         {ticket.station === "approval" && !ticket.pairing && proposalId ? (
           <>
-            <ActionButton variant="primary" pending={pending && which === "approve"} disabled={pending} onClick={() => run("approve", () => approveProposalAction(proposalId, {}, ""))}>
+            <LinkAction variant="primary" pending={pending && which === "approve"} disabled={pending} onClick={() => run("approve", () => approveProposalAction(proposalId, {}, ""))}>
               {tr(locale, "Approve (recommended picks)", "אישור (הבחירות המומלצות)")}
-            </ActionButton>
+            </LinkAction>
             <Link href={openHref} className={linkButton}>{openLabel}</Link>
             {commentButton("change", tr(locale, "Request change", "בקשת שינוי"))}
             {commentButton("reject", tr(locale, "Reject", "דחייה"), "danger")}
@@ -663,17 +689,17 @@ function TicketRow({ locale, ticket, highlighted = false }: { locale: AppLocale;
         ) : null}
         {ticket.station === "test" && ticket.sub === "branch" && proposalId ? (
           <>
-            <ActionButton variant="primary" pending={pending && which === "merge"} disabled={pending} onClick={() => run("merge", () => requestMergeAction(proposalId))}>
+            <LinkAction variant="primary" pending={pending && which === "merge"} disabled={pending} onClick={() => run("merge", () => requestMergeAction(proposalId))}>
               {tr(locale, "Merge to dev", "מיזוג לפיתוח")}
-            </ActionButton>
+            </LinkAction>
             <Link href={openHref} className={linkButton}>{openLabel}</Link>
           </>
         ) : null}
         {ticket.station === "test" && ticket.sub === "dev" && proposalId ? (
           <>
-            <ActionButton variant="primary" pending={pending && which === "toprod"} disabled={pending} onClick={() => run("toprod", () => approveForProductionAction(proposalId))}>
+            <LinkAction variant="primary" pending={pending && which === "toprod"} disabled={pending} onClick={() => run("toprod", () => approveForProductionAction(proposalId))}>
               {tr(locale, "Approve for production", "אישור לייצור")}
-            </ActionButton>
+            </LinkAction>
             <Link href={openHref} className={linkButton}>{openLabel}</Link>
             {commentButton("sendback", tr(locale, "Send back", "החזרה"), "danger")}
           </>
@@ -709,8 +735,8 @@ function TicketRow({ locale, ticket, highlighted = false }: { locale: AppLocale;
             maxLength={2000}
             className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
           />
-          <div className="mt-1.5 flex gap-2">
-            <ActionButton
+          <div className="mt-1.5 flex gap-4">
+            <LinkAction
               variant="primary"
               pending={pending && which === "comment"}
               disabled={pending || !comment.trim()}
@@ -721,8 +747,8 @@ function TicketRow({ locale, ticket, highlighted = false }: { locale: AppLocale;
               }
             >
               {tr(locale, "Confirm", "אישור")}
-            </ActionButton>
-            <ActionButton
+            </LinkAction>
+            <LinkAction
               pending={false}
               disabled={pending}
               onClick={() => {
@@ -731,7 +757,7 @@ function TicketRow({ locale, ticket, highlighted = false }: { locale: AppLocale;
               }}
             >
               {tr(locale, "Cancel", "ביטול")}
-            </ActionButton>
+            </LinkAction>
           </div>
         </div>
       ) : null}
@@ -792,9 +818,9 @@ function FoundCard({ locale, focus, onClear }: { locale: AppLocale; focus: { tic
       </p>
       <p className="mt-0.5 text-sm font-bold text-amber-800 dark:text-amber-300">{where}</p>
       {ticket ? <SignoffChips locale={locale} signoffs={ticket.signoffs} /> : null}
-      <div className="mt-2 flex flex-wrap gap-2">
-        <Link href={`/app/tickets/${id}`} className={linkButton}>{tr(locale, "Open ticket", "פתיחת הפנייה")}</Link>
-        <ActionButton pending={false} onClick={onClear}>{tr(locale, "Clear", "ניקוי")}</ActionButton>
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+        <Link href={`/app/tickets/${id}?from=automation`} className={linkButton}>{tr(locale, "Open ticket", "פתיחת הפנייה")}</Link>
+        <LinkAction pending={false} onClick={onClear}>{tr(locale, "Clear", "ניקוי")}</LinkAction>
       </div>
     </div>
   );

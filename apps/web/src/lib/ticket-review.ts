@@ -360,6 +360,17 @@ export async function requestAgentRun(supabase: Client, adminId: string, locale:
   }
   const { data: open } = await supabase.from("automation_requests").select("id").eq("kind", kind).is("completed_at", null).limit(1);
   if ((open ?? []).length > 0) return { success: tr(locale, "It is already requested.", "זה כבר התבקש.") };
+  // Already started a moment ago, or running now according to the bridge's heartbeat: never start it twice.
+  const { data: recent } = await supabase.from("automation_requests").select("id").eq("kind", kind).gte("completed_at", new Date(Date.now() - 2 * 60 * 1000).toISOString()).limit(1);
+  if ((recent ?? []).length > 0) return { success: tr(locale, "It was just started - it is running.", "זה הותחל זה עתה - והוא רץ.") };
+  if (kind !== "digest") {
+    const { data: beat } = await supabase.from("automation_settings").select("bridge_seen_at, bridge_status").eq("id", true).maybeSingle();
+    const status = (beat?.bridge_status ?? {}) as { analysisInProgress?: boolean; runInProgress?: boolean };
+    const fresh = beat?.bridge_seen_at && Date.now() - new Date(beat.bridge_seen_at as string).getTime() < 3 * 60 * 1000;
+    if (fresh && (kind === "analyze" ? status.analysisInProgress : status.runInProgress)) {
+      return { error: tr(locale, "It is already running - wait for it to finish.", "זה כבר רץ - יש להמתין לסיומו.") };
+    }
+  }
   const { error } = await supabase.from("automation_requests").insert({ kind, requested_by: adminId });
   if (error) return dbError(locale);
   const what = kind === "analyze" ? tr(locale, "The analyst", "האנליסט") : kind === "night" ? tr(locale, "The night run", "ריצת הלילה") : tr(locale, "The daily digest", "הסיכום היומי");

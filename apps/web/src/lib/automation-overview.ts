@@ -156,7 +156,15 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
     const row = ((runRows ?? []) as { kind: string; finished_at: string | null; tickets_count: number; cost_usd: number | null; result: string | null }[]).find((r) => r.kind === kind);
     return row ? { finishedAt: row.finished_at, ticketsCount: row.tickets_count, costUsd: row.cost_usd === null ? null : Number(row.cost_usd), result: row.result } : null;
   };
-  const analysisRunning = (bridgeOnline && Boolean(health.analysisInProgress)) || requests.some((request) => request.kind === "analyze" && request.picked_at !== null);
+  // A request the admin just fired counts as running right away, and keeps counting for two minutes after the poller started it,
+  // until the bridge's own heartbeat shows the run (so a ticket never flips back to "Marked" and the button never re-enables).
+  const { data: recentRows } = await supabase
+    .from("automation_requests")
+    .select("kind")
+    .in("kind", ["analyze", "night", "digest"])
+    .gte("completed_at", new Date(now() - 2 * 60 * 1000).toISOString());
+  const recent = new Set(((recentRows ?? []) as { kind: string }[]).map((row) => row.kind));
+  const analysisRunning = (bridgeOnline && Boolean(health.analysisInProgress)) || requests.some((request) => request.kind === "analyze") || recent.has("analyze");
   const mergeTickets = new Set(requests.filter((request) => request.kind === "merge" && request.ticket_id).map((request) => request.ticket_id as string));
   const promoteTickets = new Set<string>();
   for (const request of requests) {
@@ -225,7 +233,11 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
     autoMerge: Boolean(health.autoMerge),
     lastNight: runOf("night"),
     lastAnalyst: runOf("analyst"),
-    requested: { analyze: requests.some((r) => r.kind === "analyze"), night: requests.some((r) => r.kind === "night"), digest: requests.some((r) => r.kind === "digest") },
+    requested: {
+      analyze: requests.some((r) => r.kind === "analyze") || recent.has("analyze"),
+      night: requests.some((r) => r.kind === "night") || recent.has("night"),
+      digest: requests.some((r) => r.kind === "digest") || recent.has("digest"),
+    },
   };
   return { status, recentReleases, tickets: result, counts, needsYou, total: result.length };
 }
