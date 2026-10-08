@@ -386,3 +386,25 @@ export async function setAutomationPaused(supabase: Client, adminId: string, loc
   if (error) return dbError(locale);
   return { success: paused ? tr(locale, "Automation paused: the analyst and the night run will not start until you resume.", "האוטומציה הושהתה: האנליסט וריצת הלילה לא יתחילו עד שתחדש.") : tr(locale, "Automation resumed.", "האוטומציה חודשה.") };
 }
+
+/** "I handled this myself": a ticket that was settled outside the automation (a "better done together" one worked through with
+ * Claude Code) leaves automation, whatever is pending on it, and - if the admin says so - is marked resolved. */
+export async function handledByHand(supabase: Client, adminId: string, locale: AppLocale, ticketId: string, resolve: boolean, note: string): Promise<ReviewResult> {
+  const { data: ticket } = await supabase.from("tickets").select("id, ticket_seq, fix_description").eq("id", ticketId).maybeSingle();
+  if (!ticket) return notFound(locale);
+  const patch: Record<string, unknown> = { auto_handle: null };
+  if (resolve) {
+    patch.status = "resolved";
+    patch.resolved_at = new Date().toISOString();
+    if (!ticket.fix_description) patch.fix_description = note.trim() || "Handled together with Claude Code.";
+  }
+  const { error } = await supabase.from("tickets").update(patch).eq("id", ticketId);
+  if (error) return dbError(locale);
+  await supabase.from("ticket_proposals").update({ status: "taken_out", decided_at: new Date().toISOString(), decided_by: adminId }).eq("ticket_id", ticketId).eq("status", "pending");
+  await logAutomationEvent(supabase, adminId, ticketId, "handled_by_hand", { resolved: resolve });
+  return {
+    success: resolve
+      ? tr(locale, `TCK-${ticket.ticket_seq} is out of automation and marked resolved.`, `TCK-${ticket.ticket_seq} יצאה מהאוטומציה וסומנה כנפתרה.`)
+      : tr(locale, `TCK-${ticket.ticket_seq} is out of automation. It stays open for you.`, `TCK-${ticket.ticket_seq} יצאה מהאוטומציה. היא נשארת פתוחה עבורך.`),
+  };
+}

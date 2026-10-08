@@ -60,6 +60,7 @@ process.env.BRIDGE_ENV_FILE = envFilePath;
 const env = loadEnvLocal(envFilePath);
 
 const { runPromote } = require("./promote");
+const { applyDeletions } = require("./deletions");
 const PORT = Number(env.BRIDGE_PORT || 7891);
 const LOCAL_SECRET = env.BRIDGE_LOCAL_SECRET;
 const DAFFY_BASE_URL = env.DAFFY_BASE_URL;
@@ -208,6 +209,7 @@ const PHASE2_RESULT_SCHEMA = JSON.stringify({
     fixSummary: { type: ["string", "null"] },
     testSummary: { type: ["string", "null"] },
     filesChanged: { type: "array", items: { type: "string" } },
+    filesToDelete: { type: "array", items: { type: "string" } },
     testSteps: { type: "array", items: { type: "string" } },
     screenshotPages: {
       type: "array",
@@ -219,7 +221,7 @@ const PHASE2_RESULT_SCHEMA = JSON.stringify({
       },
     },
   },
-  required: ["reproduced", "nature", "classification", "reproductionSummary", "diagnosis", "fixSummary", "testSummary", "filesChanged", "testSteps", "screenshotPages"],
+  required: ["reproduced", "nature", "classification", "reproductionSummary", "diagnosis", "fixSummary", "testSummary", "filesChanged", "filesToDelete", "testSteps", "screenshotPages"],
   additionalProperties: false,
 });
 
@@ -289,6 +291,10 @@ function buildPhase2Prompt(ticket, phase1Output, port, shotsDir) {
     "TEST STEPS: in `testSteps` write 2 to 5 short, plain steps a person can follow on the dev app (localhost:3000) to see " +
       "that your change works, for example 'Open Profile, switch the app to Hebrew, check the arrows point the other way'. Name the " +
       "page, say what to click and what they should see. Use an empty array if you did not change anything.",
+    "",
+    "DELETING FILES: you have no tool to delete a file. When your change leaves a file unused (for example an old component that the new one replaces), do NOT stop as incomplete: " +
+      "list its path (from the repository root, e.g. apps/web/src/components/old-thing.tsx) in `filesToDelete` and leave the file where it is. The bridge deletes it after you finish and then runs the type check " +
+      "and lint itself. Only source files under apps/web/src can be listed; never a migration, a config file or anything outside that folder. Make sure nothing still imports a file you list. Use an empty array if nothing needs deleting.",
     "",
     "You do NOT have git access (no commits, no branches) and no access to npm install or any dev-server control - the " +
       "bridge handles all of that separately after you finish. Just edit files and verify. Output your findings per the " +
@@ -788,6 +794,12 @@ function stopDevServer(proc) {
  * a worktree that's about to be deleted. */
 async function verifyAndCommitFix(worktreeDir, ticket, phase2Output) {
   const webDir = path.join(worktreeDir, WEB_APP_SUBDIR);
+  // Files the agent asked to have deleted (it has no delete tool): only plainly safe ones, and only for a fix it claims is done.
+  let deletions = { deleted: [], rejected: [] };
+  if (phase2Output.classification === "reproduced_and_fixed") deletions = applyDeletions(worktreeDir, phase2Output.filesToDelete);
+  if (deletions.rejected.length > 0) {
+    return { committed: false, branch: null, reason: `The agent asked to delete files the bridge will not delete (${deletions.rejected.map((r) => `${r.file}: ${r.why}`).join("; ")}).` };
+  }
   // Stage first so brand-new files count too (a plain `git diff` leaves untracked files out).
   await runGit(["add", "-A"], worktreeDir);
   const changedFiles = await runGit(["diff", "--cached", "--name-only"], worktreeDir);
