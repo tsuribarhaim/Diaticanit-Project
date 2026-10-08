@@ -14,6 +14,18 @@
  */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
+/*
+ * Decides desktop top nav (AppNav) vs the mobile bottom tab bar
+ * (AppBottomNav). Until TCK-50 this was plain `sm` (width only) - but a
+ * landscape phone is wider than 40rem while shorter than 30rem, so it was
+ * getting the desktop menu. Requiring both keeps it on the tab bar.
+ */
+@custom-variant nav-desktop {
+  @media (min-width: 40rem) and (min-height: 30rem) {
+    @slot;
+  }
+}
+
 :root {
   --background: #ffffff;
   --foreground: #171717;

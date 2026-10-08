@@ -11,8 +11,9 @@ const CONFIRM_MESSAGE_EN = "You have an unsaved conversation or generated target
 const CONFIRM_MESSAGE_HE = "יש לך שיחה או תכנית יעדים שנוצרה בדף היעדים שטרם ננעלה. לעזוב את הדף בכל זאת?";
 
 /**
- * The mobile counterpart to AppNav - below the `sm` breakpoint this replaces
- * the top nav bar entirely (see app-nav.tsx's own `hidden sm:block`) with a
+ * The mobile counterpart to AppNav - outside the `nav-desktop` variant
+ * (width >= 40rem and height >= 30rem, see globals.css) this replaces the top
+ * nav bar entirely (see app-nav.tsx's own `hidden nav-desktop:block`) with a
  * fixed bottom tab bar covering only the 3 daily-use destinations. "Manage
  * Saved List", "Settings", and "Sign out" don't fit a tab bar and don't get
  * their own tab - they live inside the Profile page instead, so Profile
@@ -105,7 +106,7 @@ export function AppBottomNav({
 
   return (
     <nav
-      className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white sm:hidden dark:border-slate-800 dark:bg-slate-900"
+      className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white nav-desktop:hidden dark:border-slate-800 dark:bg-slate-900"
       aria-label={tr(locale, "Primary", "ניווט ראשי")}
     >
       <div className="mx-auto flex max-w-6xl items-stretch justify-around pb-[env(safe-area-inset-bottom)]">
