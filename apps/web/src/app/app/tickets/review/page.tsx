@@ -7,6 +7,7 @@ import { PromoteBar, ReviewNav, RunAnalysisButton } from "@/components/ticket-re
 import { formatTicketArea, formatTicketPriority, formatTicketType, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 import { isCurrentUserAdmin } from "@/lib/tickets";
+import { NAV_HREF, navLabel } from "@/lib/tickets-nav";
 
 export const dynamic = "force-dynamic";
 
@@ -172,7 +173,7 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
 
   return (
     <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col px-6 py-10">
-      <ReviewNav locale={locale} backLabel={tr(locale, "All tickets", "כל הפניות")} />
+      <ReviewNav locale={locale} backLabel={navLabel(locale, "tickets")} backHref={NAV_HREF.tickets} />
       <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">{tr(locale, "Review & approvals", "סקירה ואישורים")}</h1>
       <p className="mb-4 mt-1 text-sm text-slate-600 dark:text-slate-400">
         {tr(locale, "Proposals to approve, fixes to test on dev, and what is ready to promote to production - in one place.", "הצעות לאישור, תיקונים לבדיקה בפיתוח, ומה שמוכן להעלאה לייצור - במקום אחד.")}

@@ -6,12 +6,15 @@ import { formatTicketArea, formatTicketPriority, formatTicketType, normalizeLoca
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 import type { FixPayload, ProposalPayload, QuestionsPayload, TicketProposalRow } from "@/lib/ticket-proposals";
 import { isCurrentUserAdmin } from "@/lib/tickets";
+import { TicketTrail } from "@/components/ticket-trail";
+import { NAV_HREF, navLabel, parseFrom } from "@/lib/tickets-nav";
 
 export const dynamic = "force-dynamic";
 
 /** One ticket's proposal, questions or fix, for the admin to decide on (see ReviewPage). */
-export default async function TicketReviewDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function TicketReviewDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ from?: string }> }) {
   const { id } = await params;
+  const from = parseFrom((await searchParams).from, "review");
   const supabase = await createClient();
   const {
     data: { user },
@@ -91,7 +94,14 @@ export default async function TicketReviewDetailPage({ params }: { params: Promi
 
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 py-10">
-      <ReviewNav locale={locale} backLabel={tr(locale, "Review & approvals", "סקירה ואישורים")} />
+      <TicketTrail
+        locale={locale}
+        items={[
+          { label: navLabel(locale, from), href: NAV_HREF[from] },
+          { label: `TCK-${ticket.ticket_seq} ${tr(locale, "review", "סקירה")}` },
+        ]}
+      />
+      <ReviewNav locale={locale} backLabel={navLabel(locale, from)} backHref={NAV_HREF[from]} />
       {header}
       {proposal && proposal.kind === "proposal" ? (
         <ProposalPanel locale={locale} proposalId={proposal.id} ticketId={ticket.id} payload={proposal.payload as ProposalPayload} ticketSeq={ticket.ticket_seq} subject={ticket.subject} />

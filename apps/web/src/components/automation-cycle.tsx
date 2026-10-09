@@ -644,7 +644,7 @@ function TicketRow({ locale, ticket, highlighted = false }: { locale: AppLocale;
 
   const proposalId = ticket.proposalId;
   const onTicketPage = ticket.station === "marked" || ticket.station === "analysis" || ticket.sub === "queued";
-  const openHref = onTicketPage ? `/app/tickets/${ticket.id}?from=automation` : `/app/tickets/review/${ticket.id}`;
+  const openHref = onTicketPage ? `/app/tickets/${ticket.id}?from=automation` : `/app/tickets/review/${ticket.id}?from=automation`;
   const openLabel = onTicketPage
     ? tr(locale, "Open ticket", "פתיחת הפנייה")
     : ticket.station === "approval"

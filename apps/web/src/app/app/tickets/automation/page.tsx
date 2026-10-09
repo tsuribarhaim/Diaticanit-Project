@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 /** The Ticket Automation dashboard (admin only): every ticket marked for automation, where it stands in the cycle and what
  * is waiting for the admin. See docs/design/ticket-automation-dashboard.md. */
-export default async function TicketAutomationPage() {
+export default async function TicketAutomationPage({ searchParams }: { searchParams: Promise<{ notice?: string }> }) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -23,6 +23,7 @@ export default async function TicketAutomationPage() {
   );
   if (!(await isCurrentUserAdmin(supabase, user.id))) redirect("/app/tickets");
 
+  const { notice } = await searchParams;
   const overview = await getAutomationOverview(supabase);
 
   const cards = [
@@ -48,7 +49,12 @@ export default async function TicketAutomationPage() {
 
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 py-8">
-      <ReviewNav locale={locale} backLabel={tr(locale, "Back to Tickets", "חזרה לפניות")} />
+      <ReviewNav locale={locale} backLabel={tr(locale, "Tickets", "פניות")} backHref="/app/tickets" />
+      {notice ? (
+        <p role="status" className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
+          {notice}
+        </p>
+      ) : null}
       <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">{tr(locale, "Ticket Automation", "אוטומציית פניות")}</h1>
       <p className="mb-2 mt-1 text-sm text-slate-600 dark:text-slate-400">
         {tr(locale, "Every ticket marked for automation, where it stands, and what is waiting for you.", "כל פנייה שסומנה לאוטומציה, איפה היא עומדת ומה ממתין לך.")}

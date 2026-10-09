@@ -5,6 +5,8 @@ import type { ReactNode } from "react";
 import { AdminStatusDropdown } from "@/components/admin-status-dropdown";
 import { AutomationCheckbox } from "@/components/quick-automation-mark";
 import { ReviewCallout } from "@/components/review-banner";
+import { TicketTrail } from "@/components/ticket-trail";
+import { NAV_HREF, navLabel, parseFrom } from "@/lib/tickets-nav";
 import { CancelTicketDialog } from "@/components/cancel-ticket-dialog";
 import { EditTicketDialog } from "@/components/edit-ticket-dialog";
 import { LocalDateTime } from "@/components/local-time";
@@ -149,15 +151,20 @@ export default async function TicketDetailPage({
   }
 
   const status = ticket.status as TicketStatus;
+  const from = parseFrom(resolvedSearchParams.from, "tickets");
   const notSetLabel = tr(locale, "Not set yet", "טרם נבחר");
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col px-6 py-10">
-      <div className="mb-4">
-        <Link href="/app/tickets" className="text-sm font-semibold text-teal-700 dark:text-teal-400">
-          {tr(locale, "← My Tickets", "← הפניות שלי")}
-        </Link>
-      </div>
+      {isAdmin ? (
+        <TicketTrail locale={locale} items={[{ label: navLabel(locale, from), href: NAV_HREF[from] }, { label: `TCK-${ticket.ticket_seq}` }]} />
+      ) : (
+        <div className="mb-4">
+          <Link href="/app/tickets" className="text-sm font-semibold text-teal-700 dark:text-teal-400">
+            {tr(locale, "← My Tickets", "← הפניות שלי")}
+          </Link>
+        </div>
+      )}
 
       <section className="relative rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
         {/* Close just navigates back to the ticket list - not a status
@@ -167,9 +174,9 @@ export default async function TicketDetailPage({
             since NavLink always puts `relative` on the link itself. */}
         <div className="absolute end-3 top-3">
           <Link
-            href={resolvedSearchParams.from === "automation" ? "/app/tickets/automation" : "/app/tickets"}
-            aria-label={tr(locale, "Close", "סגירה")}
-            title={tr(locale, "Close", "סגירה")}
+            href={NAV_HREF[from]}
+            aria-label={`${tr(locale, "Close and go back to", "סגירה וחזרה אל")} ${navLabel(locale, from)}`}
+            title={`${tr(locale, "Close and go back to", "סגירה וחזרה אל")} ${navLabel(locale, from)}`}
             className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 dark:text-slate-400 dark:hover:bg-slate-800"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true" className="block">
@@ -191,7 +198,7 @@ export default async function TicketDetailPage({
           )}
         </div>
 
-        {isAdmin ? <ReviewCallout locale={locale} ticketId={ticket.id} autoHandle={ticket.auto_handle as TicketAutoHandle | null} /> : null}
+        {isAdmin ? <ReviewCallout locale={locale} ticketId={ticket.id} autoHandle={ticket.auto_handle as TicketAutoHandle | null} from={from} /> : null}
 
         <div className="mt-5 space-y-3 border-t border-slate-100 pt-4 dark:border-slate-800">
           <DetailRow label={tr(locale, "Type", "סוג")} value={ticket.ticket_type ? formatTicketType(ticket.ticket_type, locale) : notSetLabel} />
