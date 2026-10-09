@@ -12,8 +12,10 @@ import { submitTicketFromChatAction } from "@/app/app/tickets/chat-actions";
 import { SAVE_TOAST_DURATION_MS } from "@/components/daily-report-form";
 import { DailyReportSuccessToast } from "@/components/daily-report-success-toast";
 import { formatProfileDiffText, ProfileDiffValue } from "@/components/profile-diff-value";
+import { SavedListMatchChips } from "@/components/saved-list-match-chips";
 import { SavedListQuickPicker } from "@/components/saved-list-quick-picker";
 import { formatDefaultItemName, formatDefaultUnit, formatTicketArea, formatTicketPriority, formatTicketType, tr, trGendered, type AppLocale } from "@/lib/locale";
+import { matchSavedItems } from "@/lib/saved-list-match";
 import type { ChatDomain } from "@/lib/ai/chat-router";
 import type { HelpTicketDraft } from "@/lib/ai/help-chat";
 import type { ProfileDiffRow, TargetGenerationPayload } from "@/lib/targets";
@@ -419,15 +421,29 @@ export function GlobalChatWidget({
     updatePendingTicketDraftStatus(index, "discarded");
   }
 
+  // TCK-37: saved-list items matching what's typed - chips above the input,
+  // and an exact single match is logged directly on Send (see
+  // handleSendMessage). Skipped while a reply is pending or with no saved
+  // items.
+  const savedListMatch =
+    !isSending && savedItems && savedItems.length > 0 ? matchSavedItems(chatInput, savedItems, locale) : { exact: null, partial: [] };
+  const savedListMatchItems = savedListMatch.exact ? [savedListMatch.exact, ...savedListMatch.partial] : savedListMatch.partial;
+
+  /** Fetches the saved list once (null = not loaded yet) - on the chat's
+   * first open, so typed names can be matched (TCK-37), or on the popover's
+   * first open if that somehow comes first. */
+  async function loadSavedItemsOnce() {
+    if (savedItems !== null || isSavedListLoading) return;
+    setIsSavedListLoading(true);
+    const result = await listQuickLogSavedItemsAction();
+    setIsSavedListLoading(false);
+    setSavedItems("error" in result ? [] : result.items);
+  }
+
   async function handleToggleSavedList() {
     const willOpen = !isSavedListOpen;
     setIsSavedListOpen(willOpen);
-    if (willOpen && savedItems === null) {
-      setIsSavedListLoading(true);
-      const result = await listQuickLogSavedItemsAction();
-      setIsSavedListLoading(false);
-      setSavedItems("error" in result ? [] : result.items);
-    }
+    if (willOpen) await loadSavedItemsOnce();
   }
 
   /** One tap, no review step - matches the approved design exactly ("user
@@ -470,6 +486,19 @@ export function GlobalChatWidget({
   async function handleSendMessage() {
     const trimmed = chatInput.trim();
     if (!trimmed || isSending) return;
+
+    // TCK-37: typing exactly one saved item's name logs it at its saved
+    // default (same as tapping it in the saved list, no bubble added)
+    // instead of routing it - but never while something in the thread is
+    // still waiting on the user (a clarifying question, or any pending
+    // card), where the text is most likely an answer to that.
+    const exactItem = savedListMatch.exact;
+    const hasPendingTargetsChange = messages.some((message) => message.pendingChange?.status === "pending");
+    if (exactItem && !hasUnresolvedWork() && !hasPendingTargetsChange) {
+      setChatInput("");
+      await handleLogSavedItem(exactItem);
+      return;
+    }
 
     setMessages((previous) => [...previous, { role: "user", content: trimmed }]);
     setChatInput("");
@@ -576,6 +605,7 @@ export function GlobalChatWidget({
             setMessages([]);
             setPendingClarification(null);
           }
+          if (!isChatOpen) void loadSavedItemsOnce();
           setIsChatOpen((open) => !open);
           setHasUnread(false);
           if (!hasShownReviewPrompt && pendingReviewChanges && pendingReviewChanges.length > 0) {
@@ -826,64 +856,77 @@ export function GlobalChatWidget({
               </div>
             ) : null}
           </div>
-          <div className="relative flex min-w-0 items-end gap-2 border-t border-slate-200 p-3 dark:border-slate-800">
-            <button
-              ref={savedListTriggerRef}
-              type="button"
-              onClick={() => void handleToggleSavedList()}
-              aria-label={tr(locale, "Add from saved list", "הוספה מהרשימה השמורה")}
-              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${
-                isSavedListOpen
-                  ? "border-teal-300 bg-teal-50 text-teal-700 dark:border-teal-700 dark:bg-teal-950/30 dark:text-teal-400"
-                  : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800"
-              }`}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="3" width="7" height="7" rx="1.5" />
-                <rect x="14" y="3" width="7" height="7" rx="1.5" />
-                <rect x="3" y="14" width="7" height="7" rx="1.5" />
-                <rect x="14" y="14" width="7" height="7" rx="1.5" />
-              </svg>
-            </button>
-
-            <SavedListQuickPicker
-              isOpen={isSavedListOpen}
-              onClose={() => setIsSavedListOpen(false)}
-              items={savedItems ?? []}
-              isLoading={isSavedListLoading}
+          <div className="flex min-w-0 flex-col gap-2 border-t border-slate-200 p-3 dark:border-slate-800">
+            <SavedListMatchChips
+              items={savedListMatchItems}
               locale={locale}
               onSelect={(id) => {
                 const item = savedItems?.find((entry) => entry.id === id);
-                if (item) void handleLogSavedItem(item);
-              }}
-              triggerRef={savedListTriggerRef}
-            />
-
-            <input
-              value={chatInput}
-              onChange={(event) => setChatInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void handleSendMessage();
+                if (item) {
+                  setChatInput("");
+                  void handleLogSavedItem(item);
                 }
               }}
-              readOnly={isSending}
-              placeholder={tr(locale, "Type a message…", "כתוב הודעה…")}
-              className="min-w-0 flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
             />
-            <button
-              type="button"
-              onClick={() => void handleSendMessage()}
-              disabled={isSending || !chatInput.trim()}
-              className={`shrink-0 rounded-xl px-4 py-2 text-sm font-semibold ${
-                !chatInput.trim() && !isSending
-                  ? "cursor-not-allowed bg-slate-300 text-slate-500 dark:bg-slate-700 dark:text-slate-400"
-                  : "bg-teal-700 text-white disabled:cursor-not-allowed disabled:opacity-70 enabled:hover:bg-teal-800 dark:bg-teal-600 dark:enabled:hover:bg-teal-500"
-              }`}
-            >
-              {tr(locale, "Send", "שליחה")}
-            </button>
+            <div className="relative flex min-w-0 items-end gap-2">
+              <button
+                ref={savedListTriggerRef}
+                type="button"
+                onClick={() => void handleToggleSavedList()}
+                aria-label={tr(locale, "Add from saved list", "הוספה מהרשימה השמורה")}
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${
+                  isSavedListOpen
+                    ? "border-teal-300 bg-teal-50 text-teal-700 dark:border-teal-700 dark:bg-teal-950/30 dark:text-teal-400"
+                    : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800"
+                }`}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="7" height="7" rx="1.5" />
+                  <rect x="14" y="3" width="7" height="7" rx="1.5" />
+                  <rect x="3" y="14" width="7" height="7" rx="1.5" />
+                  <rect x="14" y="14" width="7" height="7" rx="1.5" />
+                </svg>
+              </button>
+  
+              <SavedListQuickPicker
+                isOpen={isSavedListOpen}
+                onClose={() => setIsSavedListOpen(false)}
+                items={savedItems ?? []}
+                isLoading={isSavedListLoading}
+                locale={locale}
+                onSelect={(id) => {
+                  const item = savedItems?.find((entry) => entry.id === id);
+                  if (item) void handleLogSavedItem(item);
+                }}
+                triggerRef={savedListTriggerRef}
+              />
+  
+              <input
+                value={chatInput}
+                onChange={(event) => setChatInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void handleSendMessage();
+                  }
+                }}
+                readOnly={isSending}
+                placeholder={tr(locale, "Type a message…", "כתוב הודעה…")}
+                className="min-w-0 flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              />
+              <button
+                type="button"
+                onClick={() => void handleSendMessage()}
+                disabled={isSending || !chatInput.trim()}
+                className={`shrink-0 rounded-xl px-4 py-2 text-sm font-semibold ${
+                  !chatInput.trim() && !isSending
+                    ? "cursor-not-allowed bg-slate-300 text-slate-500 dark:bg-slate-700 dark:text-slate-400"
+                    : "bg-teal-700 text-white disabled:cursor-not-allowed disabled:opacity-70 enabled:hover:bg-teal-800 dark:bg-teal-600 dark:enabled:hover:bg-teal-500"
+                }`}
+              >
+                {tr(locale, "Send", "שליחה")}
+              </button>
+            </div>
           </div>
 
           {/* TCK-38: the only place the disclaimer is shown, always visible

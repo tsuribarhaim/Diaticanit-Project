@@ -9,16 +9,10 @@ import { IngredientRowsFieldset, type IngredientRowValue } from "@/components/in
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { SavedItemRowActions } from "@/components/saved-item-row-actions";
 import { formatDefaultItemKind, formatDefaultItemName, formatDefaultUnit, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
+import { kindBadgeClass } from "@/lib/saved-list-match";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
-
-function kindBadgeClass(kind: string): string {
-  if (kind === "hydration") return "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-800 dark:bg-sky-950/30 dark:text-sky-400";
-  if (kind === "exercise") return "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-800 dark:bg-violet-950/30 dark:text-violet-400";
-  if (kind === "custom") return "border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300";
-  return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-400";
-}
 
 function parseIngredients(value: unknown): SavedListIngredient[] {
   if (!Array.isArray(value)) return [];
