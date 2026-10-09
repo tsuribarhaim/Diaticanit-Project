@@ -81,7 +81,7 @@ const FIELD_LABELS: Record<string, { labelEn: string; labelHe: string }> = {
   weight_kg: { labelEn: "Weight", labelHe: "משקל" },
   activity_level: { labelEn: "Activity level", labelHe: "רמת פעילות" },
   dietary_preference: { labelEn: "Dietary preference", labelHe: "העדפה תזונתית" },
-  nutritional_goal: { labelEn: "Weight goal", labelHe: "מטרה משקלית" },
+  nutritional_goal: { labelEn: "Nutritional goal", labelHe: "מטרה תזונתית" },
   pregnancy_lactation_status: { labelEn: "Pregnancy / lactation status", labelHe: "סטטוס היריון / הנקה" },
   hot_climate_or_heavy_sweating: { labelEn: "Hot climate / heavy sweating", labelHe: "אקלים חם / הזעה מרובה" },
   additional_information: { labelEn: "Additional information", labelHe: "מידע נוסף" },

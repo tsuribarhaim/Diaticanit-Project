@@ -1073,7 +1073,7 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
             </div>
           ) : null}
           <div data-field="nutritional_goal">
-            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Weight goal", "מטרה משקלית")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Nutritional goal", "מטרה תזונתית")}</span>
             <div className="grid gap-2 sm:grid-cols-2">
               {nutritionalGoalOptions.map((goal) => {
                 const label = goal === "weight_loss" ? tr(locale, "Weight Loss", "ירידה במשקל") : goal === "weight_gain" ? tr(locale, "Weight Gain", "עלייה במשקל") : tr(locale, "Maintain", "שימור");

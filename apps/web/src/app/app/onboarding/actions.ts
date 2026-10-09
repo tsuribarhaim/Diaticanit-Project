@@ -54,7 +54,6 @@ function isMissingOnboardingV2Columns(errorMessage: string): boolean {
     || errorMessage.includes("alcohol_consumption_level")
     || errorMessage.includes("smoking_packs_per_day")
     || errorMessage.includes("needs_onboarding_refresh")
-    || errorMessage.includes("health_goals")
   );
 }
 
@@ -137,9 +136,6 @@ export async function saveOnboardingProfileAction(
     exercise_frequency_days_per_week: getFormString(formData, "exercise_frequency_days_per_week"),
     exercise_duration_minutes: getFormString(formData, "exercise_duration_minutes"),
     nutritional_goal: getFormString(formData, "nutritional_goal"),
-    health_goals: parseMultiSelect(formData, "health_goals"),
-    health_goals_markers_details: getFormString(formData, "health_goals_markers_details"),
-    health_goals_other_details: getFormString(formData, "health_goals_other_details"),
     pregnancy_lactation_status: getFormString(formData, "pregnancy_lactation_status") || "none",
     has_medical_conditions: parseBooleanField(formData.get("has_medical_conditions")),
     medical_conditions_details: getFormString(formData, "medical_conditions_details"),
@@ -211,11 +207,6 @@ export async function saveOnboardingProfileAction(
     activity_level: parsed.data.activity_level,
     preferred_language: parsed.data.preferred_language,
     nutritional_goal: parsed.data.nutritional_goal,
-    health_goals: parsed.data.health_goals,
-    health_goals_markers_details: parsed.data.health_goals.includes("abnormal_markers")
-      ? parsed.data.health_goals_markers_details
-      : null,
-    health_goals_other_details: parsed.data.health_goals.includes("other") ? parsed.data.health_goals_other_details : null,
     dietary_preference: parsed.data.dietary_preference,
     hot_climate_or_heavy_sweating: parsed.data.hot_climate_or_heavy_sweating,
     exercise_modalities: parsed.data.exercise_modalities,
@@ -446,16 +437,6 @@ export async function saveOnboardingProfileAction(
           locale,
           "Database migration missing: apply db/migrations/010_phase4_profile_preferred_language.sql, then try again.",
           "חסרה מיגרציית בסיס נתונים: יש להחיל את db/migrations/010_phase4_profile_preferred_language.sql ואז לנסות שוב.",
-        ),
-      };
-    }
-
-    if (error.message.includes("health_goals")) {
-      return {
-        error: tr(
-          locale,
-          "Database migration missing: apply db/migrations/072_phase26_profile_health_goals.sql, then try again.",
-          "חסרה מיגרציית בסיס נתונים: יש להחיל את db/migrations/072_phase26_profile_health_goals.sql ואז לנסות שוב.",
         ),
       };
     }

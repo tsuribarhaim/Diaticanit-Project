@@ -21,7 +21,6 @@ import {
   type ExerciseScheduleModalityOption,
   exerciseModalityOptions,
   habitOptions,
-  healthGoalOptions,
   medicalConditionOptions,
   modalityRequiresSchedule,
   nutritionalGoalOptions,
@@ -30,7 +29,7 @@ import {
   validateFreeTextDetails,
 } from "@/lib/profile";
 import type { AppLocale } from "@/lib/locale";
-import { formatActivityLevel, formatHealthGoal, formatMedicalCondition, formatNumberForLocale, tr } from "@/lib/locale";
+import { formatActivityLevel, formatMedicalCondition, formatNumberForLocale, tr } from "@/lib/locale";
 
 type OnboardingProfileFormProps = {
   defaults?: {
@@ -48,9 +47,6 @@ type OnboardingProfileFormProps = {
     exercise_frequency_days_per_week?: number;
     exercise_duration_minutes?: number;
     nutritional_goal?: (typeof nutritionalGoalOptions)[number];
-    health_goals?: string[];
-    health_goals_markers_details?: string | null;
-    health_goals_other_details?: string | null;
     pregnancy_lactation_status?: "none" | "pregnant" | "lactating";
     has_medical_conditions?: boolean;
     medical_conditions_details?: string;
@@ -124,9 +120,6 @@ const FIELD_TO_STEP: Record<string, StepKey> = {
   exercise_frequency_days_per_week: 2,
   exercise_duration_minutes: 2,
   nutritional_goal: 2,
-  health_goals: 2,
-  health_goals_markers_details: 2,
-  health_goals_other_details: 2,
   pregnancy_lactation_status: 3,
   has_medical_conditions: 3,
   medical_conditions: 3,
@@ -165,9 +158,6 @@ type OnboardingFormDraft = {
   exercise_frequency_days_per_week: string;
   exercise_duration_minutes: string;
   nutritional_goal: (typeof nutritionalGoalOptions)[number] | "";
-  health_goals: Array<(typeof healthGoalOptions)[number]>;
-  health_goals_markers_details: string;
-  health_goals_other_details: string;
   pregnancy_lactation_status: "none" | "pregnant" | "lactating";
   has_medical_conditions: "yes" | "no" | "";
   medical_conditions: MedicalConditionOption[];
@@ -554,10 +544,6 @@ function createInitialDraft(
     exercise_frequency_days_per_week: summaryFromSchedule.frequency,
     exercise_duration_minutes: summaryFromSchedule.duration,
     nutritional_goal: defaults?.nutritional_goal ?? "",
-    health_goals: (defaults?.health_goals ?? []).filter((value): value is (typeof healthGoalOptions)[number] =>
-      healthGoalOptions.includes(value as (typeof healthGoalOptions)[number])),
-    health_goals_markers_details: defaults?.health_goals_markers_details ?? "",
-    health_goals_other_details: defaults?.health_goals_other_details ?? "",
     pregnancy_lactation_status: defaults?.pregnancy_lactation_status ?? "none",
     has_medical_conditions:
       defaults?.has_medical_conditions == null
@@ -615,9 +601,6 @@ function isValidDraft(value: unknown): value is OnboardingFormDraft {
     typeof candidate.exercise_duration_minutes === "string" &&
     (candidate.nutritional_goal === ""
       || nutritionalGoalOptions.includes(candidate.nutritional_goal as (typeof nutritionalGoalOptions)[number])) &&
-    Array.isArray(candidate.health_goals) &&
-    typeof candidate.health_goals_markers_details === "string" &&
-    typeof candidate.health_goals_other_details === "string" &&
     (candidate.pregnancy_lactation_status === "none"
       || candidate.pregnancy_lactation_status === "pregnant"
       || candidate.pregnancy_lactation_status === "lactating") &&
@@ -933,17 +916,6 @@ export function OnboardingProfileForm({
     updateDraft({ [key]: value } as Partial<OnboardingFormDraft>);
   };
 
-  const toggleHealthGoal = (value: (typeof healthGoalOptions)[number]) => {
-    const selected = draft.health_goals.includes(value);
-    // Keep the option order stable, and clear a detail text when its option is unchecked.
-    const patch: Partial<OnboardingFormDraft> = {
-      health_goals: healthGoalOptions.filter((goal) => (goal === value ? !selected : draft.health_goals.includes(goal))),
-    };
-    if (selected && value === "abnormal_markers") patch.health_goals_markers_details = "";
-    if (selected && value === "other") patch.health_goals_other_details = "";
-    updateDraft(patch);
-  };
-
   const toggleMedicalCondition = (value: MedicalConditionOption) => {
     const current = new Set(draft.medical_conditions);
 
@@ -1055,20 +1027,7 @@ export function OnboardingProfileForm({
         }
       });
       if (!draft.nutritional_goal) {
-        nextErrors.nutritional_goal = tr(effectiveLocale, "Select a weight goal.", "יש לבחור מטרה משקלית.");
-      }
-      if (draft.health_goals.length === 0) {
-        nextErrors.health_goals = tr(effectiveLocale, "Select at least one nutritional goal.", "יש לבחור לפחות מטרה תזונתית אחת.");
-      }
-      if (draft.health_goals.includes("abnormal_markers") && draft.health_goals_markers_details.trim().length < 2) {
-        nextErrors.health_goals_markers_details = tr(
-          effectiveLocale,
-          "Enter the marker(s) that need improvement.",
-          "יש לציין את המדד/ים שצריכים שיפור.",
-        );
-      }
-      if (draft.health_goals.includes("other") && draft.health_goals_other_details.trim().length < 2) {
-        nextErrors.health_goals_other_details = tr(effectiveLocale, "Describe your other goal.", "יש לתאר את המטרה האחרת.");
+        nextErrors.nutritional_goal = tr(effectiveLocale, "Select a nutritional goal.", "יש לבחור מטרה תזונתית.");
       }
       if (isUnderweight && draft.nutritional_goal === "weight_loss") {
         nextErrors.nutritional_goal = tr(
@@ -1318,19 +1277,6 @@ export function OnboardingProfileForm({
         value={exerciseSummary.duration}
       />
       <input type="hidden" name="nutritional_goal" value={draft.nutritional_goal} />
-      {draft.health_goals.map((value) => (
-        <input key={`hidden-health-goal-${value}`} type="hidden" name="health_goals" value={value} />
-      ))}
-      <input
-        type="hidden"
-        name="health_goals_markers_details"
-        value={draft.health_goals.includes("abnormal_markers") ? draft.health_goals_markers_details : ""}
-      />
-      <input
-        type="hidden"
-        name="health_goals_other_details"
-        value={draft.health_goals.includes("other") ? draft.health_goals_other_details : ""}
-      />
       <input
         type="hidden"
         name="pregnancy_lactation_status"
@@ -1826,7 +1772,7 @@ export function OnboardingProfileForm({
           ) : null}
 
           <div data-field="nutritional_goal">
-            <span className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300 dark:text-slate-300">{tr(effectiveLocale, "Weight goal", "מטרה משקלית")}</span>
+            <span className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300 dark:text-slate-300">{tr(effectiveLocale, "Nutritional goal", "מטרה תזונתית")}</span>
             <div className="grid gap-2 sm:grid-cols-2">
               {nutritionalGoalOptions.map((goal) => {
                 const disabled = isGoalDisabled(goal);
@@ -1869,61 +1815,6 @@ export function OnboardingProfileForm({
                   "עודף קלורי עשוי לא להתאים ל-BMI הנוכחי. בדרך כלל מומלץ שימור או ירידה במשקל.",
                 )}
               </p>
-            ) : null}
-          </div>
-
-          <div data-field="health_goals">
-            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Nutritional goal", "מטרה תזונתית")}</span>
-            <p className="mb-2 text-xs text-slate-500">{tr(effectiveLocale, "Select all that apply", "אפשר לבחור יותר מאחת")}</p>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {healthGoalOptions.map((goal) => {
-                const selected = draft.health_goals.includes(goal);
-                return (
-                  <label
-                    key={goal}
-                    className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium ${selected ? "border-teal-700 bg-teal-50 text-teal-900 dark:bg-teal-950/40 dark:text-teal-300" : "border-slate-300 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"}`}
-                  >
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 accent-teal-700"
-                      checked={selected}
-                      onChange={() => toggleHealthGoal(goal)}
-                    />
-                    {formatHealthGoal(goal, effectiveLocale)}
-                  </label>
-                );
-              })}
-            </div>
-            {renderFieldError("health_goals")}
-
-            {draft.health_goals.includes("abnormal_markers") ? (
-              <label className="mt-3 block" data-field="health_goals_markers_details">
-                <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Which markers need improvement?", "אילו מדדים צריכים שיפור?")}</span>
-                <textarea
-                  value={draft.health_goals_markers_details}
-                  onChange={(event) => updateDraft({ health_goals_markers_details: event.target.value })}
-                  placeholder={tr(effectiveLocale, "e.g. high LDL cholesterol, low vitamin D, low iron", "לדוגמה: כולסטרול LDL גבוה, ויטמין D נמוך, ברזל נמוך")}
-                  className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${errors.health_goals_markers_details ? "border-rose-900" : "border-slate-300"}`}
-                  rows={2}
-                  maxLength={250}
-                />
-                {renderFieldError("health_goals_markers_details")}
-              </label>
-            ) : null}
-
-            {draft.health_goals.includes("other") ? (
-              <label className="mt-3 block" data-field="health_goals_other_details">
-                <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Describe your goal", "תארו את המטרה")}</span>
-                <input
-                  type="text"
-                  value={draft.health_goals_other_details}
-                  onChange={(event) => updateDraft({ health_goals_other_details: event.target.value })}
-                  placeholder={tr(effectiveLocale, "e.g. improving energy levels", "לדוגמה: שיפור רמות האנרגיה")}
-                  className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${errors.health_goals_other_details ? "border-rose-900" : "border-slate-300"}`}
-                  maxLength={250}
-                />
-                {renderFieldError("health_goals_other_details")}
-              </label>
             ) : null}
           </div>
         </section>

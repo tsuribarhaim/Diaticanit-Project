@@ -43,8 +43,6 @@ export type ExerciseOtherActivity = {
  * athletic_performance) were one-time backfilled onto these 3 for
  * existing profiles in migration 051. */
 export const nutritionalGoalOptions = ["weight_loss", "weight_gain", "maintain"] as const;
-/** The multi-select "Nutritional goal", separate from the weight goal above (TCK-118). */
-export const healthGoalOptions = ["maintain_health", "muscle_gain", "abnormal_markers", "other"] as const;
 export const pregnancyLactationOptions = ["none", "pregnant", "lactating"] as const;
 export const dietaryPreferenceOptions = [
   "standard",
@@ -810,11 +808,6 @@ export const onboardingProfileSchema = z.object({
   nutritional_goal: z.enum(nutritionalGoalOptions, {
     error: "Select a valid nutritional goal.",
   }),
-  health_goals: z
-    .array(z.enum(healthGoalOptions, { error: "Select a valid nutritional goal option." }))
-    .min(1, "Select at least one nutritional goal."),
-  health_goals_markers_details: z.string().trim().max(250).optional().default(""),
-  health_goals_other_details: z.string().trim().max(250).optional().default(""),
   pregnancy_lactation_status: z.enum(pregnancyLactationOptions, {
     error: "Select a valid pregnancy/lactation status.",
   }),
@@ -912,22 +905,6 @@ export const onboardingProfileSchema = z.object({
           message: "Exercise schedule contains an unselected exercise type.",
         });
       }
-    });
-  }
-
-  if (data.health_goals.includes("abnormal_markers") && data.health_goals_markers_details.trim().length < 2) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["health_goals_markers_details"],
-      message: "Enter the marker(s) that need improvement.",
-    });
-  }
-
-  if (data.health_goals.includes("other") && data.health_goals_other_details.trim().length < 2) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["health_goals_other_details"],
-      message: "Describe your other goal.",
     });
   }
 

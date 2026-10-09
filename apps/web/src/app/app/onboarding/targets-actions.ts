@@ -12,25 +12,7 @@ import { targetGenerationPayloadSchema, toProfileForTargets, type TargetGenerati
 import { computeTargetsDiff } from "@/lib/targets-diff";
 
 const PROFILE_COLUMNS_FOR_TARGETS =
-  "age, gender, biological_sex, height_cm, weight_kg, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, habits, pregnancy_lactation_status, hot_climate_or_heavy_sweating, preferred_language, first_name, nutritional_goal, health_goals, health_goals_markers_details, health_goals_other_details";
-
-/** English names for the TCK-118 nutritional goals, appended to the first onboarding goal text only. */
-function describeHealthGoals(row: {
-  health_goals?: string[] | null;
-  health_goals_markers_details?: string | null;
-  health_goals_other_details?: string | null;
-}): string {
-  const goals = row.health_goals ?? [];
-  if (goals.length === 0) return "";
-  const names = goals.map((goal) => {
-    if (goal === "maintain_health") return "maintain overall health";
-    if (goal === "muscle_gain") return "build muscle mass";
-    if (goal === "abnormal_markers") return `improve out-of-range markers (${row.health_goals_markers_details?.trim() ?? ""})`;
-    if (goal === "other") return `other (${row.health_goals_other_details?.trim() ?? ""})`;
-    return goal;
-  });
-  return ` Additional nutritional goals: ${names.join(", ")}.`;
-}
+  "age, gender, biological_sex, height_cm, weight_kg, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, habits, pregnancy_lactation_status, hot_climate_or_heavy_sweating, preferred_language, first_name, nutritional_goal";
 
 export type OnboardingTargetsResult =
   | { error: string }
@@ -74,7 +56,7 @@ export async function generateOnboardingTargetsAction(): Promise<OnboardingTarge
   // needs one - the profile (nutritional_goal included) already fully
   // describes what's wanted. This text only needs to carry the goal
   // direction for the AI/heuristic to act on.
-  const goalText = `Generate my initial daily targets. My goal is: ${profileRow.nutritional_goal ?? "maintain"}.${describeHealthGoals(profileRow)}`;
+  const goalText = `Generate my initial daily targets. My goal is: ${profileRow.nutritional_goal ?? "maintain"}.`;
 
   const { payload, source, safetyRejectionMessage, notActionableMessage } = await generateTargetsPayload({
     goalText,
