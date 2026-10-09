@@ -9,9 +9,11 @@ import { logSavedItemFromChatAction } from "@/app/app/daily-report/quick-log-act
 import type { DailyReportDefaultItem } from "@/components/daily-report-defaults-picker";
 import { SAVE_TOAST_DURATION_MS } from "@/components/daily-report-form";
 import { DailyReportSuccessToast } from "@/components/daily-report-success-toast";
+import { SavedListMatchChips } from "@/components/saved-list-match-chips";
 import { SavedListQuickPicker } from "@/components/saved-list-quick-picker";
 import { SubmitButton } from "@/components/daily-report-submit-button";
 import { directionForLocale, formatDefaultItemName, formatDefaultUnit, tr, trGendered, type AppLocale } from "@/lib/locale";
+import { matchSavedItems } from "@/lib/saved-list-match";
 
 export type { DailyReportDefaultItem };
 
@@ -1051,6 +1053,31 @@ export function DailyReportChatPanel({
     router.refresh();
   }
 
+  // TCK-37: saved-list items matching what's typed - shown as chips above
+  // the input, and an exact single match is logged directly on Send (see
+  // handleSendClick). Skipped while the AI is streaming or with no saved
+  // items at all.
+  const savedListMatch =
+    !isStreaming && defaultItems.length > 0 ? matchSavedItems(inputValue, defaultItems, locale) : { exact: null, partial: [] };
+  const savedListMatchItems = savedListMatch.exact ? [savedListMatch.exact, ...savedListMatch.partial] : savedListMatch.partial;
+
+  /** Send - except that typing exactly one saved item's name logs it at its
+   * saved default (same as tapping it in the saved list, no bubble added)
+   * instead of asking the AI. Only on a fresh conversation (no non-local
+   * messages yet - so never while answering the AI's own question, and
+   * never in edit mode, whose intro already counts), with no photo
+   * attached; anything else is sent to the AI as before. */
+  function handleSendClick() {
+    const exactItem = savedListMatch.exact;
+    const canAutoLog = exactItem && !isEditing && !photoPreviewUrl && !messages.some((message) => !message.localOnly);
+    if (canAutoLog) {
+      setInputValue("");
+      void handleLogSavedItem(exactItem);
+      return;
+    }
+    void sendMessage(inputValue);
+  }
+
   async function handlePhotoSelected(file: File | null) {
     setPhotoError(null);
     if (!file) return;
@@ -1393,6 +1420,18 @@ export function DailyReportChatPanel({
             )}
           </div>
 
+          <SavedListMatchChips
+            items={savedListMatchItems.map((item) => ({ id: item.id, name: item.name, kind: item.kind, quantity: item.default_quantity, unit: item.default_unit }))}
+            locale={locale}
+            onSelect={(id) => {
+              const item = defaultItems.find((entry) => entry.id === id);
+              if (item) {
+                setInputValue("");
+                void handleLogSavedItem(item);
+              }
+            }}
+          />
+
           {/* Bigger than before (4 rows, not 2) now that it has the whole
               row to itself instead of sharing one with three icon
               buttons. */}
@@ -1433,7 +1472,7 @@ export function DailyReportChatPanel({
           <button
             type="button"
             disabled={isStreaming || !inputValue.trim()}
-            onClick={() => void sendMessage(inputValue)}
+            onClick={handleSendClick}
             onMouseDown={(event) => event.preventDefault()}
             className={`flex w-full items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold ${
               !isStreaming && !inputValue.trim()
