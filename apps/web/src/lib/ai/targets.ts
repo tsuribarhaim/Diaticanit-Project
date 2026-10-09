@@ -351,6 +351,17 @@ function buildProfileSummary(profile: ProfileForTargets): string {
         ]
       : []),
     `habits: ${profile.habits.join(", ") || "none"}`,
+    ...(profile.alcohol_weekly_frequency ? [`alcohol_per_week: ${profile.alcohol_weekly_frequency}`] : []),
+    ...(profile.smoking_status
+      ? [
+          `smoking: ${profile.smoking_status}${
+            profile.smoking_status === "daily" && profile.smoking_cigarettes_range
+              ? ` (${profile.smoking_cigarettes_range} cigarettes/day)`
+              : ""
+          }`,
+        ]
+      : []),
+    ...(profile.caffeine_cups_per_day ? [`caffeine_cups_per_day: ${profile.caffeine_cups_per_day}`] : []),
     `pregnancy_lactation_status: ${profile.pregnancy_lactation_status ?? "none"}`,
   ].join("\n");
 }

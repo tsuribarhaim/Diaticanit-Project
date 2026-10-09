@@ -9,6 +9,8 @@ import { revalidateNavChrome } from "@/lib/nav-chrome";
 import {
   calculateAgeYears,
   deriveExerciseSummaryFromSchedule,
+  deriveLegacyHabitFields,
+  lifestyleHabitsColumns,
   onboardingProfileSchema,
   parseBooleanField,
   parseDelimitedList,
@@ -142,9 +144,10 @@ export async function saveOnboardingProfileAction(
     has_regular_medications: parseBooleanField(formData.get("has_regular_medications")),
     regular_medications_details: getFormString(formData, "regular_medications_details"),
     hot_climate_or_heavy_sweating: parseBooleanField(formData.get("hot_climate_or_heavy_sweating")),
-    habits: parseMultiSelect(formData, "habits"),
-    alcohol_consumption_level: getFormString(formData, "alcohol_consumption_level"),
-    smoking_packs_per_day: getFormString(formData, "smoking_packs_per_day"),
+    alcohol_weekly_frequency: getFormString(formData, "alcohol_weekly_frequency"),
+    smoking_status: getFormString(formData, "smoking_status"),
+    smoking_cigarettes_range: getFormString(formData, "smoking_cigarettes_range"),
+    caffeine_cups_per_day: getFormString(formData, "caffeine_cups_per_day"),
     dietary_preference: getFormString(formData, "dietary_preference"),
     additional_information: getFormString(formData, "additional_information"),
     has_allergies: parseBooleanField(formData.get("has_allergies")),
@@ -221,9 +224,17 @@ export async function saveOnboardingProfileAction(
     medical_conditions_details: parsed.data.medical_conditions_details,
     has_regular_medications: parsed.data.has_regular_medications,
     regular_medications_details: parsed.data.regular_medications_details,
-    habits: parsed.data.habits,
-    alcohol_consumption_level: parsed.data.habits.includes("alcohol") ? parsed.data.alcohol_consumption_level : null,
-    smoking_packs_per_day: parsed.data.habits.includes("smoking_or_vaping") ? parsed.data.smoking_packs_per_day : null,
+    // TCK-119: the questionnaire answers are stored as-is, and the legacy
+    // habit fields (still read by targets, AI chat and target review) are
+    // derived from them.
+    ...lifestyleHabitsColumns(parsed.data),
+    ...deriveLegacyHabitFields({
+      alcohol: parsed.data.alcohol_weekly_frequency,
+      smokingStatus: parsed.data.smoking_status,
+      cigarettesRange: parsed.data.smoking_cigarettes_range,
+      biologicalSex: parsed.data.biological_sex,
+      previous: { habits: [], alcohol_consumption_level: null, smoking_packs_per_day: null },
+    }),
     additional_information: parsed.data.additional_information,
     has_allergies: parsed.data.has_allergies,
     allergies: parsed.data.allergies,

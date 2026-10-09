@@ -12,7 +12,7 @@ import { targetGenerationPayloadSchema, toProfileForTargets, type TargetGenerati
 import { computeTargetsDiff } from "@/lib/targets-diff";
 
 const PROFILE_COLUMNS_FOR_TARGETS =
-  "age, gender, biological_sex, height_cm, weight_kg, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, habits, pregnancy_lactation_status, hot_climate_or_heavy_sweating, preferred_language, first_name, nutritional_goal";
+  "age, gender, biological_sex, height_cm, weight_kg, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, habits, alcohol_weekly_frequency, smoking_status, smoking_cigarettes_range, caffeine_cups_per_day, pregnancy_lactation_status, hot_climate_or_heavy_sweating, preferred_language, first_name, nutritional_goal";
 
 export type OnboardingTargetsResult =
   | { error: string }
