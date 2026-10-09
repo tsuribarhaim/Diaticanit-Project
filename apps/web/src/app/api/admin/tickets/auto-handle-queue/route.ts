@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { loadOverlapBlockers } from "@/lib/automation-overlap";
+import type { Blocker } from "@/lib/overlap";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { logServerError } from "@/lib/server-log";
 
@@ -39,5 +41,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Failed to load queue." }, { status: 500 });
   }
 
-  return NextResponse.json({ tickets: data ?? [] }, { headers: { "Cache-Control": "no-store" } });
+  // Tickets that change the same files as another ticket wait for it (lib/overlap.ts): the bridge skips those with a non-empty heldBy.
+  const blockers = await loadOverlapBlockers(adminClient).catch(() => new Map<string, Blocker[]>());
+  const tickets = (data ?? []).map((ticket) => ({ ...ticket, heldBy: (blockers.get(ticket.id) ?? []).map((b) => ({ seq: b.seq, why: b.why, files: b.files.slice(0, 5) })) }));
+  return NextResponse.json({ tickets }, { headers: { "Cache-Control": "no-store" } });
 }

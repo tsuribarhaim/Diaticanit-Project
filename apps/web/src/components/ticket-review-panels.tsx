@@ -8,6 +8,7 @@ import {
   approveForProductionAction,
   approveProposalAction,
   handledByHandAction,
+  requeueStoppedAction,
   rejectProposalAction,
   requestAnalysisAction,
   requestChangeAction,
@@ -254,6 +255,32 @@ export function HandledByHand({ locale, ticketId, after = "refresh" }: { locale:
   );
 }
 
+/** Puts a ticket the night run left "stopped" back in the queue. */
+export function RequeueButton({ locale, ticketId }: { locale: AppLocale; ticketId: string }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [message, setMessage] = useState<string | null>(null);
+  return (
+    <span className="inline-flex flex-col gap-1">
+      <ActionButton
+        variant="primary"
+        pending={pending}
+        disabled={pending}
+        onClick={() =>
+          startTransition(async () => {
+            const result = await requeueStoppedAction(ticketId);
+            if (result.error) setMessage(result.error);
+            else router.refresh();
+          })
+        }
+      >
+        {tr(locale, "Put back in the queue", "החזרה לתור")}
+      </ActionButton>
+      {message ? <span role="status" className="text-xs text-rose-600 dark:text-rose-400">{message}</span> : null}
+    </span>
+  );
+}
+
 /** Copies the analyst's notes as a ready prompt for a Claude Code session. Instant feedback, no waiting. */
 function CopyBriefButton({ locale, text }: { locale: AppLocale; text: string }) {
   const [copied, setCopied] = useState(false);
@@ -410,6 +437,7 @@ export function QuestionsPanel({ locale, proposalId, payload }: { locale: AppLoc
           <h3 className={headingClass}>{tr(locale, "Why the night run stopped", "למה ריצת הלילה נעצרה")}</h3>
           <p dir="auto" className="whitespace-pre-wrap text-sm text-slate-800 dark:text-slate-200">{payload.why}</p>
         </div>
+        {questions.length > 0 ? (
         <div className={cardClass}>
           <h3 className={headingClass}>{tr(locale, "Its questions", "השאלות שלו")}</h3>
           <DecisionList
@@ -420,6 +448,7 @@ export function QuestionsPanel({ locale, proposalId, payload }: { locale: AppLoc
             onPick={(qi, oi) => setAnswers((current) => current.map((value, index) => (index === qi ? oi : value)))}
           />
         </div>
+        ) : null}
       </div>
       <div className={`${cardClass} self-start`}>
         <h3 className={headingClass}>{tr(locale, "Your answer", "התשובה שלך")}</h3>
@@ -435,7 +464,7 @@ export function QuestionsPanel({ locale, proposalId, payload }: { locale: AppLoc
         {error ? <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{error}</p> : null}
         <div className="mt-3 flex flex-wrap gap-2">
           <ActionButton variant="primary" pending={pending && which === "answer"} disabled={pending || !allDone} onClick={() => run("answer", () => answerQuestionsAction(proposalId, chosenMap, comment))}>
-            {tr(locale, "Send answers and re-queue", "שליחת תשובות והכנסה לתור")}
+            {questions.length > 0 ? tr(locale, "Send answers and re-queue", "שליחת תשובות והכנסה לתור") : tr(locale, "Put back in the queue", "החזרה לתור")}
           </ActionButton>
           <ActionButton pending={pending && which === "out"} disabled={pending} onClick={() => run("out", () => takeOutOfAutomationAction(proposalId))}>
             {tr(locale, "Take it out of automation", "הוצאה מהאוטומציה")}
@@ -445,6 +474,7 @@ export function QuestionsPanel({ locale, proposalId, payload }: { locale: AppLoc
           {allDone
             ? tr(locale, "Your answers go into the ticket and it runs again tonight.", "התשובות שלך נכנסות לפנייה והיא תרוץ שוב הלילה.")
             : tr(locale, "Answer every question to re-queue.", "יש לענות על כל השאלות כדי להכניס לתור.")}
+          {questions.length === 0 ? " " + tr(locale, "The run stopped on an error, not on a question. Putting it back means a fresh attempt tonight.", "הריצה נעצרה בגלל שגיאה ולא בגלל שאלה. החזרה לתור תגרום לניסיון חדש הלילה.") : null}
         </p>
       </div>
     </div>

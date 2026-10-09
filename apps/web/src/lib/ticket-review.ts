@@ -408,3 +408,25 @@ export async function handledByHand(supabase: Client, adminId: string, locale: A
       : tr(locale, `TCK-${ticket.ticket_seq} is out of automation. It stays open for you.`, `TCK-${ticket.ticket_seq} יצאה מהאוטומציה. היא נשארת פתוחה עבורך.`),
   };
 }
+
+/** A ticket the night run left flagged "stopped" (no question to answer, nothing building) goes back in the queue. */
+export async function requeueStopped(supabase: Client, adminId: string, locale: AppLocale, ticketId: string): Promise<ReviewResult> {
+  const { data: ticket } = await supabase.from("tickets").select("id, ticket_seq, auto_handle, status").eq("id", ticketId).maybeSingle();
+  if (!ticket) return notFound(locale);
+  if (ticket.auto_handle !== "P") return alreadyDecided(locale);
+  const { error } = await supabase.from("tickets").update({ auto_handle: "Y", status: ticket.status === "in_progress" ? "open" : ticket.status }).eq("id", ticketId);
+  if (error) return dbError(locale);
+  await supabase.from("ticket_proposals").update({ status: "superseded", decided_at: new Date().toISOString(), decided_by: adminId }).eq("ticket_id", ticketId).eq("kind", "questions").eq("status", "pending");
+  await logAutomationEvent(supabase, adminId, ticketId, "requeued");
+  return { success: tr(locale, `TCK-${ticket.ticket_seq} is back in the queue for the next night run.`, `TCK-${ticket.ticket_seq} חזרה לתור של ריצת הלילה הבאה.`) };
+}
+
+/** "Build anyway": a queued ticket that waits for another one (they change the same files) is built in the next run regardless.
+ * Only valid until the ticket is queued again (lib/automation-overlap.ts). Expect a merge conflict if the other fix is not promoted first. */
+export async function overrideOverlap(supabase: Client, adminId: string, locale: AppLocale, ticketId: string): Promise<ReviewResult> {
+  const { data: ticket } = await supabase.from("tickets").select("id, ticket_seq, auto_handle").eq("id", ticketId).maybeSingle();
+  if (!ticket) return notFound(locale);
+  if (ticket.auto_handle !== "Y") return alreadyDecided(locale);
+  await logAutomationEvent(supabase, adminId, ticketId, "overlap_override");
+  return { success: tr(locale, `TCK-${ticket.ticket_seq} will be built in the next run without waiting.`, `TCK-${ticket.ticket_seq} תיבנה בריצה הבאה בלי להמתין.`) };
+}

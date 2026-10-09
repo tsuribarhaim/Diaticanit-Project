@@ -29,6 +29,8 @@ export type ProposalPayload = {
   decisions: ProposalDecision[];
   mockups: ProposalMockup[];
   brief: string;
+  /** Every source file the brief tells the night agent to change (repo-relative paths): the overlap guard compares these. */
+  expectedFiles?: string[];
   outOfScope: string[];
   /** true when the analyst judges this a change to build together with the admin. */
   needsPairing?: boolean;

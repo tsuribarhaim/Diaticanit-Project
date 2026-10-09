@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 
 import { AutoHandlePill } from "@/components/auto-handle-pill";
-import { FixPanel, ProposalPanel, QuestionsPanel, ReviewNav } from "@/components/ticket-review-panels";
+import { FixPanel, ProposalPanel, QuestionsPanel, RequeueButton, ReviewNav } from "@/components/ticket-review-panels";
 import { formatTicketArea, formatTicketPriority, formatTicketType, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 import type { FixPayload, ProposalPayload, QuestionsPayload, TicketProposalRow } from "@/lib/ticket-proposals";
@@ -10,6 +10,9 @@ import { TicketTrail } from "@/components/ticket-trail";
 import { NAV_HREF, navLabel, parseFrom } from "@/lib/tickets-nav";
 
 export const dynamic = "force-dynamic";
+
+// Wrapped so the clock is read in one place (the render must not call Date.now directly).
+const now = () => Date.now();
 
 /** One ticket's proposal, questions or fix, for the admin to decide on (see ReviewPage). */
 export default async function TicketReviewDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ from?: string }> }) {
@@ -46,6 +49,16 @@ export default async function TicketReviewDetailPage({ params, searchParams }: {
       .limit(1)
       .maybeSingle();
     proposal = (data as TicketProposalRow | null) ?? null;
+  }
+
+  // A ticket the night run flagged P with no question row: it is being built right now, or it stopped without a reason on file.
+  let buildState: "building" | "stopped" | null = null;
+  if (ticket.auto_handle === "P" && !proposal) {
+    const { data: settings } = await supabase.from("automation_settings").select("bridge_seen_at, bridge_status").eq("id", true).maybeSingle();
+    const online = settings?.bridge_seen_at ? now() - new Date(settings.bridge_seen_at as string).getTime() < 3 * 60 * 1000 : false;
+    const running = online && Boolean((settings?.bridge_status as { runInProgress?: boolean } | null)?.runInProgress);
+    const { data: nightOpen } = await supabase.from("automation_requests").select("id").eq("kind", "night").is("completed_at", null).limit(1);
+    buildState = running || (nightOpen ?? []).length > 0 ? "building" : "stopped";
   }
 
   let mergeRequested = false;
@@ -88,7 +101,14 @@ export default async function TicketReviewDetailPage({ params, searchParams }: {
           {ticket.area ? formatTicketArea(ticket.area, locale) : tr(locale, "Not set yet", "טרם נבחר")} {"·"} {formatTicketPriority(ticket.priority, locale)}
         </p>
       </div>
-      <AutoHandlePill locale={locale} value={ticket.auto_handle} />
+      {buildState ? (
+        <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-semibold ${buildState === "building" ? "bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300" : "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"}`}>
+          <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current" />
+          {buildState === "building" ? tr(locale, "Being built by the night run", "בבנייה בריצת הלילה") : tr(locale, "Night run stopped", "ריצת הלילה נעצרה")}
+        </span>
+      ) : (
+        <AutoHandlePill locale={locale} value={ticket.auto_handle} />
+      )}
     </div>
   );
 
@@ -120,11 +140,20 @@ export default async function TicketReviewDetailPage({ params, searchParams }: {
         />
       ) : (
         <p className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
-          {ticket.auto_handle === "S"
+          {buildState === "building"
+            ? tr(locale, "The night run is building this fix right now. It appears here when it is done, usually within 10 minutes.", "ריצת הלילה בונה את התיקון עכשיו. הוא יופיע כאן כשיסתיים, בדרך כלל תוך 10 דקות.")
+            : buildState === "stopped"
+              ? tr(locale, "The night run stopped before it finished and left no reason on file. You can put the ticket back in the queue for the next run.", "ריצת הלילה נעצרה לפני שסיימה ולא השאירה סיבה. אפשר להחזיר את הפנייה לתור לריצה הבאה.")
+              : ticket.auto_handle === "S"
             ? tr(locale, "Analysis is requested. The analyst runs every evening, or use Run analysis now on the review page.", "התבקש ניתוח. האנליסט רץ כל ערב, או אפשר להשתמש ב'הרצת ניתוח עכשיו' בדף הסקירה.")
             : ticket.auto_handle === "Y"
               ? tr(locale, "Queued: the night run picks this up with the brief that is already in the ticket.", "בתור: ריצת הלילה תיקח את זה עם התקציר שכבר נמצא בפנייה.")
               : tr(locale, "Nothing is waiting on you for this ticket.", "שום דבר לא ממתין לך בפנייה הזו.")}
+          {buildState === "stopped" ? (
+            <span className="mt-3 block">
+              <RequeueButton locale={locale} ticketId={ticket.id} />
+            </span>
+          ) : null}
         </p>
       )}
     </main>

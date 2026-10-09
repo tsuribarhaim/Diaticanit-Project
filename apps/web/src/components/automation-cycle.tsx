@@ -11,6 +11,7 @@ import {
   requestChangeAction,
   requestAgentRunAction,
   requestMergeAction,
+  overrideOverlapAction,
   searchAutomationTicketsAction,
   setAutomationPausedAction,
   sendBackFixAction,
@@ -72,6 +73,10 @@ function subText(sub: StationSub, locale: AppLocale): string {
       return tr(locale, "Queued for the night run (02:15)", "בתור לריצת הלילה (02:15)");
     case "questions":
       return tr(locale, "The night run stopped: questions for you", "ריצת הלילה נעצרה: שאלות אליך");
+    case "held":
+      return tr(locale, "Waiting for another ticket that changes the same files", "ממתינה לפנייה אחרת שמשנה את אותם קבצים");
+    case "building":
+      return tr(locale, "The night run is building this fix now", "ריצת הלילה בונה את התיקון עכשיו");
     case "stopped":
       return tr(locale, "The night run stopped before it finished - open it to see why", "ריצת הלילה נעצרה לפני שסיימה - לפתוח כדי לראות למה");
     case "branch":
@@ -485,6 +490,16 @@ function StatusStrip({ locale, status }: { locale: AppLocale; status: Automation
           {tr(locale, "Pause the AI agents", "השהיית סוכני ה-AI")}
         </label>
       </div>
+      {status.alert ? (
+        <p role="alert" className="rounded-xl bg-rose-100 px-4 py-2 text-sm font-semibold text-rose-900 dark:bg-rose-950/50 dark:text-rose-200">
+          {tr(locale, "Automation alert: ", "התראה מהאוטומציה: ")}
+          {status.alert.message}
+          {" "}
+          <Link href="/app/notifications" className="underline">
+            {tr(locale, "Open notifications", "לפתיחת ההתראות")}
+          </Link>
+        </p>
+      ) : null}
       {status.paused ? (
         <p role="status" className="rounded-xl bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-900 dark:bg-amber-950/50 dark:text-amber-200">
           {tr(locale, "Automation is paused: the analyst and the night run will not start until you resume. Your tickets and sign-offs stay as they are, and you can still approve, merge and promote.", "האוטומציה מושהית: האנליסט וריצת הלילה לא יתחילו עד שתחדש. הפניות והאישורים שלך נשארים, ואפשר עדיין לאשר, למזג ולהעלות.")}
@@ -649,7 +664,9 @@ function TicketRow({ locale, ticket, highlighted = false }: { locale: AppLocale;
     ? tr(locale, "Open ticket", "פתיחת הפנייה")
     : ticket.station === "approval"
       ? tr(locale, "Open proposal", "פתיחת ההצעה")
-      : ticket.sub === "stopped"
+      : ticket.sub === "building"
+        ? tr(locale, "See what is happening", "לראות מה קורה")
+        : ticket.sub === "stopped"
         ? tr(locale, "See why it stopped", "לראות למה נעצרה")
         : ticket.sub === "questions"
           ? tr(locale, "Answer the questions", "מענה לשאלות")
@@ -689,6 +706,19 @@ function TicketRow({ locale, ticket, highlighted = false }: { locale: AppLocale;
         {ticket.hasMigration ? <span className="me-1.5 rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">{tr(locale, "Migration", "מיגרציה")}</span> : null}
         {subText(ticket.sub, locale)}
       </p>
+      {ticket.sub === "held" && ticket.heldBy.length > 0 ? (
+        <p dir="auto" className="mt-1 text-xs font-semibold text-amber-800 dark:text-amber-300">
+          {ticket.heldBy.map((blocker) => (blocker.why === "fix" ? `TCK-${blocker.seq} (${tr(locale, "fix not promoted yet", "התיקון עדיין לא הועלה")})` : `TCK-${blocker.seq} (${tr(locale, "queued first", "בתור לפניה")})`)).join(", ")}
+          {" - "}
+          {tr(locale, "built after it is promoted, so the two do not conflict.", "תיבנה אחרי שהיא תועלה, כדי שלא יהיה ביניהן קונפליקט.")}
+        </p>
+      ) : null}
+      {ticket.issue ? (
+        <p dir="auto" role="alert" className="mt-1 rounded-md bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+          {"⚠ "}
+          {ticket.issue}
+        </p>
+      ) : null}
       {ticket.summary ? <p dir="auto" className="mt-1 line-clamp-2 text-xs text-slate-500 dark:text-slate-400">{ticket.summary}</p> : null}
       <SignoffChips locale={locale} signoffs={ticket.signoffs} />
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5">
@@ -735,6 +765,11 @@ function TicketRow({ locale, ticket, highlighted = false }: { locale: AppLocale;
         {ticket.station === "marked" || ticket.station === "fix" ? (
           <>
             <Link href={openHref} className={ticket.sub === "questions" || ticket.sub === "stopped" ? linkButtonPrimary : linkButton}>{openLabel}</Link>
+            {ticket.sub === "held" ? (
+              <LinkAction variant="secondary" pending={pending && which === "override"} disabled={pending} onClick={() => run("override", () => overrideOverlapAction(ticket.id))}>
+                {tr(locale, "Build anyway", "לבנות בכל זאת")}
+              </LinkAction>
+            ) : null}
             {takeOut}
           </>
         ) : null}
