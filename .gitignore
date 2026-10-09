@@ -42,3 +42,6 @@ test-results/
 
 # Ad-hoc data exports (user health data pulled for one-off requests - never commit)
 exports/
+
+# Bridge logs
+*.err
