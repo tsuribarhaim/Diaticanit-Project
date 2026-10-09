@@ -126,7 +126,18 @@ type RowRequest = { kind: string; ticket_id: string | null; picked_at: string | 
 // Wrapped so the clock can be read in one place (the render must not call Date.now directly).
 const now = () => Date.now();
 
+/** PostgREST queries only run once something waits on them: wrapping one in a Promise starts it now. The screens below used to wait for
+ * sixteen queries one after another; starting every independent query at once makes the wait about one round trip per stage. */
+const start = <T>(query: PromiseLike<T>): Promise<T> => Promise.resolve(query);
+
 export async function getAutomationOverview(supabase: Client): Promise<AutomationOverview> {
+  const requestsP = start(supabase.from("automation_requests").select("kind, ticket_id, picked_at, details").is("completed_at", null));
+  const settingsP = start(supabase.from("automation_settings").select("paused, bridge_seen_at, bridge_status").eq("id", true).maybeSingle());
+  const runsP = start(supabase.from("automation_runs").select("kind, finished_at, tickets_count, cost_usd, result").order("started_at", { ascending: false }).limit(12));
+  const recentP = start(supabase.from("automation_requests").select("kind").in("kind", ["analyze", "night", "digest"]).gte("completed_at", new Date(now() - 2 * 60 * 1000).toISOString()));
+  const releasesP = start(supabase.from("automation_requests").select("requested_at, completed_at, report:details->report").eq("kind", "promote").not("completed_at", "is", null).order("requested_at", { ascending: false }).limit(3));
+  const alertP = start(supabase.from("user_notifications").select("message, created_at").like("message", "⚠ Automation alert:%").is("read_at", null).order("created_at", { ascending: false }).limit(1));
+  const blockersP = loadOverlapBlockers(supabase).catch(() => new Map<string, { seq: number; why: "fix" | "queue" | "bundle" }[]>());
   const { data: ticketRows } = await supabase
     .from("tickets")
     .select("id, ticket_seq, subject, status, auto_handle, updated_at, bundle_id")
@@ -136,14 +147,32 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
     .limit(300);
   const tickets = (ticketRows ?? []) as RowTicket[];
   const ids = tickets.map((ticket) => ticket.id);
-
-  const proposalsByTicket = new Map<string, RowProposal[]>();
-  if (ids.length > 0) {
-    const { data } = await supabase
+  const bundleIds = [...new Set(tickets.map((ticket) => ticket.bundle_id).filter((id): id is string => Boolean(id)))];
+  const none = Promise.resolve({ data: [] as unknown[] });
+  const proposalsP = ids.length > 0 ? start(supabase
       .from("ticket_proposals")
       .select("id, ticket_id, kind, status, summary:payload->summary, why:payload->why, pairing:payload->needsPairing, files:payload->files, questions:payload->questions, brief:payload->>brief, expected:payload->expectedFiles")
       .in("ticket_id", ids)
-      .in("status", ["pending", "merged", "approved"]);
+      .in("status", ["pending", "merged", "approved"])) : none;
+  const eventsP = ids.length > 0 ? start(supabase
+      .from("automation_events")
+      .select("ticket_id, kind, created_at")
+      .in("ticket_id", ids)
+      .in("kind", ["marked", "spec_approved", "approved_for_production"])
+      .order("created_at", { ascending: false })) : none;
+  const issuesP = ids.length > 0 ? start(supabase
+      .from("automation_requests")
+      .select("ticket_id, result, completed_at")
+      .in("kind", ["merge", "revert"])
+      .in("ticket_id", ids)
+      .not("completed_at", "is", null)
+      .order("completed_at", { ascending: false })
+      .limit(200)) : none;
+  const bundlesP = bundleIds.length > 0 ? start(supabase.from("automation_bundles").select("id, letter").in("id", bundleIds)) : none;
+
+  const proposalsByTicket = new Map<string, RowProposal[]>();
+  if (ids.length > 0) {
+    const { data } = await proposalsP;
     for (const row of (data ?? []) as unknown as RowProposal[]) {
       const list = proposalsByTicket.get(row.ticket_id) ?? [];
       list.push(row);
@@ -153,12 +182,7 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
 
   const signoffsByTicket = new Map<string, { marked: string | null; spec: string | null; production: string | null }>();
   if (ids.length > 0) {
-    const { data: events } = await supabase
-      .from("automation_events")
-      .select("ticket_id, kind, created_at")
-      .in("ticket_id", ids)
-      .in("kind", ["marked", "spec_approved", "approved_for_production"])
-      .order("created_at", { ascending: false });
+    const { data: events } = await eventsP;
     for (const event of (events ?? []) as { ticket_id: string; kind: string; created_at: string }[]) {
       const entry = signoffsByTicket.get(event.ticket_id) ?? { marked: null, spec: null, production: null };
       const field = event.kind === "marked" ? "marked" : event.kind === "spec_approved" ? "spec" : "production";
@@ -167,39 +191,28 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
     }
   }
 
-  const { data: requestRows } = await supabase.from("automation_requests").select("kind, ticket_id, picked_at, details").is("completed_at", null);
+  const { data: requestRows } = await requestsP;
   const requests = (requestRows ?? []) as RowRequest[];
 
-  const { data: settingsRow } = await supabase.from("automation_settings").select("paused, bridge_seen_at, bridge_status").eq("id", true).maybeSingle();
+  const { data: settingsRow } = await settingsP;
   const health = ((settingsRow?.bridge_status ?? {}) as { analysisInProgress?: boolean; runInProgress?: boolean; promoteInProgress?: boolean; autoMerge?: boolean });
   const seenAt = (settingsRow?.bridge_seen_at as string | null) ?? null;
   const bridgeOnline = seenAt !== null && now() - new Date(seenAt).getTime() < 3 * 60 * 1000;
-  const { data: runRows } = await supabase.from("automation_runs").select("kind, finished_at, tickets_count, cost_usd, result").order("started_at", { ascending: false }).limit(12);
+  const { data: runRows } = await runsP;
   const runOf = (kind: string): RunInfo | null => {
     const row = ((runRows ?? []) as { kind: string; finished_at: string | null; tickets_count: number; cost_usd: number | null; result: string | null }[]).find((r) => r.kind === kind);
     return row ? { finishedAt: row.finished_at, ticketsCount: row.tickets_count, costUsd: row.cost_usd === null ? null : Number(row.cost_usd), result: row.result } : null;
   };
   // A request the admin just fired counts as running right away, and keeps counting for two minutes after the poller started it,
   // until the bridge's own heartbeat shows the run (so a ticket never flips back to "Marked" and the button never re-enables).
-  const { data: recentRows } = await supabase
-    .from("automation_requests")
-    .select("kind")
-    .in("kind", ["analyze", "night", "digest"])
-    .gte("completed_at", new Date(now() - 2 * 60 * 1000).toISOString());
+  const { data: recentRows } = await recentP;
   const recent = new Set(((recentRows ?? []) as { kind: string }[]).map((row) => row.kind));
   const analysisRunning = (bridgeOnline && Boolean(health.analysisInProgress)) || requests.some((request) => request.kind === "analyze") || recent.has("analyze");
   const buildRunning = (bridgeOnline && Boolean(health.runInProgress)) || requests.some((request) => request.kind === "night") || recent.has("night");
   // The newest finished merge or revert per ticket: a failure is shown on the row, a later success clears it.
   const issueByTicket = new Map<string, string>();
   if (ids.length > 0) {
-    const { data: doneRows } = await supabase
-      .from("automation_requests")
-      .select("ticket_id, result, completed_at")
-      .in("kind", ["merge", "revert"])
-      .in("ticket_id", ids)
-      .not("completed_at", "is", null)
-      .order("completed_at", { ascending: false })
-      .limit(200);
+    const { data: doneRows } = await issuesP;
     const seenTickets = new Set<string>();
     for (const row of (doneRows ?? []) as { ticket_id: string; result: string | null }[]) {
       if (seenTickets.has(row.ticket_id)) continue;
@@ -214,15 +227,14 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
     for (const item of request.details?.tickets ?? []) if (item.ticketId) promoteTickets.add(item.ticketId);
   }
 
-  const bundleIds = [...new Set(tickets.map((ticket) => ticket.bundle_id).filter((id): id is string => Boolean(id)))];
   const letterById = new Map<string, string>();
   if (bundleIds.length > 0) {
-    const { data: bundleRows } = await supabase.from("automation_bundles").select("id, letter").in("id", bundleIds);
+    const { data: bundleRows } = await bundlesP;
     for (const row of (bundleRows ?? []) as { id: string; letter: string }[]) letterById.set(row.id, row.letter);
   }
   const seqsByBundle = new Map<string, number[]>();
   for (const ticket of tickets) if (ticket.bundle_id) seqsByBundle.set(ticket.bundle_id, [...(seqsByBundle.get(ticket.bundle_id) ?? []), ticket.ticket_seq].sort((a, b) => a - b));
-  const blockersById = await loadOverlapBlockers(supabase).catch(() => new Map<string, { seq: number; why: "fix" | "queue" | "bundle" }[]>());
+  const blockersById = await blockersP;
   const counts: Record<StationId, number> = { marked: 0, analysis: 0, approval: 0, fix: 0, test: 0, promote: 0, release: 0 };
   const result: OverviewTicket[] = [];
   const nowMs = now();
@@ -292,13 +304,7 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
     for (let i = 0; i < group.length; i += 1) for (let j = i + 1; j < group.length; j += 1) for (const file of sharedFiles(group[i].files, group[j].files)) shared.add(file);
     return { ids: group.map((member) => member.id), seqs, files: [...shared], subjects: group.map((member) => member.subject) };
   });
-  const { data: releaseRows } = await supabase
-    .from("automation_requests")
-    .select("requested_at, completed_at, report:details->report")
-    .eq("kind", "promote")
-    .not("completed_at", "is", null)
-    .order("requested_at", { ascending: false })
-    .limit(3);
+  const { data: releaseRows } = await releasesP;
   const recentReleases: RecentRelease[] = ((releaseRows ?? []) as unknown as { requested_at: string; completed_at: string | null; report: { version?: string; ok?: boolean; rolledBack?: boolean; tickets?: { status?: string }[] } | null }[]).map((row) => ({
     version: row.report?.version ?? null,
     at: row.completed_at ?? row.requested_at,
@@ -306,13 +312,7 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
     rolledBack: row.report?.rolledBack === true,
     tickets: (row.report?.tickets ?? []).filter((ticket) => ticket.status === "released" || ticket.status === "deployed").length,
   }));
-  const { data: alertRows } = await supabase
-    .from("user_notifications")
-    .select("message, created_at")
-    .like("message", "⚠ Automation alert:%")
-    .is("read_at", null)
-    .order("created_at", { ascending: false })
-    .limit(1);
+  const { data: alertRows } = await alertP;
   const alertRow = ((alertRows ?? []) as { message: string; created_at: string }[])[0];
   const status: AutomationStatus = {
     paused: Boolean(settingsRow?.paused),
@@ -332,4 +332,51 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
     },
   };
   return { status, recentReleases, tickets: result, counts, ticketCounts, suggestions, needsYou, total: result.length };
+}
+
+/** The number on the "Review & approvals" tab: what waits for the admin, counted as fixes - the same as AutomationOverview.needsYou, but from
+ * three queries started together instead of the whole overview (this runs on every screen of the tickets area). */
+export async function getWaitingCount(supabase: Client): Promise<number> {
+  const [ticketRes, proposalRes, requestRes, settingsRes] = await Promise.all([
+    start(supabase.from("tickets").select("id, status, auto_handle, bundle_id").in("auto_handle", ["A", "P", "D", "M", "R"]).not("status", "in", `(${FINAL_STATUSES.join(",")})`).limit(300)),
+    start(
+      supabase
+        .from("ticket_proposals")
+        .select("ticket_id, kind, status, questions:payload->questions")
+        .or("status.in.(pending,merged),and(kind.eq.fix,status.eq.approved)"),
+    ),
+    start(supabase.from("automation_requests").select("kind, details").is("completed_at", null)),
+    start(supabase.from("automation_settings").select("bridge_seen_at, bridge_status").eq("id", true).maybeSingle()),
+  ]);
+  const tickets = (ticketRes.data ?? []) as { id: string; status: string; auto_handle: string | null; bundle_id: string | null }[];
+  const rows = (proposalRes.data ?? []) as unknown as { ticket_id: string; kind: string; status: string; questions: unknown }[];
+  const requests = (requestRes.data ?? []) as unknown as { kind: string; details: { tickets?: { ticketId?: string }[] } | null }[];
+  const health = (settingsRes.data?.bridge_status ?? {}) as { runInProgress?: boolean };
+  const seenAt = (settingsRes.data?.bridge_seen_at as string | null) ?? null;
+  const online = seenAt !== null && now() - new Date(seenAt).getTime() < 3 * 60 * 1000;
+  const buildRunning = (online && Boolean(health.runInProgress)) || requests.some((request) => request.kind === "night");
+  const promoteTickets = new Set<string>();
+  for (const request of requests) if (request.kind === "promote") for (const item of request.details?.tickets ?? []) if (item.ticketId) promoteTickets.add(item.ticketId);
+  const waiting = new Set<string>();
+  for (const ticket of tickets) {
+    const own = rows.filter((row) => row.ticket_id === ticket.id);
+    const fixes = own.filter((row) => row.kind === "fix");
+    const fix = fixes.find((row) => row.status === "approved") ?? fixes.find((row) => row.status === "merged") ?? fixes.find((row) => row.status === "pending") ?? null;
+    const placed = stationOf({
+      autoHandle: ticket.auto_handle,
+      status: ticket.status,
+      hasPendingProposal: own.some((row) => row.kind === "proposal" && row.status === "pending"),
+      hasPendingQuestions: own.some((row) => row.kind === "questions" && row.status === "pending"),
+      fixStatus: (fix?.status as StationInput["fixStatus"]) ?? null,
+      analysisRunning: false,
+      buildRunning,
+      held: false,
+      inPromoteRequest: promoteTickets.has(ticket.id),
+      mergeRequested: false,
+    });
+    if (!placed) continue;
+    const isWaiting = placed.station === "approval" || placed.station === "test" || placed.station === "promote" || (placed.station === "fix" && (placed.sub === "questions" || placed.sub === "stopped"));
+    if (isWaiting) waiting.add(`${placed.station}:${ticket.bundle_id ? `b:${ticket.bundle_id}` : `t:${ticket.id}`}`);
+  }
+  return waiting.size;
 }

@@ -20,6 +20,7 @@ import {
   takeOutOfAutomationAction,
   withdrawApprovalAction,
 } from "@/app/app/tickets/review-actions";
+import { NavLink } from "@/components/nav-link";
 import { Spinner } from "@/components/spinner";
 import { tr, type AppLocale } from "@/lib/locale";
 import { NAV_HREF, parseFrom } from "@/lib/tickets-nav";
@@ -70,32 +71,22 @@ export function ActionButton({
   );
 }
 
-/** Close (x) and back: both go to the named place (not the browser history, which an approval or a refresh scrambles). */
+/** Close (x): goes to the named place (not the browser history, which an approval or a refresh scrambles). It is a link, so it shows a
+ * spinner while the next screen loads; the trail and the tab bar above it already say where you are, so there is no second "back" link. */
 export function ReviewNav({ locale, backLabel, backHref }: { locale: AppLocale; backLabel: string; backHref: string }) {
-  const router = useRouter();
-  function goBack() {
-    router.push(backHref);
-  }
   return (
-    <>
-      <div className="mb-3 flex items-center justify-between">
-        <button type="button" onClick={goBack} className="text-sm font-semibold text-teal-700 dark:text-teal-400">
-          {tr(locale, "← Back to ", "→ חזרה אל ")}
-          {backLabel}
-        </button>
-        <button
-          type="button"
-          onClick={goBack}
-          aria-label={`${tr(locale, "Close and go back to", "סגירה וחזרה אל")} ${backLabel}`}
-          title={`${tr(locale, "Close and go back to", "סגירה וחזרה אל")} ${backLabel}`}
-          className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
-            <path d="M6 6l12 12M18 6L6 18" />
-          </svg>
-        </button>
-      </div>
-    </>
+    <div className="mb-3 flex items-center justify-end">
+      <NavLink
+        href={backHref}
+        aria-label={`${tr(locale, "Close and go back to", "סגירה וחזרה אל")} ${backLabel}`}
+        title={`${tr(locale, "Close and go back to", "סגירה וחזרה אל")} ${backLabel}`}
+        className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+          <path d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      </NavLink>
+    </div>
   );
 }
 

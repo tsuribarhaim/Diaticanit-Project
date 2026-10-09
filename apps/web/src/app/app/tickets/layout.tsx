@@ -1,7 +1,7 @@
 import { Suspense, type ReactNode } from "react";
 
 import { TicketsAreaNav } from "@/components/tickets-area-nav";
-import { getAutomationOverview } from "@/lib/automation-overview";
+import { getWaitingCount } from "@/lib/automation-overview";
 import { normalizeLocale, type AppLocale } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 import { isCurrentUserAdmin } from "@/lib/tickets";
@@ -22,7 +22,7 @@ export default async function TicketsLayout({ children }: { children: ReactNode 
   );
   let waiting = 0;
   try {
-    waiting = (await getAutomationOverview(supabase)).needsYou;
+    waiting = await getWaitingCount(supabase);
   } catch {
     // The bar still works without the count.
   }
