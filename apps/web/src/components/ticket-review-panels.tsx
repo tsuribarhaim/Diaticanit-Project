@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, useTransition, type ReactNode } from "react";
 
 import {
@@ -21,9 +21,15 @@ import {
 } from "@/app/app/tickets/review-actions";
 import { Spinner } from "@/components/spinner";
 import { tr, type AppLocale } from "@/lib/locale";
+import { NAV_HREF, parseFrom } from "@/lib/tickets-nav";
 import { buildPairingPrompt, resolveChoices, type FixPayload, type ProposalDecision, type ProposalPayload, type QuestionsPayload } from "@/lib/ticket-proposals";
 
 const REVIEW_HREF = "/app/tickets/review";
+
+/** Where an action returns to: the screen this one was opened from (default: Review & approvals). */
+function useReturnHref(): string {
+  return NAV_HREF[parseFrom(useSearchParams().get("from"), "review")] ?? REVIEW_HREF;
+}
 const cardClass = "rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900";
 const headingClass = "mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400";
 const inputClass =
@@ -63,25 +69,24 @@ export function ActionButton({
   );
 }
 
-/** Close (x) and back, both returning to wherever the admin came from. */
-export function ReviewNav({ locale, backLabel }: { locale: AppLocale; backLabel: string }) {
+/** Close (x) and back: both go to the named place (not the browser history, which an approval or a refresh scrambles). */
+export function ReviewNav({ locale, backLabel, backHref }: { locale: AppLocale; backLabel: string; backHref: string }) {
   const router = useRouter();
   function goBack() {
-    if (typeof window !== "undefined" && window.history.length > 1) router.back();
-    else router.push(REVIEW_HREF);
+    router.push(backHref);
   }
   return (
     <>
       <div className="mb-3 flex items-center justify-between">
         <button type="button" onClick={goBack} className="text-sm font-semibold text-teal-700 dark:text-teal-400">
-          {tr(locale, "← ", "→ ")}
+          {tr(locale, "← Back to ", "→ חזרה אל ")}
           {backLabel}
         </button>
         <button
           type="button"
           onClick={goBack}
-          aria-label={tr(locale, "Close", "סגירה")}
-          title={tr(locale, "Close", "סגירה")}
+          aria-label={`${tr(locale, "Close and go back to", "סגירה וחזרה אל")} ${backLabel}`}
+          title={`${tr(locale, "Close and go back to", "סגירה וחזרה אל")} ${backLabel}`}
           className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
@@ -166,6 +171,7 @@ function useAutoRefresh(active: boolean, everyMs = 8000) {
 
 function useReviewAction(locale: AppLocale) {
   const router = useRouter();
+  const returnHref = useReturnHref();
   const [pending, startTransition] = useTransition();
   const [which, setWhich] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -179,7 +185,7 @@ function useReviewAction(locale: AppLocale) {
         setWhich(null);
         return;
       }
-      if (after === "list") router.push(`${REVIEW_HREF}?notice=${encodeURIComponent(result.success ?? "")}`);
+      if (after === "list") router.push(`${returnHref}?notice=${encodeURIComponent(result.success ?? "")}`);
       else router.refresh();
       setWhich(null);
     });
@@ -191,6 +197,7 @@ function useReviewAction(locale: AppLocale) {
  * marked resolved) instead of waiting in a queue the night run would pick up. */
 export function HandledByHand({ locale, ticketId, after = "refresh" }: { locale: AppLocale; ticketId: string; after?: "refresh" | "list" }) {
   const router = useRouter();
+  const returnHref = useReturnHref();
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState("");
   const [pending, startTransition] = useTransition();
@@ -203,7 +210,7 @@ export function HandledByHand({ locale, ticketId, after = "refresh" }: { locale:
     startTransition(async () => {
       const result = await handledByHandAction(ticketId, resolve, note);
       if (result.error) setMessage(result.error);
-      else if (after === "list") router.push(`${REVIEW_HREF}?notice=${encodeURIComponent(result.success ?? "")}`);
+      else if (after === "list") router.push(`${returnHref}?notice=${encodeURIComponent(result.success ?? "")}`);
       else router.refresh();
       setWhich(null);
     });

@@ -2,6 +2,7 @@ import { NavLink as Link } from "@/components/nav-link";
 
 import { tr, type AppLocale } from "@/lib/locale";
 import type { TicketAutoHandle } from "@/lib/tickets";
+import type { NavFrom } from "@/lib/tickets-nav";
 
 /** Top of the admin ticket list: what is waiting on the admin, with a way into the review page.
  * With nothing waiting it is just a quiet link, so the review page is always one click away. */
@@ -56,7 +57,7 @@ export function ReviewBanner({
 }
 
 /** On a ticket itself: the same hand-off, for the one state that is waiting on the admin. */
-export function ReviewCallout({ locale, ticketId, autoHandle }: { locale: AppLocale; ticketId: string; autoHandle: TicketAutoHandle | null }) {
+export function ReviewCallout({ locale, ticketId, autoHandle, from = "tickets" }: { locale: AppLocale; ticketId: string; autoHandle: TicketAutoHandle | null; from?: NavFrom }) {
   if (autoHandle !== "A" && autoHandle !== "P" && autoHandle !== "D" && autoHandle !== "M") return null;
   const text =
     autoHandle === "A"
@@ -70,7 +71,7 @@ export function ReviewCallout({ locale, ticketId, autoHandle }: { locale: AppLoc
   return (
     <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 border-s-4 border-s-amber-600 bg-amber-50 px-4 py-3 dark:border-amber-900 dark:border-s-amber-500 dark:bg-amber-950/30">
       <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">{text}</p>
-      <Link href={`/app/tickets/review/${ticketId}`} className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500">
+      <Link href={`/app/tickets/review/${ticketId}?from=${from}`} className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500">
         {cta}
       </Link>
     </div>

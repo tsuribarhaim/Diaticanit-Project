@@ -1,5 +1,7 @@
 import { redirect } from "next/navigation";
 
+import { TicketTrail } from "@/components/ticket-trail";
+import { NAV_HREF, navLabel } from "@/lib/tickets-nav";
 import { ReviewNav } from "@/components/ticket-review-panels";
 import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import type { PromoteReport } from "@/lib/promotion-email";
@@ -51,7 +53,8 @@ export default async function ReleaseHistoryPage() {
 
   return (
     <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col px-6 py-10">
-      <ReviewNav locale={locale} backLabel={tr(locale, "Ticket Automation", "אוטומציית פניות")} />
+      <TicketTrail locale={locale} items={[{ label: navLabel(locale, "automation"), href: NAV_HREF.automation }, { label: tr(locale, "Releases", "שחרורים") }]} />
+      <ReviewNav locale={locale} backLabel={navLabel(locale, "automation")} backHref={NAV_HREF.automation} />
       <h1 className="mb-5 text-2xl font-bold text-slate-900 dark:text-slate-100">{tr(locale, "Release history", "היסטוריית שחרורים")}</h1>
       <section>
         {releases.length === 0 ? (
