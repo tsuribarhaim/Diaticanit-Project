@@ -45,14 +45,21 @@ export async function createNotification({
 export async function listNotifications({
   supabase,
   userId,
+  unreadOnly = false,
 }: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   userId: string;
+  /** TCK-66: only rows with read_at null (the same rule as the nav badge). */
+  unreadOnly?: boolean;
 }): Promise<NotificationRow[]> {
-  const { data } = await supabase
+  let query = supabase
     .from("user_notifications")
     .select("id, severity, message, field_keys, read_at, resolved_at, created_at, target_profile_id")
-    .eq("user_id", userId)
+    .eq("user_id", userId);
+  if (unreadOnly) {
+    query = query.is("read_at", null);
+  }
+  const { data } = await query
     .order("created_at", { ascending: false })
     .limit(50);
 

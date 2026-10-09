@@ -11,11 +11,17 @@ import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
+const activeToggleClass = "rounded-full bg-teal-700 px-3 py-1 text-xs font-semibold text-white dark:bg-teal-600";
+const inactiveToggleClass =
+  "rounded-full px-3 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800";
+
 /**
  * The landing spot for the Targets save-flow redesign's background-check
  * notifications (see docs/design/targets-save-performance-redesign.md) - a
- * plain reverse-chronological list, resolved and unresolved together, since
- * there's no real volume yet to justify tabs/filters. Each unresolved
+ * plain reverse-chronological list, resolved and unresolved together. Since
+ * TCK-66, read notifications are hidden by default (unread only - read_at
+ * null, the same rule as the nav badge), with a small Unread / All toggle
+ * under the intro that keeps "All" in the URL as ?show=all. Each unresolved
  * concern links back into the Targets page with itself marked read on
  * arrival (see targets/page.tsx's own ?concern=/?viewed= handling).
  *
@@ -27,7 +33,11 @@ export const dynamic = "force-dynamic";
  * report insights soon, so "concerns your AI coach flagged" undersold what
  * actually shows up here.
  */
-export default async function NotificationsPage() {
+export default async function NotificationsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ show?: string }>;
+}) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -40,7 +50,10 @@ export default async function NotificationsPage() {
   const profileRow = (await supabase.from("user_profile").select("preferred_language").eq("user_id", user.id).maybeSingle()).data;
   const locale = normalizeLocale(profileRow?.preferred_language);
 
-  const notifications = await listNotifications({ supabase, userId: user.id });
+  const resolvedSearchParams = await searchParams;
+  const showAll = resolvedSearchParams.show === "all";
+
+  const notifications = await listNotifications({ supabase, userId: user.id, unreadOnly: !showAll });
   const hasUnread = notifications.some((notification) => !notification.read_at);
 
   // TCK-77 reverses TCK-96's mark-on-open - otherwise the "Mark all as read"
@@ -64,11 +77,50 @@ export default async function NotificationsPage() {
           "דפי רוצה לשתף איתך תובנות, המלצות ועדכונים מהמעקב שלך - ועדכונים על פניות שהגשת.",
         )}
       </p>
+      {/* TCK-66: replace + scroll={false} so switching the filter doesn't
+          add a history entry - the Close (x) button uses router.back(). */}
+      <div>
+        <div className="mt-4 inline-flex rounded-full border border-slate-200 bg-white p-0.5 dark:border-slate-700 dark:bg-slate-900">
+          <Link
+            href="/app/notifications"
+            replace
+            scroll={false}
+            aria-current={!showAll ? "page" : undefined}
+            className={!showAll ? activeToggleClass : inactiveToggleClass}
+          >
+            {tr(locale, "Unread", "לא נקראו")}
+          </Link>
+          <Link
+            href="/app/notifications?show=all"
+            replace
+            scroll={false}
+            aria-current={showAll ? "page" : undefined}
+            className={showAll ? activeToggleClass : inactiveToggleClass}
+          >
+            {tr(locale, "All", "הכל")}
+          </Link>
+        </div>
+      </div>
 
       <div className="mt-6 space-y-3">
         {notifications.length === 0 ? (
           <p className="rounded-xl border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-            {tr(locale, "Nothing here yet.", "אין כאן עדיין דבר.")}
+            {showAll ? (
+              tr(locale, "Nothing here yet.", "אין כאן עדיין דבר.")
+            ) : (
+              <>
+                {tr(locale, "No unread notifications.", "אין התראות שלא נקראו.")}
+                <br />
+                <Link
+                  href="/app/notifications?show=all"
+                  replace
+                  scroll={false}
+                  className="mt-1 inline-block font-semibold text-teal-700 underline dark:text-teal-400"
+                >
+                  {tr(locale, "Show all", "הצגת הכל")}
+                </Link>
+              </>
+            )}
           </p>
         ) : (
           notifications.map((notification) => {
