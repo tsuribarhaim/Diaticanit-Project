@@ -85,6 +85,8 @@ export type AutomationStatus = {
   lastAnalyst: RunInfo | null;
   /** A "run it now" request that nobody has finished yet. */
   requested: { analyze: boolean; night: boolean; digest: boolean };
+  /** The newest unread "something in the automation failed" notification for the viewer (see /api/admin/automation-alerts). */
+  alert: { message: string; at: string } | null;
 };
 
 export type RecentRelease = { version: string | null; at: string; ok: boolean; rolledBack: boolean; tickets: number };
@@ -252,6 +254,14 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
     rolledBack: row.report?.rolledBack === true,
     tickets: (row.report?.tickets ?? []).filter((ticket) => ticket.status === "released" || ticket.status === "deployed").length,
   }));
+  const { data: alertRows } = await supabase
+    .from("user_notifications")
+    .select("message, created_at")
+    .like("message", "⚠ Automation alert:%")
+    .is("read_at", null)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const alertRow = ((alertRows ?? []) as { message: string; created_at: string }[])[0];
   const status: AutomationStatus = {
     paused: Boolean(settingsRow?.paused),
     bridgeOnline,
@@ -262,6 +272,7 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
     autoMerge: Boolean(health.autoMerge),
     lastNight: runOf("night"),
     lastAnalyst: runOf("analyst"),
+    alert: alertRow ? { message: alertRow.message.replace(/^⚠ Automation alert:\s*/, ""), at: alertRow.created_at } : null,
     requested: {
       analyze: requests.some((r) => r.kind === "analyze") || recent.has("analyze"),
       night: requests.some((r) => r.kind === "night") || recent.has("night"),

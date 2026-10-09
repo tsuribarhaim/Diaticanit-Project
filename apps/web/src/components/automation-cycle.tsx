@@ -487,6 +487,16 @@ function StatusStrip({ locale, status }: { locale: AppLocale; status: Automation
           {tr(locale, "Pause the AI agents", "השהיית סוכני ה-AI")}
         </label>
       </div>
+      {status.alert ? (
+        <p role="alert" className="rounded-xl bg-rose-100 px-4 py-2 text-sm font-semibold text-rose-900 dark:bg-rose-950/50 dark:text-rose-200">
+          {tr(locale, "Automation alert: ", "התראה מהאוטומציה: ")}
+          {status.alert.message}
+          {" "}
+          <Link href="/app/notifications" className="underline">
+            {tr(locale, "Open notifications", "לפתיחת ההתראות")}
+          </Link>
+        </p>
+      ) : null}
       {status.paused ? (
         <p role="status" className="rounded-xl bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-900 dark:bg-amber-950/50 dark:text-amber-200">
           {tr(locale, "Automation is paused: the analyst and the night run will not start until you resume. Your tickets and sign-offs stay as they are, and you can still approve, merge and promote.", "האוטומציה מושהית: האנליסט וריצת הלילה לא יתחילו עד שתחדש. הפניות והאישורים שלך נשארים, ואפשר עדיין לאשר, למזג ולהעלות.")}
