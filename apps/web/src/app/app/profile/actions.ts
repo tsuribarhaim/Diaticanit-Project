@@ -14,11 +14,13 @@ import {
   biologicalSexOptions,
   calculateAgeYears,
   deriveExerciseSummaryFromSchedule,
+  deriveLegacyHabitFields,
   dietaryPreferenceOptions,
   exerciseModalityOptions,
   exerciseOtherActivitiesSchema,
   exerciseScheduleByModalitySchema,
-  habitOptions,
+  lifestyleHabitsAnswersSchema,
+  lifestyleHabitsColumns,
   medicalConditionOptions,
   modalityRequiresSchedule,
   nutritionalGoalOptions,
@@ -221,9 +223,10 @@ export async function updateProfileAction(
     has_regular_medications: parseBooleanField(formData.get("has_regular_medications")),
     regular_medications_details: getFormString(formData, "regular_medications_details"),
     hot_climate_or_heavy_sweating: parseBooleanField(formData.get("hot_climate_or_heavy_sweating")),
-    habits: parseMultiSelect(formData, "habits"),
-    alcohol_consumption_level: getFormString(formData, "alcohol_consumption_level"),
-    smoking_packs_per_day: getFormString(formData, "smoking_packs_per_day"),
+    alcohol_weekly_frequency: getFormString(formData, "alcohol_weekly_frequency"),
+    smoking_status: getFormString(formData, "smoking_status"),
+    smoking_cigarettes_range: getFormString(formData, "smoking_cigarettes_range"),
+    caffeine_cups_per_day: getFormString(formData, "caffeine_cups_per_day"),
     dietary_preference: getFormString(formData, "dietary_preference"),
     additional_information: getFormString(formData, "additional_information"),
     allergies: parseDelimitedList(formData.get("allergies")),
@@ -513,9 +516,6 @@ export async function updateProfileAction(
     medical_conditions_details: parsed.data.medical_conditions_details,
     has_regular_medications: parsed.data.has_regular_medications,
     regular_medications_details: parsed.data.regular_medications_details,
-    habits: parsed.data.habits,
-    alcohol_consumption_level: parsed.data.habits.includes("alcohol") ? parsed.data.alcohol_consumption_level : null,
-    smoking_packs_per_day: parsed.data.habits.includes("smoking_or_vaping") ? parsed.data.smoking_packs_per_day : null,
     additional_information: parsed.data.additional_information,
     allergies: parsed.data.allergies,
     medical_conditions: legacyMedicalConditions,
@@ -526,13 +526,29 @@ export async function updateProfileAction(
   };
 
   // Read before the update so a weight change can also be logged as a Daily
-  // Report weigh-in below (ticket TCK-42).
+  // Report weigh-in below (ticket TCK-42). The legacy habit fields are read
+  // too: an unanswered lifestyle-habits question keeps them (TCK-119).
   const { data: profileBefore } = await supabase
     .from("user_profile")
-    .select("weight_kg")
+    .select("weight_kg, habits, alcohol_consumption_level, smoking_packs_per_day")
     .eq("user_id", user.id)
     .maybeSingle();
   const previousWeightKg = profileBefore?.weight_kg == null ? null : Number(profileBefore.weight_kg);
+
+  Object.assign(payload, {
+    ...lifestyleHabitsColumns(parsed.data),
+    ...deriveLegacyHabitFields({
+      alcohol: parsed.data.alcohol_weekly_frequency,
+      smokingStatus: parsed.data.smoking_status,
+      cigarettesRange: parsed.data.smoking_cigarettes_range,
+      biologicalSex: parsed.data.biological_sex,
+      previous: {
+        habits: profileBefore?.habits ?? [],
+        alcohol_consumption_level: profileBefore?.alcohol_consumption_level ?? null,
+        smoking_packs_per_day: profileBefore?.smoking_packs_per_day == null ? null : Number(profileBefore.smoking_packs_per_day),
+      },
+    }),
+  });
 
   const { error } = await supabase
     .from("user_profile")
@@ -1231,35 +1247,41 @@ export async function updateHabitsAction(_prevState: QuickEditState, formData: F
     redirect("/auth/sign-in");
   }
 
-  const habitsParsed = z.array(z.enum(habitOptions)).safeParse(parseMultiSelect(formData, "habits"));
-  if (!habitsParsed.success) {
+  const answersParsed = lifestyleHabitsAnswersSchema.safeParse({
+    alcohol_weekly_frequency: getFormString(formData, "alcohol_weekly_frequency"),
+    smoking_status: getFormString(formData, "smoking_status"),
+    smoking_cigarettes_range: getFormString(formData, "smoking_cigarettes_range"),
+    caffeine_cups_per_day: getFormString(formData, "caffeine_cups_per_day"),
+  });
+  if (!answersParsed.success) {
     return { error: tr(locale, "Select a valid habit option.", "יש לבחור אפשרות הרגל תקינה.") };
   }
-  const habits = habitsParsed.data;
+  const answers = answersParsed.data;
 
-  let alcoholConsumptionLevel: "low" | "high" | null = null;
-  if (habits.includes("alcohol")) {
-    const level = getFormString(formData, "alcohol_consumption_level");
-    if (level !== "low" && level !== "high") {
-      return { error: tr(locale, "Select a consumption level.", "יש לבחור רמת צריכה.") };
-    }
-    alcoholConsumptionLevel = level;
-  }
-
-  let smokingPacksPerDay: number | null = null;
-  if (habits.includes("smoking_or_vaping")) {
-    const packsParsed = z.coerce.number().min(0).max(20).safeParse(getFormString(formData, "smoking_packs_per_day"));
-    if (!packsParsed.success || packsParsed.data <= 0) {
-      return { error: tr(locale, "Enter cigarettes per day.", "יש להזין מספר סיגריות ליום.") };
-    }
-    smokingPacksPerDay = packsParsed.data;
-  }
+  const { data: currentRow } = await supabase
+    .from("user_profile")
+    .select("habits, alcohol_consumption_level, smoking_packs_per_day, biological_sex")
+    .eq("user_id", user.id)
+    .maybeSingle();
 
   return applyProfilePatchAndFlagTargets({
     supabase,
     userId: user.id,
     locale,
-    patch: { habits, alcohol_consumption_level: alcoholConsumptionLevel, smoking_packs_per_day: smokingPacksPerDay },
+    patch: {
+      ...lifestyleHabitsColumns(answers),
+      ...deriveLegacyHabitFields({
+        alcohol: answers.alcohol_weekly_frequency,
+        smokingStatus: answers.smoking_status,
+        cigarettesRange: answers.smoking_cigarettes_range,
+        biologicalSex: currentRow?.biological_sex ?? null,
+        previous: {
+          habits: currentRow?.habits ?? [],
+          alcohol_consumption_level: currentRow?.alcohol_consumption_level ?? null,
+          smoking_packs_per_day: currentRow?.smoking_packs_per_day == null ? null : Number(currentRow.smoking_packs_per_day),
+        },
+      }),
+    },
   });
 }
 
