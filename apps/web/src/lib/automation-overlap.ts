@@ -32,15 +32,17 @@ export async function loadOverlapBlockers(supabase: SupabaseClient): Promise<Map
   // Fixes that are built but not promoted yet: what they really changed.
   const { data: fixRows } = await supabase
     .from("ticket_proposals")
-    .select("ticket_id, files:payload->files, tickets!inner(ticket_seq, bundle_id)")
+    .select("ticket_id, files:payload->files, tickets!inner(ticket_seq, bundle_id, status, auto_handle)")
     .eq("kind", "fix")
     .in("status", ["pending", "merged", "approved"]);
   const inFlight: TicketFiles[] = [];
   const bundleOf = new Map<number, string>();
   for (const row of queue) if (row.bundle_id) bundleOf.set(row.ticket_seq, row.bundle_id);
-  for (const row of (fixRows ?? []) as unknown as { files: unknown; tickets: { ticket_seq: number; bundle_id: string | null } | { ticket_seq: number; bundle_id: string | null }[] }[]) {
+  type JoinedTicket = { ticket_seq: number; bundle_id: string | null; status: string; auto_handle: string | null };
+  for (const row of (fixRows ?? []) as unknown as { files: unknown; tickets: JoinedTicket | JoinedTicket[] }[]) {
     const joined = Array.isArray(row.tickets) ? row.tickets[0] : row.tickets;
-    if (!joined) continue;
+    // Only a fix whose ticket is still waiting for it to reach production counts: an old fix row of a resolved ticket is history.
+    if (!joined || !["D", "M", "R"].includes(joined.auto_handle ?? "") || ["resolved", "closed", "cancelled", "duplicate"].includes(joined.status)) continue;
     inFlight.push({ seq: joined.ticket_seq, files: collectFiles(row.files) });
     if (joined.bundle_id) bundleOf.set(joined.ticket_seq, joined.bundle_id);
   }
