@@ -255,6 +255,8 @@ export function formatNutritionalGoal(value: string, locale: AppLocale): string 
   const token = normalizeToken(value);
   if (token === "maintenance") return tr(locale, "Maintenance", "שימור");
   if (token === "weight_loss") return tr(locale, "Weight Loss", "ירידה במשקל");
+  if (token === "weight_gain") return tr(locale, "Weight Gain", "עלייה במשקל");
+  if (token === "maintain") return tr(locale, "Maintain", "שימור");
   if (token === "muscle_hypertrophy") return tr(locale, "Muscle Hypertrophy", "היפרטרופיה");
   if (token === "body_recomposition") return tr(locale, "Body Recomposition", "הרכב גוף");
   if (token === "athletic_performance") return tr(locale, "Athletic Performance", "ביצועים אתלטיים");
