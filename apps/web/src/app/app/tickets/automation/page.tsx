@@ -2,7 +2,6 @@ import { NavLink as Link } from "@/components/nav-link";
 import { redirect } from "next/navigation";
 
 import { AutomationCycle, DigestCard } from "@/components/automation-cycle";
-import { ReviewNav } from "@/components/ticket-review-panels";
 import { getAutomationOverview } from "@/lib/automation-overview";
 import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
@@ -49,7 +48,6 @@ export default async function TicketAutomationPage({ searchParams }: { searchPar
 
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 py-8">
-      <ReviewNav locale={locale} backLabel={tr(locale, "Tickets", "פניות")} backHref="/app/tickets" />
       {notice ? (
         <p role="status" className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
           {notice}
@@ -109,12 +107,6 @@ export default async function TicketAutomationPage({ searchParams }: { searchPar
           </Link>
         ))}
         <DigestCard locale={locale} digestRequested={overview.status.requested.digest} />
-      </div>
-
-      <div className="mt-8">
-        <Link href="/app/tickets" className="inline-flex rounded-full border border-teal-600 px-4 py-1.5 text-sm font-semibold text-teal-700 hover:bg-teal-50 dark:border-teal-500 dark:text-teal-300 dark:hover:bg-teal-950/40">
-          {tr(locale, "← Back to Tickets", "→ חזרה לפניות")}
-        </Link>
       </div>
     </main>
   );
