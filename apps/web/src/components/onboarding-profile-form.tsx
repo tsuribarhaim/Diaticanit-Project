@@ -1214,6 +1214,12 @@ export function OnboardingProfileForm({
     // knows the saved language, which is still "en" for a brand-new user who
     // picks עברית here.
     <div lang={effectiveLocale} dir={directionForLocale(effectiveLocale)}>
+    <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">
+      {tr(effectiveLocale, "Hi, I'm Daffy", "היי, אני דפי")}
+    </h1>
+    <p className="mt-1 text-base text-slate-700 dark:text-slate-300">
+      {tr(effectiveLocale, "Your personal coach for a healthier life.", "המלווה האישית שלך לחיים בריאים יותר.")}
+    </p>
     {step < 5 ? (
       // Only makes sense while there's still a profile to set up - step 5
       // (OnboardingTargetsStep) has its own contextual copy once the
@@ -1221,8 +1227,8 @@ export function OnboardingProfileForm({
       <p className="mt-3 text-sm text-slate-600 dark:text-slate-400">
         {tr(
           effectiveLocale,
-          "Let's set up your profile and your first daily targets - just a few minutes to get started.",
-          "בואו נגדיר את הפרופיל שלכם ואת היעדים היומיים הראשונים שלכם - רק כמה דקות כדי להתחיל.",
+          "Let's set up your profile and first goals together – it only takes a few minutes.",
+          "בואי נגדיר ביחד את הפרופיל והיעדים הראשונים שלך – זה ייקח רק כמה דקות.",
         )}
       </p>
     ) : null}
