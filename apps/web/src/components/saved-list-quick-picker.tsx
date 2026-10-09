@@ -4,6 +4,7 @@ import { useEffect, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 
 import { formatDefaultItemKind, formatDefaultItemName, formatDefaultUnit, tr, type AppLocale } from "@/lib/locale";
+import { kindBadgeClass } from "@/lib/saved-list-match";
 
 export type SavedListPickerRow = {
   id: string;
@@ -19,13 +20,6 @@ export type SavedListPickerRow = {
 // coordinates rather than a panel-relative, page-clipped position).
 const DESKTOP_POPOVER_WIDTH_PX = 288;
 const VIEWPORT_MARGIN_PX = 12;
-
-function kindBadgeClass(kind: string): string {
-  if (kind === "hydration") return "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-800 dark:bg-sky-950/30 dark:text-sky-400";
-  if (kind === "exercise") return "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-800 dark:bg-violet-950/30 dark:text-violet-400";
-  if (kind === "custom") return "border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300";
-  return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-400";
-}
 
 /**
  * The "tap the icon, tap an item, it's logged immediately" saved-list
