@@ -153,6 +153,9 @@ Done (bridge and dashboard, built 2026-10-09):
 - The analyst is told the next free migration number and that a new `user_profile` column needs `user_profile_enriched`
   recreated in the same migration (029, 073).
 
+Built later the same day (see docs/design/auto-ticket-handling.md, "Keeping fixes from colliding"): the overlap guard, the
+automatic rebuild of stale fixes after a promotion, and the alert when an automation step fails.
+
 Still open:
 
 - **Overlap guard (design first).** Tickets that touch the same files must not be built in parallel on the same base (117, 118

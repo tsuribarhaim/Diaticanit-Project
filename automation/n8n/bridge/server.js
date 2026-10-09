@@ -395,6 +395,53 @@ async function syncDevWithProduction() {
   }
 }
 
+/** After a promotion production has moved, so every fix that is built but not promoted yet (on its branch, on dev, or approved) was
+ * built on an older production and could no longer be promoted: the promotion refuses a fix whose base is not production's
+ * current head. Instead of leaving each one for the admin to send back by hand, undo its merge on dev (if it has one), move the
+ * old branch aside and put the ticket back in the queue with a note; the next night run rebuilds it on the new production.
+ * Tickets that went out in this promotion are left alone. Returns what happened, per ticket. */
+async function rebuildStaleFixes(promotedSeqs) {
+  const results = [];
+  const head = (await runGit(["rev-parse", PRODUCTION_REF], REPO_PATH)).trim();
+  const res = await fetch(`${DAFFY_BASE_URL}/api/admin/tickets/unpromoted-fixes`, { headers: { "x-ticket-automation-secret": TICKET_SECRET } });
+  // An app that does not have the endpoint yet (the release is still to come) simply has nothing for us to do.
+  if (res.status === 404) return results;
+  if (!res.ok) throw new Error(`HTTP ${res.status} - ${(await res.text()).slice(0, 200)}`);
+  const { fixes } = await res.json();
+  for (const fix of fixes || []) {
+    const seq = Number(fix.ticketSeq);
+    if (promotedSeqs.includes(seq)) continue;
+    const branch = `auto-fix/tck-${seq}`;
+    try {
+      const exists = await runGit(["rev-parse", "--verify", "--quiet", branch], REPO_PATH).catch(() => "");
+      if (exists) {
+        const message = await runGit(["log", "-1", "--format=%B", branch], REPO_PATH);
+        const base = ((message.match(/Built-on-production:\s*([0-9a-f]{7,40})/i) || [])[1] || "").toLowerCase();
+        // Built on the current production: still promotable, leave it alone. No trailer at all (an older fix) counts as stale.
+        if (base !== "" && head.toLowerCase().startsWith(base)) continue;
+        const merged = await runGit(["merge-base", "--is-ancestor", branch, "main"], REPO_PATH).then(() => true).catch(() => false);
+        if (merged) {
+          const undone = await revertMerge(seq);
+          if (!undone.ok) { results.push({ seq, ok: false, note: undone.result }); continue; }
+        } else {
+          await moveStaleBranchAside(seq);
+        }
+      }
+      const note = `Rebuilt automatically: production moved on (now ${head.slice(0, 7)}) after this fix was built, so it could no longer be promoted. The old attempt was set aside. Rebuild the fix on the current production in the next run; the admin's earlier notes above still apply.`;
+      const post = await fetch(`${DAFFY_BASE_URL}/api/admin/tickets/requeue-stale`, {
+        method: "POST",
+        headers: { "x-ticket-automation-secret": TICKET_SECRET, "Content-Type": "application/json" },
+        body: JSON.stringify({ ticketId: fix.ticketId, note }),
+      });
+      if (!post.ok) throw new Error(`HTTP ${post.status} - ${(await post.text()).slice(0, 160)}`);
+      results.push({ seq, ok: true, note: null });
+    } catch (err) {
+      results.push({ seq, ok: false, note: err.message });
+    }
+  }
+  return results;
+}
+
 /** A branch name left over from an earlier attempt would make "git checkout -b" fail at the very end of a run, after the agent
  * has been paid. Move it aside before any work starts. A branch that a worktree is using right now is never touched. */
 async function moveStaleBranchAside(ticketSeq) {
@@ -1325,6 +1372,17 @@ const server = http.createServer(async (req, res) => {
       if (report.ok && !dryRun) {
         const sync = await syncDevWithProduction();
         if (sync.note) report.steps.push({ name: "sync dev with production", ok: sync.ok, detail: sync.note });
+        // Fixes that were not part of this release are now stale: rebuild them on the new production (see rebuildStaleFixes).
+        try {
+          const rebuilt = await rebuildStaleFixes(report.tickets.filter((t) => t.status !== "skipped").map((t) => Number(t.seq)));
+          if (rebuilt.length > 0) {
+            const done = rebuilt.filter((r) => r.ok).map((r) => `TCK-${r.seq}`);
+            const left = rebuilt.filter((r) => !r.ok).map((r) => `TCK-${r.seq} (${String(r.note).slice(0, 120)})`);
+            report.steps.push({ name: "rebuild stale fixes", ok: left.length === 0, detail: `${done.length ? `Re-queued for a rebuild on the new production: ${done.join(", ")}. ` : ""}${left.length ? `Could not re-queue: ${left.join("; ")}` : ""}`.trim() });
+          }
+        } catch (err) {
+          report.steps.push({ name: "rebuild stale fixes", ok: false, detail: `Could not check the other fixes: ${err.message}`.slice(0, 300) });
+        }
       }
       return sendJson(res, 200, {
         ok: report.ok,
@@ -1398,5 +1456,5 @@ if (require.main === module) {
     console.log(`Phase 2: ${PHASE2_ENABLED ? "enabled" : "disabled"}`);
   });
 } else {
-  module.exports = { syncDevWithProduction, moveStaleBranchAside, conflictAdvice, nextMigrationNumber, mergeBranch, revertMerge, runAll };
+  module.exports = { syncDevWithProduction, moveStaleBranchAside, conflictAdvice, nextMigrationNumber, mergeBranch, revertMerge, runAll, rebuildStaleFixes };
 }

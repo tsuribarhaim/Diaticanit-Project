@@ -242,3 +242,31 @@ release branch and that the live version is the one it started from; otherwise t
 since this fix was built" and must be sent back to be built again. Fixes made before this rule (no trailer) are checked by file
 overlap with unreleased changes instead. A fix built on production can conflict on dev (main moved on): the auto-merge leaves it on
 its branch and the admin sees it in the dev test - that never reaches production.
+
+## Keeping fixes from colliding (rules of 2026-10-09)
+
+The run of 2026-10-09 (TCK-117, 118, 119) showed three ways the cycle could get stuck. The rules below close them.
+
+**Dev stays level with production.** Promotion puts each fix on `release/1.0` as a cherry-pick, while dev (`main`) received the same
+fix as a branch merge: same content, different commits. A new fix is built on production, so merging it into dev then conflicted
+with the fixes already promoted. The bridge now merges `release/1.0` into `main` after every successful promotion and before every
+merge to dev (`syncDevWithProduction` in `automation/n8n/bridge/server.js`). It only adds history: nothing on dev is undone, and fixes
+that are on dev but not promoted stay there. It is skipped, with a note, when the dev copy has uncommitted changes.
+
+**Overlap guard.** Tickets that change the same files are not built in parallel. The analyst lists `expectedFiles` for each proposal
+(and the files named in its brief count too, which covers older proposals). A queued ticket waits when it overlaps with (a) a ticket
+queued ahead of it (lower number first) or (b) a ticket whose fix is built but not promoted yet. `lib/overlap.ts` holds the pure
+rule, `lib/automation-overlap.ts` loads the data; the night-run queue API returns `heldBy` for each ticket, the bridge skips those,
+and the dashboard shows "Waiting for TCK-n" with a **Build anyway** link (valid until the ticket is queued again). Files every ticket
+touches with a small separate addition (`lib/locale.ts`) never count.
+
+**Stale fixes are rebuilt automatically.** After a promotion, every fix that is built but not promoted (on its branch, on dev, or
+approved) was built on an older production and could no longer be promoted. The bridge (`rebuildStaleFixes`) undoes its merge on dev
+if it has one, moves the old branch aside (`-reverted-` / `-stale-`), and puts the ticket back in the queue with a note
+(`/api/admin/tickets/unpromoted-fixes`, `/api/admin/tickets/requeue-stale`). A fix built on the current production is left alone.
+The promotion e-mail lists the re-queued tickets as a step.
+
+**Failures are visible.** A rebuild no longer fails at the end because an old branch exists (it is moved aside before the agent
+starts); any error in a ticket leaves a "stopped" card with the reason and a "Put back in the queue" button instead of an invisible
+flag; and every Daffy n8n workflow names "Daffy - Error Alert" as its error workflow, which raises an in-app notification for every
+admin (the bell, and a red line on the dashboard) and tries an e-mail as well.
