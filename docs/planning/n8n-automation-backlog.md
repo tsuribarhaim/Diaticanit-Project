@@ -138,3 +138,31 @@ Logged 2026-10-08 while building the Ticket Automation dashboard (docs/design/ti
   offline"; an e-mail when a scheduled run did not start would close the gap.
 - **Behavioural dependencies** the file-overlap and production-base checks cannot see (a fix that relies on another change in a
   different file) still depend on the type check, the smoke test and the rollback.
+
+## Lessons from the 2026-10-09 run (TCK-117 / 118 / 119) - what is done and what is still open
+
+Done (bridge and dashboard, built 2026-10-09):
+
+- A leftover `auto-fix/tck-N` branch no longer makes a rebuild fail at the end of a run: it is renamed to `-stale-<time>` before
+  any agent work starts (a branch a working copy is using is never touched).
+- Any error in a ticket now leaves a "stopped" card with the reason (and a "Put back in the queue" button), not an invisible flag.
+  It is not retried automatically every night.
+- Dev (main) is merged with production (release/1.0) after every promotion and before every merge to dev. Production reaches
+  dev as history only: nothing on dev is undone.
+- The dashboard shows a ticket the night run is building ("building now") and a failed merge or revert with its reason.
+- The analyst is told the next free migration number and that a new `user_profile` column needs `user_profile_enriched`
+  recreated in the same migration (029, 073).
+
+Still open:
+
+- **Overlap guard (design first).** Tickets that touch the same files must not be built in parallel on the same base (117, 118
+  and 119 all rewrote the onboarding form). The analyst lists the files each ticket will touch; the night run holds a ticket
+  whose files overlap with one that is queued, merged on dev or approved but not promoted, and the dashboard says "waiting for
+  TCK-n". Combine with "Rebuild stale fixes automatically" above.
+- **Additive migrations without pairing.** The agent drafts the SQL, a checker allows only safe statements (add column if not
+  exists, create table if not exists, create index, view refresh), the admin approves in the dashboard, the automation applies
+  it to dev with the merge and to production before the deploy, and records it in the migration history.
+- Publish the Google OAuth app ("In production") so the Gmail token does not expire every 7 days, and add an n8n alert when a
+  send fails.
+- Standing rule for Claude's own changes: nothing is merged or released while an agent run is active or approved fixes await
+  promotion (memory: hold-changes-while-agents-running).

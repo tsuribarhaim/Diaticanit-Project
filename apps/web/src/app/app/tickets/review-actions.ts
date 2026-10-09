@@ -14,6 +14,7 @@ import {
   requestChange,
   requestMerge,
   handledByHand,
+  requeueStopped,
   requestAgentRun,
   requestPromote,
   returnFix,
@@ -132,4 +133,7 @@ export async function setAutomationPausedAction(paused: boolean): Promise<Review
 }
 export async function handledByHandAction(ticketId: string, resolve: boolean, note: string): Promise<ReviewResult> {
   return withAdmin(({ supabase, adminId, locale }) => handledByHand(supabase, adminId, locale, ticketId, resolve, note));
+}
+export async function requeueStoppedAction(ticketId: string): Promise<ReviewResult> {
+  return withAdmin(({ supabase, adminId, locale }) => requeueStopped(supabase, adminId, locale, ticketId));
 }

@@ -7,7 +7,7 @@ import type { createClient } from "@/lib/supabase/server";
 export type StationId = "marked" | "analysis" | "approval" | "fix" | "test" | "promote" | "release";
 export const STATION_ORDER: StationId[] = ["marked", "analysis", "approval", "fix", "test", "promote", "release"];
 
-export type StationSub = "waiting" | "analysing" | "proposal" | "queued" | "questions" | "branch" | "merging" | "dev" | "approved" | "releasing" | "stopped";
+export type StationSub = "waiting" | "analysing" | "proposal" | "queued" | "questions" | "branch" | "merging" | "dev" | "approved" | "releasing" | "stopped" | "building";
 
 const FINAL_STATUSES = ["resolved", "closed", "cancelled", "duplicate"];
 
@@ -19,6 +19,8 @@ export type StationInput = {
   /** The ticket's newest fix row, if any: pending (on its branch), merged (on dev) or approved (for production). */
   fixStatus: "pending" | "merged" | "approved" | null;
   analysisRunning: boolean;
+  /** A night run is going right now (it flags a ticket P when its read-only pass ends and keeps that flag while it builds the fix). */
+  buildRunning: boolean;
   inPromoteRequest: boolean;
   mergeRequested: boolean;
 };
@@ -34,7 +36,9 @@ export function stationOf(input: StationInput): { station: StationId; sub: Stati
     case "Y":
       return { station: "fix", sub: "queued" };
     case "P":
-      return input.hasPendingQuestions ? { station: "fix", sub: "questions" } : null;
+      if (input.hasPendingQuestions) return { station: "fix", sub: "questions" };
+      // No question to answer: either the night run is building the fix right now, or it stopped without leaving one.
+      return input.buildRunning ? { station: "fix", sub: "building" } : { station: "fix", sub: "stopped" };
     case "D":
       return input.fixStatus === "pending" || input.fixStatus === "merged" ? { station: "test", sub: input.mergeRequested ? "merging" : "branch" } : null;
     case "M":
@@ -58,6 +62,8 @@ export type OverviewTicket = {
   summary: string | null;
   ageDays: number;
   hasMigration: boolean;
+  /** Why the last merge or revert for this ticket failed, when it did (shown in red on the row). */
+  issue: string | null;
   /** The pending proposal / questions row, or the fix row, that the panel's buttons act on. */
   proposalId: string | null;
   /** When the admin signed each step off (from the automation_events trail). */
@@ -165,6 +171,25 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
     .gte("completed_at", new Date(now() - 2 * 60 * 1000).toISOString());
   const recent = new Set(((recentRows ?? []) as { kind: string }[]).map((row) => row.kind));
   const analysisRunning = (bridgeOnline && Boolean(health.analysisInProgress)) || requests.some((request) => request.kind === "analyze") || recent.has("analyze");
+  const buildRunning = (bridgeOnline && Boolean(health.runInProgress)) || requests.some((request) => request.kind === "night") || recent.has("night");
+  // The newest finished merge or revert per ticket: a failure is shown on the row, a later success clears it.
+  const issueByTicket = new Map<string, string>();
+  if (ids.length > 0) {
+    const { data: doneRows } = await supabase
+      .from("automation_requests")
+      .select("ticket_id, result, completed_at")
+      .in("kind", ["merge", "revert"])
+      .in("ticket_id", ids)
+      .not("completed_at", "is", null)
+      .order("completed_at", { ascending: false })
+      .limit(200);
+    const seenTickets = new Set<string>();
+    for (const row of (doneRows ?? []) as { ticket_id: string; result: string | null }[]) {
+      if (seenTickets.has(row.ticket_id)) continue;
+      seenTickets.add(row.ticket_id);
+      if (row.result && /(failed|does not exist|not main|could not|nothing was (merged|reverted|changed))/i.test(row.result)) issueByTicket.set(row.ticket_id, row.result);
+    }
+  }
   const mergeTickets = new Set(requests.filter((request) => request.kind === "merge" && request.ticket_id).map((request) => request.ticket_id as string));
   const promoteTickets = new Set<string>();
   for (const request of requests) {
@@ -188,6 +213,7 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
       hasPendingQuestions: Boolean(questions),
       fixStatus: (fix?.status as StationInput["fixStatus"]) ?? null,
       analysisRunning,
+      buildRunning,
       inPromoteRequest: promoteTickets.has(ticket.id),
       mergeRequested: mergeTickets.has(ticket.id),
     });
@@ -207,6 +233,7 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
       ageDays: Math.max(0, Math.floor((nowMs - new Date(ticket.updated_at).getTime()) / 86400000)),
       proposalId: source?.id ?? null,
       signoffs: signoffsByTicket.get(ticket.id) ?? { marked: null, spec: null, production: null },
+      issue: placed.station === "test" && placed.sub === "branch" ? issueByTicket.get(ticket.id) ?? null : null,
       hasMigration: Array.isArray(source?.files) && (source!.files as unknown[]).some((file) => typeof file === "string" && /migrations\//.test(file)),
     });
   }
