@@ -339,6 +339,17 @@ export async function applyProfileChatChangeAction(rawPatch: Record<string, unkn
     } else if (patch.habits) {
       dbPatch.smoking_packs_per_day = null;
     }
+
+    // TCK-119: the chat edits the legacy fields directly, so the matching
+    // lifestyle-habits answers no longer describe them - clear those so the
+    // profile row falls back to the legacy summary instead of contradicting it.
+    if (patch.habits || patch.alcohol_consumption_level !== undefined) {
+      dbPatch.alcohol_weekly_frequency = null;
+    }
+    if (patch.habits || patch.smoking_packs_per_day !== undefined) {
+      dbPatch.smoking_status = null;
+      dbPatch.smoking_cigarettes_range = null;
+    }
   }
 
   if (patch.allergies) {

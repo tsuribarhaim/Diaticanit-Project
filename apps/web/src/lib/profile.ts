@@ -61,6 +61,138 @@ export const medicalConditionOptions = [
   "prefer_not_to_disclose",
 ] as const;
 export const habitOptions = ["smoking_or_vaping", "alcohol", "none"] as const;
+/** TCK-119 lifestyle-habits questionnaire answers (migration 074). */
+export const alcoholWeeklyFrequencyOptions = ["none", "rare", "1_3", "4_7", "over_7"] as const;
+export const smokingStatusOptions = ["never", "former", "social", "daily"] as const;
+export const smokingCigarettesRangeOptions = ["1_5", "6_10", "11_20", "over_20"] as const;
+export const caffeineCupsOptions = ["0", "1_2", "3_4", "5_plus"] as const;
+export type AlcoholWeeklyFrequency = (typeof alcoholWeeklyFrequencyOptions)[number];
+export type SmokingStatus = (typeof smokingStatusOptions)[number];
+export type SmokingCigarettesRange = (typeof smokingCigarettesRangeOptions)[number];
+export type CaffeineCups = (typeof caffeineCupsOptions)[number];
+
+const emptyToUndefined = (value: unknown) => (typeof value === "string" && value.trim() === "" ? undefined : value);
+
+/** The four questionnaire answers on their own - used by the Habits quick-edit action. */
+export const lifestyleHabitsAnswersSchema = z.object({
+  alcohol_weekly_frequency: z.preprocess(emptyToUndefined, z.enum(alcoholWeeklyFrequencyOptions).optional()),
+  smoking_status: z.preprocess(emptyToUndefined, z.enum(smokingStatusOptions).optional()),
+  smoking_cigarettes_range: z.preprocess(emptyToUndefined, z.enum(smokingCigarettesRangeOptions).optional()),
+  caffeine_cups_per_day: z.preprocess(emptyToUndefined, z.enum(caffeineCupsOptions).optional()),
+});
+
+/** DB columns for the questionnaire answers - unanswered is stored as null,
+ * and the cigarettes range only counts for daily smokers. */
+export function lifestyleHabitsColumns(answers: {
+  alcohol_weekly_frequency?: AlcoholWeeklyFrequency;
+  smoking_status?: SmokingStatus;
+  smoking_cigarettes_range?: SmokingCigarettesRange;
+  caffeine_cups_per_day?: CaffeineCups;
+}) {
+  return {
+    alcohol_weekly_frequency: answers.alcohol_weekly_frequency ?? null,
+    smoking_status: answers.smoking_status ?? null,
+    smoking_cigarettes_range: answers.smoking_status === "daily" ? (answers.smoking_cigarettes_range ?? null) : null,
+    caffeine_cups_per_day: answers.caffeine_cups_per_day ?? null,
+  };
+}
+
+const cigarettesRangePacks: Record<SmokingCigarettesRange, number> = {
+  "1_5": 0.15,
+  "6_10": 0.4,
+  "11_20": 0.75,
+  over_20: 1.25,
+};
+
+export type LegacyHabitFields = {
+  habits: Array<(typeof habitOptions)[number]>;
+  alcohol_consumption_level: "low" | "high" | null;
+  smoking_packs_per_day: number | null;
+};
+
+/**
+ * Derives the legacy habits / alcohol_consumption_level / smoking_packs_per_day
+ * from the lifestyle-habits answers, so targets, AI chat and target review keep
+ * reading the old fields unchanged. An unanswered question keeps the previous
+ * values for its part. The 'over_7' -> 'high' split for women follows the
+ * weekly thresholds the old alcohol info popover used (>7 women, >14 men).
+ */
+export function deriveLegacyHabitFields(input: {
+  alcohol: string | null | undefined;
+  smokingStatus: string | null | undefined;
+  cigarettesRange: string | null | undefined;
+  biologicalSex: string | null | undefined;
+  previous: {
+    habits: readonly string[] | null | undefined;
+    alcohol_consumption_level: string | null | undefined;
+    smoking_packs_per_day: number | null | undefined;
+  };
+}): LegacyHabitFields {
+  const previousHabits = (input.previous.habits ?? []).filter((habit): habit is LegacyHabitFields["habits"][number] =>
+    (habitOptions as readonly string[]).includes(habit),
+  );
+  const previousLevel =
+    input.previous.alcohol_consumption_level === "low" || input.previous.alcohol_consumption_level === "high"
+      ? input.previous.alcohol_consumption_level
+      : null;
+  const previousPacks = input.previous.smoking_packs_per_day ?? null;
+
+  const alcohol = (alcoholWeeklyFrequencyOptions as readonly string[]).includes(input.alcohol ?? "")
+    ? (input.alcohol as AlcoholWeeklyFrequency)
+    : null;
+  const smoking = (smokingStatusOptions as readonly string[]).includes(input.smokingStatus ?? "")
+    ? (input.smokingStatus as SmokingStatus)
+    : null;
+  const range = (smokingCigarettesRangeOptions as readonly string[]).includes(input.cigarettesRange ?? "")
+    ? (input.cigarettesRange as SmokingCigarettesRange)
+    : null;
+
+  if (!alcohol && !smoking) {
+    return {
+      habits: [...previousHabits],
+      alcohol_consumption_level: previousLevel,
+      smoking_packs_per_day: previousPacks,
+    };
+  }
+
+  let hasAlcohol: boolean;
+  let level: "low" | "high" | null;
+  if (!alcohol) {
+    hasAlcohol = previousHabits.includes("alcohol");
+    level = previousLevel;
+  } else if (alcohol === "none" || alcohol === "rare") {
+    hasAlcohol = false;
+    level = null;
+  } else if (alcohol === "over_7") {
+    hasAlcohol = true;
+    level = input.biologicalSex === "female" ? "high" : "low";
+  } else {
+    hasAlcohol = true;
+    level = "low";
+  }
+
+  let hasSmoking: boolean;
+  let packs: number | null;
+  if (!smoking) {
+    hasSmoking = previousHabits.includes("smoking_or_vaping");
+    packs = previousPacks;
+  } else if (smoking === "daily") {
+    hasSmoking = true;
+    packs = range ? cigarettesRangePacks[range] : previousPacks != null && previousPacks > 0 ? previousPacks : null;
+  } else {
+    hasSmoking = false;
+    packs = null;
+  }
+
+  const habits: LegacyHabitFields["habits"] = [];
+  if (hasSmoking) habits.push("smoking_or_vaping");
+  if (hasAlcohol) habits.push("alcohol");
+  return {
+    habits: habits.length > 0 ? habits : ["none"],
+    alcohol_consumption_level: level,
+    smoking_packs_per_day: packs,
+  };
+}
 
 const exerciseOtherKeywords = [
   "running",
@@ -834,6 +966,22 @@ export const onboardingProfileSchema = z.object({
       .max(20, "Smoking amount must be at most 400 cigarettes per day.")
       .optional(),
   ),
+  alcohol_weekly_frequency: z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    z.enum(alcoholWeeklyFrequencyOptions, { error: "Select a valid alcohol frequency." }).optional(),
+  ),
+  smoking_status: z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    z.enum(smokingStatusOptions, { error: "Select a valid smoking status." }).optional(),
+  ),
+  smoking_cigarettes_range: z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    z.enum(smokingCigarettesRangeOptions, { error: "Select a valid cigarettes range." }).optional(),
+  ),
+  caffeine_cups_per_day: z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    z.enum(caffeineCupsOptions, { error: "Select a valid caffeine amount." }).optional(),
+  ),
   dietary_preference: z.preprocess(
     (value) => {
       if (typeof value === "string" && value.trim() === "") {
@@ -861,8 +1009,6 @@ export const onboardingProfileSchema = z.object({
   has_allergies: z.boolean(),
   allergies: z.array(z.string().trim().min(1)).default([]),
 }).superRefine((data, ctx) => {
-  const includesAlcohol = data.habits.includes("alcohol");
-  const includesSmoking = data.habits.includes("smoking_or_vaping");
   const includesExerciseOther = data.exercise_modalities.includes("other");
   const includesNoExercise = data.exercise_modalities.includes("none");
   const selectedScheduledModalities = data.exercise_modalities.filter(modalityRequiresSchedule);
@@ -905,22 +1051,6 @@ export const onboardingProfileSchema = z.object({
           message: "Exercise schedule contains an unselected exercise type.",
         });
       }
-    });
-  }
-
-  if (includesAlcohol && data.alcohol_consumption_level == null) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["alcohol_consumption_level"],
-      message: "Select a consumption level.",
-    });
-  }
-
-  if (includesSmoking && (data.smoking_packs_per_day == null || data.smoking_packs_per_day <= 0)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["smoking_packs_per_day"],
-      message: "Enter cigarettes per day.",
     });
   }
 

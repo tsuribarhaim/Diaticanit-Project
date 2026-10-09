@@ -351,6 +351,12 @@ export type ProfileForTargets = {
   exercise_other_activities: Array<{ name: string; days_per_week: number; minutes_per_session: number }>;
   exercise_schedule_by_modality: Record<string, { days_per_week: number; minutes_per_session: number }> | null;
   habits: string[];
+  /** TCK-119 lifestyle-habits answers - only fed to the AI target prompt as
+   * extra profile lines; rule-based targets keep reading `habits`. */
+  alcohol_weekly_frequency?: string | null;
+  smoking_status?: string | null;
+  smoking_cigarettes_range?: string | null;
+  caffeine_cups_per_day?: string | null;
   pregnancy_lactation_status: string | null;
   hot_climate_or_heavy_sweating?: boolean | null;
   /** Optional - only the Targets chat (see targets-chat.ts) actually uses
@@ -383,6 +389,10 @@ export function toProfileForTargets(profile: Record<string, unknown>): ProfileFo
     exercise_schedule_by_modality:
       (profile.exercise_schedule_by_modality as ProfileForTargets["exercise_schedule_by_modality"]) ?? null,
     habits: Array.isArray(profile.habits) ? (profile.habits as string[]) : [],
+    alcohol_weekly_frequency: (profile.alcohol_weekly_frequency as string) ?? null,
+    smoking_status: (profile.smoking_status as string) ?? null,
+    smoking_cigarettes_range: (profile.smoking_cigarettes_range as string) ?? null,
+    caffeine_cups_per_day: (profile.caffeine_cups_per_day as string) ?? null,
     pregnancy_lactation_status: (profile.pregnancy_lactation_status as string) ?? null,
     hot_climate_or_heavy_sweating: Boolean(profile.hot_climate_or_heavy_sweating),
     // Only meaningfully used by the Targets chat's ADDRESSING THE USER

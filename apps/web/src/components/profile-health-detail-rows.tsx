@@ -10,17 +10,24 @@ import {
   updateMedicationsAction,
   type QuickEditState,
 } from "@/app/app/profile/actions";
+import {
+  alcoholWeeklyFrequencyLabels,
+  caffeineCupsLabels,
+  lifestyleHabitLabel,
+  LifestyleHabitsFields,
+  type LifestyleHabitsValues,
+  smokingCigarettesRangeLabels,
+  smokingStatusLabels,
+} from "@/components/lifestyle-habits-fields";
 import { ProfileRow, QuickEditSheet, SheetActions, useQuickEditSuccessEffect } from "@/components/profile-quick-edit";
 import {
   exerciseModalityOptions,
-  habitOptions,
   medicalConditionOptions,
   modalityRequiresSchedule,
   type ExerciseScheduleModalityOption,
 } from "@/lib/profile";
 import { formatExerciseModality, formatHabit, formatMedicalCondition, tr, type AppLocale } from "@/lib/locale";
 
-const CIGARETTES_PER_PACK = 20;
 const SCHEDULE_MODALITIES: ExerciseScheduleModalityOption[] = ["resistance_hypertrophy", "endurance_cardio", "martial_arts"];
 
 const fieldInputClass =
@@ -426,91 +433,55 @@ export function MedicationsRow({
 export function HabitsRow({
   locale,
   habits,
-  alcoholConsumptionLevel,
-  smokingPacksPerDay,
+  biologicalSex,
+  lifestyleHabits,
 }: {
   locale: AppLocale;
   habits: string[];
-  alcoholConsumptionLevel: "low" | "high" | null;
-  smokingPacksPerDay: number | null;
+  biologicalSex: string | null;
+  lifestyleHabits: LifestyleHabitsValues;
 }) {
   const [isOpen, setIsOpen] = useState(false);
-  const [selected, setSelected] = useState<string[]>(habits);
-  const [alcoholLevel, setAlcoholLevel] = useState<"low" | "high" | "">(alcoholConsumptionLevel ?? "");
-  const [cigarettes, setCigarettes] = useState(smokingPacksPerDay != null ? String(Math.round(smokingPacksPerDay * CIGARETTES_PER_PACK)) : "");
+  const [values, setValues] = useState<LifestyleHabitsValues>(lifestyleHabits);
   const [state, formAction] = useActionState(updateHabitsAction, {} as QuickEditState);
 
   useQuickEditSuccessEffect(state, isOpen, setIsOpen);
 
   function openSheet() {
-    setSelected(habits);
-    setAlcoholLevel(alcoholConsumptionLevel ?? "");
-    setCigarettes(smokingPacksPerDay != null ? String(Math.round(smokingPacksPerDay * CIGARETTES_PER_PACK)) : "");
+    setValues(lifestyleHabits);
     setIsOpen(true);
   }
 
-  function toggleHabit(habit: string) {
-    setSelected((previous) => {
-      if (habit === "none") return previous.includes("none") ? [] : ["none"];
-      const withoutNone = previous.filter((entry) => entry !== "none");
-      return withoutNone.includes(habit) ? withoutNone.filter((entry) => entry !== habit) : [...withoutNone, habit];
-    });
+  // TCK-119: once any questionnaire answer exists the row summarizes the
+  // answers; until then it keeps the legacy habits summary.
+  const answeredParts: string[] = [];
+  const alcoholLabel = lifestyleHabitLabel(alcoholWeeklyFrequencyLabels, lifestyleHabits.alcohol_weekly_frequency, locale, biologicalSex);
+  if (alcoholLabel) answeredParts.push(`${tr(locale, "Alcohol: ", "אלכוהול: ")}${alcoholLabel}`);
+  const smokingLabel = lifestyleHabitLabel(smokingStatusLabels, lifestyleHabits.smoking_status, locale, biologicalSex);
+  if (smokingLabel) {
+    const rangeLabel =
+      lifestyleHabits.smoking_status === "daily"
+        ? lifestyleHabitLabel(smokingCigarettesRangeLabels, lifestyleHabits.smoking_cigarettes_range, locale, biologicalSex)
+        : null;
+    answeredParts.push(`${tr(locale, "Smoking: ", "עישון: ")}${smokingLabel}${rangeLabel ? ` (${rangeLabel})` : ""}`);
   }
+  const caffeineLabel = lifestyleHabitLabel(caffeineCupsLabels, lifestyleHabits.caffeine_cups_per_day, locale, biologicalSex);
+  if (caffeineLabel) answeredParts.push(tr(locale, `Caffeine: ${caffeineLabel}/day`, `קפאין: ${caffeineLabel} ביום`));
 
-  const packsPerDay = cigarettes.trim() === "" ? "" : String(Number(cigarettes) / CIGARETTES_PER_PACK);
   const summary =
-    selected.length === 0 || selected.includes("none") ? tr(locale, "No", "לא") : selected.map((habit) => formatHabit(habit, locale)).join(", ");
+    answeredParts.length > 0
+      ? answeredParts.join(" · ")
+      : habits.length === 0 || habits.includes("none")
+        ? tr(locale, "No", "לא")
+        : habits.map((habit) => formatHabit(habit, locale)).join(", ");
 
   return (
     <>
-      <ProfileRow label={tr(locale, "Habits", "הרגלים")} value={summary} onClick={openSheet} />
-      <QuickEditSheet locale={locale} isOpen={isOpen} onClose={() => setIsOpen(false)} title={tr(locale, "Habits", "הרגלים")}>
+      <ProfileRow label={tr(locale, "Lifestyle habits", "הרגלי חיים")} value={summary} onClick={openSheet} />
+      <QuickEditSheet locale={locale} isOpen={isOpen} onClose={() => setIsOpen(false)} title={tr(locale, "Lifestyle habits", "הרגלי חיים")}>
         <form action={formAction} className="space-y-3">
           <input type="hidden" name="preferred_language" value={locale} />
-          <input type="hidden" name="alcohol_consumption_level" value={alcoholLevel} />
-          <input type="hidden" name="smoking_packs_per_day" value={packsPerDay} />
-          <div className="space-y-1.5">
-            {habitOptions.map((habit) => (
-              <label key={habit} className="flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
-                <input
-                  type="checkbox"
-                  name="habits"
-                  value={habit}
-                  checked={selected.includes(habit)}
-                  onChange={() => toggleHabit(habit)}
-                  className="h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-600"
-                />
-                {formatHabit(habit, locale)}
-              </label>
-            ))}
-          </div>
-
-          {selected.includes("alcohol") ? (
-            <div>
-              <p className="mb-1.5 text-xs font-semibold text-slate-600 dark:text-slate-400">{tr(locale, "Alcohol consumption", "צריכת אלכוהול")}</p>
-              <div className="flex gap-2">
-                <button type="button" onClick={() => setAlcoholLevel("low")} className={pillButtonClass(alcoholLevel === "low")}>
-                  {tr(locale, "Low", "נמוכה")}
-                </button>
-                <button type="button" onClick={() => setAlcoholLevel("high")} className={pillButtonClass(alcoholLevel === "high")}>
-                  {tr(locale, "High", "גבוהה")}
-                </button>
-              </div>
-            </div>
-          ) : null}
-
-          {selected.includes("smoking_or_vaping") ? (
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold text-slate-600 dark:text-slate-400">{tr(locale, "Cigarettes per day", "סיגריות ליום")}</label>
-              <input
-                type="number"
-                min={0}
-                value={cigarettes}
-                onChange={(event) => setCigarettes(event.target.value)}
-                className={fieldInputClass}
-              />
-            </div>
-          ) : null}
+          <LifestyleHabitsFields locale={locale} biologicalSex={biologicalSex} values={values} onChange={setValues} hideTitle />
 
           {state.error ? <p className="text-xs text-rose-600 dark:text-rose-400">{state.error}</p> : null}
           <SheetActions locale={locale} onCancel={() => setIsOpen(false)} />

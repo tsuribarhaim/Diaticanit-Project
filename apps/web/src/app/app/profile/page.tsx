@@ -91,7 +91,7 @@ export default async function ProfilePage({
     supabase
       .from("user_profile_enriched")
       .select(
-        "first_name, last_name, date_of_birth, gender, biological_sex, calculated_age_years, bmi, height_cm, weight_kg, activity_level, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, exercise_frequency_days_per_week, exercise_duration_minutes, nutritional_goal, pregnancy_lactation_status, has_medical_conditions, medical_conditions, medical_conditions_details, has_regular_medications, regular_medications_details, hot_climate_or_heavy_sweating, habits, alcohol_consumption_level, smoking_packs_per_day, dietary_preference, additional_information, allergies, updated_at",
+        "first_name, last_name, date_of_birth, gender, biological_sex, calculated_age_years, bmi, height_cm, weight_kg, activity_level, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, exercise_frequency_days_per_week, exercise_duration_minutes, nutritional_goal, pregnancy_lactation_status, has_medical_conditions, medical_conditions, medical_conditions_details, has_regular_medications, regular_medications_details, hot_climate_or_heavy_sweating, habits, alcohol_consumption_level, smoking_packs_per_day, alcohol_weekly_frequency, smoking_status, smoking_cigarettes_range, caffeine_cups_per_day, dietary_preference, additional_information, allergies, updated_at",
       )
       .eq("user_id", user.id)
       .maybeSingle(),
@@ -325,8 +325,13 @@ export default async function ProfilePage({
           <HabitsRow
             locale={locale}
             habits={profile.habits ?? []}
-            alcoholConsumptionLevel={(profile.alcohol_consumption_level as "low" | "high" | null) ?? null}
-            smokingPacksPerDay={profile.smoking_packs_per_day ?? null}
+            biologicalSex={profile.biological_sex ?? null}
+            lifestyleHabits={{
+              alcohol_weekly_frequency: profile.alcohol_weekly_frequency ?? "",
+              smoking_status: profile.smoking_status ?? "",
+              smoking_cigarettes_range: profile.smoking_cigarettes_range ?? "",
+              caffeine_cups_per_day: profile.caffeine_cups_per_day ?? "",
+            }}
           />
           <QuickBooleanFieldRow
             locale={locale}

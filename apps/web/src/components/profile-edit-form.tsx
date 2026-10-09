@@ -9,7 +9,7 @@ import {
   updateProfileAction,
   type ProfileUpdateActionState,
 } from "@/app/app/profile/actions";
-import { AlcoholConsumptionInfo } from "@/components/alcohol-consumption-info";
+import { LifestyleHabitsFields } from "@/components/lifestyle-habits-fields";
 import { LocalizedDateInput } from "@/components/localized-date-input";
 import { useUnsavedPreview } from "@/components/unsaved-preview-context";
 import {
@@ -19,7 +19,6 @@ import {
   type ExerciseScheduleByModality,
   type ExerciseScheduleModalityOption,
   exerciseModalityOptions,
-  habitOptions,
   medicalConditionOptions,
   modalityRequiresSchedule,
   nutritionalGoalOptions,
@@ -52,9 +51,10 @@ type ProfileEditFormProps = {
     has_regular_medications: boolean;
     regular_medications_details: string;
     hot_climate_or_heavy_sweating: boolean;
-    habits: string[];
-    alcohol_consumption_level: "low" | "high" | null;
-    smoking_packs_per_day: number | null;
+    alcohol_weekly_frequency: string | null;
+    smoking_status: string | null;
+    smoking_cigarettes_range: string | null;
+    caffeine_cups_per_day: string | null;
     dietary_preference: (typeof dietaryPreferenceOptions)[number];
     additional_information: string;
     preferred_language: "en" | "he";
@@ -68,7 +68,6 @@ type ProfileEditFormProps = {
 
 const initialState: ProfileUpdateActionState = {};
 const PROFILE_EDIT_DRAFT_KEY = "phc_profile_edit_draft";
-const CIGARETTES_PER_PACK = 20;
 
 const EXERCISE_MODALITY_LABELS: Record<ExerciseScheduleModalityOption, { en: string; he: string }> = {
   resistance_hypertrophy: { en: "Resistance / Hypertrophy", he: "התנגדות / היפרטרופיה" },
@@ -102,9 +101,10 @@ type ProfileEditDraft = {
   has_regular_medications: "yes" | "no";
   regular_medications_details: string;
   hot_climate_or_heavy_sweating: "yes" | "no";
-  habits: string[];
-  alcohol_consumption_level: "low" | "high" | "";
-  smoking_packs_per_day: string;
+  alcohol_weekly_frequency: string;
+  smoking_status: string;
+  smoking_cigarettes_range: string;
+  caffeine_cups_per_day: string;
   dietary_preference: (typeof dietaryPreferenceOptions)[number];
   additional_information: string;
   preferred_language: "en" | "he";
@@ -282,18 +282,6 @@ function computeExerciseSummaryFromDraft(
   };
 }
 
-function packsPerDayToCigarettesString(value: number | null): string {
-  if (value == null || !Number.isFinite(value)) return "";
-  return String(Math.round(value * CIGARETTES_PER_PACK));
-}
-
-function cigarettesPerDayToPacksString(value: string): string {
-  if (value.trim() === "") return "";
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return "";
-  return String(numeric / CIGARETTES_PER_PACK);
-}
-
 function calculateAge(dateOfBirth: string): number | null {
   if (!dateOfBirth) return null;
   const dob = new Date(dateOfBirth);
@@ -361,9 +349,10 @@ function createInitialDraft(defaults: ProfileEditFormProps["defaults"]): Profile
     has_regular_medications: defaults.has_regular_medications ? "yes" : "no",
     regular_medications_details: defaults.regular_medications_details,
     hot_climate_or_heavy_sweating: defaults.hot_climate_or_heavy_sweating ? "yes" : "no",
-    habits: defaults.habits,
-    alcohol_consumption_level: defaults.alcohol_consumption_level ?? "",
-    smoking_packs_per_day: packsPerDayToCigarettesString(defaults.smoking_packs_per_day),
+    alcohol_weekly_frequency: defaults.alcohol_weekly_frequency ?? "",
+    smoking_status: defaults.smoking_status ?? "",
+    smoking_cigarettes_range: defaults.smoking_cigarettes_range ?? "",
+    caffeine_cups_per_day: defaults.caffeine_cups_per_day ?? "",
     dietary_preference: defaults.dietary_preference,
     additional_information: defaults.additional_information,
     preferred_language: defaults.preferred_language,
@@ -520,8 +509,8 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
   };
 
   const toggleListValue = (
-    key: "exercise_modalities" | "habits",
-    value: (typeof exerciseModalityOptions)[number] | (typeof habitOptions)[number],
+    key: "exercise_modalities",
+    value: (typeof exerciseModalityOptions)[number],
   ) => {
     const set = new Set(draft[key]);
     if (set.has(value)) {
@@ -533,26 +522,11 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
       if (key === "exercise_modalities" && value !== "none") {
         set.delete("none");
       }
-      if (key === "habits" && value === "none") {
-        set.clear();
-      }
-      if (key === "habits" && value !== "none") {
-        set.delete("none");
-      }
       set.add(value);
     }
 
     const nextValues = Array.from(set);
     const patch: Partial<ProfileEditDraft> = { [key]: nextValues } as Partial<ProfileEditDraft>;
-
-    if (key === "habits") {
-      if (!nextValues.includes("alcohol")) {
-        patch.alcohol_consumption_level = "";
-      }
-      if (!nextValues.includes("smoking_or_vaping")) {
-        patch.smoking_packs_per_day = "";
-      }
-    }
 
     if (key === "exercise_modalities" && !nextValues.includes("other")) {
       patch.exercise_other_activities = [];
@@ -858,8 +832,6 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
         name="medical_conditions"
         value={draft.has_medical_conditions === "yes" ? draft.medical_conditions.join(",") : ""}
       />
-      <input type="hidden" name="alcohol_consumption_level" value={draft.alcohol_consumption_level} />
-      <input type="hidden" name="smoking_packs_per_day" value={cigarettesPerDayToPacksString(draft.smoking_packs_per_day)} />
 
       <section className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
         <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Step 1 - Identity & Vital Statistics", "שלב 1 - זהות ומדדים")}</h2>
@@ -1178,58 +1150,17 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
             {renderFieldError("hot_climate_or_heavy_sweating")}
           </div>
 
-          <div data-field="habits">
-            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Habits", "הרגלים")}</span>
-            <div className="flex flex-wrap gap-2">
-              {habitOptions.map((value) => {
-                const label = value === "smoking_or_vaping" ? tr(locale, "Smoking", "עישון") : value === "alcohol" ? tr(locale, "Regular Alcohol", "אלכוהול קבוע") : tr(locale, "None", "ללא");
-                const selected = draft.habits.includes(value);
-                return <button key={value} type="button" onClick={() => toggleListValue("habits", value)} className={`rounded-full border px-3 py-1.5 text-xs ${selected ? "border-slate-900 bg-slate-900 text-white dark:bg-slate-600 dark:border-slate-600" : "border-slate-300 bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700"}`}>{label}</button>;
-              })}
-            </div>
-            {draft.habits.includes("alcohol") ? (
-              <div className="mt-2" data-field="alcohol_consumption_level">
-                <span className="mb-1 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
-                  {tr(locale, "Alcohol consumption", "צריכת אלכוהול")}
-                  <AlcoholConsumptionInfo locale={locale} />
-                </span>
-                <div className="flex gap-3 text-sm">
-                  <label
-                    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.alcohol_consumption_level === "low" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}
-                  >
-                    <input
-                      className="h-4 w-4 accent-teal-700"
-                      type="radio"
-                      checked={draft.alcohol_consumption_level === "low"}
-                      onChange={() => updateDraft({ alcohol_consumption_level: "low" })}
-                    />{" "}
-                    {tr(locale, "Low consumption", "צריכה נמוכה")}
-                  </label>
-                  <label
-                    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 font-medium ${draft.alcohol_consumption_level === "high" ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}
-                  >
-                    <input
-                      className="h-4 w-4 accent-teal-700"
-                      type="radio"
-                      checked={draft.alcohol_consumption_level === "high"}
-                      onChange={() => updateDraft({ alcohol_consumption_level: "high" })}
-                    />{" "}
-                    {tr(locale, "High consumption", "צריכה גבוהה")}
-                  </label>
-                </div>
-                {renderFieldError("alcohol_consumption_level")}
-              </div>
-            ) : null}
-            {draft.habits.includes("smoking_or_vaping") ? (
-              <label className="mt-2 block" data-field="smoking_packs_per_day">
-                <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Smoking amount (cigarettes/day)", "כמות עישון (סיגריות ביום)")}</span>
-                <input type="number" min={0} step="1" value={draft.smoking_packs_per_day} onChange={(event) => updateDraft({ smoking_packs_per_day: event.target.value })} className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("smoking_packs_per_day")}`} />
-                {renderFieldError("smoking_packs_per_day")}
-              </label>
-            ) : null}
-            {draft.habits.map((value) => <input key={value} type="hidden" name="habits" value={value} />)}
-            {renderFieldError("habits")}
-          </div>
+          <LifestyleHabitsFields
+            locale={locale}
+            biologicalSex={draft.biological_sex}
+            values={{
+              alcohol_weekly_frequency: draft.alcohol_weekly_frequency,
+              smoking_status: draft.smoking_status,
+              smoking_cigarettes_range: draft.smoking_cigarettes_range,
+              caffeine_cups_per_day: draft.caffeine_cups_per_day,
+            }}
+            onChange={(next) => updateDraft(next)}
+          />
         </div>
       </section>
 
