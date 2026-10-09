@@ -154,6 +154,56 @@ function hasAdminDecisions(ticket) {
   return /Approved spec \(|Product decision \(admin\)|Product decisions \(admin\)|Admin answers to the questions/.test(ticket.description || "");
 }
 
+// ---- Fix bundles (docs/design/auto-ticket-handling.md): tickets that change the same files are built as ONE job -------------
+/** The tickets a job covers: a bundle's members, or just the ticket itself. */
+const membersOf = (job) => job.members || [job];
+/** A bundle gets the budget and time of every ticket in it. */
+const scaled = (value, job) => String((Number(value) * membersOf(job).length).toFixed(2));
+const scaledMs = (value, job) => value * membersOf(job).length;
+
+/** The prompt paragraph that tells an agent it is building a bundle. */
+function bundleLines(job) {
+  if (!job.members) return [];
+  const seqs = job.members.map((m) => `TCK-${m.ticket_seq}`).join(", ");
+  return [
+    "",
+    `THIS JOB COVERS ${job.members.length} TICKETS BUILT TOGETHER AS ONE FIX (Bundle ${job.bundleLetter || ""}: ${seqs}). They change the same files, so implement ALL of them in one coherent change.`,
+    "The Description above holds each ticket under its own heading (=== TCK-n ... ===). Every ticket must be done; none may be dropped or merged away. If one of them cannot be done safely, say so and name it.",
+    "Start every entry of testSteps with the ticket it belongs to, for example 'TCK-203: open the onboarding page and check the heading'.",
+  ];
+}
+
+/** One job out of the tickets of a bundle: the lowest ticket leads (its number names the branch), the others ride along. */
+function bundleJob(tickets) {
+  const members = [...tickets].sort((a, b) => a.ticket_seq - b.ticket_seq);
+  const lead = members[0];
+  return {
+    ...lead,
+    members,
+    bundleLetter: lead.bundleLetter || "",
+    commitLabel: members.map((m) => `TCK-${m.ticket_seq}`).join(" + "),
+    subject: members.length > 1 ? `${lead.subject} (+ ${members.slice(1).map((m) => `TCK-${m.ticket_seq} ${m.subject}`).join("; ")})`.slice(0, 220) : lead.subject,
+    description: members.map((m) => `=== TCK-${m.ticket_seq}: ${m.subject} ===\nType: ${m.ticket_type} | Area: ${m.area} | Priority: ${m.priority}\n${m.description}`).join("\n\n"),
+  };
+}
+
+/** The night-run queue as jobs: a bundle is one job, a ticket that has to wait (or whose bundle has to wait) is held. */
+function groupQueue(queue) {
+  const heldBundles = new Set(queue.filter((t) => t.bundle_id && Array.isArray(t.heldBy) && t.heldBy.length > 0).map((t) => t.bundle_id));
+  const held = [];
+  const jobs = [];
+  const byBundle = new Map();
+  for (const ticket of queue) {
+    const wait = (Array.isArray(ticket.heldBy) && ticket.heldBy.length > 0) || (ticket.bundle_id && heldBundles.has(ticket.bundle_id));
+    if (wait) { held.push(ticket); continue; }
+    if (ticket.bundle_id) {
+      if (!byBundle.has(ticket.bundle_id)) { byBundle.set(ticket.bundle_id, []); jobs.push({ bundleKey: ticket.bundle_id }); }
+      byBundle.get(ticket.bundle_id).push(ticket);
+    } else jobs.push(ticket);
+  }
+  return { jobs: jobs.map((job) => (job.bundleKey ? (byBundle.get(job.bundleKey).length > 1 ? bundleJob(byBundle.get(job.bundleKey)) : byBundle.get(job.bundleKey)[0]) : job)), held };
+}
+
 function buildPhase1Prompt(ticket) {
   const lines = [
     "You are doing a READ-ONLY investigation of a support ticket for the Daffy app (this repository).",
@@ -162,6 +212,7 @@ function buildPhase1Prompt(ticket) {
     `Ticket TCK-${ticket.ticket_seq}: "${ticket.subject}"`,
     `Type: ${ticket.ticket_type} | Area: ${ticket.area} | Priority: ${ticket.priority}`,
     `Description: ${ticket.description}`,
+    ...bundleLines(ticket),
     "",
   ];
   if (hasAdminDecisions(ticket)) {
@@ -233,6 +284,7 @@ function buildPhase2Prompt(ticket, phase1Output, port, shotsDir) {
     `Ticket TCK-${ticket.ticket_seq}: "${ticket.subject}"`,
     `Type: ${ticket.ticket_type} | Area: ${ticket.area} | Priority: ${ticket.priority}`,
     `Description: ${ticket.description}`,
+    ...bundleLines(ticket),
     "",
     "Earlier read-only diagnosis (re-verify this yourself, don't just trust it):",
     phase1Output.diagnosis,
@@ -408,10 +460,14 @@ async function rebuildStaleFixes(promotedSeqs) {
   if (res.status === 404) return results;
   if (!res.ok) throw new Error(`HTTP ${res.status} - ${(await res.text()).slice(0, 200)}`);
   const { fixes } = await res.json();
+  const handled = new Set();
   for (const fix of fixes || []) {
-    const seq = Number(fix.ticketSeq);
-    if (promotedSeqs.includes(seq)) continue;
-    const branch = `auto-fix/tck-${seq}`;
+    // A bundle has one branch (its lowest ticket's) shared by all its tickets' fix rows: handle each branch once, and the
+    // re-queue endpoint puts every ticket of the bundle back.
+    const branch = fix.branch || `auto-fix/tck-${Number(fix.ticketSeq)}`;
+    const seq = Number((/tck-(\d+)$/.exec(branch) || [])[1] || fix.ticketSeq);
+    if (promotedSeqs.includes(Number(fix.ticketSeq)) || promotedSeqs.includes(seq) || handled.has(branch)) continue;
+    handled.add(branch);
     try {
       const exists = await runGit(["rev-parse", "--verify", "--quiet", branch], REPO_PATH).catch(() => "");
       if (exists) {
@@ -925,7 +981,7 @@ async function verifyAndCommitFix(worktreeDir, ticket, phase2Output) {
     [
       "commit",
       "-m",
-      `fix: TCK-${ticket.ticket_seq} - ${ticket.subject}\n\nAuto-fixed by the Auto Ticket Handling bridge (Phase 2).\nNever pushed; review before merging.\nBuilt-on-production: ${builtOn}\n\nCo-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>`,
+      `fix: ${ticket.commitLabel || `TCK-${ticket.ticket_seq}`} - ${ticket.subject}\n\nAuto-fixed by the Auto Ticket Handling bridge (Phase 2).\nNever pushed; review before merging.\nBuilt-on-production: ${builtOn}\n\nCo-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>`,
     ],
     worktreeDir,
   );
@@ -988,15 +1044,15 @@ async function processTicket(ticket, budgetTracker) {
       prompt: buildPhase1Prompt(ticket) + lessonsBlock("night"),
       tools: "Read,Grep,Glob",
       restricted: true,
-      budget: MAX_BUDGET_USD,
-      timeoutMs: CLAUDE_TIMEOUT_MS,
+      budget: scaled(MAX_BUDGET_USD, ticket),
+      timeoutMs: scaledMs(CLAUDE_TIMEOUT_MS, ticket),
       schema: PHASE1_RESULT_SCHEMA,
     });
     budgetTracker.spentUsd += phase1.costUsd;
-    await reportResult(ticket.id, "P", formatPhase1Notes(phase1.output), "in_progress");
+    for (const member of membersOf(ticket)) await reportResult(member.id, "P", formatPhase1Notes(phase1.output), "in_progress");
     if (phase1.output.classification !== "safe_code_fix") {
       // What the admin sees on the review screen: why the run stopped and what it needs answered.
-      await reportProposal(ticket.id, "questions", {
+      for (const member of membersOf(ticket)) await reportProposal(member.id, "questions", {
         why: [phase1.output.diagnosis, phase1.output.proposedFix ? `Proposed fix if approved:\n${phase1.output.proposedFix}` : ""].filter(Boolean).join("\n\n"),
         questions: phase1.output.questions || [],
       });
@@ -1007,6 +1063,7 @@ async function processTicket(ticket, budgetTracker) {
       ticketSeq: ticket.ticket_seq,
       subject: ticket.subject,
       phase1Classification: phase1.output.classification,
+      ...(ticket.members ? { bundle: ticket.members.map((m) => m.ticket_seq) } : {}),
     };
 
     if (!PHASE2_ENABLED || phase1.output.classification !== "safe_code_fix") {
@@ -1028,8 +1085,8 @@ async function processTicket(ticket, budgetTracker) {
       allowedTools: "Edit Write Bash(npx tsc*) Bash(npx eslint*) Bash(node *)",
       disallowedTools: "Bash(git *) Bash(npm *) Bash(yarn *) Bash(pnpm *) Bash(rm *) Bash(rmdir *) Bash(del *) Bash(taskkill*) Bash(npx next*)",
       restricted: true,
-      budget: PHASE2_MAX_BUDGET_USD,
-      timeoutMs: PHASE2_TIMEOUT_MS,
+      budget: scaled(PHASE2_MAX_BUDGET_USD, ticket),
+      timeoutMs: scaledMs(PHASE2_TIMEOUT_MS, ticket),
       schema: PHASE2_RESULT_SCHEMA,
     });
     budgetTracker.spentUsd += phase2.costUsd;
@@ -1045,10 +1102,11 @@ async function processTicket(ticket, budgetTracker) {
     const mergeResult = commitResult.committed ? await autoMergeToDev(ticket.ticket_seq, commitResult.files || []) : { merged: false, reason: null };
     const finalAutoHandle = commitResult.committed ? (mergeResult.merged ? "M" : "D") : "P";
     const finalStatus = commitResult.committed ? "fixed" : "in_progress";
-    await reportResult(ticket.id, finalAutoHandle, formatPhase2Notes(phase2.output, commitResult), finalStatus);
+    for (const member of membersOf(ticket)) await reportResult(member.id, finalAutoHandle, formatPhase2Notes(phase2.output, commitResult), finalStatus);
     if (commitResult.committed) {
-      await reportProposal(ticket.id, "fix", {
+      for (const member of membersOf(ticket)) await reportProposal(member.id, "fix", {
         summary: phase2.output.fixSummary || phase2.output.diagnosis,
+        bundle: ticket.members ? { letter: ticket.bundleLetter, seqs: ticket.members.map((m) => m.ticket_seq) } : undefined,
         branch: commitResult.branch,
         files: commitResult.files || [],
         checks: [
@@ -1062,7 +1120,7 @@ async function processTicket(ticket, budgetTracker) {
         shots,
       }, { status: mergeResult.merged ? "merged" : undefined });
     } else {
-      await reportProposal(ticket.id, "questions", {
+      for (const member of membersOf(ticket)) await reportProposal(member.id, "questions", {
         why: [phase2.output.diagnosis, commitResult.reason ? `Not committed: ${commitResult.reason}` : ""].filter(Boolean).join("\n\n"),
         questions: [],
       });
@@ -1082,8 +1140,10 @@ async function processTicket(ticket, budgetTracker) {
     // The ticket was flagged P when its read-only pass finished, so after a failure it would sit there with nothing for the
     // dashboard to show. Say so on the ticket instead: a "stopped" card with the reason, which the admin can put back in the queue
     // with one click. It is deliberately not retried automatically every night: a broken ticket would cost money each time.
-    await reportProposal(ticket.id, "questions", { why: `The night run hit an error and stopped: ${err.message}`, questions: [] }).catch(() => {});
-    await reportResult(ticket.id, "P", `Night run error: ${err.message}`, "in_progress").catch(() => {});
+    for (const member of membersOf(ticket)) {
+      await reportProposal(member.id, "questions", { why: `The night run hit an error and stopped: ${err.message}`, questions: [] }).catch(() => {});
+      await reportResult(member.id, "P", `Night run error: ${err.message}`, "in_progress").catch(() => {});
+    }
     return { ticketId: ticket.id, ticketSeq: ticket.ticket_seq, subject: ticket.subject, outcome: "failed", error: err.message };
   } finally {
     if (devServerProc) await stopDevServer(devServerProc);
@@ -1225,8 +1285,8 @@ async function runAll() {
   const queue = await fetchQueue();
   // A ticket that changes the same files as another ticket (queued ahead of it, or with a fix not promoted yet) waits: built in
   // parallel on the same base the two would conflict (TCK-117/118/119). The app decides; "Build anyway" on the dashboard lifts it.
-  const held = queue.filter((ticket) => Array.isArray(ticket.heldBy) && ticket.heldBy.length > 0);
-  const tickets = queue.filter((ticket) => !held.includes(ticket));
+  // A bundle is one job (all its tickets together); a bundle that has to wait is held as a whole.
+  const { jobs: tickets, held } = groupQueue(queue);
   for (const ticket of held) console.log(`TCK-${ticket.ticket_seq} is held: waits for ${ticket.heldBy.map((b) => `TCK-${b.seq} (${b.why})`).join(", ")}`);
   if (tickets.length > 0) await refreshLessons();
   if (tickets.length > 0 && env.SEED_SOURCE_EMAIL) {
@@ -1374,7 +1434,7 @@ const server = http.createServer(async (req, res) => {
         if (sync.note) report.steps.push({ name: "sync dev with production", ok: sync.ok, detail: sync.note });
         // Fixes that were not part of this release are now stale: rebuild them on the new production (see rebuildStaleFixes).
         try {
-          const rebuilt = await rebuildStaleFixes(report.tickets.filter((t) => t.status !== "skipped").map((t) => Number(t.seq)));
+          const rebuilt = await rebuildStaleFixes(report.tickets.filter((t) => t.status !== "skipped").flatMap((t) => [Number(t.seq), ...(t.alsoSeqs || []).map(Number)]));
           if (rebuilt.length > 0) {
             const done = rebuilt.filter((r) => r.ok).map((r) => `TCK-${r.seq}`);
             const left = rebuilt.filter((r) => !r.ok).map((r) => `TCK-${r.seq} (${String(r.note).slice(0, 120)})`);
@@ -1456,5 +1516,5 @@ if (require.main === module) {
     console.log(`Phase 2: ${PHASE2_ENABLED ? "enabled" : "disabled"}`);
   });
 } else {
-  module.exports = { syncDevWithProduction, moveStaleBranchAside, conflictAdvice, nextMigrationNumber, mergeBranch, revertMerge, runAll, rebuildStaleFixes };
+  module.exports = { syncDevWithProduction, moveStaleBranchAside, conflictAdvice, nextMigrationNumber, mergeBranch, revertMerge, runAll, rebuildStaleFixes, groupQueue, bundleJob, bundleLines };
 }

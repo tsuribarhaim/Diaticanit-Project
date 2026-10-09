@@ -16,6 +16,10 @@ import {
   handledByHand,
   requeueStopped,
   overrideOverlap,
+  approveSuggestedGroup,
+  approveBundleMembers,
+  splitBundle,
+  bundleTickets,
   requestAgentRun,
   requestPromote,
   returnFix,
@@ -140,4 +144,19 @@ export async function requeueStoppedAction(ticketId: string): Promise<ReviewResu
 }
 export async function overrideOverlapAction(ticketId: string): Promise<ReviewResult> {
   return withAdmin(({ supabase, adminId, locale }) => overrideOverlap(supabase, adminId, locale, ticketId));
+}
+export async function approveSuggestedGroupAction(ticketIds: string[], asBundle: boolean): Promise<ReviewResult> {
+  return withAdmin(({ supabase, adminId, locale }) => approveSuggestedGroup(supabase, adminId, locale, ticketIds, asBundle));
+}
+
+export async function approveBundleAction(bundleId: string): Promise<ReviewResult> {
+  return withAdmin(({ supabase, adminId, locale }) => approveBundleMembers(supabase, adminId, locale, bundleId));
+}
+
+export async function splitBundleAction(bundleId: string): Promise<ReviewResult> {
+  return withAdmin(({ supabase, adminId, locale }) => splitBundle(supabase, adminId, locale, bundleId));
+}
+
+export async function bundleTicketsAction(ticketIds: string[]): Promise<ReviewResult> {
+  return withAdmin(({ supabase, adminId, locale }) => bundleTickets(supabase, adminId, locale, ticketIds));
 }

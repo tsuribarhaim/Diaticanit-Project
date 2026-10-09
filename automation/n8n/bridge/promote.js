@@ -42,6 +42,9 @@ function nonAdditive(sql) {
   return hit ? (text.match(hit) || [hit.source])[0].trim() : null;
 }
 
+/** "TCK-203" for a ticket, "TCK-203 + TCK-204 (Bundle A)" for a bundle (one fix, several tickets). */
+const labelOf = (t) => `TCK-${t.seq}${(t.alsoSeqs || []).map((seq) => ` + TCK-${seq}`).join("")}${t.bundleLetter ? ` (Bundle ${t.bundleLetter})` : ""}`;
+
 async function runPromote({ tickets, dryRun = false, cfg, appCall }) {
   const sp = cfg.stagingPath;
   const web = path.join(sp, cfg.webSubdir);
@@ -111,7 +114,7 @@ async function runPromote({ tickets, dryRun = false, cfg, appCall }) {
 
     // ---- cherry-pick every approved ticket's fix commit
     for (const t of tickets) {
-      const entry = { seq: t.ticketSeq, subject: t.subject, ticketId: t.ticketId, proposalId: t.proposalId, commit: null, status: "skipped", reason: "" };
+      const entry = { seq: t.ticketSeq, subject: t.subject, ticketId: t.ticketId, proposalId: t.proposalId, commit: null, status: "skipped", reason: "", bundleLetter: t.bundleLetter || null, alsoTickets: t.alsoTickets || [], alsoSeqs: (t.alsoTickets || []).map((a) => a.ticketSeq) };
       report.tickets.push(entry);
       const ref = `auto-fix/tck-${t.ticketSeq}`;
       const tip = await git(["rev-parse", "--verify", "--quiet", ref], sp).catch(() => "");
@@ -149,7 +152,7 @@ async function runPromote({ tickets, dryRun = false, cfg, appCall }) {
       entry.status = "picked";
     }
     const picked = report.tickets.filter((t) => t.status === "picked");
-    step("Pick the approved fixes", picked.length > 0, report.tickets.map((t) => `TCK-${t.seq}: ${t.status === "picked" ? "ok" : `skipped - ${t.reason}`}`).join("; "));
+    step("Pick the approved fixes", picked.length > 0, report.tickets.map((t) => `${labelOf(t)}: ${t.status === "picked" ? "ok" : `skipped - ${t.reason}`}`).join("; "));
     if (picked.length === 0) throw new Error("None of the approved fixes could be applied to release/1.0.");
 
     // ---- migrations
@@ -231,8 +234,8 @@ async function runPromote({ tickets, dryRun = false, cfg, appCall }) {
     await git(["tag", tag], sp);
     const push = await exec("git", ["push", "origin", "release/1.0", tag], { cwd: sp, timeout: 300000 });
     step("Push release/1.0 and the tag to GitHub", push.ok, push.ok ? tag : push.output.slice(-300));
-    const released = await appCall("/api/admin/tickets/mark-released", { version: report.version, tickets: picked.map((t) => ({ ticketId: t.ticketId, proposalId: t.proposalId })) }).catch((err) => ({ error: err.message }));
-    step("Mark the tickets resolved", !released.error, released.error || `${released.resolved ?? picked.length} resolved`);
+    const released = await appCall("/api/admin/tickets/mark-released", { version: report.version, tickets: picked.flatMap((t) => [{ ticketId: t.ticketId, proposalId: t.proposalId }, ...(t.alsoTickets || []).map((a) => ({ ticketId: a.ticketId, proposalId: a.proposalId }))]) }).catch((err) => ({ error: err.message }));
+    step("Mark the tickets resolved", !released.error, released.error || `${released.resolved ?? picked.length} ticket${(released.resolved ?? picked.length) === 1 ? "" : "s"} resolved`);
     for (const t of picked) t.status = released.error ? "deployed" : "released";
     report.ok = true;
     return report;

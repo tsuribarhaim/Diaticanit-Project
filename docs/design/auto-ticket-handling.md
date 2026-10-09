@@ -270,3 +270,39 @@ The promotion e-mail lists the re-queued tickets as a step.
 starts); any error in a ticket leaves a "stopped" card with the reason and a "Put back in the queue" button instead of an invisible
 flag; and every Daffy n8n workflow names "Daffy - Error Alert" as its error workflow, which raises an in-app notification for every
 admin (the bell, and a red line on the dashboard) and tries an e-mail as well.
+
+## Fix bundles (2026-10-09)
+
+Tickets whose fixes change the same files are built, tested and promoted as ONE fix, so they never conflict with each other and do
+not wait a night each for the one before to be promoted (the overlap guard above still staggers tickets that are approved
+separately). Mockup and the decisions: the "Fix bundles" mockup of 2026-10-09; the numbers below are the ones agreed.
+
+**What a bundle is.** A small group (2 to 4 tickets, `MAX_BUNDLE_SIZE` in `lib/overlap.ts`) with a letter (A, B, ...). The group is
+`tickets.bundle_id` (migration 075, table `automation_bundles`). Several bundles can exist at once, next to standalone tickets.
+The night run builds the whole group as ONE job on ONE branch, named after its lowest ticket (the lead), with ONE commit
+`fix: TCK-203 + TCK-204 - ...`; every ticket keeps its own fix row pointing at that branch, so the per-ticket screens keep working.
+
+**Who proposes it.** The code, not the AI: after the analyst's proposals are in, waiting proposals that name the same files
+(`expectedFiles` and the paths in the brief; `lib/overlap.ts` `suggestBundles`, transitive, `lib/locale.ts` ignored, cut into groups
+of at most 4) are shown as suggestion cards, in place of the loose tickets, on the dashboard's approval station and on Review &
+approvals. The admin chooses **Approve as one bundle (recommended)** or **Approve separately** (each ticket approved with the
+analyst's recommended picks; separately they are built one after another by the overlap guard). A ticket's own choices can still be
+made by opening its proposal first.
+
+**Life of a bundle.** Approved: every member is queued (`Y`); the bundle is built only when ALL members are queued (a member that
+is not (still waiting for approval, stopped) holds the others) and when none of them has to wait for another ticket's fix.
+Built: one fix per member, flags `D`; **Merge to dev** is one request on the lead (the branch), and its completion puts every
+member on dev (`M`). **Approve for production**, **Withdraw**, **Send back**, **Return** act on every member (all or nothing; a
+member that is not on dev stops the approval). **Promote**: the bundle is ONE item (the lead's commit) carrying the other tickets
+(`alsoTickets`), and every ticket of it is resolved with it (`mark-released`, which then frees the tickets and the letter).
+A question the night run asks of a bundle is asked of every member; one answer puts them all back.
+
+**Split.** Before the bundle is built it simply becomes separate tickets. After it is built, its merge on dev is undone, the old
+branch is set aside, the fix rows are marked returned and every ticket is queued on its own (the overlap guard then staggers them).
+A member cannot be taken out of a built bundle one by one: split it first. A member whose proposal is rejected or sent back for
+changes leaves its bundle (the others go on; a bundle of one is dissolved).
+
+**After a promotion**, fixes that are not promoted are rebuilt automatically (see above): a bundle's shared branch is handled once
+and all its tickets are re-queued together.
+
+**Cost.** A bundle gets the budget and the time limit of its tickets added together (`scaled` / `scaledMs` in the bridge).

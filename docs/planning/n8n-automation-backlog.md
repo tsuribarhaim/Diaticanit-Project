@@ -156,6 +156,12 @@ Done (bridge and dashboard, built 2026-10-09):
 Built later the same day (see docs/design/auto-ticket-handling.md, "Keeping fixes from colliding"): the overlap guard, the
 automatic rebuild of stale fixes after a promotion, and the alert when an automation step fails.
 
+Built the same day: **fix bundles** (docs/design/auto-ticket-handling.md, "Fix bundles"): tickets that change the same files are built,
+tested and promoted as one fix; suggested by the code, approved as a bundle or separately, split when needed.
+Not in the first version: adding a ticket to an existing bundle by hand ("Edit bundle"; today a bundle is created from the
+analyst's suggestion and a member can only leave before the bundle is built or by splitting it), and a bundle across tickets
+that were analysed on different days.
+
 Still open:
 
 - **Overlap guard (design first).** Tickets that touch the same files must not be built in parallel on the same base (117, 118

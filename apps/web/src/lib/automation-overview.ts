@@ -1,4 +1,5 @@
 import { loadOverlapBlockers } from "@/lib/automation-overlap";
+import { collectFiles, filesFromText, sharedFiles, suggestBundles } from "@/lib/overlap";
 import type { createClient } from "@/lib/supabase/server";
 
 /** What the Ticket Automation dashboard shows (see docs/design/ticket-automation-dashboard.md): which station of the
@@ -54,6 +55,8 @@ export function stationOf(input: StationInput): { station: StationId; sub: Stati
   }
 }
 
+export type BundleSuggestion = { ids: string[]; seqs: number[]; files: string[]; subjects: string[] };
+
 export type OverviewTicket = {
   id: string;
   seq: number;
@@ -68,7 +71,9 @@ export type OverviewTicket = {
   /** Why the last merge or revert for this ticket failed, when it did (shown in red on the row). */
   issue: string | null;
   /** For a held ticket: the tickets it waits for and whether their fix exists ("fix") or they are queued ahead of it ("queue"). */
-  heldBy: { seq: number; why: "fix" | "queue" }[];
+  heldBy: { seq: number; why: "fix" | "queue" | "bundle" }[];
+  /** The bundle this ticket is part of (built, tested and promoted as one fix with the other tickets of it), or null. */
+  bundle: { id: string; letter: string; seqs: number[] } | null;
   /** The pending proposal / questions row, or the fix row, that the panel's buttons act on. */
   proposalId: string | null;
   /** When the admin signed each step off (from the automation_events trail). */
@@ -101,7 +106,12 @@ export type AutomationOverview = {
   /** The last few promotions, newest first (full history is on its own page). */
   recentReleases: RecentRelease[];
   tickets: OverviewTicket[];
+  /** Fixes at each station: a bundle counts once, however many tickets it has. */
   counts: Record<StationId, number>;
+  /** Tickets at each station (a bundle of three counts three here). */
+  ticketCounts: Record<StationId, number>;
+  /** Groups of tickets waiting for approval that change the same files: the analyst suggests building each as one fix. */
+  suggestions: BundleSuggestion[];
   /** Tickets waiting on the admin: proposals, questions, fixes to test, fixes to promote. */
   needsYou: number;
   total: number;
@@ -109,8 +119,8 @@ export type AutomationOverview = {
 
 type Client = Awaited<ReturnType<typeof createClient>>;
 
-type RowTicket = { id: string; ticket_seq: number; subject: string; status: string; auto_handle: string | null; updated_at: string };
-type RowProposal = { questions: unknown; id: string; ticket_id: string; kind: string; status: string; summary: string | null; why: string | null; pairing: boolean | null; files: unknown };
+type RowTicket = { id: string; ticket_seq: number; subject: string; status: string; auto_handle: string | null; updated_at: string; bundle_id: string | null };
+type RowProposal = { brief: string | null; expected: unknown; questions: unknown; id: string; ticket_id: string; kind: string; status: string; summary: string | null; why: string | null; pairing: boolean | null; files: unknown };
 type RowRequest = { kind: string; ticket_id: string | null; picked_at: string | null; details: { tickets?: { ticketId?: string }[] } | null };
 
 // Wrapped so the clock can be read in one place (the render must not call Date.now directly).
@@ -119,7 +129,7 @@ const now = () => Date.now();
 export async function getAutomationOverview(supabase: Client): Promise<AutomationOverview> {
   const { data: ticketRows } = await supabase
     .from("tickets")
-    .select("id, ticket_seq, subject, status, auto_handle, updated_at")
+    .select("id, ticket_seq, subject, status, auto_handle, updated_at, bundle_id")
     .not("auto_handle", "is", null)
     .not("status", "in", `(${FINAL_STATUSES.join(",")})`)
     .order("ticket_seq", { ascending: false })
@@ -131,7 +141,7 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
   if (ids.length > 0) {
     const { data } = await supabase
       .from("ticket_proposals")
-      .select("id, ticket_id, kind, status, summary:payload->summary, why:payload->why, pairing:payload->needsPairing, files:payload->files, questions:payload->questions")
+      .select("id, ticket_id, kind, status, summary:payload->summary, why:payload->why, pairing:payload->needsPairing, files:payload->files, questions:payload->questions, brief:payload->>brief, expected:payload->expectedFiles")
       .in("ticket_id", ids)
       .in("status", ["pending", "merged", "approved"]);
     for (const row of (data ?? []) as unknown as RowProposal[]) {
@@ -204,7 +214,15 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
     for (const item of request.details?.tickets ?? []) if (item.ticketId) promoteTickets.add(item.ticketId);
   }
 
-  const blockersById = await loadOverlapBlockers(supabase).catch(() => new Map<string, { seq: number; why: "fix" | "queue" }[]>());
+  const bundleIds = [...new Set(tickets.map((ticket) => ticket.bundle_id).filter((id): id is string => Boolean(id)))];
+  const letterById = new Map<string, string>();
+  if (bundleIds.length > 0) {
+    const { data: bundleRows } = await supabase.from("automation_bundles").select("id, letter").in("id", bundleIds);
+    for (const row of (bundleRows ?? []) as { id: string; letter: string }[]) letterById.set(row.id, row.letter);
+  }
+  const seqsByBundle = new Map<string, number[]>();
+  for (const ticket of tickets) if (ticket.bundle_id) seqsByBundle.set(ticket.bundle_id, [...(seqsByBundle.get(ticket.bundle_id) ?? []), ticket.ticket_seq].sort((a, b) => a - b));
+  const blockersById = await loadOverlapBlockers(supabase).catch(() => new Map<string, { seq: number; why: "fix" | "queue" | "bundle" }[]>());
   const counts: Record<StationId, number> = { marked: 0, analysis: 0, approval: 0, fix: 0, test: 0, promote: 0, release: 0 };
   const result: OverviewTicket[] = [];
   const nowMs = now();
@@ -229,7 +247,6 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
     if (!placed) continue;
     // The night run can stop with nothing to ask (it ran into a limit): that is "stopped", not "questions for you".
     if (placed.sub === "questions" && Array.isArray(questions?.questions) && (questions?.questions as unknown[]).length === 0) placed.sub = "stopped";
-    counts[placed.station] += 1;
     const source = proposal ?? questions ?? fix;
     result.push({
       id: ticket.id,
@@ -243,11 +260,38 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
       proposalId: source?.id ?? null,
       signoffs: signoffsByTicket.get(ticket.id) ?? { marked: null, spec: null, production: null },
       heldBy: (blockersById.get(ticket.id) ?? []).map((b) => ({ seq: b.seq, why: b.why })),
+      bundle: ticket.bundle_id && letterById.has(ticket.bundle_id) ? { id: ticket.bundle_id, letter: letterById.get(ticket.bundle_id)!, seqs: seqsByBundle.get(ticket.bundle_id) ?? [ticket.ticket_seq] } : null,
       issue: placed.station === "test" && placed.sub === "branch" ? issueByTicket.get(ticket.id) ?? null : null,
       hasMigration: Array.isArray(source?.files) && (source!.files as unknown[]).some((file) => typeof file === "string" && /migrations\//.test(file)),
     });
   }
-  const needsYou = counts.approval + counts.test + counts.promote + result.filter((ticket) => ticket.station === "fix" && (ticket.sub === "questions" || ticket.sub === "stopped")).length;
+  // Count fixes, not tickets: a bundle is one fix (one thing to approve, test and promote).
+  const ticketCounts: Record<StationId, number> = { marked: 0, analysis: 0, approval: 0, fix: 0, test: 0, promote: 0, release: 0 };
+  const unitsAt = new Map<StationId, Set<string>>();
+  const waitingUnits = new Set<string>();
+  for (const ticket of result) {
+    ticketCounts[ticket.station] += 1;
+    const unit = ticket.bundle ? `b:${ticket.bundle.id}` : `t:${ticket.id}`;
+    unitsAt.set(ticket.station, (unitsAt.get(ticket.station) ?? new Set()).add(unit));
+    const waiting = ticket.station === "approval" || ticket.station === "test" || ticket.station === "promote" || (ticket.station === "fix" && (ticket.sub === "questions" || ticket.sub === "stopped"));
+    if (waiting) waitingUnits.add(`${ticket.station}:${unit}`);
+  }
+  for (const station of STATION_ORDER) counts[station] = unitsAt.get(station)?.size ?? 0;
+  const needsYou = waitingUnits.size;
+  // Tickets waiting for approval that change the same files: suggest building each group as one fix.
+  const candidates = tickets
+    .filter((ticket) => ticket.auto_handle === "A" && !ticket.bundle_id)
+    .map((ticket) => {
+      const proposal = (proposalsByTicket.get(ticket.id) ?? []).find((row) => row.kind === "proposal" && row.status === "pending");
+      return proposal ? { id: ticket.id, seq: ticket.ticket_seq, subject: ticket.subject, files: collectFiles(proposal.expected, filesFromText(proposal.brief)) } : null;
+    })
+    .filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null);
+  const suggestions: BundleSuggestion[] = suggestBundles(candidates.map(({ seq, files }) => ({ seq, files }))).map((seqs) => {
+    const group = seqs.map((seq) => candidates.find((candidate) => candidate.seq === seq)!);
+    const shared = new Set<string>();
+    for (let i = 0; i < group.length; i += 1) for (let j = i + 1; j < group.length; j += 1) for (const file of sharedFiles(group[i].files, group[j].files)) shared.add(file);
+    return { ids: group.map((member) => member.id), seqs, files: [...shared], subjects: group.map((member) => member.subject) };
+  });
   const { data: releaseRows } = await supabase
     .from("automation_requests")
     .select("requested_at, completed_at, report:details->report")
@@ -287,5 +331,5 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
       digest: requests.some((r) => r.kind === "digest") || recent.has("digest"),
     },
   };
-  return { status, recentReleases, tickets: result, counts, needsYou, total: result.length };
+  return { status, recentReleases, tickets: result, counts, ticketCounts, suggestions, needsYou, total: result.length };
 }

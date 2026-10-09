@@ -7,6 +7,8 @@ import { PromoteBar, RunAnalysisButton } from "@/components/ticket-review-panels
 import { formatTicketArea, formatTicketPriority, formatTicketType, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 import { isCurrentUserAdmin } from "@/lib/tickets";
+import { BundleBadge, BundleSuggestionCards } from "@/components/bundle-ui";
+import { getAutomationOverview } from "@/lib/automation-overview";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +21,7 @@ type ReviewTicket = {
   priority: string;
   status: string;
   auto_handle: string | null;
+  bundle_id: string | null;
 };
 
 /** Everything the automation needs from the admin, in one place (admin only). */
@@ -38,7 +41,7 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
 
   const { data: rows, error } = await supabase
     .from("tickets")
-    .select("id, ticket_seq, subject, ticket_type, area, priority, status, auto_handle")
+    .select("id, ticket_seq, subject, ticket_type, area, priority, status, auto_handle, bundle_id")
     .in("auto_handle", ["S", "A", "P", "D", "Y", "M", "R"])
     .not("status", "in", "(resolved,closed,cancelled,duplicate)")
     .order("ticket_seq", { ascending: false });
@@ -97,10 +100,27 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
   const promoteRunning = (openRequests ?? []).some((request) => request.kind === "promote");
   const revertQueued = new Set((openRequests ?? []).filter((request) => request.kind === "revert" && request.ticket_id).map((request) => request.ticket_id as string));
 
+  // Fix bundles: a bundle is one fix, so its merge and revert requests sit on its first ticket (the lead); the others share them.
+  const bundleIds = [...new Set(tickets.map((ticket) => ticket.bundle_id).filter((id): id is string => Boolean(id)))];
+  const letterById = new Map<string, string>();
+  if (bundleIds.length > 0) {
+    const { data: bundleRows } = await supabase.from("automation_bundles").select("id, letter").in("id", bundleIds);
+    for (const row of (bundleRows ?? []) as { id: string; letter: string }[]) letterById.set(row.id, row.letter);
+  }
+  const leadOfBundle = new Map<string, ReviewTicket>();
+  for (const ticket of tickets) {
+    const current = ticket.bundle_id ? leadOfBundle.get(ticket.bundle_id) : null;
+    if (ticket.bundle_id && (!current || ticket.ticket_seq < current.ticket_seq)) leadOfBundle.set(ticket.bundle_id, ticket);
+  }
+  const requestKey = (ticket: ReviewTicket) => (ticket.bundle_id ? leadOfBundle.get(ticket.bundle_id)?.id ?? ticket.id : ticket.id);
+  const overview = await getAutomationOverview(supabase).catch(() => null);
+  const suggestedIds = new Set((overview?.suggestions ?? []).flatMap((group) => group.ids));
+
   const by = (flag: string, pairing?: boolean) =>
     tickets.filter(
       (ticket) =>
         (flag !== "A" || pairing === undefined || pairingTickets.has(ticket.id) === pairing) &&
+        !(flag === "A" && pairing !== true && suggestedIds.has(ticket.id)) &&
         ticket.auto_handle === flag && (!needsRow[flag] || needsRow[flag].statuses.some((status) => hasRow.has(`${ticket.id}:${needsRow[flag].kind}:${status}`))),
     );
   const section = (title: string, flag: string, note?: string, extra?: ReactNode, pairing?: boolean) => {
@@ -126,6 +146,7 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
                   <span>
                     <span className="block text-sm font-semibold text-slate-900 dark:text-slate-100">
                       <span className="me-2 font-mono text-xs text-slate-500 dark:text-slate-400">TCK-{ticket.ticket_seq}</span>
+                      {ticket.bundle_id && letterById.get(ticket.bundle_id) ? <span className="me-2"><BundleBadge locale={locale} letter={letterById.get(ticket.bundle_id)!} /></span> : null}
                       <span dir="auto">{ticket.subject}</span>
                     </span>
                     <span className="block text-xs text-slate-500 dark:text-slate-400">
@@ -133,7 +154,7 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
                       {ticket.area ? formatTicketArea(ticket.area, locale) : tr(locale, "Not set yet", "טרם נבחר")} {"·"} {formatTicketPriority(ticket.priority, locale)}
                     </span>
                   </span>
-                  {(flag === "M" || flag === "R") && revertQueued.has(ticket.id) ? (
+                  {(flag === "M" || flag === "R") && revertQueued.has(requestKey(ticket)) ? (
                     <span className="rounded-full bg-sky-100 px-2.5 py-0.5 text-xs font-semibold text-sky-800 dark:bg-sky-950/50 dark:text-sky-300">
                       {tr(locale, "Revert queued", "ביטול מיזוג בתור")}
                     </span>
@@ -150,11 +171,11 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
                     <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-600 dark:text-emerald-400">
                       {tr(locale, "Merged on dev", "מוזג בפיתוח")}
                     </span>
-                  ) : flag === "D" && latestMerge.get(ticket.id) && !latestMerge.get(ticket.id)!.done ? (
+                  ) : flag === "D" && latestMerge.get(requestKey(ticket)) && !latestMerge.get(requestKey(ticket))!.done ? (
                     <span className="rounded-full bg-sky-100 px-2.5 py-0.5 text-xs font-semibold text-sky-800 dark:bg-sky-950/50 dark:text-sky-300">
                       {tr(locale, "Merge queued", "מיזוג בתור")}
                     </span>
-                  ) : flag === "D" && latestMerge.get(ticket.id)?.done ? (
+                  ) : flag === "D" && latestMerge.get(requestKey(ticket))?.done ? (
                     <span className="rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-800 dark:bg-rose-950/50 dark:text-rose-300">
                       {tr(locale, "Merge failed - open it", "המיזוג נכשל - לפתיחה")}
                     </span>
@@ -188,6 +209,7 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
         undefined,
         true,
       )}
+      <BundleSuggestionCards locale={locale} suggestions={overview?.suggestions ?? []} />
       {section(tr(locale, "Waiting for your approval", "ממתינות לאישורך"), "A", tr(locale, "Approve queues the ticket for the night run.", "אישור מכניס את הפנייה לתור של ריצת הלילה."), undefined, false)}
       {section(tr(locale, "Returned with questions", "חזרו עם שאלות"), "P", tr(locale, "The night run read the real code and stopped. Answer and re-queue.", "ריצת הלילה קראה את הקוד האמיתי ונעצרה. יש לענות ולהכניס לתור."))}
       {section(
@@ -200,8 +222,12 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
         approved={by("R").length}
         running={promoteRunning}
         tickets={by("R")
-          .filter((ticket) => approvedFixByTicket.has(ticket.id))
-          .map((ticket) => ({ seq: ticket.ticket_seq, subject: ticket.subject, proposalId: approvedFixByTicket.get(ticket.id)!, migration: migrationByTicket.has(ticket.id) }))}
+          .filter((ticket) => approvedFixByTicket.has(ticket.id) && (!ticket.bundle_id || leadOfBundle.get(ticket.bundle_id)?.id === ticket.id))
+          .map((ticket) => {
+            const letter = ticket.bundle_id ? letterById.get(ticket.bundle_id) : null;
+            const mates = ticket.bundle_id ? tickets.filter((other) => other.bundle_id === ticket.bundle_id).map((other) => `TCK-${other.ticket_seq}`).join(" + ") : "";
+            return { seq: ticket.ticket_seq, subject: letter ? `${tr(locale, "Bundle", "חבילה")} ${letter} (${mates}): ${ticket.subject}` : ticket.subject, proposalId: approvedFixByTicket.get(ticket.id)!, migration: migrationByTicket.has(ticket.id) };
+          })}
       />
       {section(
         tr(locale, "Approved for production", "אושרו לייצור"),
