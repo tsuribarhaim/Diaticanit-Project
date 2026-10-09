@@ -19,6 +19,7 @@ import {
   exerciseModalityOptions,
   exerciseOtherActivitiesSchema,
   exerciseScheduleByModalitySchema,
+  healthGoalOptions,
   lifestyleHabitsAnswersSchema,
   lifestyleHabitsColumns,
   medicalConditionOptions,
@@ -1281,6 +1282,45 @@ export async function updateHabitsAction(_prevState: QuickEditState, formData: F
           smoking_packs_per_day: currentRow?.smoking_packs_per_day == null ? null : Number(currentRow.smoking_packs_per_day),
         },
       }),
+    },
+  });
+}
+
+/** Multi-select nutritional goal (TCK-118) - separate from the single-select weight goal. */
+export async function updateHealthGoalsAction(_prevState: QuickEditState, formData: FormData): Promise<QuickEditState> {
+  const locale = requestLocale(formData);
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/sign-in");
+  }
+
+  const goalsParsed = z.array(z.enum(healthGoalOptions)).min(1).safeParse(parseMultiSelect(formData, "health_goals"));
+  if (!goalsParsed.success) {
+    return { error: tr(locale, "Select at least one nutritional goal.", "יש לבחור לפחות מטרה תזונתית אחת.") };
+  }
+  const healthGoals = goalsParsed.data;
+  const markersDetails = getFormString(formData, "health_goals_markers_details").trim().slice(0, 250);
+  const otherDetails = getFormString(formData, "health_goals_other_details").trim().slice(0, 250);
+
+  if (healthGoals.includes("abnormal_markers") && markersDetails.length < 2) {
+    return { error: tr(locale, "Enter the marker(s) that need improvement.", "יש לציין את המדד/ים שצריכים שיפור.") };
+  }
+  if (healthGoals.includes("other") && otherDetails.length < 2) {
+    return { error: tr(locale, "Describe your other goal.", "יש לתאר את המטרה האחרת.") };
+  }
+
+  return applyProfilePatchAndFlagTargets({
+    supabase,
+    userId: user.id,
+    locale,
+    patch: {
+      health_goals: healthGoals,
+      health_goals_markers_details: healthGoals.includes("abnormal_markers") ? markersDetails : null,
+      health_goals_other_details: healthGoals.includes("other") ? otherDetails : null,
     },
   });
 }

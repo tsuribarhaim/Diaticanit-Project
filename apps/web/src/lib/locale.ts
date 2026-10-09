@@ -263,6 +263,15 @@ export function formatNutritionalGoal(value: string, locale: AppLocale): string 
   return locale === "he" ? value : titleCase(value.replace(/_/g, " "));
 }
 
+export function formatHealthGoal(value: string, locale: AppLocale): string {
+  const token = normalizeToken(value);
+  if (token === "maintain_health") return tr(locale, "Maintaining health", "שמירה על הבריאות");
+  if (token === "muscle_gain") return tr(locale, "Building muscle mass", "הגדלת מסת שריר");
+  if (token === "abnormal_markers") return tr(locale, "Improving out-of-range markers", "טיפול במדדים חורגים");
+  if (token === "other") return tr(locale, "Other", "אחר");
+  return locale === "he" ? value : titleCase(value.replace(/_/g, " "));
+}
+
 export function formatPregnancyLactationStatus(value: string, locale: AppLocale): string {
   const token = normalizeToken(value);
   if (token === "none") return tr(locale, "No", "לא");
