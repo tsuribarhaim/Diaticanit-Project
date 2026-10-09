@@ -12,12 +12,14 @@ import {
   requestAgentRunAction,
   requestMergeAction,
   overrideOverlapAction,
+  approveBundleAction,
   searchAutomationTicketsAction,
   setAutomationPausedAction,
   sendBackFixAction,
   takeTicketOutAction,
 } from "@/app/app/tickets/review-actions";
 import { type AutomationSearchHit } from "@/app/app/tickets/review-actions";
+import { BundleBadge, BundleSuggestionCards, SplitBundleControl, hueOf } from "@/components/bundle-ui";
 import { Spinner } from "@/components/spinner";
 import { ActionButton, HandledByHand, PromoteBar } from "@/components/ticket-review-panels";
 import { tr, type AppLocale } from "@/lib/locale";
@@ -193,8 +195,8 @@ export function AutomationCycle({ locale, overview }: { locale: AppLocale; overv
   });
 
   const fixTickets = ticketsAt(overview, "fix");
-  const fixQueued = fixTickets.filter((ticket) => ticket.sub === "queued").length;
-  const fixStopped = fixTickets.filter((ticket) => ticket.sub === "questions" || ticket.sub === "stopped").length;
+  const fixQueued = unitsOf(fixTickets.filter((ticket) => ticket.sub === "queued")).length;
+  const fixStopped = unitsOf(fixTickets.filter((ticket) => ticket.sub === "questions" || ticket.sub === "stopped")).length;
   /** The line under a station's name: what it is doing right now, not what it is for. */
   function caption(id: StationId, fallback: string): string {
     if (id === "fix") {
@@ -210,7 +212,10 @@ export function AutomationCycle({ locale, overview }: { locale: AppLocale; overv
   }
 
   const selectedText = stationText(selected, locale);
-  const list = ticketsAt(overview, selected);
+  // Tickets waiting for approval that the analyst suggests building together are shown in the suggestion cards, not twice.
+  const suggestedIds = new Set(overview.suggestions.flatMap((group) => group.ids));
+  const list = ticketsAt(overview, selected).filter((ticket) => !(selected === "approval" && suggestedIds.has(ticket.id)));
+  const units = unitsOf(list);
 
   return (
     <div className="space-y-4">
@@ -338,7 +343,7 @@ export function AutomationCycle({ locale, overview }: { locale: AppLocale; overv
             const text = stationText(node.id, locale);
             const actor = ACTOR[node.id];
             const count = overview.counts[node.id];
-            const waiting = ticketsAt(overview, node.id).filter(needsAdmin).length;
+            const waiting = unitsOf(ticketsAt(overview, node.id).filter(needsAdmin)).length;
             return (
               <div key={node.id}>
                 <button
@@ -397,7 +402,11 @@ export function AutomationCycle({ locale, overview }: { locale: AppLocale; overv
       <section aria-live="polite" className="min-h-[360px] rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">
-            {selectedText.name} <span className="font-medium text-slate-500 dark:text-slate-400">({list.length})</span>
+            {selectedText.name}{" "}
+            <span className="font-medium text-slate-500 dark:text-slate-400">
+              ({units.length}
+              {units.length !== list.length ? tr(locale, ` fixes · ${list.length} tickets`, ` תיקונים · ${list.length} פניות`) : ""})
+            </span>
           </h2>
           <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${ACTOR[selected] === "admin" ? "bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300" : ACTOR[selected] === "agent" ? "bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300" : "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300"}`}>
             {ACTOR[selected] === "admin" ? tr(locale, "You act here", "את/ה פועל/ת כאן") : ACTOR[selected] === "agent" ? tr(locale, "AI agent acts here", "סוכן AI פועל כאן") : tr(locale, "Automation acts here - no AI", "האוטומציה פועלת כאן - ללא AI")}
@@ -405,12 +414,13 @@ export function AutomationCycle({ locale, overview }: { locale: AppLocale; overv
         </div>
         <p className="mb-3 mt-1 text-sm text-slate-600 dark:text-slate-400">{selectedText.desc}</p>
         {focus ? <FoundCard locale={locale} focus={focus} onClear={() => { setFocus(null); setQuery(""); }} /> : null}
-        {list.length === 0 ? (
+        {selected === "approval" ? <BundleSuggestionCards locale={locale} suggestions={overview.suggestions} /> : null}
+        {list.length === 0 && !(selected === "approval" && overview.suggestions.length > 0) ? (
           <p className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">{tr(locale, "Nothing here right now.", "אין כאן כלום כרגע.")}</p>
         ) : (
           <ul className="space-y-2">
-            {list.map((ticket) => (
-              <TicketRow key={ticket.id} locale={locale} ticket={ticket} highlighted={focus?.ticket?.id === ticket.id} />
+            {units.map((unit) => (
+              <TicketRow key={unit[0].bundle?.id ?? unit[0].id} locale={locale} ticket={unit[0]} members={unit[0].bundle ? unit : undefined} highlighted={unit.some((ticket) => focus?.ticket?.id === ticket.id)} />
             ))}
           </ul>
         )}
@@ -418,9 +428,9 @@ export function AutomationCycle({ locale, overview }: { locale: AppLocale; overv
           <div className="mt-4">
             <PromoteBar
               locale={locale}
-              approved={list.length}
+              approved={units.length}
               running={overview.counts.release > 0}
-              tickets={list.filter((ticket) => ticket.proposalId).map((ticket) => ({ seq: ticket.seq, subject: ticket.subject, proposalId: ticket.proposalId as string, migration: ticket.hasMigration }))}
+              tickets={units.filter((unit) => unit[0].proposalId).map((unit) => ({ seq: unit[0].seq, subject: unit[0].bundle ? `${tr(locale, "Bundle", "חבילה")} ${unit[0].bundle.letter} (${unit.map((ticket) => `TCK-${ticket.seq}`).join(" + ")}): ${unit[0].subject}` : unit[0].subject, proposalId: unit[0].proposalId as string, migration: unit.some((ticket) => ticket.hasMigration) }))}
             />
           </div>
         ) : null}
@@ -635,7 +645,7 @@ const linkButtonPrimary = "text-sm font-semibold text-teal-700 hover:underline d
 
 /** One ticket in a station panel: what it is, who signed what off, and the buttons that move it on. Every button reuses the
  * existing review step (lib/ticket-review.ts), so the dashboard and the review screens always agree. */
-function TicketRow({ locale, ticket, highlighted = false }: { locale: AppLocale; ticket: OverviewTicket; highlighted?: boolean }) {
+function TicketRow({ locale, ticket, highlighted = false, members }: { locale: AppLocale; ticket: OverviewTicket; highlighted?: boolean; members?: OverviewTicket[] }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [which, setWhich] = useState<string | null>(null);
@@ -658,6 +668,9 @@ function TicketRow({ locale, ticket, highlighted = false }: { locale: AppLocale;
   }
 
   const proposalId = ticket.proposalId;
+  // A bundle is one card for all its tickets that are at this station; the actions are those of its first ticket, and every step on the server
+  // applies to the whole bundle.
+  const bundle = ticket.bundle && members && members.length > 0 ? ticket.bundle : null;
   const onTicketPage = ticket.station === "marked" || ticket.station === "analysis" || ticket.sub === "queued";
   const openHref = onTicketPage ? `/app/tickets/${ticket.id}?from=automation` : `/app/tickets/review/${ticket.id}?from=automation`;
   const openLabel = onTicketPage
@@ -691,8 +704,25 @@ function TicketRow({ locale, ticket, highlighted = false }: { locale: AppLocale;
   );
 
   return (
-    <li className={`rounded-xl border px-3 py-2.5 ${highlighted ? "border-amber-500 bg-amber-50 ring-2 ring-amber-500/40 dark:bg-amber-950/20" : "border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950/40"}`}>
-      <div className="flex flex-wrap items-baseline gap-x-2">
+    <li className={`rounded-xl px-3 py-2.5 ${highlighted ? "border border-amber-500 bg-amber-50 ring-2 ring-amber-500/40 dark:bg-amber-950/20" : bundle ? `border-2 ${hueOf(bundle.letter).border} bg-white dark:bg-slate-950/40` : "border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950/40"}`}>
+      {bundle ? (
+        <div className={`-mx-3 -mt-2.5 mb-2 rounded-t-[10px] px-3 py-2 ${hueOf(bundle.letter).head}`}>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <BundleBadge locale={locale} letter={bundle.letter} />
+            <b className="text-sm text-slate-900 dark:text-slate-100">{tr(locale, `Bundle ${bundle.letter}`, `חבילה ${bundle.letter}`)}</b>
+            <span className="text-xs text-slate-600 dark:text-slate-400">{tr(locale, `one fix for ${bundle.seqs.length} tickets`, `תיקון אחד עבור ${bundle.seqs.length} פניות`)}</span>
+          </div>
+          <ul className="mt-1.5 space-y-0.5">
+            {(members ?? [ticket]).map((member) => (
+              <li key={member.id} className="flex flex-wrap items-baseline gap-x-2">
+                <span className={`rounded border px-1.5 font-mono text-xs text-slate-700 dark:text-slate-200 ${hueOf(bundle.letter).chip}`}>TCK-{member.seq}</span>
+                <Link href={`/app/tickets/review/${member.id}?from=automation`} dir="auto" className="text-sm font-semibold text-slate-900 hover:underline dark:text-slate-100">{member.subject}</Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-baseline gap-x-2">
         <span className="font-mono text-xs text-slate-500 dark:text-slate-400">TCK-{ticket.seq}</span>
         <b dir="auto" className="text-sm font-semibold text-slate-900 dark:text-slate-100">{ticket.subject}</b>
         {ticket.ageDays >= 3 ? (
@@ -700,7 +730,8 @@ function TicketRow({ locale, ticket, highlighted = false }: { locale: AppLocale;
         ) : ticket.ageDays > 0 ? (
           <span className="text-xs text-slate-500 dark:text-slate-400">{tr(locale, `${ticket.ageDays} day${ticket.ageDays === 1 ? "" : "s"}`, `${ticket.ageDays} ימים`)}</span>
         ) : null}
-      </div>
+        </div>
+      )}
       <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-400">
         {ticket.pairing ? <span className="me-1.5 rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">{tr(locale, "Better done together", "עדיף לעשות יחד")}</span> : null}
         {ticket.hasMigration ? <span className="me-1.5 rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">{tr(locale, "Migration", "מיגרציה")}</span> : null}
@@ -722,7 +753,12 @@ function TicketRow({ locale, ticket, highlighted = false }: { locale: AppLocale;
       {ticket.summary ? <p dir="auto" className="mt-1 line-clamp-2 text-xs text-slate-500 dark:text-slate-400">{ticket.summary}</p> : null}
       <SignoffChips locale={locale} signoffs={ticket.signoffs} />
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5">
-        {ticket.station === "approval" && !ticket.pairing && proposalId ? (
+        {bundle && ticket.station === "approval" ? (
+          <LinkAction variant="primary" pending={pending && which === "approve"} disabled={pending} onClick={() => run("approve", () => approveBundleAction(bundle.id))}>
+            {tr(locale, "Approve bundle (recommended picks)", "אישור החבילה (הבחירות המומלצות)")}
+          </LinkAction>
+        ) : null}
+        {!bundle && ticket.station === "approval" && !ticket.pairing && proposalId ? (
           <>
             <LinkAction variant="primary" pending={pending && which === "approve"} disabled={pending} onClick={() => run("approve", () => approveProposalAction(proposalId, {}, ""))}>
               {tr(locale, "Approve (recommended picks)", "אישור (הבחירות המומלצות)")}
@@ -770,11 +806,16 @@ function TicketRow({ locale, ticket, highlighted = false }: { locale: AppLocale;
                 {tr(locale, "Build anyway", "לבנות בכל זאת")}
               </LinkAction>
             ) : null}
-            {takeOut}
+            {bundle ? null : takeOut}
           </>
         ) : null}
         {ticket.station === "analysis" || ticket.station === "release" || (ticket.station === "test" && ticket.sub === "merging") ? <Link href={openHref} className={linkButton}>{openLabel}</Link> : null}
       </div>
+      {bundle ? (
+        <div className="mt-2">
+          <SplitBundleControl locale={locale} bundleId={bundle.id} letter={bundle.letter} seqs={bundle.seqs} built={ticket.station === "test" || ticket.station === "promote"} />
+        </div>
+      ) : null}
       {mode && proposalId ? (
         <div className="mt-2 rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-700 dark:bg-slate-900">
           <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300" htmlFor={`c-${ticket.id}`}>
@@ -881,6 +922,28 @@ function FoundCard({ locale, focus, onClear }: { locale: AppLocale; focus: { tic
       </div>
     </div>
   );
+}
+
+/** The tickets of a station as fixes: a bundle's tickets are one unit (in the order the first of them appears). */
+function unitsOf(tickets: OverviewTicket[]): OverviewTicket[][] {
+  const units: OverviewTicket[][] = [];
+  const byBundle = new Map<string, OverviewTicket[]>();
+  for (const ticket of tickets) {
+    if (!ticket.bundle) {
+      units.push([ticket]);
+      continue;
+    }
+    const existing = byBundle.get(ticket.bundle.id);
+    if (existing) existing.push(ticket);
+    else {
+      const unit = [ticket];
+      byBundle.set(ticket.bundle.id, unit);
+      units.push(unit);
+    }
+  }
+  // The first ticket of a bundle is its lead (the lowest number: the branch is named after it); the overview lists tickets newest first.
+  for (const unit of units) if (unit.length > 1) unit.sort((a, b) => a.seq - b.seq);
+  return units;
 }
 
 function ticketsAt(overview: AutomationOverview, station: StationId): OverviewTicket[] {

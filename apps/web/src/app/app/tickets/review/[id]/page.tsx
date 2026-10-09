@@ -7,6 +7,9 @@ import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 import type { FixPayload, ProposalPayload, QuestionsPayload, TicketProposalRow } from "@/lib/ticket-proposals";
 import { isCurrentUserAdmin } from "@/lib/tickets";
 import { TicketTrail } from "@/components/ticket-trail";
+import { BundleBadge, SplitBundleControl, hueOf } from "@/components/bundle-ui";
+import { bundleOfTicket } from "@/lib/bundles";
+import { NavLink as Link } from "@/components/nav-link";
 import { NAV_HREF, navLabel, parseFrom } from "@/lib/tickets-nav";
 
 export const dynamic = "force-dynamic";
@@ -61,6 +64,10 @@ export default async function TicketReviewDetailPage({ params, searchParams }: {
     buildState = running || (nightOpen ?? []).length > 0 ? "building" : "stopped";
   }
 
+  // Fix bundles: this ticket may be built, tested and promoted as one fix with others; its merge and revert requests are on the first ticket.
+  const bundle = await bundleOfTicket(supabase, id);
+  const requestTicketId = bundle ? bundle.lead.id : id;
+
   let mergeRequested = false;
   let mergeResult: string | null = null;
   let revertRequested = false;
@@ -70,7 +77,7 @@ export default async function TicketReviewDetailPage({ params, searchParams }: {
       .from("automation_requests")
       .select("completed_at, result")
       .eq("kind", "revert")
-      .eq("ticket_id", id)
+      .eq("ticket_id", requestTicketId)
       .order("requested_at", { ascending: false })
       .limit(1);
     const lastRevert = reverts?.[0];
@@ -81,7 +88,7 @@ export default async function TicketReviewDetailPage({ params, searchParams }: {
       .from("automation_requests")
       .select("completed_at, result")
       .eq("kind", "merge")
-      .eq("ticket_id", id)
+      .eq("ticket_id", requestTicketId)
       .order("requested_at", { ascending: false })
       .limit(1);
     const latest = requests?.[0];
@@ -123,6 +130,33 @@ export default async function TicketReviewDetailPage({ params, searchParams }: {
       />
       <ReviewNav locale={locale} backLabel={navLabel(locale, from)} backHref={NAV_HREF[from]} />
       {header}
+      {bundle ? (
+        <section aria-label={tr(locale, `Bundle ${bundle.letter}`, `חבילה ${bundle.letter}`)} className={`mt-4 rounded-xl border-2 px-4 py-3 ${hueOf(bundle.letter).border} ${hueOf(bundle.letter).head}`}>
+          <div className="flex flex-wrap items-center gap-2">
+            <BundleBadge locale={locale} letter={bundle.letter} />
+            <b className="text-sm text-slate-900 dark:text-slate-100">
+              {tr(locale, `Built, tested and promoted as one fix with ${bundle.members.filter((member) => member.id !== id).map((member) => `TCK-${member.seq}`).join(", ")}`, `נבנית, נבדקת ועולה כתיקון אחד יחד עם ${bundle.members.filter((member) => member.id !== id).map((member) => `TCK-${member.seq}`).join(", ")}`)}
+            </b>
+          </div>
+          <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+            {tr(locale, "Merge to dev, approve for production, send back and promote apply to the whole bundle. Test every ticket of it on dev before approving.", "מיזוג לפיתוח, אישור לייצור, החזרה והעלאה חלים על כל החבילה. יש לבדוק בפיתוח את כל הפניות שבה לפני האישור.")}
+          </p>
+          <ul className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+            {bundle.members.map((member) => (
+              <li key={member.id}>
+                {member.id === id ? (
+                  <span className="font-mono text-xs font-bold text-slate-900 dark:text-slate-100">TCK-{member.seq} {tr(locale, "(this one)", "(זו)")}</span>
+                ) : (
+                  <Link href={`/app/tickets/review/${member.id}?from=${from}`} className="font-mono text-xs font-semibold text-teal-700 hover:underline dark:text-teal-400">TCK-{member.seq}</Link>
+                )}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-2">
+            <SplitBundleControl locale={locale} bundleId={bundle.bundleId} letter={bundle.letter} seqs={bundle.members.map((member) => member.seq)} built={ticket.auto_handle === "D" || ticket.auto_handle === "M" || ticket.auto_handle === "R"} />
+          </div>
+        </section>
+      ) : null}
       {proposal && proposal.kind === "proposal" ? (
         <ProposalPanel locale={locale} proposalId={proposal.id} ticketId={ticket.id} payload={proposal.payload as ProposalPayload} ticketSeq={ticket.ticket_seq} subject={ticket.subject} />
       ) : proposal && proposal.kind === "questions" ? (

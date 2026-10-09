@@ -5,6 +5,7 @@ import { logServerError } from "@/lib/server-log";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { renderPromotionEmail, type PromoteReport } from "@/lib/promotion-email";
 import { appendTicketDescriptionEntry } from "@/lib/tickets";
+import { bundleOfTicket } from "@/lib/bundles";
 
 export const dynamic = "force-dynamic";
 
@@ -103,22 +104,28 @@ export async function POST(request: Request) {
   if (ok === true) {
     const { data: done } = await adminClient.from("automation_requests").select("kind, ticket_id, details").eq("id", id).maybeSingle();
     // A merge that went through: the fix is on dev and waits for the admin's test (flag M).
+    // The request is on the lead ticket (the bundle's branch); every ticket of a bundle is on dev with it.
+    const bundle = done?.ticket_id ? await bundleOfTicket(adminClient, done.ticket_id) : null;
+    const groupIds = bundle ? bundle.members.map((member) => member.id) : done?.ticket_id ? [done.ticket_id] : [];
     if (done?.kind === "merge" && done.ticket_id) {
       await adminClient
         .from("ticket_proposals")
         .update({ status: "merged", decided_at: now })
-        .eq("ticket_id", done.ticket_id)
+        .in("ticket_id", groupIds)
         .eq("kind", "fix")
         .eq("status", "pending");
-      await adminClient.from("tickets").update({ auto_handle: "M" }).eq("id", done.ticket_id).eq("auto_handle", "D");
+      await adminClient.from("tickets").update({ auto_handle: "M" }).in("id", groupIds).eq("auto_handle", "D");
     }
     // A revert that went through ("Send back"): the merge is undone on dev, so the ticket goes back to
     // the night run with the admin's comment in its log (where the agent reads decisions from).
-    if (done?.kind === "revert" && done.ticket_id) {
+    if (done?.kind === "revert" && done.ticket_id && (done.details as { split?: boolean } | null)?.split !== true) {
+      // (A split bundle was already put back in the queue, ticket by ticket, when it was split: only its merge on dev was left to undo.)
       const details = (done.details ?? {}) as { comment?: string };
-      const { data: ticket } = await adminClient.from("tickets").select("description, created_by, ticket_seq").eq("id", done.ticket_id).maybeSingle();
-      if (ticket) {
-        const note = `Admin sent the fix back after testing it on dev (the merge was reverted, a fresh attempt is needed). What needs to change: ${details.comment ?? "(no comment)"}`;
+      for (const ticketId of groupIds) {
+        const { data: ticket } = await adminClient.from("tickets").select("description, created_by, ticket_seq").eq("id", ticketId).maybeSingle();
+        if (!ticket) continue;
+        const together = bundle ? `; it was built together with ${bundle.members.filter((member) => member.id !== ticketId).map((member) => `TCK-${member.seq}`).join(", ")} as Bundle ${bundle.letter} and is rebuilt together` : "";
+        const note = `Admin sent the fix back after testing it on dev (the merge was reverted, a fresh attempt is needed${together}). What needs to change: ${details.comment ?? "(no comment)"}`;
         await adminClient
           .from("tickets")
           .update({
@@ -126,14 +133,14 @@ export async function POST(request: Request) {
             auto_handle: "Y",
             status: "open",
           })
-          .eq("id", done.ticket_id);
-        await adminClient
-          .from("ticket_proposals")
-          .update({ status: "returned", admin_comment: details.comment ?? null, decided_at: now })
-          .eq("ticket_id", done.ticket_id)
-          .eq("kind", "fix")
-          .in("status", ["merged", "approved"]);
+          .eq("id", ticketId);
       }
+      await adminClient
+        .from("ticket_proposals")
+        .update({ status: "returned", admin_comment: details.comment ?? null, decided_at: now })
+        .in("ticket_id", groupIds)
+        .eq("kind", "fix")
+        .in("status", ["merged", "approved"]);
     }
   }
   // A promote reports itself in `report` (see the bridge's /promote): stored on the request for the

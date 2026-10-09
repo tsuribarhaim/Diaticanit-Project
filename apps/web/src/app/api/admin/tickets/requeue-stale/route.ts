@@ -4,6 +4,7 @@ import { checkAutomationSecret } from "@/lib/automation-auth";
 import { logServerError } from "@/lib/server-log";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { appendTicketDescriptionEntry } from "@/lib/tickets";
+import { bundleOfTicket } from "@/lib/bundles";
 
 export const dynamic = "force-dynamic";
 
@@ -25,20 +26,27 @@ export async function POST(request: Request) {
   if (!ticket) return NextResponse.json({ error: "Ticket not found." }, { status: 404 });
   if (!["D", "M", "R"].includes(ticket.auto_handle ?? "")) return NextResponse.json({ ok: true, skipped: "The ticket is not waiting for a fix to reach production." });
 
-  const { error } = await admin
-    .from("tickets")
-    .update({ description: appendTicketDescriptionEntry({ currentDescription: ticket.description ?? "", changeLines: [], note, authoredBySupport: true }), auto_handle: "Y", status: "open" })
-    .eq("id", ticketId);
-  if (error) {
-    logServerError("adminRequeueStale", "ticket_update_failed", { error: error.message });
-    return NextResponse.json({ error: "Failed to update the ticket." }, { status: 500 });
+  // A bundle goes back as a whole: its fix is one branch, so every ticket of it is rebuilt together.
+  const bundle = await bundleOfTicket(admin, ticketId);
+  const ids = bundle ? bundle.members.map((member) => member.id) : [ticketId];
+  for (const id of ids) {
+    const { data: row } = await admin.from("tickets").select("id, description").eq("id", id).maybeSingle();
+    if (!row) continue;
+    const { error } = await admin
+      .from("tickets")
+      .update({ description: appendTicketDescriptionEntry({ currentDescription: row.description ?? "", changeLines: [], note, authoredBySupport: true }), auto_handle: "Y", status: "open" })
+      .eq("id", id);
+    if (error) {
+      logServerError("adminRequeueStale", "ticket_update_failed", { error: error.message });
+      return NextResponse.json({ error: "Failed to update the ticket." }, { status: 500 });
+    }
+    await admin.from("automation_events").insert({ ticket_id: id, kind: "auto_requeued", actor: null, detail: { note } });
   }
   await admin
     .from("ticket_proposals")
     .update({ status: "returned", admin_comment: note, decided_at: new Date().toISOString() })
-    .eq("ticket_id", ticketId)
+    .in("ticket_id", ids)
     .eq("kind", "fix")
     .in("status", ["pending", "merged", "approved"]);
-  await admin.from("automation_events").insert({ ticket_id: ticketId, kind: "auto_requeued", actor: null, detail: { note } });
   return NextResponse.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
 }

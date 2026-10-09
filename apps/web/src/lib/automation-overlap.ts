@@ -9,8 +9,8 @@ const QUEUED_EVENTS = ["spec_approved", "answered", "requeued", "auto_requeued",
  * so both always agree. */
 export async function loadOverlapBlockers(supabase: SupabaseClient): Promise<Map<string, Blocker[]>> {
   const out = new Map<string, Blocker[]>();
-  const { data: queueRows } = await supabase.from("tickets").select("id, ticket_seq").eq("auto_handle", "Y").in("status", ["open", "reopened"]);
-  const queue = (queueRows ?? []) as { id: string; ticket_seq: number }[];
+  const { data: queueRows } = await supabase.from("tickets").select("id, ticket_seq, bundle_id").eq("auto_handle", "Y").in("status", ["open", "reopened"]);
+  const queue = (queueRows ?? []) as { id: string; ticket_seq: number; bundle_id: string | null }[];
   if (queue.length === 0) return out;
   const ids = queue.map((row) => row.id);
 
@@ -32,13 +32,17 @@ export async function loadOverlapBlockers(supabase: SupabaseClient): Promise<Map
   // Fixes that are built but not promoted yet: what they really changed.
   const { data: fixRows } = await supabase
     .from("ticket_proposals")
-    .select("ticket_id, files:payload->files, tickets!inner(ticket_seq)")
+    .select("ticket_id, files:payload->files, tickets!inner(ticket_seq, bundle_id)")
     .eq("kind", "fix")
     .in("status", ["pending", "merged", "approved"]);
   const inFlight: TicketFiles[] = [];
-  for (const row of (fixRows ?? []) as unknown as { files: unknown; tickets: { ticket_seq: number } | { ticket_seq: number }[] }[]) {
+  const bundleOf = new Map<number, string>();
+  for (const row of queue) if (row.bundle_id) bundleOf.set(row.ticket_seq, row.bundle_id);
+  for (const row of (fixRows ?? []) as unknown as { files: unknown; tickets: { ticket_seq: number; bundle_id: string | null } | { ticket_seq: number; bundle_id: string | null }[] }[]) {
     const joined = Array.isArray(row.tickets) ? row.tickets[0] : row.tickets;
-    if (joined) inFlight.push({ seq: joined.ticket_seq, files: collectFiles(row.files) });
+    if (!joined) continue;
+    inFlight.push({ seq: joined.ticket_seq, files: collectFiles(row.files) });
+    if (joined.bundle_id) bundleOf.set(joined.ticket_seq, joined.bundle_id);
   }
 
   // "Build anyway": valid only if the admin said it after the ticket was last queued.
@@ -59,10 +63,34 @@ export async function loadOverlapBlockers(supabase: SupabaseClient): Promise<Map
     if (override && override > (lastQueued.get(row.id) ?? "")) overridden.add(row.ticket_seq);
   }
 
-  const bySeq = overlapBlockers(queued, inFlight, overridden);
+  const bySeq = overlapBlockers(queued, inFlight, overridden, bundleOf);
   for (const ticket of queued) {
     const blockers = bySeq.get(ticket.seq);
     if (blockers) out.set(ticket.id, blockers);
+  }
+
+  // A bundle is built as one job, so it is ready only when EVERY ticket of it is queued, and it waits when any one of them has to wait:
+  // each member gets the union of what its bundle is waiting for.
+  const bundleIds = [...new Set(queue.map((row) => row.bundle_id).filter((id): id is string => Boolean(id)))];
+  if (bundleIds.length > 0) {
+    const { data: memberRows } = await supabase.from("tickets").select("id, ticket_seq, auto_handle, status, bundle_id").in("bundle_id", bundleIds);
+    const members = (memberRows ?? []) as { id: string; ticket_seq: number; auto_handle: string | null; status: string; bundle_id: string }[];
+    for (const bundleId of bundleIds) {
+      const group = members.filter((member) => member.bundle_id === bundleId);
+      const merged = new Map<string, Blocker>();
+      for (const member of group) for (const blocker of out.get(member.id) ?? []) merged.set(`${blocker.seq}:${blocker.why}`, blocker);
+      for (const member of group) {
+        if (member.auto_handle !== "Y" || !["open", "reopened"].includes(member.status)) {
+          // Someone in the bundle is not queued (still waiting for approval, or stopped): the others wait for it.
+          for (const other of group) if (other.id !== member.id) merged.set(`${member.ticket_seq}:bundle`, { seq: member.ticket_seq, files: [], why: "bundle" });
+        }
+      }
+      if (merged.size === 0) continue;
+      for (const member of group) {
+        const own = [...merged.values()].filter((blocker) => blocker.seq !== member.ticket_seq);
+        if (own.length > 0 && member.auto_handle === "Y") out.set(member.id, own);
+      }
+    }
   }
   return out;
 }

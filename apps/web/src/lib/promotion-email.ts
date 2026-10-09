@@ -3,7 +3,13 @@
  * Pure, so it can be rendered for any report without a database. English only, like the other ops emails. */
 
 export type PromoteReportStep = { name: string; ok: boolean; detail: string };
-export type PromoteReportTicket = { seq: number; subject: string; commit: string | null; status: string; reason: string };
+export type PromoteReportTicket = { seq: number; subject: string; commit: string | null; status: string; reason: string; bundleLetter?: string | null; alsoSeqs?: number[] };
+
+/** "TCK-203" for a ticket, "TCK-203, TCK-204 (Bundle A)" for a bundle. */
+function ticketLabel(t: PromoteReportTicket): string {
+  const all = [t.seq, ...(t.alsoSeqs ?? [])].map((seq) => `TCK-${seq}`).join(", ");
+  return t.bundleLetter ? `${all} (Bundle ${t.bundleLetter})` : all;
+}
 export type PromoteReport = {
   version: string | null;
   previousVersion: string | null;
@@ -54,7 +60,7 @@ export function renderPromotionEmail({
   const failedStep = report.steps.find((s) => !s.ok);
   const state = report.ok ? (failedStep ? "live, with a follow-up needed" : "live") : report.rolledBack ? "rolled back" : "stopped before it reached production";
   const subject = report.ok
-    ? `Daffy v${report.version} is ${failedStep ? "live (see the follow-up)" : "live"} - ${released.length} fix${released.length === 1 ? "" : "es"} released`
+    ? `Daffy v${report.version} is ${failedStep ? "live (see the follow-up)" : "live"} - ${released.length} fix${released.length === 1 ? "" : "es"} released${released.some((t) => (t.alsoSeqs ?? []).length > 0) ? ` (${released.reduce((n, t) => n + 1 + (t.alsoSeqs ?? []).length, 0)} tickets)` : ""}`
     : `Daffy promotion did not complete - ${report.rolledBack ? "rolled back to the previous version" : "nothing changed in production"}`;
   const color = report.ok && !failedStep ? "#0b8f7f" : report.ok ? "#a86400" : "#b3261e";
   const th = "text-align:left;padding:6px 8px;border-bottom:1px solid #d3dde4;font-size:12px;color:#5b6b78";
@@ -63,7 +69,7 @@ export function renderPromotionEmail({
     .map((t) => {
       const ok = t.status === "released" || t.status === "deployed";
       const note = ok ? (t.status === "released" ? "Resolved" : "Deployed - ticket not marked resolved, do it by hand") : `Not shipped: ${t.reason}`;
-      return `<tr><td style="${td}">TCK-${t.seq}</td><td style="${td}">${esc(t.subject)}</td><td style="${td};font-family:Consolas,monospace">${esc(t.commit ?? "-")}</td><td style="${td};color:${ok ? "#0b8f7f" : "#b3261e"}">${esc(note)}</td></tr>`;
+      return `<tr><td style="${td}">${esc(ticketLabel(t))}</td><td style="${td}">${esc(t.subject)}</td><td style="${td};font-family:Consolas,monospace">${esc(t.commit ?? "-")}</td><td style="${td};color:${ok ? "#0b8f7f" : "#b3261e"}">${esc(note)}</td></tr>`;
     })
     .join("");
   const stepRows = report.steps

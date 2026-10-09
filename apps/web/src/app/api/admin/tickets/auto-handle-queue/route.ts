@@ -30,7 +30,7 @@ export async function GET(request: Request) {
   const adminClient = createAdminClient();
   const { data, error } = await adminClient
     .from("tickets")
-    .select("id, ticket_seq, subject, ticket_type, area, priority, description, status, created_at")
+    .select("id, ticket_seq, subject, ticket_type, area, priority, description, status, created_at, bundle_id")
     .in("status", ["open", "reopened"])
     .eq("auto_handle", "Y")
     .order("priority", { ascending: false })
@@ -43,6 +43,12 @@ export async function GET(request: Request) {
 
   // Tickets that change the same files as another ticket wait for it (lib/overlap.ts): the bridge skips those with a non-empty heldBy.
   const blockers = await loadOverlapBlockers(adminClient).catch(() => new Map<string, Blocker[]>());
-  const tickets = (data ?? []).map((ticket) => ({ ...ticket, heldBy: (blockers.get(ticket.id) ?? []).map((b) => ({ seq: b.seq, why: b.why, files: b.files.slice(0, 5) })) }));
+  const bundleIds = [...new Set((data ?? []).map((ticket) => ticket.bundle_id as string | null).filter((id): id is string => Boolean(id)))];
+  const letters = new Map<string, string>();
+  if (bundleIds.length > 0) {
+    const { data: bundleRows } = await adminClient.from("automation_bundles").select("id, letter").in("id", bundleIds);
+    for (const row of (bundleRows ?? []) as { id: string; letter: string }[]) letters.set(row.id, row.letter);
+  }
+  const tickets = (data ?? []).map((ticket) => ({ ...ticket, bundleLetter: ticket.bundle_id ? letters.get(ticket.bundle_id as string) ?? null : null, heldBy: (blockers.get(ticket.id) ?? []).map((b) => ({ seq: b.seq, why: b.why, files: b.files.slice(0, 5) })) }));
   return NextResponse.json({ tickets }, { headers: { "Cache-Control": "no-store" } });
 }

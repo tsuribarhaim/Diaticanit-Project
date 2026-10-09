@@ -30,15 +30,18 @@ export async function POST(request: Request) {
   const adminClient = createAdminClient();
   const now = new Date().toISOString();
   let resolved = 0;
+  const touched: string[] = [];
+  const bundleIds = new Set<string>();
   const skipped: string[] = [];
   for (const item of items) {
     if (typeof item.ticketId !== "string" || typeof item.proposalId !== "string") continue;
     const { data: proposal } = await adminClient.from("ticket_proposals").select("id, status, ticket_id").eq("id", item.proposalId).maybeSingle();
-    const { data: ticket } = await adminClient.from("tickets").select("id, auto_handle, status, fix_description").eq("id", item.ticketId).maybeSingle();
+    const { data: ticket } = await adminClient.from("tickets").select("id, auto_handle, status, fix_description, bundle_id").eq("id", item.ticketId).maybeSingle();
     if (!proposal || !ticket || proposal.ticket_id !== ticket.id || proposal.status !== "approved" || ticket.auto_handle !== "R") {
       skipped.push(item.ticketId);
       continue;
     }
+    if ((ticket as { bundle_id?: string | null }).bundle_id) bundleIds.add((ticket as { bundle_id: string }).bundle_id);
     const patch: Record<string, unknown> = { status: "resolved", resolved_at: now, auto_handle: "D" };
     if (!ticket.fix_description) patch.fix_description = `Fixed automatically and released in version ${version}.`;
     const { error } = await adminClient.from("tickets").update(patch).eq("id", ticket.id);
@@ -49,6 +52,15 @@ export async function POST(request: Request) {
     }
     await adminClient.from("ticket_proposals").update({ status: "released", decided_at: now }).eq("id", proposal.id);
     resolved += 1;
+    touched.push(ticket.id);
+  }
+  // A released bundle is finished: its tickets are freed and the letter can be used again.
+  if (touched.length > 0 && bundleIds.size > 0) {
+    await adminClient.from("tickets").update({ bundle_id: null }).in("id", touched);
+    for (const bundleId of bundleIds) {
+      const { data: left } = await adminClient.from("tickets").select("id").eq("bundle_id", bundleId).limit(1);
+      if ((left ?? []).length === 0) await adminClient.from("automation_bundles").delete().eq("id", bundleId);
+    }
   }
   return NextResponse.json({ success: true, resolved, skipped }, { headers: { "Cache-Control": "no-store" } });
 }
