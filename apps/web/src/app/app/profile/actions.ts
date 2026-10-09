@@ -19,6 +19,7 @@ import {
   exerciseOtherActivitiesSchema,
   exerciseScheduleByModalitySchema,
   habitOptions,
+  healthGoalOptions,
   medicalConditionOptions,
   modalityRequiresSchedule,
   nutritionalGoalOptions,
@@ -1260,6 +1261,52 @@ export async function updateHabitsAction(_prevState: QuickEditState, formData: F
     userId: user.id,
     locale,
     patch: { habits, alcohol_consumption_level: alcoholConsumptionLevel, smoking_packs_per_day: smokingPacksPerDay },
+  });
+}
+
+/** The multi-select "Nutritional goal" (TCK-118), separate from the weight goal (nutritional_goal). */
+export async function updateHealthGoalsAction(_prevState: QuickEditState, formData: FormData): Promise<QuickEditState> {
+  const locale = requestLocale(formData);
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/sign-in");
+  }
+
+  const goalsParsed = z.array(z.enum(healthGoalOptions)).min(1).safeParse(parseMultiSelect(formData, "health_goals"));
+  if (!goalsParsed.success) {
+    return { error: tr(locale, "Select at least one nutritional goal.", "יש לבחור לפחות מטרה תזונתית אחת.") };
+  }
+  const healthGoals = goalsParsed.data;
+
+  let markersDetails: string | null = null;
+  if (healthGoals.includes("abnormal_markers")) {
+    markersDetails = getFormString(formData, "health_goals_markers_details").trim().slice(0, 250);
+    if (markersDetails.length < 2) {
+      return { error: tr(locale, "Enter the marker(s) that need improvement.", "יש לציין את המדד/ים שצריכים שיפור.") };
+    }
+  }
+
+  let otherDetails: string | null = null;
+  if (healthGoals.includes("other")) {
+    otherDetails = getFormString(formData, "health_goals_other_details").trim().slice(0, 250);
+    if (otherDetails.length < 2) {
+      return { error: tr(locale, "Describe your other goal.", "יש לתאר את המטרה האחרת.") };
+    }
+  }
+
+  return applyProfilePatchAndFlagTargets({
+    supabase,
+    userId: user.id,
+    locale,
+    patch: {
+      health_goals: healthGoals,
+      health_goals_markers_details: markersDetails,
+      health_goals_other_details: otherDetails,
+    },
   });
 }
 

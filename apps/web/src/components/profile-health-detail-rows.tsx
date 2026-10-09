@@ -6,6 +6,7 @@ import {
   updateAllergiesAction,
   updateExercisePreferencesAction,
   updateHabitsAction,
+  updateHealthGoalsAction,
   updateMedicalConditionsAction,
   updateMedicationsAction,
   type QuickEditState,
@@ -14,11 +15,12 @@ import { ProfileRow, QuickEditSheet, SheetActions, useQuickEditSuccessEffect } f
 import {
   exerciseModalityOptions,
   habitOptions,
+  healthGoalOptions,
   medicalConditionOptions,
   modalityRequiresSchedule,
   type ExerciseScheduleModalityOption,
 } from "@/lib/profile";
-import { formatExerciseModality, formatHabit, formatMedicalCondition, tr, type AppLocale } from "@/lib/locale";
+import { formatExerciseModality, formatHabit, formatHealthGoal, formatMedicalCondition, tr, type AppLocale } from "@/lib/locale";
 
 const CIGARETTES_PER_PACK = 20;
 const SCHEDULE_MODALITIES: ExerciseScheduleModalityOption[] = ["resistance_hypertrophy", "endurance_cardio", "martial_arts"];
@@ -507,6 +509,110 @@ export function HabitsRow({
                 min={0}
                 value={cigarettes}
                 onChange={(event) => setCigarettes(event.target.value)}
+                className={fieldInputClass}
+              />
+            </div>
+          ) : null}
+
+          {state.error ? <p className="text-xs text-rose-600 dark:text-rose-400">{state.error}</p> : null}
+          <SheetActions locale={locale} onCancel={() => setIsOpen(false)} />
+        </form>
+      </QuickEditSheet>
+    </>
+  );
+}
+
+export function HealthGoalsRow({
+  locale,
+  healthGoals,
+  markersDetails,
+  otherDetails,
+}: {
+  locale: AppLocale;
+  healthGoals: string[];
+  markersDetails: string | null;
+  otherDetails: string | null;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [selected, setSelected] = useState<string[]>(healthGoals);
+  const [markers, setMarkers] = useState(markersDetails ?? "");
+  const [other, setOther] = useState(otherDetails ?? "");
+  const [state, formAction] = useActionState(updateHealthGoalsAction, {} as QuickEditState);
+
+  useQuickEditSuccessEffect(state, isOpen, setIsOpen);
+
+  function openSheet() {
+    setSelected(healthGoals);
+    setMarkers(markersDetails ?? "");
+    setOther(otherDetails ?? "");
+    setIsOpen(true);
+  }
+
+  function toggleGoal(goal: string) {
+    if (selected.includes(goal)) {
+      if (goal === "abnormal_markers") setMarkers("");
+      if (goal === "other") setOther("");
+      setSelected(selected.filter((entry) => entry !== goal));
+    } else {
+      setSelected([...selected, goal]);
+    }
+  }
+
+  const title = tr(locale, "Nutritional goal", "מטרה תזונתית");
+  const summary =
+    healthGoals.length === 0 ? tr(locale, "Not set", "לא הוגדר") : healthGoals.map((goal) => formatHealthGoal(goal, locale)).join(", ");
+
+  return (
+    <>
+      <ProfileRow label={title} value={summary} onClick={openSheet} />
+      <QuickEditSheet locale={locale} isOpen={isOpen} onClose={() => setIsOpen(false)} title={title}>
+        <form action={formAction} className="space-y-3">
+          <input type="hidden" name="preferred_language" value={locale} />
+          <div className="space-y-1.5">
+            {healthGoalOptions.map((goal) => (
+              <label key={goal} className="flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
+                <input
+                  type="checkbox"
+                  name="health_goals"
+                  value={goal}
+                  checked={selected.includes(goal)}
+                  onChange={() => toggleGoal(goal)}
+                  className="h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-600"
+                />
+                {formatHealthGoal(goal, locale)}
+              </label>
+            ))}
+          </div>
+
+          {selected.includes("abnormal_markers") ? (
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold text-slate-600 dark:text-slate-400">
+                {tr(locale, "Which markers need improvement?", "אילו מדדים צריכים שיפור?")}
+              </label>
+              <textarea
+                name="health_goals_markers_details"
+                value={markers}
+                onChange={(event) => setMarkers(event.target.value)}
+                rows={2}
+                maxLength={250}
+                placeholder={tr(locale, "e.g. high LDL cholesterol, low vitamin D, low iron", "לדוגמה: כולסטרול LDL גבוה, ויטמין D נמוך, ברזל נמוך")}
+                className={`${fieldInputClass} resize-none`}
+              />
+            </div>
+          ) : null}
+
+          {selected.includes("other") ? (
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold text-slate-600 dark:text-slate-400">
+                {tr(locale, "Describe your goal", "תארו את המטרה")}
+              </label>
+              <input
+                type="text"
+                name="health_goals_other_details"
+                value={other}
+                onChange={(event) => setOther(event.target.value)}
+                maxLength={250}
+                placeholder={tr(locale, "e.g. improving energy levels", "לדוגמה: שיפור רמות האנרגיה")}
                 className={fieldInputClass}
               />
             </div>
