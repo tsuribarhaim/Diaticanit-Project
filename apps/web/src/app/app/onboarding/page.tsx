@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 
 import { OnboardingProfileForm } from "@/components/onboarding-profile-form";
-import { tr } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -88,10 +87,6 @@ export default async function OnboardingPage() {
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-10">
       <section className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">
-          {tr(locale, "Welcome to Daffy — your personal AI coach for a healthier life", "ברוכים הבאים ל-Daffy - מאמנת ה-AI האישית שלכם לחיים בריאים")}
-        </h1>
-
         <OnboardingProfileForm locale={locale} defaults={formDefaults} startAtTargetsStep={startAtTargetsStep} />
       </section>
     </main>
