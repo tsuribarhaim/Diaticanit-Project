@@ -1059,6 +1059,7 @@ const ANALYST_RESULT_SCHEMA = JSON.stringify({
     nature: { type: "string", enum: ["bug", "logic", "ui_ux"] },
     findings: { type: "array", items: { type: "string" } },
     blastRadius: { type: "array", items: { type: "string" } },
+    expectedFiles: { type: "array", items: { type: "string" } },
     decisions: { type: "array", items: QUESTION_ITEM_SCHEMA },
     mockups: {
       type: "array",
@@ -1069,7 +1070,7 @@ const ANALYST_RESULT_SCHEMA = JSON.stringify({
     needsPairing: { type: "boolean" },
     pairingReason: { type: "string" },
   },
-  required: ["summary", "nature", "findings", "blastRadius", "decisions", "mockups", "brief", "outOfScope", "needsPairing", "pairingReason"],
+  required: ["summary", "nature", "findings", "blastRadius", "expectedFiles", "decisions", "mockups", "brief", "outOfScope", "needsPairing", "pairingReason"],
   additionalProperties: false,
 });
 
@@ -1103,7 +1104,8 @@ function buildAnalystPrompt(ticket) {
     "5. BRIEF: the exact instructions the night coding agent will receive, as imperative numbered steps: which files and functions, exact behavior, every user-facing string in English AND Hebrew, what is OUT OF SCOPE, and how to verify (tsc and eslint, plus what to check). The agent can take screenshots with a headless browser but only as a non-admin test account with no data: say what cannot be verified. The brief must follow your recommended option for every decision. Never tell it to create records on any account.",
     "6. PAIRING: set needsPairing true, and say why in pairingReason, when doing this unattended is risky: it changes core behavior across several screens, writes user data automatically, needs a visual check on a phone to be judged, depends on another unmerged ticket, or needs a database migration. Still write the best brief you can. Otherwise needsPairing false and pairingReason an empty string.",
     `7. MIGRATIONS: when the brief needs a database change, the migration number is ${nextMigrationNumber()} (the next free number in db/migrations; if another ticket's proposal already uses it, add one). Any new column on user_profile also needs the view user_profile_enriched recreated in the same migration (a "select p.*" view freezes its columns, and a page that selects a missing column redirects to onboarding in a loop - see migrations 029 and 073). Name the two files db/migrations/NNN_*.sql and supabase/migrations/20240101000NNN_*.sql with identical SQL.`,
-    "8. Keep the scope as small as the ticket allows. Do not propose changes to unrelated code.",
+    "8. EXPECTED FILES: list in expectedFiles every source file (path from the repository root, for example apps/web/src/components/x.tsx) that your brief tells the night agent to change. Two tickets that change the same file are built one after the other, not in parallel, so an honest, complete list matters. Use an empty array only when no file changes.",
+    "9. Keep the scope as small as the ticket allows. Do not propose changes to unrelated code.",
     "",
     "Output per the provided JSON schema.",
   );
@@ -1173,7 +1175,12 @@ async function runAnalysis() {
 
 
 async function runAll() {
-  const tickets = await fetchQueue();
+  const queue = await fetchQueue();
+  // A ticket that changes the same files as another ticket (queued ahead of it, or with a fix not promoted yet) waits: built in
+  // parallel on the same base the two would conflict (TCK-117/118/119). The app decides; "Build anyway" on the dashboard lifts it.
+  const held = queue.filter((ticket) => Array.isArray(ticket.heldBy) && ticket.heldBy.length > 0);
+  const tickets = queue.filter((ticket) => !held.includes(ticket));
+  for (const ticket of held) console.log(`TCK-${ticket.ticket_seq} is held: waits for ${ticket.heldBy.map((b) => `TCK-${b.seq} (${b.why})`).join(", ")}`);
   if (tickets.length > 0) await refreshLessons();
   if (tickets.length > 0 && env.SEED_SOURCE_EMAIL) {
     // Fresh sample data for the test account, so the agent's screenshots show real-looking pages. Never fatal.
@@ -1199,6 +1206,7 @@ async function runAll() {
     succeeded: results.filter((r) => r.outcome === "processed" || r.outcome === "processed_phase1_only"),
     failed: results.filter((r) => r.outcome === "failed"),
     skipped: results.filter((r) => r.outcome === "skipped_budget"),
+    held: held.map((ticket) => ({ ticketSeq: ticket.ticket_seq, subject: ticket.subject, waitingFor: ticket.heldBy.map((b) => b.seq) })),
   };
 }
 
@@ -1390,5 +1398,5 @@ if (require.main === module) {
     console.log(`Phase 2: ${PHASE2_ENABLED ? "enabled" : "disabled"}`);
   });
 } else {
-  module.exports = { syncDevWithProduction, moveStaleBranchAside, conflictAdvice, nextMigrationNumber, mergeBranch, revertMerge };
+  module.exports = { syncDevWithProduction, moveStaleBranchAside, conflictAdvice, nextMigrationNumber, mergeBranch, revertMerge, runAll };
 }

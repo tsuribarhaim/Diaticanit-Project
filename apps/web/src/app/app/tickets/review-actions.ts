@@ -15,6 +15,7 @@ import {
   requestMerge,
   handledByHand,
   requeueStopped,
+  overrideOverlap,
   requestAgentRun,
   requestPromote,
   returnFix,
@@ -136,4 +137,7 @@ export async function handledByHandAction(ticketId: string, resolve: boolean, no
 }
 export async function requeueStoppedAction(ticketId: string): Promise<ReviewResult> {
   return withAdmin(({ supabase, adminId, locale }) => requeueStopped(supabase, adminId, locale, ticketId));
+}
+export async function overrideOverlapAction(ticketId: string): Promise<ReviewResult> {
+  return withAdmin(({ supabase, adminId, locale }) => overrideOverlap(supabase, adminId, locale, ticketId));
 }

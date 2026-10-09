@@ -420,3 +420,13 @@ export async function requeueStopped(supabase: Client, adminId: string, locale: 
   await logAutomationEvent(supabase, adminId, ticketId, "requeued");
   return { success: tr(locale, `TCK-${ticket.ticket_seq} is back in the queue for the next night run.`, `TCK-${ticket.ticket_seq} חזרה לתור של ריצת הלילה הבאה.`) };
 }
+
+/** "Build anyway": a queued ticket that waits for another one (they change the same files) is built in the next run regardless.
+ * Only valid until the ticket is queued again (lib/automation-overlap.ts). Expect a merge conflict if the other fix is not promoted first. */
+export async function overrideOverlap(supabase: Client, adminId: string, locale: AppLocale, ticketId: string): Promise<ReviewResult> {
+  const { data: ticket } = await supabase.from("tickets").select("id, ticket_seq, auto_handle").eq("id", ticketId).maybeSingle();
+  if (!ticket) return notFound(locale);
+  if (ticket.auto_handle !== "Y") return alreadyDecided(locale);
+  await logAutomationEvent(supabase, adminId, ticketId, "overlap_override");
+  return { success: tr(locale, `TCK-${ticket.ticket_seq} will be built in the next run without waiting.`, `TCK-${ticket.ticket_seq} תיבנה בריצה הבאה בלי להמתין.`) };
+}
