@@ -326,10 +326,13 @@ async function upsert(name, nodes, connections, settings = { executionOrder: "v1
   promoteMail.id = uuid();
   promoteMail.name = "Send Promotion Email";
   promoteMail.position = [720, 0];
+  // The e-mail steps send over SMTP with the "Daffy SMTP" credential (a Google App Password), not Gmail OAuth: the OAuth token of an
+  // app in "Testing" mode expires every 7 days, and Google will not publish it without a domain of our own. The credential is
+  // carried over from the node cloned above.
   promoteMail.parameters = {
-    resource: "message", operation: "send",
-    sendTo: '={{ [...new Set([...($json.adminEmails || []), "tsuri.barhaim@gmail.com", "shenhar.orit@gmail.com"])].join(",") }}',
-    subject: "={{ $json.emailSubject }}", emailType: "html", message: "={{ $json.emailBody }}", options: { appendAttribution: false },
+    fromEmail: "Daffy <daffy.healthcompanion@gmail.com>",
+    toEmail: '={{ [...new Set([...($json.adminEmails || []), "tsuri.barhaim@gmail.com", "shenhar.orit@gmail.com"])].join(",") }}',
+    subject: "={{ $json.emailSubject }}", emailFormat: "html", html: "={{ $json.emailBody }}", options: { appendAttribution: false },
   };
   const promoteId = await upsert(PROMOTE_NAME, [promoteHook, promoteRun, promoteFinish, promoteMail], {
     [promoteHook.name]: { main: [[{ node: promoteRun.name, type: "main", index: 0 }]] },
@@ -360,9 +363,9 @@ async function upsert(name, nodes, connections, settings = { executionOrder: "v1
   lessonMail.name = "Send Lesson Email";
   lessonMail.position = [720, 0];
   lessonMail.parameters = {
-    resource: "message", operation: "send",
-    sendTo: '={{ [...new Set([...($json.adminEmails || []), "tsuri.barhaim@gmail.com"])].join(",") }}',
-    subject: "={{ $json.emailSubject }}", emailType: "html", message: "={{ $json.emailBody }}", options: { appendAttribution: false },
+    fromEmail: "Daffy <daffy.healthcompanion@gmail.com>",
+    toEmail: '={{ [...new Set([...($json.adminEmails || []), "tsuri.barhaim@gmail.com"])].join(",") }}',
+    subject: "={{ $json.emailSubject }}", emailFormat: "html", html: "={{ $json.emailBody }}", options: { appendAttribution: false },
   };
   const lessonId = await upsert(LESSON_NAME, [lessonHook, lessonRun, lessonFinish, lessonMail], {
     [lessonHook.name]: { main: [[{ node: lessonRun.name, type: "main", index: 0 }]] },

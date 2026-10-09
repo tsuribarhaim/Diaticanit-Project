@@ -162,7 +162,9 @@ Still open:
 - **Additive migrations without pairing.** The agent drafts the SQL, a checker allows only safe statements (add column if not
   exists, create table if not exists, create index, view refresh), the admin approves in the dashboard, the automation applies
   it to dev with the merge and to production before the deploy, and records it in the migration history.
-- Publish the Google OAuth app ("In production") so the Gmail token does not expire every 7 days, and add an n8n alert when a
-  send fails.
+- Add an n8n alert when an e-mail send fails (done 2026-10-09 for the cause: the e-mails now go out over SMTP with a Google App
+  Password, credential "Daffy SMTP", instead of Gmail OAuth, whose token expires every 7 days while the app is in "Testing" and
+  cannot be published without a domain of our own. An App Password does not expire, but if it is ever revoked the sends fail
+  silently, so an alert is still worth having. The two old Gmail OAuth credentials in n8n are unused and can be deleted.)
 - Standing rule for Claude's own changes: nothing is merged or released while an agent run is active or approved fixes await
   promotion (memory: hold-changes-while-agents-running).
