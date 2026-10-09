@@ -12,7 +12,7 @@ import { targetGenerationPayloadSchema, toProfileForTargets, type TargetGenerati
 import { computeTargetsDiff } from "@/lib/targets-diff";
 
 const PROFILE_COLUMNS_FOR_TARGETS =
-  "age, gender, biological_sex, height_cm, weight_kg, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, habits, alcohol_weekly_frequency, smoking_status, smoking_cigarettes_range, caffeine_cups_per_day, pregnancy_lactation_status, hot_climate_or_heavy_sweating, preferred_language, first_name, nutritional_goal";
+  "age, gender, biological_sex, height_cm, weight_kg, activity_level, allergies, medical_conditions, medical_conditions_details, regular_medications_details, dietary_preference, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, habits, alcohol_weekly_frequency, smoking_status, smoking_cigarettes_range, caffeine_cups_per_day, pregnancy_lactation_status, hot_climate_or_heavy_sweating, preferred_language, first_name, nutritional_goal, health_goals, health_goals_markers_details, health_goals_other_details";
 
 export type OnboardingTargetsResult =
   | { error: string }
@@ -56,7 +56,18 @@ export async function generateOnboardingTargetsAction(): Promise<OnboardingTarge
   // needs one - the profile (nutritional_goal included) already fully
   // describes what's wanted. This text only needs to carry the goal
   // direction for the AI/heuristic to act on.
-  const goalText = `Generate my initial daily targets. My goal is: ${profileRow.nutritional_goal ?? "maintain"}.`;
+  let goalText = `Generate my initial daily targets. My goal is: ${profileRow.nutritional_goal ?? "maintain"}.`;
+  const healthGoals: string[] = Array.isArray(profileRow.health_goals) ? profileRow.health_goals : [];
+  if (healthGoals.length > 0) {
+    const healthGoalNames = healthGoals.map((goal) => {
+      if (goal === "maintain_health") return "maintain overall health";
+      if (goal === "muscle_gain") return "build muscle mass";
+      if (goal === "abnormal_markers") return `improve out-of-range markers (${profileRow.health_goals_markers_details ?? ""})`;
+      if (goal === "other") return `other (${profileRow.health_goals_other_details ?? ""})`;
+      return goal;
+    });
+    goalText += ` Additional nutritional goals: ${healthGoalNames.join(", ")}.`;
+  }
 
   const { payload, source, safetyRejectionMessage, notActionableMessage } = await generateTargetsPayload({
     goalText,
