@@ -29,7 +29,7 @@ import {
   validateFreeTextDetails,
 } from "@/lib/profile";
 import type { AppLocale } from "@/lib/locale";
-import { formatActivityLevel, formatMedicalCondition, formatNumberForLocale, tr } from "@/lib/locale";
+import { directionForLocale, formatActivityLevel, formatMedicalCondition, formatNumberForLocale, tr } from "@/lib/locale";
 
 type OnboardingProfileFormProps = {
   defaults?: {
@@ -1199,7 +1199,10 @@ export function OnboardingProfileForm({
   };
 
   return (
-    <>
+    // dir set from the language chosen in this wizard - the app layout only
+    // knows the saved language, which is still "en" for a brand-new user who
+    // picks עברית here.
+    <div lang={effectiveLocale} dir={directionForLocale(effectiveLocale)}>
     {step < 5 ? (
       // Only makes sense while there's still a profile to set up - step 5
       // (OnboardingTargetsStep) has its own contextual copy once the
@@ -1526,7 +1529,7 @@ export function OnboardingProfileForm({
                 ) : null}
               </div>
 
-              <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+              <div dir="ltr" className="mt-2 flex items-center justify-between text-xs text-slate-500">
                 <span>{BMI_SCALE_MIN}</span>
                 <span>{BMI_SCALE_MAX}</span>
               </div>
@@ -2231,6 +2234,6 @@ export function OnboardingProfileForm({
         </div>
       </div>
     ) : null}
-    </>
+    </div>
   );
 }
