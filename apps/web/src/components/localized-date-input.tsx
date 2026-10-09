@@ -5,9 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { tr, type AppLocale } from "@/lib/locale";
 
 /**
- * A day/month/year field group that always displays in the order the app's
- * own locale dictates (dd/mm/yyyy for Hebrew, mm/dd/yyyy for English) -
- * unlike a native `<input type="date">`, whose displayed format is chosen
+ * A day/month/year field group that always displays dd/mm/yyyy, regardless
+ * of the app's locale or the browser's own UI language - unlike a native `<input type="date">`, whose displayed format is chosen
  * by the browser's own UI-language setting, not the page's `lang`
  * attribute. Chrome in particular ignores `lang` here entirely, which is
  * why a Hebrew-locale page can still show mm/dd/yyyy to a user whose
@@ -99,7 +98,7 @@ export function LocalizedDateInput({
    * separate box - used where the default sizing was too bulky to fit a
    * date next to a time on one line (daily report's date & time row).
    * Defaults to false so every other existing call site (onboarding/profile
-   * date of birth, the daily-report page's own date picker) is unaffected. */
+   * date of birth) is unaffected. */
   compact?: boolean;
 }) {
   const initial = splitIso(value);
@@ -134,7 +133,7 @@ export function LocalizedDateInput({
       inputMode="numeric"
       maxLength={2}
       value={day}
-      placeholder={tr(locale, "DD", "יי")}
+      placeholder="DD"
       aria-label={tr(locale, "Day", "יום")}
       onChange={(event) => {
         const next = onlyDigits(event.target.value, 2);
@@ -154,7 +153,7 @@ export function LocalizedDateInput({
       inputMode="numeric"
       maxLength={2}
       value={month}
-      placeholder={tr(locale, "MM", "חח")}
+      placeholder="MM"
       aria-label={tr(locale, "Month", "חודש")}
       onChange={(event) => {
         const next = onlyDigits(event.target.value, 2);
@@ -174,7 +173,7 @@ export function LocalizedDateInput({
       inputMode="numeric"
       maxLength={4}
       value={year}
-      placeholder={tr(locale, "YYYY", "שששש")}
+      placeholder="YYYY"
       aria-label={tr(locale, "Year", "שנה")}
       onChange={(event) => {
         const next = onlyDigits(event.target.value, 4);
@@ -185,11 +184,11 @@ export function LocalizedDateInput({
     />
   );
 
-  // The only thing that changes between locales: which field reads first,
-  // left to right. Kept explicitly ltr below regardless of page direction -
-  // digit sequences read left-to-right the same way a phone number would,
-  // even inside an RTL page.
-  const orderedFields = locale === "he" ? [dayField, monthField, yearField] : [monthField, dayField, yearField];
+  // Always day / month / year, left to right, in every locale. Kept
+  // explicitly ltr below regardless of page direction - digit sequences
+  // read left-to-right the same way a phone number would, even inside an
+  // RTL page.
+  const orderedFields = [dayField, monthField, yearField];
 
   const slashClass = compact ? "text-xs text-slate-400 dark:text-slate-600" : "text-slate-400 dark:text-slate-600";
 
