@@ -373,11 +373,54 @@ function removeShotDirs(ticket) {
   fs.rmSync(shotsDirFor(ticket, "final"), { recursive: true, force: true });
 }
 
+/** Dev (main) and production (release/1.0) must share history. Promotion puts each fix on production as a cherry-pick, while dev
+ * got the same fix as a branch merge: same content, different commits. A new fix is built on production, so merging it into
+ * dev then conflicts with the fixes that were already promoted (TCK-117/118/119, 2026-10-09). Merging production into dev
+ * records that those fixes are already there. It only ADDS history to dev: nothing on dev is undone, and fixes that are on dev
+ * but not promoted yet stay where they are. Skipped (with a note) when the dev copy is not clean or not on main. */
+async function syncDevWithProduction() {
+  try {
+    const current = await runGit(["branch", "--show-current"], REPO_PATH);
+    if (current !== "main") return { ok: false, changed: false, note: `The dev repo is on "${current}", not main, so dev was not synced with production.` };
+    const dirty = await runGit(["status", "--porcelain", "--untracked-files=no"], REPO_PATH);
+    if (dirty) return { ok: false, changed: false, note: "Your dev copy has uncommitted changes, so dev was not synced with production." };
+    const behind = Number((await runGit(["rev-list", "--count", `main..${PRODUCTION_REF}`], REPO_PATH)).trim());
+    if (!behind) return { ok: true, changed: false, note: null };
+    await runGit(["merge", "--no-edit", "-m", `Merge ${PRODUCTION_REF} into main (keep dev in step with production)`, PRODUCTION_REF], REPO_PATH);
+    return { ok: true, changed: true, note: `Dev was synced with production (${behind} commit(s)).` };
+  } catch (err) {
+    const files = (await runGit(["diff", "--name-only", "--diff-filter=U"], REPO_PATH).catch(() => "")).trim().split(/\r?\n/).filter(Boolean);
+    await runGit(["merge", "--abort"], REPO_PATH).catch(() => {});
+    return { ok: false, changed: false, note: `Dev could not be synced with production (conflicts in: ${files.join(", ") || "unknown"}). Nothing was changed.` };
+  }
+}
+
+/** A branch name left over from an earlier attempt would make "git checkout -b" fail at the very end of a run, after the agent
+ * has been paid. Move it aside before any work starts. A branch that a worktree is using right now is never touched. */
+async function moveStaleBranchAside(ticketSeq) {
+  const branch = `auto-fix/tck-${Number(ticketSeq)}`;
+  const exists = await runGit(["rev-parse", "--verify", "--quiet", branch], REPO_PATH).catch(() => "");
+  if (!exists) return null;
+  const worktrees = await runGit(["worktree", "list", "--porcelain"], REPO_PATH);
+  if (worktrees.includes(`branch refs/heads/${branch}`)) throw new Error(`${branch} is checked out in another working copy right now, so it was not rebuilt.`);
+  const aside = `${branch}-stale-${Date.now()}`;
+  await runGit(["branch", "-m", branch, aside], REPO_PATH);
+  return aside;
+}
+
+/** Why a merge or revert conflicted, in words the admin can act on. */
+async function conflictAdvice(kind) {
+  const files = (await runGit(["diff", "--name-only", "--diff-filter=U"], REPO_PATH).catch(() => "")).trim().split(/\r?\n/).filter(Boolean);
+  const where = files.length ? ` Conflicting files: ${files.slice(0, 6).join(", ")}${files.length > 6 ? ", ..." : ""}.` : "";
+  return `${where} Most likely another fix that changes the same code is already on dev or in production. Promote or merge that one first, then return this ticket with a comment so it is rebuilt on top of it.`;
+}
+
 /** "Merge to dev": the fix lives on a local branch on this laptop, so the laptop merges it. Only
  * ever into main of the dev repo, never pushed, and a failed merge is aborted so nothing is left half-done. */
 async function mergeBranch(ticketSeq) {
   const branch = `auto-fix/tck-${Number(ticketSeq)}`;
   if (!Number.isInteger(Number(ticketSeq))) return { ok: false, result: "Invalid ticket number." };
+  let sync = null;
   try {
     const current = await runGit(["branch", "--show-current"], REPO_PATH);
     if (current !== "main") return { ok: false, result: `The dev repo is on "${current}", not main - nothing was merged.` };
@@ -385,11 +428,13 @@ async function mergeBranch(ticketSeq) {
     if (!exists) return { ok: false, result: `Branch ${branch} does not exist on this laptop.` };
     const already = await runGit(["merge-base", "--is-ancestor", branch, "main"], REPO_PATH).then(() => true).catch(() => false);
     if (already) return { ok: true, result: `${branch} is already merged into main on dev.` };
+    sync = await syncDevWithProduction();
     await runGit(["merge", "--no-ff", "-m", `Merge ${branch}`, branch], REPO_PATH);
-    return { ok: true, result: `Merged ${branch} into main on dev (not pushed).` };
+    return { ok: true, result: `Merged ${branch} into main on dev (not pushed).${sync.changed ? ` ${sync.note}` : ""}` };
   } catch (err) {
+    const advice = await conflictAdvice("merge");
     await runGit(["merge", "--abort"], REPO_PATH).catch(() => {});
-    return { ok: false, result: "Merge failed and was undone - nothing was changed. The branch most likely conflicts with newer changes on main, or with uncommitted changes in your dev copy. Merge it by hand: git merge " + branch };
+    return { ok: false, result: `Merge failed and was undone - nothing was changed.${advice}${sync && !sync.ok ? ` ${sync.note}` : ""}` };
   }
 }
 
@@ -409,8 +454,9 @@ async function revertMerge(ticketSeq) {
     if (exists) await runGit(["branch", "-m", branch, `${branch}-reverted-${Date.now()}`], REPO_PATH);
     return { ok: true, result: `Reverted the merge of ${branch} on dev (not pushed). The ticket goes back to the night run.` };
   } catch (err) {
+    const advice = await conflictAdvice("revert");
     await runGit(["revert", "--abort"], REPO_PATH).catch(() => {});
-    return { ok: false, result: "Revert failed and was undone - nothing was changed. Later commits on main probably touch the same code, or your dev copy has uncommitted changes. Undo it by hand: git revert -m 1 <merge commit>" };
+    return { ok: false, result: `Revert failed and was undone - nothing was changed.${advice}` };
   }
 }
 
@@ -437,6 +483,8 @@ async function autoMergeToDev(ticketSeq, files, { force = false } = {}) {
   } catch (err) {
     return { merged: false, reason: `Not merged automatically: could not read the dev repo (${err.message}).` };
   }
+  const sync = await syncDevWithProduction();
+  if (!sync.ok) return { merged: false, reason: `Not merged automatically: ${sync.note}` };
 
   const checkDir = path.join(WORKTREE_BASE, `merge-check-${Number(ticketSeq)}-${Date.now()}`);
   const junctions = [];
@@ -885,6 +933,7 @@ async function processTicket(ticket, budgetTracker) {
   const worktreeDir = path.join(WORKTREE_BASE, `ticket-${ticket.ticket_seq}-${Date.now()}`);
   let devServerProc = null;
   try {
+    await moveStaleBranchAside(ticket.ticket_seq);
     await gitWorktreeAdd(worktreeDir, PRODUCTION_REF);
 
     const phase1 = await runClaudeHeadless({
@@ -983,9 +1032,11 @@ async function processTicket(ticket, budgetTracker) {
       mergeNote: mergeResult.reason,
     };
   } catch (err) {
-    // Deliberately does NOT call reportResult here - auto_handle stays at
-    // 'Y' untouched, so this ticket is retried on the next attempt instead
-    // of silently advancing past a genuine failure.
+    // The ticket was flagged P when its read-only pass finished, so after a failure it would sit there with nothing for the
+    // dashboard to show. Say so on the ticket instead: a "stopped" card with the reason, which the admin can put back in the queue
+    // with one click. It is deliberately not retried automatically every night: a broken ticket would cost money each time.
+    await reportProposal(ticket.id, "questions", { why: `The night run hit an error and stopped: ${err.message}`, questions: [] }).catch(() => {});
+    await reportResult(ticket.id, "P", `Night run error: ${err.message}`, "in_progress").catch(() => {});
     return { ticketId: ticket.id, ticketSeq: ticket.ticket_seq, subject: ticket.subject, outcome: "failed", error: err.message };
   } finally {
     if (devServerProc) await stopDevServer(devServerProc);
@@ -1051,11 +1102,23 @@ function buildAnalystPrompt(ticket) {
     '4. MOCKUPS: only when nature is ui_ux, otherwise []. 1 to 3 mockups, each ONE self-contained HTML document (inline CSS only, no scripts, no external resources or image URLs, under 12 KB) showing the proposed result with realistic content from the app (Hebrew text with dir="rtl" where the screen is Hebrew-facing). Draw it on a light app surface (white card, dark slate text): it is shown in an isolated frame.',
     "5. BRIEF: the exact instructions the night coding agent will receive, as imperative numbered steps: which files and functions, exact behavior, every user-facing string in English AND Hebrew, what is OUT OF SCOPE, and how to verify (tsc and eslint, plus what to check). The agent can take screenshots with a headless browser but only as a non-admin test account with no data: say what cannot be verified. The brief must follow your recommended option for every decision. Never tell it to create records on any account.",
     "6. PAIRING: set needsPairing true, and say why in pairingReason, when doing this unattended is risky: it changes core behavior across several screens, writes user data automatically, needs a visual check on a phone to be judged, depends on another unmerged ticket, or needs a database migration. Still write the best brief you can. Otherwise needsPairing false and pairingReason an empty string.",
-    "7. Keep the scope as small as the ticket allows. Do not propose changes to unrelated code.",
+    `7. MIGRATIONS: when the brief needs a database change, the migration number is ${nextMigrationNumber()} (the next free number in db/migrations; if another ticket's proposal already uses it, add one). Any new column on user_profile also needs the view user_profile_enriched recreated in the same migration (a "select p.*" view freezes its columns, and a page that selects a missing column redirects to onboarding in a loop - see migrations 029 and 073). Name the two files db/migrations/NNN_*.sql and supabase/migrations/20240101000NNN_*.sql with identical SQL.`,
+    "8. Keep the scope as small as the ticket allows. Do not propose changes to unrelated code.",
     "",
     "Output per the provided JSON schema.",
   );
   return lines.join("\n");
+}
+
+/** The next free migration number, read from the dev repo (migrations are committed to both dev and production). */
+function nextMigrationNumber() {
+  try {
+    const dir = path.join(REPO_PATH, "db", "migrations");
+    const numbers = fs.readdirSync(dir).map((name) => Number((name.match(/^(\d+)_/) || [])[1])).filter(Number.isFinite);
+    return String(Math.max(0, ...numbers) + 1).padStart(3, "0");
+  } catch {
+    return "(check the highest number in db/migrations and add one)";
+  }
 }
 
 async function fetchAnalyzeQueue() {
@@ -1250,6 +1313,11 @@ const server = http.createServer(async (req, res) => {
         },
       });
       const picked = report.tickets.filter((t) => t.status !== "skipped").length;
+      // Production moved: record that in dev's history too, so the next fixes (built on production) merge into dev cleanly.
+      if (report.ok && !dryRun) {
+        const sync = await syncDevWithProduction();
+        if (sync.note) report.steps.push({ name: "sync dev with production", ok: sync.ok, detail: sync.note });
+      }
       return sendJson(res, 200, {
         ok: report.ok,
         report,
@@ -1315,7 +1383,12 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, "127.0.0.1", () => {
-  console.log(`Auto Ticket Handling bridge listening on http://127.0.0.1:${PORT} (POST /run, /analyze, /merge)`);
-  console.log(`Phase 2: ${PHASE2_ENABLED ? "enabled" : "disabled"}`);
-});
+// Started with `node server.js <env file>`. When another script requires this file (the tests), only the helpers are exposed.
+if (require.main === module) {
+  server.listen(PORT, "127.0.0.1", () => {
+    console.log(`Auto Ticket Handling bridge listening on http://127.0.0.1:${PORT} (POST /run, /analyze, /merge)`);
+    console.log(`Phase 2: ${PHASE2_ENABLED ? "enabled" : "disabled"}`);
+  });
+} else {
+  module.exports = { syncDevWithProduction, moveStaleBranchAside, conflictAdvice, nextMigrationNumber, mergeBranch, revertMerge };
+}
