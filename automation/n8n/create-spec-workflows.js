@@ -162,7 +162,16 @@ const beat = async () => {
 };
 await beat();
 
-const list = await call({ method: 'GET', url: APP_URL + '/api/admin/automation-requests', headers: appHeaders });
+let list;
+try {
+  list = await call({ method: 'GET', url: APP_URL + '/api/admin/automation-requests', headers: appHeaders });
+} catch (e) {
+  // No network for a moment (DNS, connection refused, timeout): nothing to do until the next minute. The dashboard shows
+  // "Bridge offline" when the heartbeat stops arriving, so an outage is not hidden - it just stops filling n8n with errors.
+  // A real answer from the app that is an error (HTTP status) is not matched here and still fails loudly.
+  if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ESOCKETTIMEDOUT|getaddrinfo|timeout/i.test(String((e && (e.code || e.message)) || ''))) return [];
+  throw e;
+}
 const done = [];
 for (const r of (list.requests || [])) {
   const claim = await call({ method: 'POST', url: APP_URL + '/api/admin/automation-requests', headers: appHeaders, body: { id: r.id, action: 'claim' } });
@@ -197,6 +206,11 @@ for (const r of (list.requests || [])) {
       // cannot send: hand it to the "Lesson Learned" workflow, which completes this request itself.
       await call({ method: 'POST', url: LESSON_WEBHOOK, body: { requestId: r.id, ticketSeq: (r.details && r.details.ticketSeq) || r.ticketSeq, source: r.details && r.details.source, comment: r.details && r.details.comment, context: r.details && r.details.context } });
       done.push({ id: r.id, kind: r.kind, ok: true, result: 'learning started' });
+      continue;
+    } else if (r.kind === 'invite') {
+      // The welcome email for a new user: handed to the "Welcome Invite" workflow (create-invite-workflow.js), which sends it and completes this request itself.
+      await call({ method: 'POST', url: 'http://localhost:5678/webhook/daffy-welcome-invite', body: { requestId: r.id } });
+      done.push({ id: r.id, kind: r.kind, ok: true, result: 'welcome email started' });
       continue;
     } else if (r.kind === 'revert') {
       const res = await call({ method: 'POST', url: BRIDGE_URL + '/revert', headers: { 'x-bridge-secret': BRIDGE_SECRET }, body: { ticketSeq: r.ticketSeq } });
@@ -317,10 +331,13 @@ async function upsert(name, nodes, connections, settings = { executionOrder: "v1
   promoteMail.id = uuid();
   promoteMail.name = "Send Promotion Email";
   promoteMail.position = [720, 0];
+  // The e-mail steps send over SMTP with the "Daffy SMTP" credential (a Google App Password), not Gmail OAuth: the OAuth token of an
+  // app in "Testing" mode expires every 7 days, and Google will not publish it without a domain of our own. The credential is
+  // carried over from the node cloned above.
   promoteMail.parameters = {
-    resource: "message", operation: "send",
-    sendTo: '={{ [...new Set([...($json.adminEmails || []), "tsuri.barhaim@gmail.com", "shenhar.orit@gmail.com"])].join(",") }}',
-    subject: "={{ $json.emailSubject }}", emailType: "html", message: "={{ $json.emailBody }}", options: { appendAttribution: false },
+    fromEmail: "Daffy <daffy.healthcompanion@gmail.com>",
+    toEmail: '={{ [...new Set([...($json.adminEmails || []), "tsuri.barhaim@gmail.com", "shenhar.orit@gmail.com"])].join(",") }}',
+    subject: "={{ $json.emailSubject }}", emailFormat: "html", html: "={{ $json.emailBody }}", options: { appendAttribution: false },
   };
   const promoteId = await upsert(PROMOTE_NAME, [promoteHook, promoteRun, promoteFinish, promoteMail], {
     [promoteHook.name]: { main: [[{ node: promoteRun.name, type: "main", index: 0 }]] },
@@ -351,9 +368,9 @@ async function upsert(name, nodes, connections, settings = { executionOrder: "v1
   lessonMail.name = "Send Lesson Email";
   lessonMail.position = [720, 0];
   lessonMail.parameters = {
-    resource: "message", operation: "send",
-    sendTo: '={{ [...new Set([...($json.adminEmails || []), "tsuri.barhaim@gmail.com"])].join(",") }}',
-    subject: "={{ $json.emailSubject }}", emailType: "html", message: "={{ $json.emailBody }}", options: { appendAttribution: false },
+    fromEmail: "Daffy <daffy.healthcompanion@gmail.com>",
+    toEmail: '={{ [...new Set([...($json.adminEmails || []), "tsuri.barhaim@gmail.com"])].join(",") }}',
+    subject: "={{ $json.emailSubject }}", emailFormat: "html", html: "={{ $json.emailBody }}", options: { appendAttribution: false },
   };
   const lessonId = await upsert(LESSON_NAME, [lessonHook, lessonRun, lessonFinish, lessonMail], {
     [lessonHook.name]: { main: [[{ node: lessonRun.name, type: "main", index: 0 }]] },
