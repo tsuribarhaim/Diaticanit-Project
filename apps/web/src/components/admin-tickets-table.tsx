@@ -3,6 +3,7 @@
 import { NavLink as Link } from "@/components/nav-link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { AddUserDialog } from "@/components/add-user-dialog";
 import { AdminStatusDropdown } from "@/components/admin-status-dropdown";
 import { LocalDate } from "@/components/local-time";
 import { AutomationCheckbox } from "@/components/quick-automation-mark";
@@ -428,6 +429,8 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
               admin view (the non-admin branch of /app/tickets/page.tsx already
               had one), which was the actual bug: nothing here needed a backend
               change, just a way in. */}
+          {/* Admin view only (this table is only rendered for admins; addPilotUserAction checks again on the server). */}
+          <AddUserDialog locale={locale} />
           <Link
             href="/app/tickets/new"
             className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
