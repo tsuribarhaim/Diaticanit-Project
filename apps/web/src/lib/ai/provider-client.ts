@@ -1,3 +1,4 @@
+import { anthropicFetch } from "@/lib/ai/anthropic-fetch";
 import type { AiExtractionConfig } from "@/lib/ai/env";
 
 /**
@@ -157,7 +158,7 @@ async function callOpenAiCompatibleChatCompletion({
 async function callAnthropicChatCompletion({ config, messages, signal }: AiChatCompletionParams): Promise<string> {
   const { system, messages: anthropicMessages } = toAnthropicRequestParts(messages);
 
-  const response = await fetch(`${(config.baseUrl || ANTHROPIC_DEFAULT_BASE_URL).replace(/\/+$/, "")}/messages`, {
+  const response = await anthropicFetch(`${(config.baseUrl || ANTHROPIC_DEFAULT_BASE_URL).replace(/\/+$/, "")}/messages`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -258,7 +259,7 @@ async function callAnthropicChatCompletionStreaming({
 }: AiChatCompletionProgressParams): Promise<string> {
   const { system, messages: anthropicMessages } = toAnthropicRequestParts(messages);
 
-  const response = await fetch(`${(config.baseUrl || ANTHROPIC_DEFAULT_BASE_URL).replace(/\/+$/, "")}/messages`, {
+  const response = await anthropicFetch(`${(config.baseUrl || ANTHROPIC_DEFAULT_BASE_URL).replace(/\/+$/, "")}/messages`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -425,7 +426,7 @@ async function streamAnthropicAsOpenAiSse({ config, messages, signal }: AiChatCo
   const { system, messages: anthropicMessages } = toAnthropicRequestParts(messages);
 
   // No `temperature` - see the note in callAnthropicChatCompletion.
-  const upstream = await fetch(`${(config.baseUrl || ANTHROPIC_DEFAULT_BASE_URL).replace(/\/+$/, "")}/messages`, {
+  const upstream = await anthropicFetch(`${(config.baseUrl || ANTHROPIC_DEFAULT_BASE_URL).replace(/\/+$/, "")}/messages`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
