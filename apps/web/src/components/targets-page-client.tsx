@@ -79,8 +79,8 @@ export function TargetsPageClient({
         <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
           {tr(
             locale,
-            "These are locked in and in effect. A small edit applies instantly; ask Daffy for anything bigger from the chat bubble and she'll review it and update automatically, then let you know.",
-            "אלה נעולים ובתוקף. שינוי קטן חל באופן מיידי; בקשו מ-Daffy שינוי גדול יותר דרך בועת הצ'אט - היא תבדוק ותעדכן אוטומטית, ותודיע לכם.",
+            "A small change within the allowed range updates right away. A bigger change needs a fresh review of your profile: Daffy will check it in the background and get back to you with an answer.",
+            "שינוי קטן בתוך הטווח המותר מתעדכן מיד. שינוי גדול יותר מצריך בדיקה מחודשת של הפרופיל שלכם: דפי תבדוק ברקע ותעדכן אתכם בתשובה.",
           )}
         </p>
       </div>
