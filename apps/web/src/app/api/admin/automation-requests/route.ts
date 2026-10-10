@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { renderPromotionEmail, type PromoteReport } from "@/lib/promotion-email";
 import { appendTicketDescriptionEntry } from "@/lib/tickets";
 import { bundleOfTicket } from "@/lib/bundles";
+import { renderWelcomeEmail } from "@/lib/welcome-email";
 
 export const dynamic = "force-dynamic";
 
@@ -51,8 +52,8 @@ export async function POST(request: Request) {
   }
   const { id, action, result, ok, report } = body;
   if (typeof id !== "string" || !id) return NextResponse.json({ error: "id is required." }, { status: 400 });
-  if (action !== "claim" && action !== "complete" && action !== "email" && action !== "recipients") {
-    return NextResponse.json({ error: "action must be claim, complete, email or recipients." }, { status: 400 });
+  if (action !== "claim" && action !== "complete" && action !== "email" && action !== "recipients" && action !== "invite_email") {
+    return NextResponse.json({ error: "action must be claim, complete, email, invite_email or recipients." }, { status: 400 });
   }
 
   const adminClient = createAdminClient();
@@ -64,6 +65,16 @@ export async function POST(request: Request) {
       await Promise.all(((admins ?? []) as { user_id: string }[]).map(async (admin) => (await adminClient.auth.admin.getUserById(admin.user_id)).data.user?.email ?? null))
     ).filter((email): email is string => Boolean(email));
     return NextResponse.json({ adminEmails }, { headers: { "Cache-Control": "no-store" } });
+  }
+  if (action === "invite_email") {
+    // The welcome email for an "Add new user" request: the poller's "Welcome Invite" workflow sends what this returns.
+    const { data: row } = await adminClient.from("automation_requests").select("kind, details").eq("id", id).maybeSingle();
+    const details = (row?.details ?? {}) as { email?: unknown; language?: unknown };
+    if (!row || row.kind !== "invite" || typeof details.email !== "string" || !details.email) {
+      return NextResponse.json({ error: "Not an invite request." }, { status: 404 });
+    }
+    const email = renderWelcomeEmail({ email: details.email, language: details.language === "en" ? "en" : "he" });
+    return NextResponse.json({ to: details.email, subject: email.subject, html: email.html }, { headers: { "Cache-Control": "no-store" } });
   }
   if (action === "email") {
     // The confirmation email for a finished promote request: the poller sends what this returns.

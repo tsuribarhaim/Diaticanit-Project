@@ -207,6 +207,11 @@ for (const r of (list.requests || [])) {
       await call({ method: 'POST', url: LESSON_WEBHOOK, body: { requestId: r.id, ticketSeq: (r.details && r.details.ticketSeq) || r.ticketSeq, source: r.details && r.details.source, comment: r.details && r.details.comment, context: r.details && r.details.context } });
       done.push({ id: r.id, kind: r.kind, ok: true, result: 'learning started' });
       continue;
+    } else if (r.kind === 'invite') {
+      // The welcome email for a new user: handed to the "Welcome Invite" workflow (create-invite-workflow.js), which sends it and completes this request itself.
+      await call({ method: 'POST', url: 'http://localhost:5678/webhook/daffy-welcome-invite', body: { requestId: r.id } });
+      done.push({ id: r.id, kind: r.kind, ok: true, result: 'welcome email started' });
+      continue;
     } else if (r.kind === 'revert') {
       const res = await call({ method: 'POST', url: BRIDGE_URL + '/revert', headers: { 'x-bridge-secret': BRIDGE_SECRET }, body: { ticketSeq: r.ticketSeq } });
       ok = res.ok === true;
