@@ -14,6 +14,7 @@ import { SavedListQuickPicker } from "@/components/saved-list-quick-picker";
 import { SubmitButton } from "@/components/daily-report-submit-button";
 import { directionForLocale, formatDefaultItemName, formatDefaultUnit, tr, trGendered, type AppLocale } from "@/lib/locale";
 import { matchSavedItems } from "@/lib/saved-list-match";
+import { shrinkPhoto } from "@/lib/shrink-photo";
 
 export type { DailyReportDefaultItem };
 
@@ -181,6 +182,21 @@ function DeleteEntrySubmitButton({
       {isBusy ? pendingLabel : label}
     </button>
   );
+}
+
+/** Tell the server why a chat request failed (see /api/daily-report/chat-failure): a request refused by the hosting platform never reaches
+ * our own route, so without this nothing records it. Fire-and-forget; never allowed to break the screen. */
+function reportChatFailure(info: { reason: string; status?: number | null; photoBytes?: number; photoType?: string; message?: string }) {
+  try {
+    void fetch("/api/daily-report/chat-failure", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...info, status: info.status ?? undefined }),
+      keepalive: true,
+    }).catch(() => undefined);
+  } catch {
+    // reporting is best effort
+  }
 }
 
 function readFileAsBase64(file: File): Promise<string> {
@@ -776,6 +792,8 @@ export function DailyReportChatPanel({
     // which is the trigger for fetching the structured breakdown card
     // below, after the stream itself finishes.
     let isActionable = false;
+    // The HTTP status of a failed request, for the failure report below.
+    let failedStatus: number | null = null;
 
     try {
       armTimeout();
@@ -794,10 +812,13 @@ export function DailyReportChatPanel({
       });
 
       if (!response.ok || !response.body) {
+        failedStatus = response.status;
         throw new Error(
           response.status === 409
             ? tr(locale, "AI chat is currently unavailable.", "צ'אט ה-AI אינו זמין כרגע.")
-            : tr(locale, "The chat request failed. Please try again.", "בקשת הצ'אט נכשלה. יש לנסות שוב."),
+            : response.status === 413
+              ? tr(locale, "The photo is too large to send. Please try a smaller one.", "התמונה גדולה מדי לשליחה. יש לנסות תמונה קטנה יותר.")
+              : tr(locale, "The chat request failed. Please try again.", "בקשת הצ'אט נכשלה. יש לנסות שוב."),
         );
       }
 
@@ -851,6 +872,13 @@ export function DailyReportChatPanel({
 
       if (!isUserAbort) {
         const isNetworkError = error instanceof TypeError;
+        reportChatFailure({
+          reason: isTimeout ? "timeout" : isNetworkError ? "network" : failedStatus ? "http" : "other",
+          status: failedStatus,
+          photoBytes: image?.base64 ? Math.round((image.base64.length * 3) / 4) : undefined,
+          photoType: image?.mimeType,
+          message: error instanceof Error ? error.message : undefined,
+        });
         errorMessage = isTimeout
           ? tr(locale, "This is taking longer than expected. Please retry.", "זה לוקח יותר זמן מהצפוי. יש לנסות שוב.")
           : isNetworkError
@@ -1091,12 +1119,20 @@ export function DailyReportChatPanel({
       return;
     }
 
-    const previewUrl = URL.createObjectURL(file);
+    // Shrink the picture on the phone first (see lib/shrink-photo.ts): a full-size camera photo is often too big for the request to get through.
+    const photo = await shrinkPhoto(file);
+    if (photo !== file && photoInputRef.current) {
+      // The form's own photo field (used when the entry is saved) carries the same smaller picture.
+      const transfer = new DataTransfer();
+      transfer.items.add(photo);
+      photoInputRef.current.files = transfer.files;
+    }
+    const previewUrl = URL.createObjectURL(photo);
     setPhotoPreviewUrl(previewUrl);
-    const base64 = await readFileAsBase64(file);
+    const base64 = await readFileAsBase64(photo);
     const textToSend = inputValue;
     setInputValue("");
-    void sendMessage(textToSend, { base64, mimeType: file.type, previewUrl });
+    void sendMessage(textToSend, { base64, mimeType: photo.type, previewUrl });
   }
 
   /**

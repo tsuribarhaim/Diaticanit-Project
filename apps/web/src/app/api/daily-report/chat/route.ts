@@ -262,6 +262,11 @@ export async function POST(request: NextRequest) {
         logServerError("dailyReport.chat", "stream_failed", {
           userId: user.id,
           error: error instanceof Error ? error.message : "Unknown error",
+          // What was being asked, to tell a photo problem from a provider problem.
+          provider: aiConfig.provider,
+          model: aiConfig.model,
+          photoBytes: imageBase64 ? Math.round((imageBase64.length * 3) / 4) : 0,
+          photoType: mimeType ?? null,
         });
         controller.enqueue(
           sseEvent({
