@@ -18,7 +18,8 @@ type Copy = {
   iphoneTitle: string;
   iphone: string[];
   signUpTitle: string;
-  signUp: (email: string) => string;
+  signUpBefore: string;
+  signUpAfter: string;
   footer: string;
 };
 
@@ -45,7 +46,8 @@ const COPY: Record<AppLocale, Copy> = {
       "Open Daffy from your home screen.",
     ],
     signUpTitle: "Sign up",
-    signUp: (email) => `Tap <b>Sign up</b> and use <b>this email address</b> (${email}). Daffy will then guide you through a short onboarding.`,
+    signUpBefore: "Tap <b>Sign up</b> and use <b>this email address</b>:",
+    signUpAfter: "Daffy will then guide you through a short onboarding.",
     footer: "Daffy is currently a private pilot, so only invited email addresses can sign up. Questions? Just reply to this email.",
   },
   he: {
@@ -70,7 +72,8 @@ const COPY: Record<AppLocale, Copy> = {
       "פתחו את Daffy ממסך הבית.",
     ],
     signUpTitle: "הרשמה",
-    signUp: (email) => `הקישו על <b>הרשמה</b> והשתמשו ב<b>כתובת האימייל הזו</b> (${email}). Daffy ידריך אתכם בהצטרפות קצרה.`,
+    signUpBefore: "הקישו על <b>הרשמה</b> והשתמשו ב<b>כתובת האימייל הזו</b>:",
+    signUpAfter: "Daffy ידריך אתכם בהצטרפות קצרה.",
     footer: "Daffy נמצא כרגע בפיילוט סגור, ולכן רק כתובות מוזמנות יכולות להירשם. שאלות? פשוט השיבו למייל הזה.",
   },
 };
@@ -94,7 +97,9 @@ export function renderWelcomeEmail(input: { email: string; language: AppLocale }
 <p style="margin:8px 0 2px"><b>${c.androidTitle}</b></p>${list(c.android)}
 <p style="margin:8px 0 2px"><b>${c.iphoneTitle}</b></p>${list(c.iphone)}
 <h3 style="font-size:16px;margin:20px 0 6px">${c.signUpTitle}</h3>
-<p style="margin:0">${c.signUp(`<span dir="ltr">${esc(input.email)}</span>`)}</p>
+<p style="margin:0 0 8px">${c.signUpBefore}</p>
+<p dir="ltr" style="margin:0 0 10px;text-align:${c.dir === "rtl" ? "right" : "left"};font-size:16px;font-weight:700;color:#0f172a"><span style="white-space:nowrap">${esc(input.email)}</span></p>
+<p style="margin:0">${c.signUpAfter}</p>
 </div>
 <div style="padding:12px 24px;background:#f1f5f9;color:#64748b;font-size:12px">${c.footer}</div>
 </div></body></html>`;
