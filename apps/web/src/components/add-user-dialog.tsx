@@ -35,6 +35,20 @@ function withAddress(text: string, address: string) {
   return parts.flatMap((part, index) => (index === 0 ? [part] : [<bdi key={index} dir="ltr">{address}</bdi>, part]));
 }
 
+function ResendButton({ locale }: { locale: AppLocale }) {
+  const { pending } = useFormStatus();
+  return (
+    <button
+      type="submit"
+      disabled={pending}
+      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+    >
+      {pending ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" aria-hidden="true" /> : null}
+      {tr(locale, "Send the welcome email anyway", "לשלוח בכל זאת מייל ברוכים הבאים")}
+    </button>
+  );
+}
+
 const okButtonClass =
   "flex-1 rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500";
 
@@ -111,7 +125,14 @@ export function AddUserDialog({ locale }: { locale: AppLocale }) {
                     </h3>
                     <p role="status" className="mt-2 rounded-xl bg-emerald-50 px-3 py-3 text-sm text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-400">
                       {state.alreadyThere
-? withAddress(tr(locale, `${state.added} was already allowed to sign up. Nothing was changed.`, `${state.added} כבר הורשה להירשם. לא בוצע שינוי.`), state.added ?? "")
+? withAddress(
+                            tr(
+                              locale,
+                              `${state.added} is already on the list and has not signed up yet. Nothing was changed.`,
+                              `${state.added} כבר ברשימה ועדיין לא נרשם/ה. לא בוצע שינוי.`,
+                            ),
+                            state.added ?? "",
+                          )
                         : withAddress(
                             tr(
                               locale,
@@ -121,6 +142,15 @@ export function AddUserDialog({ locale }: { locale: AppLocale }) {
                             state.added ?? "",
                           )}
                     </p>
+                    {state.resendOffered ? (
+                      <form action={formAction} className="mt-2">
+                        <input type="hidden" name="email" value={state.added} />
+                        <input type="hidden" name="send_email" value="on" />
+                        <input type="hidden" name="language" value={language} />
+                        <input type="hidden" name="resend" value="1" />
+                        <ResendButton locale={locale} />
+                      </form>
+                    ) : null}
                     {state.emailQueued ? (
                       <p className="mt-2 rounded-xl bg-emerald-50 px-3 py-3 text-sm text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-400">
                         {withAddress(

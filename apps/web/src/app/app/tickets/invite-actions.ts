@@ -17,6 +17,8 @@ export type AddUserState = {
   /** A welcome email was asked for: queued for the n8n poller (sent within about a minute), or the request could not be saved. */
   emailQueued?: AppLocale;
   emailFailed?: boolean;
+  /** On the list already, so no email was sent; the popup offers to send the welcome email anyway (when the box was ticked). */
+  resendOffered?: boolean;
 };
 
 /** Does this domain exist and accept mail? True when it has MX records or, failing that, an address record (mail then goes to the host
@@ -37,6 +39,18 @@ async function domainAcceptsMail(domain: string): Promise<boolean> {
   if (a === "yes" || a === "unknown") return true;
   const aaaa = await lookup(() => dns.resolve6(domain));
   return aaaa !== "no";
+}
+
+/** Is there already a registered account with this (lowercase) email? supabase-js has no lookup by email, so this pages through the
+ * accounts (a pilot has a few dozen; the cap of 20 pages x 1000 is far beyond that). */
+async function accountExists(admin: ReturnType<typeof createAdminClient>, email: string): Promise<boolean> {
+  for (let page = 1; page <= 20; page += 1) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 1000 });
+    if (error) throw error;
+    if (data.users.some((account) => account.email?.toLowerCase() === email)) return true;
+    if (data.users.length < 1000) return false;
+  }
+  return false;
 }
 
 /** Admin only: lets one more person sign up, by adding their email to pilot_allowlist (the invite list signUpAction checks). Written with
@@ -74,6 +88,14 @@ export async function addPilotUserAction(_previous: AddUserState, formData: Form
   const emailLanguage: AppLocale = formData.get("language") === "en" ? "en" : "he";
 
   const admin = createAdminClient();
+  try {
+    if (await accountExists(admin, checked.email)) {
+      return { error: tr(locale, "This email already has a Daffy account, so there is nothing to add.", "לכתובת האימייל הזו כבר יש חשבון ב-Daffy, ולכן אין מה להוסיף.") };
+    }
+  } catch (accountError) {
+    logServerError("tickets.addPilotUser", "account_lookup_failed", { error: accountError instanceof Error ? accountError.message : String(accountError) });
+    return { error: tr(locale, "Something went wrong. Please try again in a moment.", "משהו השתבש. יש לנסות שוב בעוד רגע.") };
+  }
   const { data: existing, error: lookupError } = await admin.from("pilot_allowlist").select("email").eq("email", checked.email).maybeSingle();
   if (lookupError) {
     logServerError("tickets.addPilotUser", "lookup_failed", { error: lookupError.message });
@@ -93,7 +115,11 @@ export async function addPilotUserAction(_previous: AddUserState, formData: Form
     return { emailQueued: emailLanguage };
   };
 
-  if (existing) return { added: checked.email, alreadyThere: true, ...(await queueEmail()) };
+  // Already invited and not signed up yet: nothing to add. A welcome email goes out only when the admin asks for it again (the "resend" button).
+  if (existing) {
+    if (formData.get("resend") === "1") return { added: checked.email, alreadyThere: true, ...(await queueEmail()) };
+    return { added: checked.email, alreadyThere: true, resendOffered: wantsEmail };
+  }
 
   const { error: insertError } = await admin
     .from("pilot_allowlist")
