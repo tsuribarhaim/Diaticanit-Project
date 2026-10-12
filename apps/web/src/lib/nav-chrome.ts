@@ -24,9 +24,11 @@ export type NavChromeData = {
    * Notifications page itself (and still drives the separate Targets/Daily
    * Report ring-warning icons via getFlaggedFieldKeys, deliberately
    * untouched by this change), just not this badge. See
-   * mark-notification-read-button.tsx (now shown for concern rows too) and
-   * the Notifications page's own auto-mark-on-view for what writes
-   * read_at. */
+   * mark-notification-read-button.tsx (now shown for concern rows too),
+   * "Mark all as read" and opening the item itself for what writes read_at -
+   * opening the Notifications page alone no longer marks anything read
+   * (TCK-77). While this is above 0 the mobile Profile tab leads to
+   * Notifications (TCK-138, app-bottom-nav.tsx). */
   unresolvedNotificationCount: number;
 };
 

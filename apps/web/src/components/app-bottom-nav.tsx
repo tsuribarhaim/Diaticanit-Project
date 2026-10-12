@@ -44,24 +44,25 @@ export function AppBottomNav({
     return null;
   }
 
-  const tabs: Array<{ href: string; label: string; isActive: boolean; icon: ReactNode }> = [
+  const onNotifications = pathname?.startsWith("/app/notifications") ?? false;
+  const redirectsToNotifications = Boolean(notificationCount) && !onNotifications;
+  const profileHref = redirectsToNotifications ? "/app/notifications" : "/app/profile";
+
+  const tabs: Array<{ href: string; label: string; ariaLabel?: string; isActive: boolean; icon: ReactNode }> = [
     {
-      // TCK-96 round 2: this tab used to redirect to Notifications instead
-      // of Profile whenever there was a pending notification - meant as a
-      // helpful shortcut, but for a "concern"-severity notification (see
-      // nav-chrome.ts's own comment) the badge count only ever clears once
-      // a LATER background check confirms the underlying issue is actually
-      // fixed, not when the user views it - so for an affected account the
-      // redirect could never turn off at all. Confirmed live as "stuck on
-      // notifications no matter how many times I try, even after
-      // reinstalling" - the earlier one-tap "escape hatch while already on
-      // Notifications" fix only ever addressed the second tap, never the
-      // first. Matches the desktop AppNav's own Profile link (app-nav.tsx),
-      // which has never redirected - the red dot below is the only signal
-      // now; the Profile page's own always-visible Notifications row is the
-      // deliberate way in, same as it always was on desktop.
-      href: "/app/profile",
+      // TCK-138: while there are unread notifications (the red dot), this tab
+      // opens /app/notifications - unread-only by default - so the user doesn't
+      // have to scroll Profile down to its Notifications row. TCK-96 removed an
+      // earlier redirect like this because the badge then counted unresolved
+      // concerns, which only a later background check cleared ("stuck on
+      // notifications"); it now counts read_at null (nav-chrome.ts), which
+      // clears on a per-row mark or "Mark all as read". Tapping the tab again
+      // while on Notifications always goes to /app/profile, so Profile is never
+      // out of reach. The desktop AppNav keeps its own Notifications pill.
+      href: profileHref,
       label: tr(locale, "Profile", "פרופיל"),
+      // Spoken only: the visible label stays "Profile", but a screen-reader user should know the tab leads to the unread notifications.
+      ariaLabel: redirectsToNotifications ? tr(locale, "Profile, unread notifications", "פרופיל, יש התראות שלא נקראו") : undefined,
       isActive: (pathname?.startsWith("/app/profile") || pathname?.startsWith("/app/notifications")) ?? false,
       // The user's own picture/initial doubles as this tab's icon - "which
       // account is this" and "go to your profile" are the same destination
@@ -114,6 +115,7 @@ export function AppBottomNav({
           <GuardedLink
             key={tab.href}
             href={tab.href}
+            aria-label={tab.ariaLabel}
             confirmMessage={tr(locale, CONFIRM_MESSAGE_EN, CONFIRM_MESSAGE_HE)}
             // TCK-107: flex-col lived on THIS link, but GuardedLink renders
             // its children through PendingOverlay (nav-link.tsx), which
