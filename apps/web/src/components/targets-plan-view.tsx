@@ -122,7 +122,7 @@ export function TargetsPlanView({ payload, locale }: { payload: TargetGeneration
             {payload.exerciseTargets.map((entry, index) => (
               <div
                 key={`${entry.modality}-${index}`}
-                className="flex min-h-[80px] flex-col justify-between rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/60"
+                className="flex min-h-[80px] min-w-0 flex-col justify-between rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/60"
               >
                 <div>
                   {/* TCK-90 round 2: activityName (set only for an "other"
@@ -131,7 +131,7 @@ export function TargetsPlanView({ payload, locale }: { payload: TargetGeneration
                       e.g. "Pilates" instead of the generic bucket label -
                       falls back to the normal localized modality label
                       otherwise, same as before. */}
-                  <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+                  <p className="break-words text-sm font-semibold text-slate-800 dark:text-slate-200">
                     {entry.activityName || formatExerciseModality(entry.modality, locale)}
                   </p>
                   {/* TCK-90 round 2: this used to show searchKeywords[0],
@@ -145,9 +145,12 @@ export function TargetsPlanView({ payload, locale }: { payload: TargetGeneration
                       Hebrew UI. ai_adjustment_note IS already required to
                       be in the reply language and already contains the
                       specific-activity description this caption is meant
-                      to show. */}
+                      to show.
+                      TCK-129: the note used to be `truncate` - its nowrap
+                      text widened the single-column mobile grid past the
+                      screen, so it now wraps (min-w-0 + break-words). */}
                   {entry.aiAdjustmentNote ? (
-                    <p className="mt-0.5 truncate text-xs text-slate-600 dark:text-slate-400">{entry.aiAdjustmentNote}</p>
+                    <p className="mt-0.5 break-words text-xs text-slate-600 dark:text-slate-400">{entry.aiAdjustmentNote}</p>
                   ) : null}
                 </div>
                 <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
