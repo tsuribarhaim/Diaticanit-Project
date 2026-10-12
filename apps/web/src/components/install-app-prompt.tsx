@@ -123,7 +123,9 @@ export function InstallAppPrompt({ locale }: { locale: AppLocale }) {
   if (dismissed || (!showIosInstructions && !showSamsungInstructions && !deferredEvent)) return null;
 
   return (
-    <div className="fixed inset-x-3 bottom-[calc(3.25rem+env(safe-area-inset-bottom)+0.5rem)] z-40 flex items-center justify-between gap-3 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-900 shadow-lg nav-desktop:bottom-3 dark:border-teal-800 dark:bg-teal-950/90 dark:text-teal-200">
+    // Above the bottom tab bar AND the chat button (bottom 4rem + 3.5rem tall, z-50, on the right - where a Hebrew
+    // text starts), which used to cover the start of the banner text on a phone.
+    <div className="fixed inset-x-3 bottom-[calc(3.25rem+env(safe-area-inset-bottom)+4.75rem)] z-40 flex items-center justify-between gap-3 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-900 shadow-lg nav-desktop:bottom-3 dark:border-teal-800 dark:bg-teal-950/90 dark:text-teal-200">
       <span>
         {showIosInstructions
           ? // Opened from a messaging/email app's in-app browser (very
