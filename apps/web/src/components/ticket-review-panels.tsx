@@ -18,6 +18,7 @@ import {
   sendBackFixAction,
   setLessonActiveAction,
   takeOutOfAutomationAction,
+  takeTicketOutAction,
   withdrawApprovalAction,
 } from "@/app/app/tickets/review-actions";
 import { NavLink } from "@/components/nav-link";
@@ -266,6 +267,32 @@ export function RequeueButton({ locale, ticketId }: { locale: AppLocale; ticketI
         }
       >
         {tr(locale, "Put back in the queue", "החזרה לתור")}
+      </ActionButton>
+      {message ? <span role="status" className="text-xs text-rose-600 dark:text-rose-400">{message}</span> : null}
+    </span>
+  );
+}
+
+/** Takes a ticket out of automation when its flag has nothing behind it (e.g. marked fixed with no fix card), so it is on no station. */
+export function TakeOutButton({ locale, ticketId }: { locale: AppLocale; ticketId: string }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [message, setMessage] = useState<string | null>(null);
+  return (
+    <span className="inline-flex flex-col gap-1">
+      <ActionButton
+        variant="primary"
+        pending={pending}
+        disabled={pending}
+        onClick={() =>
+          startTransition(async () => {
+            const result = await takeTicketOutAction(ticketId);
+            if (result.error) setMessage(result.error);
+            else router.refresh();
+          })
+        }
+      >
+        {tr(locale, "Take out of automation", "הוצאה מהאוטומציה")}
       </ActionButton>
       {message ? <span role="status" className="text-xs text-rose-600 dark:text-rose-400">{message}</span> : null}
     </span>
