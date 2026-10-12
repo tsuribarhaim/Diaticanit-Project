@@ -871,6 +871,11 @@ export function DailyReportForm({
         ))
       ) : null}
       {selectedDateParam ? <input type="hidden" name="selected_date" value={selectedDateParam} /> : null}
+      {/* Same reasoning as changed_custom_target_ids: the Weight field is
+          pre-filled with today's weight (TCK-110), so an untouched value
+          must not be re-recorded on every save (TCK-143). Edit mode keeps
+          the entry's own weight, so it's left out there. */}
+      {!liveEditReportId ? <input type="hidden" name="weight_changed" value={weightValue !== weightBaseline ? "1" : "0"} /> : null}
 
       {/* reportAtValue is a timezone-naive wall-clock string (e.g.
           "2026-08-30T23:30") with no offset, the same shape a native

@@ -13,6 +13,8 @@ export type QuickLogSavedItem = {
   kind: string;
   quantity: number;
   unit: string;
+  /** TCK-144: more than one ingredient - the picker shows it as "Combined". */
+  isBundle?: boolean;
 };
 
 export type ListQuickLogSavedItemsResult = { items: QuickLogSavedItem[] } | { error: string };
@@ -37,7 +39,7 @@ export async function listQuickLogSavedItemsAction(): Promise<ListQuickLogSavedI
 
   const { data, error } = await supabase
     .from("user_default_items")
-    .select("id, name, kind, default_quantity, default_unit")
+    .select("id, name, kind, default_quantity, default_unit, ingredients")
     .eq("user_id", user.id)
     .eq("is_active", true)
     .order("created_at", { ascending: false });
@@ -54,6 +56,7 @@ export async function listQuickLogSavedItemsAction(): Promise<ListQuickLogSavedI
       kind: row.kind,
       quantity: Number(row.default_quantity ?? 1),
       unit: row.default_unit,
+      isBundle: Array.isArray(row.ingredients) && row.ingredients.length > 1,
     })),
   };
 }

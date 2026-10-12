@@ -18,6 +18,34 @@ export const CHART_EXTRA_METRIC_IDS = [
 ] as const;
 export type DailyReportChartExtraMetric = (typeof CHART_EXTRA_METRIC_IDS)[number];
 
+/** TCK-131/TCK-137: either group (primary/additional) can hold any of these. */
+export const CHART_METRIC_IDS = [...CHART_CORE_METRIC_IDS, ...CHART_EXTRA_METRIC_IDS] as const;
+export const CHART_ALL_METRIC_IDS = CHART_METRIC_IDS;
+export type DailyReportChartMetric = DailyReportChartCoreMetric | DailyReportChartExtraMetric;
+
+export function isDailyReportChartMetric(id: unknown): id is DailyReportChartMetric {
+  return (CHART_METRIC_IDS as readonly unknown[]).includes(id);
+}
+
+/**
+ * TCK-137: keeps each id once - its first occurrence, core first - so an id
+ * already in the core group is dropped from the extra group.
+ */
+export function dedupeChartMetricGroups(
+  coreIds: DailyReportChartMetric[],
+  extraIds: DailyReportChartMetric[],
+): { coreMetrics: DailyReportChartMetric[]; extraMetrics: DailyReportChartMetric[] } {
+  const seen = new Set<DailyReportChartMetric>();
+  const keepFirst = (id: DailyReportChartMetric) => {
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  };
+  const coreMetrics = coreIds.filter(keepFirst);
+  const extraMetrics = extraIds.filter(keepFirst);
+  return { coreMetrics, extraMetrics };
+}
+
 /**
  * Where each chart-preference metric id actually lives on a single
  * user_daily_reports row, plus its matching camelCase key on
@@ -61,14 +89,14 @@ export const DAILY_REPORT_METRIC_FIELD_INFO: Record<
 };
 
 export type DailyReportChartPreferences = {
-  coreMetrics: DailyReportChartCoreMetric[];
-  extraMetrics: DailyReportChartExtraMetric[];
+  coreMetrics: DailyReportChartMetric[];
+  extraMetrics: DailyReportChartMetric[];
   showWeightTrend: boolean;
 };
 
 const DEFAULT_PREFERENCES: DailyReportChartPreferences = {
   coreMetrics: [...CHART_CORE_METRIC_IDS],
-  extraMetrics: [],
+  extraMetrics: [...CHART_EXTRA_METRIC_IDS],
   showWeightTrend: false,
 };
 
@@ -80,8 +108,12 @@ const DEFAULT_PREFERENCES: DailyReportChartPreferences = {
  * `customized` flag is written (by updateDailyReportChartPreferencesAction)
  * the first time the user actually saves the customize-charts form, so a
  * pristine `{}` row falls back to a sensible starting selection (all core
- * nutrient rings, no extras, no weight trend), while any saved selection -
- * including a deliberately empty one - is respected exactly from then on.
+ * values primary, all micronutrients additional, no weight trend - TCK-131,
+ * so "Show full detail" has something behind it), while any saved
+ * selection - including a deliberately empty one - is respected exactly
+ * from then on. TCK-137: either group can hold any metric id (the editor
+ * lets the user drag e.g. magnesium into primary or water into additional),
+ * so both are filtered against the full id list, then de-duplicated.
  */
 export function normalizeDailyReportChartPreferences(value: unknown): DailyReportChartPreferences {
   const record = (value ?? {}) as Record<string, unknown>;
@@ -90,16 +122,10 @@ export function normalizeDailyReportChartPreferences(value: unknown): DailyRepor
     return DEFAULT_PREFERENCES;
   }
 
-  const coreMetrics = Array.isArray(record.coreMetrics)
-    ? record.coreMetrics.filter((id): id is DailyReportChartCoreMetric =>
-        CHART_CORE_METRIC_IDS.includes(id as DailyReportChartCoreMetric),
-      )
-    : [];
-  const extraMetrics = Array.isArray(record.extraMetrics)
-    ? record.extraMetrics.filter((id): id is DailyReportChartExtraMetric =>
-        CHART_EXTRA_METRIC_IDS.includes(id as DailyReportChartExtraMetric),
-      )
-    : [];
+  const { coreMetrics, extraMetrics } = dedupeChartMetricGroups(
+    Array.isArray(record.coreMetrics) ? record.coreMetrics.filter(isDailyReportChartMetric) : [],
+    Array.isArray(record.extraMetrics) ? record.extraMetrics.filter(isDailyReportChartMetric) : [],
+  );
 
   return {
     coreMetrics,

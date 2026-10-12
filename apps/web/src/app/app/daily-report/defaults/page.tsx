@@ -95,6 +95,14 @@ export default async function DailyReportDefaultsPage({
         ) : null}
 
         <form action={addDefaultItemAction} className="mt-5 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/60">
+          {/* TCK-144 */}
+          <p className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-xs text-teal-800 dark:border-teal-800 dark:bg-teal-950/30 dark:text-teal-300">
+            {tr(
+              locale,
+              "Daffy calculates the nutritional values from the item's description - no need to enter them.",
+              "דפי תחשב את הערכים התזונתיים לפי תיאור הפריט, אין צורך להזין",
+            )}
+          </p>
           <label className="block space-y-1">
             <span className="text-xs font-medium text-slate-700 dark:text-slate-300">
               {tr(locale, "Item name (only needed for a bundle of several ingredients)", "שם הפריט (נדרש רק עבור צירוף של כמה מרכיבים)")}

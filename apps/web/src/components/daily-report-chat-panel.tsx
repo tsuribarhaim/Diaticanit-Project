@@ -899,6 +899,10 @@ export function DailyReportChatPanel({
 
     setIsStreaming(false);
 
+    if (isActionable && assistantText && !errorMessage && !options?.localOnly) {
+      clearPhotoForSave();
+    }
+
     // TCK-94: fire-and-forget, deliberately AFTER setIsStreaming(false) -
     // never blocks the user from continuing the conversation while this
     // resolves (it's a second AI call, on top of the one that just
@@ -1019,6 +1023,7 @@ export function DailyReportChatPanel({
    * which call this directly before any state update from setCloseAfterClear
    * would actually be visible yet. */
   function confirmClearChat(shouldCloseAfter: boolean = closeAfterClear) {
+    clearPhotoForSave();
     setPendingClearConfirm(false);
     abortRef.current?.abort();
     setIsStreaming(false);
@@ -1104,6 +1109,12 @@ export function DailyReportChatPanel({
       return;
     }
     void sendMessage(inputValue);
+  }
+
+  // Once the chat has read the photo, Save uses the chat's text instead (TCK-143).
+  function clearPhotoForSave() {
+    if (photoInputRef.current) photoInputRef.current.value = "";
+    if (photoGalleryInputRef.current) photoGalleryInputRef.current.value = "";
   }
 
   async function handlePhotoSelected(file: File | null) {
@@ -1402,7 +1413,14 @@ export function DailyReportChatPanel({
             <SavedListQuickPicker
               isOpen={isSavedListOpen}
               onClose={() => setIsSavedListOpen(false)}
-              items={defaultItems.map((item) => ({ id: item.id, name: item.name, kind: item.kind, quantity: item.default_quantity, unit: item.default_unit }))}
+              items={defaultItems.map((item) => ({
+                id: item.id,
+                name: item.name,
+                kind: item.kind,
+                quantity: item.default_quantity,
+                unit: item.default_unit,
+                isBundle: (item.ingredients?.length ?? 0) > 1,
+              }))}
               locale={locale}
               onSelect={(id) => {
                 const item = defaultItems.find((entry) => entry.id === id);
