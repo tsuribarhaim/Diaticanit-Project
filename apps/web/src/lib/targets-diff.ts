@@ -1,4 +1,4 @@
-import { formatGoalType, formatMeasurementUnit, formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
+import { formatExerciseModality, formatGoalType, formatMeasurementUnit, formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
 import type { TargetGenerationPayload } from "@/lib/targets";
 
 export type MetricDiffRow = { labelEn: string; labelHe: string; before: string; after: string };
@@ -43,11 +43,20 @@ export const NUTRIENT_DIFF_FIELDS: NutrientFieldInfo[] = [
   { id: "cholesterol", labelEn: "Cholesterol", labelHe: "כולסטרול", minKey: "cholesterolMinMg", maxKey: "cholesterolMaxMg", unit: "mg" },
 ];
 
-function exerciseSummary(payload: TargetGenerationPayload): string {
+/** Plain-language summary of the exercise plan, using the same display names
+ * the Targets cards show (the activity's own name, or the localized modality
+ * label) - never the raw modality token, which leaked into user-facing
+ * notifications as e.g. "martial_arts 4x/50min" (TCK-139). Entries are joined
+ * with "; " so the comma inside each entry stays unambiguous. */
+function exerciseSummary(payload: TargetGenerationPayload, locale: AppLocale): string {
+  if (payload.exerciseTargets.length === 0) return tr(locale, "None", "ללא");
   return payload.exerciseTargets
-    .map((entry) => `${entry.modality} ${entry.frequencyPerWeek}x/${entry.durationMinutesPerSession}min`)
+    .map(
+      (entry) =>
+        `${entry.activityName || formatExerciseModality(entry.modality, locale)} ${tr(locale, `${entry.frequencyPerWeek} times/week`, `${entry.frequencyPerWeek} פעמים בשבוע`)}, ${entry.durationMinutesPerSession} ${tr(locale, "min", "דק'")}`,
+    )
     .sort()
-    .join(", ");
+    .join("; ");
 }
 
 function habitsSummary(payload: TargetGenerationPayload): string {
@@ -122,8 +131,8 @@ export function computeTargetsDiff(before: TargetGenerationPayload, after: Targe
     });
   }
 
-  const beforeExercise = exerciseSummary(before);
-  const afterExercise = exerciseSummary(after);
+  const beforeExercise = exerciseSummary(before, locale);
+  const afterExercise = exerciseSummary(after, locale);
   if (beforeExercise !== afterExercise) {
     rows.push({ labelEn: "Exercise plan", labelHe: "תכנית פעילות", before: beforeExercise, after: afterExercise });
   }
@@ -153,8 +162,8 @@ export function computeTargetsDiff(before: TargetGenerationPayload, after: Targe
     rows.push({
       labelEn: "Target weight",
       labelHe: "משקל יעד",
-      before: before.targetWeightKg === null ? tr(locale, "None", "ללא") : `${n(before.targetWeightKg)} kg`,
-      after: after.targetWeightKg === null ? tr(locale, "None", "ללא") : `${n(after.targetWeightKg)} kg`,
+      before: before.targetWeightKg === null ? tr(locale, "None", "ללא") : `${n(before.targetWeightKg)} ${formatMeasurementUnit("kg", locale)}`,
+      after: after.targetWeightKg === null ? tr(locale, "None", "ללא") : `${n(after.targetWeightKg)} ${formatMeasurementUnit("kg", locale)}`,
     });
   }
   if (before.durationDays !== after.durationDays) {

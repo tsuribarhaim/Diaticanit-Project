@@ -69,6 +69,7 @@ export async function verifyQuickAppliedFieldSafety({
         'Return strict JSON with exactly this shape: {"has_concern":boolean,"concern_message":"string"}',
         "Rules:",
         "- Set has_concern true ONLY for a genuine, specific reason: this value conflicts with a stated medical condition, medication, or allergy, or is an extreme/risky value for this specific person's profile (age, sex, pregnancy status, etc.). When in doubt, set this false - a false alarm here is worse than a missed one, since the underlying range was already safety-reviewed once.",
+        "- A dietary supplement listed in regular_medications_details (e.g. calcium, vitamins) is NOT intake the user has already received and is not a reason to flag a nutrient target as too high or redundant - targets are total daily intake from all sources, and a supplement only counts on a day the user logs it.",
         `- concern_message: only when has_concern is true - the complete, ready-to-show notification text in ${languageName}, starting with something like "We noticed your recent change to [field] might be worth reconsidering" (translated naturally, not a literal template), then one short sentence naming the SPECIFIC concern, then a brief suggestion to discuss it with Daffy to reconsider the value. Empty string otherwise.`,
         `- Address the user directly in second person ("you"/"your"). Never third person.`,
         locale === "he"
