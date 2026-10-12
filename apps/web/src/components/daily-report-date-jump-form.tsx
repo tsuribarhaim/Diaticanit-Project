@@ -2,7 +2,7 @@
 
 import { NavLink as Link } from "@/components/nav-link";
 
-import { tr, type AppLocale } from "@/lib/locale";
+import { formatDateForLocale, tr, type AppLocale } from "@/lib/locale";
 
 /**
  * The "Jump to a date" calendar control on the Daily Report page - a client
@@ -25,23 +25,45 @@ export function DailyReportDateJumpForm({
   return (
     <form method="GET" className="mt-2 flex items-center justify-center gap-2">
       {/* Native date input, not LocalizedDateInput (used everywhere else in
-          the app for typed entry, e.g. birthdate) - deliberately different
-          here: this field is pure browsing (tap a day on a calendar face,
-          never read or type the raw digits), so LocalizedDateInput's whole
-          reason to exist - keeping the DISPLAYED digit order tied to the
-          page's own locale rather than the browser's language - doesn't
-          apply. A native input gets a real calendar picker (month grid,
-          prev/next navigation) on every platform for free instead of three
-          plain digit boxes with no picker UI at all. */}
-      <input
-        type="date"
-        name="date"
-        defaultValue={selectedDate}
-        max={todayDateString}
-        aria-label={tr(locale, "View date", "תאריך לצפייה")}
-        onChange={(event) => event.currentTarget.form?.requestSubmit()}
-        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none ring-teal-600 focus:ring-2 dark:border-slate-700 dark:bg-slate-900"
-      />
+          the app for typed entry, e.g. birthdate): a native input gets a real
+          calendar picker (month grid, prev/next navigation) on every platform,
+          which LocalizedDateInput's plain digit boxes don't have. But the
+          browser draws that input's digits in ITS OWN order (e.g. mm/dd on an
+          en-US phone), which didn't match the header above it (TCK-146). So
+          the input sits invisible on top of the field - a tap still opens the
+          system calendar - and the visible text is formatDateForLocale, the
+          same formatter as the header. The bare YYYY-MM-DD is parsed as a
+          local date there, so it can't shift a day in the browser's timezone.
+          min-w keeps the field (and so the invisible input) a real tap target:
+          an iOS date input with no size of its own can shrink to nothing. */}
+      <span className="relative inline-flex min-w-[9.5rem] items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm ring-teal-600 focus-within:ring-2 dark:border-slate-700 dark:bg-slate-900">
+        <span aria-hidden="true" className="inline-flex items-center gap-2 text-slate-700 dark:text-slate-200">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="18" rx="2" />
+            <path d="M16 2v4M8 2v4M3 10h18" />
+          </svg>
+          <span dir="ltr">{formatDateForLocale(selectedDate, locale)}</span>
+        </span>
+        <input
+          type="date"
+          name="date"
+          defaultValue={selectedDate}
+          max={todayDateString}
+          aria-label={tr(locale, "View date", "תאריך לצפייה")}
+          onChange={(event) => event.currentTarget.form?.requestSubmit()}
+          onClick={(event) => {
+            // With a mouse, a click on the (invisible) digits only focuses them - open the calendar instead. Phones open
+            // their own picker on tap, so this is skipped there (a second open could flicker or throw).
+            if (!window.matchMedia("(pointer: fine)").matches) return;
+            try {
+              event.currentTarget.showPicker?.();
+            } catch {
+              // Not allowed here (e.g. inside a cross-origin frame): the focused field still works with the keyboard.
+            }
+          }}
+          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+        />
+      </span>
       {/* No visible submit button - selecting a date above navigates
           immediately via onChange. Kept as a screen-reader-only control
           rather than removed outright: it's still what makes Enter-to-submit

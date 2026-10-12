@@ -227,6 +227,7 @@ export default async function DailyReportPage({
   const previousDateString = addDaysToDateString(selectedDate, -1);
   const nextDateString = addDaysToDateString(selectedDate, 1);
   const isNextDayDisabled = selectedDate >= todayDateString;
+  const isViewingToday = selectedDate === todayDateString;
   const { startIso: selectedDayStartIso, endIso: selectedDayEndIso } = getLocalDayRangeUtc(selectedDate, timeZone);
 
   const aiAvailable = Boolean(getAiExtractionConfig());
@@ -950,8 +951,17 @@ export default async function DailyReportPage({
               </svg>
             </Link>
             <div className="text-center">
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Today's summary", "סיכום היום שלי")}</h2>
-              <p className="text-sm text-slate-500 dark:text-slate-400">{formatDateForLocale(`${selectedDate}T00:00:00.000Z`, locale)}</p>
+              {/* TCK-146: browsing a past day, the title names the day itself (and the date line below would only repeat it). */}
+              {isViewingToday ? (
+                <>
+                  <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Today's summary", "סיכום היום שלי")}</h2>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">{formatDateForLocale(`${selectedDate}T00:00:00.000Z`, locale)}</p>
+                </>
+              ) : (
+                <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                  {tr(locale, "Summary for", "סיכום ליום")} {formatDateForLocale(`${selectedDate}T00:00:00.000Z`, locale)}
+                </h2>
+              )}
             </div>
             {isNextDayDisabled ? (
               <span
