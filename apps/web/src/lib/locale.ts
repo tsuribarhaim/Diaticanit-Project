@@ -368,6 +368,7 @@ export function formatTicketArea(value: string, locale: AppLocale): string {
 
 export function formatTicketPriority(value: string, locale: AppLocale): string {
   const token = normalizeToken(value);
+  if (token === "future") return tr(locale, "Future", "עתידית");
   if (token === "low") return tr(locale, "Low", "נמוכה");
   if (token === "medium") return tr(locale, "Medium", "בינונית");
   if (token === "high") return tr(locale, "High", "גבוהה");

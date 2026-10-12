@@ -32,7 +32,7 @@ const AREA_LABELS: Record<string, string> = {
   home: "Home", daily_report: "Daily Report", targets: "Targets", profile: "Profile", documents: "Documents",
   health_labs: "Health / Labs", notifications: "Notifications", account_auth: "Account / Sign-in", other: "Other",
 };
-const PRIORITIES = [["urgent", "Urgent"], ["high", "High"], ["medium", "Medium"], ["low", "Low"]] as const;
+const PRIORITIES = [["urgent", "Urgent"], ["high", "High"], ["medium", "Medium"], ["low", "Low"], ["future", "Future"]] as const;
 
 export type DigestStats = {
   total: number;
@@ -292,7 +292,8 @@ export function renderDigest(input: {
     `<tr>${td("Urgent")}${num(String(stats.openByPriority.urgent ?? 0))}${td("Bugs")}${num(String(stats.openBugs))}</tr>` +
     `<tr>${td("High")}${num(String(stats.openByPriority.high ?? 0))}${td("Feature requests")}${num(String(stats.openFeatures))}</tr>` +
     `<tr>${td("Medium")}${num(String(stats.openByPriority.medium ?? 0))}${td(stats.oldestOpen ? `Oldest open: TCK-${stats.oldestOpen.seq}, ${stats.oldestOpen.days} days (${stats.oldestOpen.status.replace("_", " ")})` : "", `font-size:12.5px;color:${muted}`).replace("<td", '<td colspan="2"')}</tr>` +
-    `<tr>${td("Low")}${num(String(stats.openByPriority.low ?? 0))}${td(stats.topAreas.length ? `Most open: ${stats.topAreas.map(([label, n]) => `${escapeHtml(label)} ${n}`).join(", ")}` : "", `font-size:12.5px;color:${muted}`).replace("<td", '<td colspan="2"')}</tr>`;
+    `<tr>${td("Low")}${num(String(stats.openByPriority.low ?? 0))}${td(stats.topAreas.length ? `Most open: ${stats.topAreas.map(([label, n]) => `${escapeHtml(label)} ${n}`).join(", ")}` : "", `font-size:12.5px;color:${muted}`).replace("<td", '<td colspan="2"')}</tr>` +
+    `<tr>${td("Future")}${num(String(stats.openByPriority.future ?? 0))}${td("")}${num("")}</tr>`;
 
   const autoRows =
     `<tr>${th("Fixing tickets")}${th("Count", true)}</tr>` +

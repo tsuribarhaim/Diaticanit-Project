@@ -25,7 +25,8 @@ export const ticketAreaOptions = [
 ] as const;
 export type TicketArea = (typeof ticketAreaOptions)[number];
 
-export const ticketPriorityOptions = ["low", "medium", "high", "urgent"] as const;
+// TCK-33: "future" is the least urgent end - this order is also the dropdown order and the admin table's sort rank.
+export const ticketPriorityOptions = ["future", "low", "medium", "high", "urgent"] as const;
 export type TicketPriority = (typeof ticketPriorityOptions)[number];
 
 /** Reopened is currently support-team-only (set directly in Supabase,
