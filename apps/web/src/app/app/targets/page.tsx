@@ -70,12 +70,11 @@ export default async function TargetsPage({
 
   const locale = normalizeLocale(profileRow.preferred_language);
   const payload = mapTargetProfileRowToPayload(activeRow);
-  const source: "ai" | "heuristic" = activeRow.analysis_source === "ai" ? "ai" : "heuristic";
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-10">
       <section className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-        <TargetsPageClient initialPayload={payload} locale={locale} firstName={profileRow.first_name} source={source} />
+        <TargetsPageClient initialPayload={payload} locale={locale} firstName={profileRow.first_name} />
 
         <p className="mt-6 border-t border-slate-100 pt-4 text-xs text-slate-500 dark:border-slate-800">
           {tr(
