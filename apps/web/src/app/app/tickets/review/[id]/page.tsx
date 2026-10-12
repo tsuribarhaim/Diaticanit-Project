@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 
 import { AutoHandlePill } from "@/components/auto-handle-pill";
-import { FixPanel, ProposalPanel, QuestionsPanel, RequeueButton, ReviewNav } from "@/components/ticket-review-panels";
+import { FixPanel, ProposalPanel, QuestionsPanel, RequeueButton, ReviewNav, TakeOutButton } from "@/components/ticket-review-panels";
 import { formatTicketArea, formatTicketPriority, formatTicketType, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 import type { FixPayload, ProposalPayload, QuestionsPayload, TicketProposalRow } from "@/lib/ticket-proposals";
@@ -64,6 +64,9 @@ export default async function TicketReviewDetailPage({ params, searchParams }: {
     const { data: nightOpen } = await supabase.from("automation_requests").select("id").eq("kind", "night").is("completed_at", null).limit(1);
     buildState = running || (nightOpen ?? []).length > 0 ? "building" : "stopped";
   }
+
+  // Flagged as built (D/M/R) with no fix card behind it - e.g. a ticket fixed by hand: it is on no station, so offer the way out here.
+  const orphanFix = wantedKind === "fix" && !proposal;
 
   // Fix bundles: this ticket may be built, tested and promoted as one fix with others; its merge and revert requests are on the first ticket.
   const bundle = await bundleOfTicket(supabase, id);
@@ -179,11 +182,18 @@ export default async function TicketReviewDetailPage({ params, searchParams }: {
             ? tr(locale, "The night run is building this fix right now. It appears here when it is done, usually within 10 minutes.", "ריצת הלילה בונה את התיקון עכשיו. הוא יופיע כאן כשיסתיים, בדרך כלל תוך 10 דקות.")
             : buildState === "stopped"
               ? tr(locale, "The night run stopped before it finished and left no reason on file. You can put the ticket back in the queue for the next run.", "ריצת הלילה נעצרה לפני שסיימה ולא השאירה סיבה. אפשר להחזיר את הפנייה לתור לריצה הבאה.")
+              : orphanFix
+              ? tr(locale, "This ticket is marked as fixed by automation, but no fix card exists for it (it was probably fixed by hand), so it is not on any station. Take it out of automation to handle it as a normal ticket.", "הפנייה מסומנת כמתוקנת באוטומציה, אבל אין לה כרטיס תיקון (כנראה תוקנה ידנית), ולכן היא לא נמצאת באף תחנה. יש להוציא אותה מהאוטומציה כדי לטפל בה כפנייה רגילה.")
               : ticket.auto_handle === "S"
             ? tr(locale, "Analysis is requested. The analyst runs every evening, or use Run analysis now on the review page.", "התבקש ניתוח. האנליסט רץ כל ערב, או אפשר להשתמש ב'הרצת ניתוח עכשיו' בדף הסקירה.")
             : ticket.auto_handle === "Y"
               ? tr(locale, "Queued: the night run picks this up with the brief that is already in the ticket.", "בתור: ריצת הלילה תיקח את זה עם התקציר שכבר נמצא בפנייה.")
               : tr(locale, "Nothing is waiting on you for this ticket.", "שום דבר לא ממתין לך בפנייה הזו.")}
+          {orphanFix ? (
+            <span className="mt-3 block">
+              <TakeOutButton locale={locale} ticketId={ticket.id} />
+            </span>
+          ) : null}
           {buildState === "stopped" ? (
             <span className="mt-3 block">
               <RequeueButton locale={locale} ticketId={ticket.id} />
