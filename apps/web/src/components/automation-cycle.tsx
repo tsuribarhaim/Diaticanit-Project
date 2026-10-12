@@ -19,7 +19,8 @@ import {
   takeTicketOutAction,
 } from "@/app/app/tickets/review-actions";
 import { type AutomationSearchHit } from "@/app/app/tickets/review-actions";
-import { BundleBadge, BundleSuggestionCards, SplitBundleControl, hueOf } from "@/components/bundle-ui";
+import { BundleBadge, BundleSuggestionCards, SplitBundleControl } from "@/components/bundle-ui";
+import { hueOf } from "@/lib/bundle-hues";
 import { Spinner } from "@/components/spinner";
 import { ActionButton, HandledByHand, PromoteBar } from "@/components/ticket-review-panels";
 import { tr, type AppLocale } from "@/lib/locale";
