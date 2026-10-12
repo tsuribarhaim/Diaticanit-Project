@@ -37,6 +37,7 @@ const COPY: Record<AppLocale, Copy> = {
       "Open the link above in Chrome.",
       "Tap <b>Install</b> when it appears, or open the menu (&#8942;) and choose <b>Install app</b> (or <b>Add to Home screen</b>).",
       "Open Daffy from your home screen.",
+      "If you see <b>Unsafe app blocked</b>, the link opened in Samsung Internet: open it in <b>Chrome</b> and install from there.",
     ],
     iphoneTitle: "iPhone (Safari)",
     iphone: [
@@ -63,6 +64,7 @@ const COPY: Record<AppLocale, Copy> = {
       "פתחו את הקישור למעלה ב-Chrome.",
       "הקישו על <b>התקנה</b> כשהיא מופיעה, או פתחו את התפריט (&#8942;) ובחרו <b>התקנת אפליקציה</b> (או <b>הוספה למסך הבית</b>).",
       "פתחו את Daffy ממסך הבית.",
+      "אם מופיעה ההודעה <b>אפליקציה לא בטוחה נחסמה</b>, הקישור נפתח ב-Samsung Internet: פתחו אותו ב-<b>Chrome</b> והתקינו משם.",
     ],
     iphoneTitle: "אייפון (Safari)",
     iphone: [

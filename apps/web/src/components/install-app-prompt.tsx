@@ -36,6 +36,20 @@ function isIos(): boolean {
   return /iphone|ipad|ipod/i.test(window.navigator.userAgent);
 }
 
+/** TCK-1: Samsung Internet can install a site too, but it builds its own Android package for it, and Google Play
+ * Protect on newer Android blocks that package ("Unsafe app blocked - built for an older version of Android", seen
+ * on a new Samsung phone). Chrome's install is built by Google for current Android and is not blocked, so in
+ * Samsung Internet we never offer our Install button - we send the user to Chrome instead. */
+function isSamsungInternet(): boolean {
+  return /SamsungBrowser/i.test(window.navigator.userAgent);
+}
+
+/** Opens this same page in Chrome (an Android intent link); without Chrome, the fallback reloads it here. */
+function openInChrome() {
+  const { host, pathname, search, href } = window.location;
+  window.location.href = `intent://${host}${pathname}${search}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(href)};end`;
+}
+
 function wasRecentlyDismissed(): boolean {
   try {
     const raw = window.localStorage.getItem(DISMISS_KEY);
@@ -56,6 +70,7 @@ function consumeInstallPromptDueCookie(): boolean {
 export function InstallAppPrompt({ locale }: { locale: AppLocale }) {
   const [deferredEvent, setDeferredEvent] = useState<BeforeInstallPromptEvent | null>(null);
   const [showIosInstructions, setShowIosInstructions] = useState(false);
+  const [showSamsungInstructions, setShowSamsungInstructions] = useState(false);
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
@@ -65,6 +80,10 @@ export function InstallAppPrompt({ locale }: { locale: AppLocale }) {
 
     if (isIos()) {
       startTransition(() => setShowIosInstructions(true));
+      return;
+    }
+    if (isSamsungInternet()) {
+      startTransition(() => setShowSamsungInstructions(true));
       return;
     }
 
@@ -101,7 +120,7 @@ export function InstallAppPrompt({ locale }: { locale: AppLocale }) {
     setDeferredEvent(null);
   }
 
-  if (dismissed || (!showIosInstructions && !deferredEvent)) return null;
+  if (dismissed || (!showIosInstructions && !showSamsungInstructions && !deferredEvent)) return null;
 
   return (
     <div className="fixed inset-x-3 bottom-[calc(3.25rem+env(safe-area-inset-bottom)+0.5rem)] z-40 flex items-center justify-between gap-3 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-900 shadow-lg nav-desktop:bottom-3 dark:border-teal-800 dark:bg-teal-950/90 dark:text-teal-200">
@@ -119,10 +138,25 @@ export function InstallAppPrompt({ locale }: { locale: AppLocale }) {
               'To install: open this page in Safari, then tap Share and choose "Add to Home Screen".',
               'להתקנה: יש לפתוח את העמוד בספארי, להקיש על שיתוף ולבחור "הוספה למסך הבית".',
             )
-          : tr(locale, "Install Daffy for quicker access.", "התקינו את Daffy לגישה מהירה יותר.")}
+          : showSamsungInstructions
+            ? tr(
+                locale,
+                'Installing from Samsung Internet is blocked on newer Android ("Unsafe app blocked"). Open this page in Chrome and install from there.',
+                'התקנה מ-Samsung Internet נחסמת ב-Android החדש ("אפליקציה לא בטוחה נחסמה"). יש לפתוח את העמוד ב-Chrome ולהתקין משם.',
+              )
+            : tr(locale, "Install Daffy for quicker access.", "התקינו את Daffy לגישה מהירה יותר.")}
       </span>
       <div className="flex shrink-0 items-center gap-2">
-        {!showIosInstructions ? (
+        {showSamsungInstructions ? (
+          <button
+            type="button"
+            onClick={openInChrome}
+            className="whitespace-nowrap rounded-md bg-teal-700 px-3 py-1.5 font-semibold text-white hover:bg-teal-800 dark:bg-teal-600"
+          >
+            {tr(locale, "Open in Chrome", "פתיחה ב-Chrome")}
+          </button>
+        ) : null}
+        {!showIosInstructions && !showSamsungInstructions ? (
           <button
             type="button"
             onClick={handleInstallClick}
