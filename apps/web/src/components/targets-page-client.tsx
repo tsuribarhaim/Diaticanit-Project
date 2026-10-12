@@ -22,12 +22,10 @@ export function TargetsPageClient({
   initialPayload,
   locale,
   firstName,
-  source,
 }: {
   initialPayload: TargetGenerationPayload;
   locale: AppLocale;
   firstName?: string | null;
-  source: "ai" | "heuristic";
 }) {
   const [payload, setPayload] = useState(initialPayload);
 
@@ -67,15 +65,6 @@ export function TargetsPageClient({
             </span>
           ) : null}
         </div>
-        {source === "heuristic" ? (
-          <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">
-            {tr(
-              locale,
-              "Baseline estimate - AI review wasn't available when this was generated.",
-              "הערכה בסיסית - סקירת AI לא הייתה זמינה בעת יצירת התכנית.",
-            )}
-          </p>
-        ) : null}
         <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
           {tr(
             locale,
