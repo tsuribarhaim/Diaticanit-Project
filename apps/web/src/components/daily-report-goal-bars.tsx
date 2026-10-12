@@ -15,6 +15,8 @@ export type { RingMetric };
  * compact rows behind a "show full detail" accordion - the same
  * progressive-disclosure split the spec calls for, using the exact same
  * core/extra metric split the chart-preferences feature already tracks.
+ * TCK-131: that accordion is always present, even when the additional
+ * group is empty (it then shows a hint instead of rows).
  */
 /** Only the "genuine over-limit" state (red) - exceeding a metric whose
  * exceedingIsPositive flag says that's actually fine (or a neverOverLimit
@@ -169,27 +171,39 @@ export function DailyReportGoalBars({
         </div>
       ) : null}
 
-      {extraMetrics.length ? (
-        <details className="mt-4 group">
-          {/* TCK-16: bumped from text-xs to text-sm, and the missing
-              dark:text-teal-400 added, to match the "Choose values to
-              display" toggle's own weight - this is the one other control
-              on the page that works the same way (tap to reveal more),
-              and reads as more prominent/intentional than this one used
-              to. */}
-          <summary className="flex cursor-pointer list-none items-center justify-center gap-1.5 text-sm font-semibold text-teal-700 dark:text-teal-400 [&::-webkit-details-marker]:hidden">
-            {tr(locale, "Show full detail", "הצג פירוט מלא")}
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" className="transition-transform group-open:rotate-180" aria-hidden="true">
-              <path d="M6 9l6 6 6-6" />
-            </svg>
-          </summary>
+      {/* TCK-131: always present, even with nothing in the additional
+          group - it used to vanish then, so users never found out the
+          extra values existed. Empty, it points to "Choose values to
+          display" instead. */}
+      <details className="mt-4 group">
+        {/* TCK-16: bumped from text-xs to text-sm, and the missing
+            dark:text-teal-400 added, to match the "Choose values to
+            display" toggle's own weight - this is the one other control
+            on the page that works the same way (tap to reveal more),
+            and reads as more prominent/intentional than this one used
+            to. */}
+        <summary className="flex cursor-pointer list-none items-center justify-center gap-1.5 text-sm font-semibold text-teal-700 dark:text-teal-400 [&::-webkit-details-marker]:hidden">
+          {tr(locale, "Show full detail", "הצג פירוט מלא")}
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" className="transition-transform group-open:rotate-180" aria-hidden="true">
+            <path d="M6 9l6 6 6-6" />
+          </svg>
+        </summary>
+        {extraMetrics.length ? (
           <div className="mt-3 space-y-3">
             {extraMetrics.map((metric) => (
               <GoalBarRow key={metric.id} locale={locale} metric={metric} onSelect={onSelect} />
             ))}
           </div>
-        </details>
-      ) : null}
+        ) : (
+          <p className="mt-3 text-center text-xs text-slate-500 dark:text-slate-400">
+            {tr(
+              locale,
+              "No additional values chosen yet. Drag values into the middle group under \"Choose values to display\" below.",
+              "עדיין לא נבחרו ערכים נוספים. אפשר לגרור ערכים לקבוצה האמצעית תחת \"בחירת ערכים לתצוגה\" למטה.",
+            )}
+          </p>
+        )}
+      </details>
     </div>
   );
 }

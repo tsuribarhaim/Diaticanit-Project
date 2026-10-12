@@ -14,11 +14,10 @@ import {
   type ParsedFoodItem,
 } from "@/lib/daily-report";
 import {
-  CHART_CORE_METRIC_IDS,
-  CHART_EXTRA_METRIC_IDS,
+  CHART_METRIC_IDS,
   DAILY_REPORT_METRIC_FIELD_INFO,
-  type DailyReportChartCoreMetric,
-  type DailyReportChartExtraMetric,
+  dedupeChartMetricGroups,
+  type DailyReportChartMetric,
   type DailyReportChartPreferences,
 } from "@/lib/daily-report-chart-preferences";
 import { parseDailyReportPhotoWithAi, parseDailyReportWithAi, reconcileCustomTargetValueUnits } from "@/lib/ai/daily-report";
@@ -563,6 +562,11 @@ export async function saveDailyReportAction(
       : [];
   }
   const isEditing = editReportId !== null;
+  // TCK-143: the Weight field is pre-filled with today's weight, so the form
+  // says whether the user actually changed it. A missing field (a stale
+  // cached page) counts as changed - the old behavior.
+  const weightUnchanged = !isEditing && formData.get("weight_changed") === "0";
+  const weightFieldRaw = weightUnchanged ? "" : (formData.get("reported_weight_kg")?.toString().trim() ?? "");
 
   const reportTextRaw = formData.get("report_text")?.toString() ?? "";
   const reportText = reportTextRaw.trim();
@@ -579,7 +583,7 @@ export async function saveDailyReportAction(
   // A weight-only entry (no food/exercise content at all) is a legitimate
   // way to just log today's weight, so it bypasses the "add something"
   // requirement below.
-  const hasWeightEntry = Boolean(formData.get("reported_weight_kg")?.toString().trim());
+  const hasWeightEntry = Boolean(weightFieldRaw);
   // Computed once here (rather than only later, right before it's written to
   // the row) so a report consisting ONLY of a custom target value - e.g.
   // sleep duration with nothing else filled in - is recognized as real
@@ -980,7 +984,7 @@ export async function saveDailyReportAction(
   const reportAtRaw = formData.get("report_at")?.toString().trim();
   const reportDate = reportAtRaw ? new Date(reportAtRaw) : null;
   const reportAt = reportDate && !Number.isNaN(reportDate.getTime()) ? reportDate.toISOString() : new Date().toISOString();
-  const reportedWeightRaw = formData.get("reported_weight_kg")?.toString().trim() ?? "";
+  const reportedWeightRaw = weightFieldRaw;
   const inferredWeightFromText = reportText ? extractReportedWeightFromText(reportText) : null;
   const enteredReportedWeightKg = reportedWeightRaw ? toNumber(reportedWeightRaw, NaN) : null;
 
@@ -1939,14 +1943,19 @@ export async function updateDailyReportChartPreferencesAction(formData: FormData
 
   const locale = await resolveDailyReportLocale(supabase, user.id);
 
-  const coreMetrics = formData
-    .getAll("core_metric")
-    .map((value) => value.toString())
-    .filter((id): id is DailyReportChartCoreMetric => CHART_CORE_METRIC_IDS.includes(id as DailyReportChartCoreMetric));
-  const extraMetrics = formData
-    .getAll("extra_metric")
-    .map((value) => value.toString())
-    .filter((id): id is DailyReportChartExtraMetric => CHART_EXTRA_METRIC_IDS.includes(id as DailyReportChartExtraMetric));
+  // TCK-137: any metric can sit in either group (the editor lets the user
+  // drag e.g. magnesium into primary), so both lists are checked against
+  // the full id list, then each id is kept once (core first).
+  const { coreMetrics, extraMetrics } = dedupeChartMetricGroups(
+    formData
+      .getAll("core_metric")
+      .map((value) => value.toString())
+      .filter((id): id is DailyReportChartMetric => CHART_METRIC_IDS.includes(id as DailyReportChartMetric)),
+    formData
+      .getAll("extra_metric")
+      .map((value) => value.toString())
+      .filter((id): id is DailyReportChartMetric => CHART_METRIC_IDS.includes(id as DailyReportChartMetric)),
+  );
   const showWeightTrend = formData.get("show_weight_trend")?.toString() === "on";
 
   // `customized: true` marks that the user has explicitly saved a selection

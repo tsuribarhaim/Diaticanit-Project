@@ -17,12 +17,12 @@ import { DailyReportWeightTrend, type WeightPoint } from "@/components/daily-rep
 import { LocalTime } from "@/components/local-time";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import {
-  CHART_CORE_METRIC_IDS,
-  CHART_EXTRA_METRIC_IDS,
+  CHART_METRIC_IDS,
   DAILY_REPORT_METRIC_FIELD_INFO,
   normalizeDailyReportChartPreferences,
   type DailyReportChartCoreMetric,
   type DailyReportChartExtraMetric,
+  type DailyReportChartMetric,
 } from "@/lib/daily-report-chart-preferences";
 import { resolveUserGenderForAddressing } from "@/lib/ai/persona";
 import { getDailyReportTotalsForRange } from "@/lib/daily-report";
@@ -726,6 +726,9 @@ export default async function DailyReportPage({
       lowerIsBetter: true,
     },
   };
+  // TCK-131/TCK-137: any metric can sit in either group, so both groups
+  // look their ids up in one combined map.
+  const metricDefinitions: Record<DailyReportChartMetric, RingMetric> = { ...coreMetricDefinitions, ...extraMetricDefinitions };
 
   // TCK-16: rendered in the USER'S OWN saved order (chartPreferences.
   // coreMetrics/extraMetrics are themselves ordered arrays - see
@@ -739,11 +742,11 @@ export default async function DailyReportPage({
   // every reorder. Still filtered against the canonical id lists first, so
   // a stale/tampered preferences array can never smuggle in an unknown id.
   const coreDisplayMetrics: RingMetric[] = chartPreferences.coreMetrics
-    .filter((id) => (CHART_CORE_METRIC_IDS as readonly string[]).includes(id))
-    .map((id) => coreMetricDefinitions[id]);
+    .filter((id) => (CHART_METRIC_IDS as readonly string[]).includes(id))
+    .map((id) => metricDefinitions[id]);
   const extraDisplayMetrics: RingMetric[] = chartPreferences.extraMetrics
-    .filter((id) => (CHART_EXTRA_METRIC_IDS as readonly string[]).includes(id))
-    .map((id) => extraMetricDefinitions[id]);
+    .filter((id) => (CHART_METRIC_IDS as readonly string[]).includes(id))
+    .map((id) => metricDefinitions[id]);
 
   // Same user-order-first pattern as coreDisplayMetrics/extraDisplayMetrics
   // just above (core metrics first, in the user's own order, then extras
@@ -752,9 +755,9 @@ export default async function DailyReportPage({
   // reflects the same nutrients (and the same order) the user chose to
   // track everywhere, instead of the fixed 8-field subset they used to
   // hardcode independently of chartPreferences (TCK-44).
-  const selectedReportMetricIds: (DailyReportChartCoreMetric | DailyReportChartExtraMetric)[] = [
-    ...chartPreferences.coreMetrics.filter((id) => (CHART_CORE_METRIC_IDS as readonly string[]).includes(id)),
-    ...chartPreferences.extraMetrics.filter((id) => (CHART_EXTRA_METRIC_IDS as readonly string[]).includes(id)),
+  const selectedReportMetricIds: DailyReportChartMetric[] = [
+    ...chartPreferences.coreMetrics.filter((id) => (CHART_METRIC_IDS as readonly string[]).includes(id)),
+    ...chartPreferences.extraMetrics.filter((id) => (CHART_METRIC_IDS as readonly string[]).includes(id)),
   ];
 
   const weightHistory: WeightPoint[] = chartPreferences.showWeightTrend
@@ -1063,7 +1066,12 @@ export default async function DailyReportPage({
                     "ניתן לגרור לשינוי סדר, או לגרור מעבר לקו מפריד כדי להעביר ערך בין קבוצות - הקבוצה העליונה תמיד מוצגת כבארים; הקבוצה האמצעית ממתינה מתחת ל\"הצג פירוט מלא\".",
                   )}
                 </p>
-                <DailyReportMetricOrderEditor locale={locale} coreMetrics={chartPreferences.coreMetrics} extraMetrics={chartPreferences.extraMetrics} />
+                {/* TCK-137: keyed on the saved preferences so the editor
+                    re-initialises after a save and shows what was stored. */}
+                <DailyReportMetricOrderEditor
+                  key={[...chartPreferences.coreMetrics, "|", ...chartPreferences.extraMetrics].join(",")}
+                  locale={locale}
+                  coreMetrics={chartPreferences.coreMetrics} extraMetrics={chartPreferences.extraMetrics} />
                 <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
                   <input
                     type="checkbox"

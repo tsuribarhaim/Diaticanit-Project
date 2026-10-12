@@ -1,17 +1,18 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 import {
-  CHART_CORE_METRIC_IDS,
-  CHART_EXTRA_METRIC_IDS,
+  CHART_METRIC_IDS,
   DAILY_REPORT_METRIC_FIELD_INFO,
-  type DailyReportChartCoreMetric,
-  type DailyReportChartExtraMetric,
+  dedupeChartMetricGroups,
+  isDailyReportChartMetric,
+  type DailyReportChartMetric,
 } from "@/lib/daily-report-chart-preferences";
 import { tr, type AppLocale } from "@/lib/locale";
 
-type MetricId = DailyReportChartCoreMetric | DailyReportChartExtraMetric;
+type MetricId = DailyReportChartMetric;
 
 /**
  * TCK-16: two sentinels, not a separate "how many are primary" count - they
@@ -28,11 +29,16 @@ const DIVIDER_PRIMARY = "__divider_primary__";
 const DIVIDER_UNTRACKED = "__divider_untracked__";
 type Row = MetricId | typeof DIVIDER_PRIMARY | typeof DIVIDER_UNTRACKED;
 
-function buildInitialOrder(coreMetrics: DailyReportChartCoreMetric[], extraMetrics: DailyReportChartExtraMetric[]): Row[] {
-  const allIds: MetricId[] = [...CHART_CORE_METRIC_IDS, ...CHART_EXTRA_METRIC_IDS];
-  const tracked = new Set<string>([...coreMetrics, ...extraMetrics]);
-  const untracked = allIds.filter((id) => !tracked.has(id));
-  return [...coreMetrics, DIVIDER_PRIMARY, ...extraMetrics, DIVIDER_UNTRACKED, ...untracked];
+function buildInitialOrder(coreMetrics: DailyReportChartMetric[], extraMetrics: DailyReportChartMetric[]): Row[] {
+  // TCK-137: unknown ids and a second copy of an id would render as broken
+  // or duplicate-key rows, so they're dropped here.
+  const { coreMetrics: core, extraMetrics: extra } = dedupeChartMetricGroups(
+    coreMetrics.filter(isDailyReportChartMetric),
+    extraMetrics.filter(isDailyReportChartMetric),
+  );
+  const tracked = new Set<string>([...core, ...extra]);
+  const untracked = CHART_METRIC_IDS.filter((id) => !tracked.has(id));
+  return [...core, DIVIDER_PRIMARY, ...extra, DIVIDER_UNTRACKED, ...untracked];
 }
 
 function labelFor(id: MetricId, locale: AppLocale): string {
@@ -52,6 +58,13 @@ function labelFor(id: MetricId, locale: AppLocale): string {
  * already reads these two field names via formData.getAll(), which
  * preserves DOCUMENT order, so no server-side change was needed to make
  * the saved order match what's dragged here.
+ *
+ * TCK-137: any metric can go in any group (the server used to silently drop
+ * e.g. magnesium dragged into primary, so the selection looked unsaved). The
+ * drag also keeps the row under the finger after each swap (its offset is
+ * corrected by how far its natural position moved), picks the drop spot
+ * from the other rows only, draws above its neighbours, and cleans up on
+ * pointercancel as well as pointerup.
  */
 export function DailyReportMetricOrderEditor({
   locale,
@@ -59,8 +72,8 @@ export function DailyReportMetricOrderEditor({
   extraMetrics,
 }: {
   locale: AppLocale;
-  coreMetrics: DailyReportChartCoreMetric[];
-  extraMetrics: DailyReportChartExtraMetric[];
+  coreMetrics: DailyReportChartMetric[];
+  extraMetrics: DailyReportChartMetric[];
 }) {
   const [order, setOrder] = useState<Row[]>(() => buildInitialOrder(coreMetrics, extraMetrics));
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -85,50 +98,90 @@ export function DailyReportMetricOrderEditor({
     event.preventDefault();
     const rowEl = (event.currentTarget as HTMLElement).closest<HTMLElement>("[data-row]");
     if (!rowEl) return;
-    rowEl.setPointerCapture?.(event.pointerId);
+    const pointerId = event.pointerId;
+    rowEl.setPointerCapture?.(pointerId);
     setDraggingId(id);
 
+    const liveRow = () => listRef.current?.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(String(id))}"]`) ?? null;
+
     let currentOrder = order;
-    let rects = rowNodes().map((el) => el.getBoundingClientRect());
-    let startY = event.clientY;
+    let pointerY = event.clientY;
+    // transform = pointerY - grabY. grabY moves by however far the row's
+    // natural (untransformed) top moves after each reorder, so the row stays
+    // exactly under the finger instead of jumping.
+    let grabY = event.clientY;
+    let naturalTop = rowEl.getBoundingClientRect().top;
+    // Midpoints of the OTHER rows only, in order - the dragged row's own
+    // shifted box never affects where it drops.
+    let otherMidpoints: number[] = [];
+    let measuring = false;
+    let frame: number | null = null;
+    let active = true;
 
-    function onMove(ev: PointerEvent) {
-      const liveRow = listRef.current?.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(String(id))}"]`);
-      if (liveRow) {
-        liveRow.style.transform = `translateY(${ev.clientY - startY}px)`;
-      }
-
-      let targetIdx = rects.findIndex((r) => ev.clientY < r.top + r.height / 2);
-      if (targetIdx === -1) targetIdx = rects.length;
-      const fromIdx = currentOrder.indexOf(id);
-      let toIdx = targetIdx;
-      if (fromIdx < toIdx) toIdx -= 1;
-      toIdx = Math.max(0, Math.min(currentOrder.length - 1, toIdx));
-
-      if (toIdx !== fromIdx) {
-        const next = [...currentOrder];
-        next.splice(fromIdx, 1);
-        next.splice(toIdx, 0, id);
-        currentOrder = next;
-        setOrder(next);
-        // Re-measure against the just-re-rendered rows for the next move.
-        requestAnimationFrame(() => {
-          rects = rowNodes().map((el) => el.getBoundingClientRect());
-          startY = ev.clientY;
-          const freshRow = listRef.current?.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(String(id))}"]`);
-          if (freshRow) freshRow.style.transform = "translateY(0px)";
-        });
-      }
+    function applyTransform() {
+      const row = liveRow();
+      if (row) row.style.transform = `translateY(${pointerY - grabY}px)`;
     }
 
-    function onUp() {
+    function measure() {
+      const row = liveRow();
+      if (row) {
+        row.style.transform = "";
+        const top = row.getBoundingClientRect().top;
+        grabY += top - naturalTop;
+        naturalTop = top;
+      }
+      otherMidpoints = rowNodes()
+        .filter((el) => el !== row)
+        .map((el) => {
+          const r = el.getBoundingClientRect();
+          return r.top + r.height / 2;
+        });
+      applyTransform();
+    }
+
+    measure();
+
+    function onMove(ev: PointerEvent) {
+      if (!active) return;
+      pointerY = ev.clientY;
+      applyTransform();
+      if (measuring) return;
+
+      const fromIdx = currentOrder.indexOf(id);
+      const toIdx = otherMidpoints.filter((mid) => pointerY > mid).length;
+      if (toIdx === fromIdx) return;
+
+      const next = currentOrder.filter((row) => row !== id);
+      next.splice(toIdx, 0, id);
+      currentOrder = next;
+      // Committed synchronously so the measure below sees the new layout.
+      flushSync(() => setOrder(next));
+      measuring = true;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        measuring = false;
+        if (active) measure();
+      });
+    }
+
+    function cleanup() {
+      active = false;
+      if (frame !== null) cancelAnimationFrame(frame);
       window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointerup", cleanup);
+      window.removeEventListener("pointercancel", cleanup);
+      const row = liveRow();
+      if (row) {
+        row.style.transform = "";
+        if (row.hasPointerCapture?.(pointerId)) row.releasePointerCapture(pointerId);
+      }
       setDraggingId(null);
     }
 
     window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointerup", cleanup);
+    window.addEventListener("pointercancel", cleanup);
   }
 
   return (
@@ -167,7 +220,7 @@ export function DailyReportMetricOrderEditor({
               data-row-id={row}
               className={`flex items-center gap-2 rounded-lg border px-2 py-2 text-sm transition-colors ${
                 draggingId === row
-                  ? "border-teal-400 bg-teal-50 shadow-lg dark:border-teal-600 dark:bg-slate-800"
+                  ? "relative z-10 border-teal-400 bg-teal-50 shadow-lg dark:border-teal-600 dark:bg-slate-800"
                   : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
               }`}
               style={{ touchAction: "none" }}
