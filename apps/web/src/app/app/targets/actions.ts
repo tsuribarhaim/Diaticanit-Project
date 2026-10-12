@@ -70,6 +70,7 @@ export async function generateTargetsPayload({
   supabase,
   userId,
   onProgress,
+  profileChangeOnly,
 }: {
   goalText: string;
   profile: ProfileForTargets;
@@ -91,6 +92,8 @@ export async function generateTargetsPayload({
   userId?: string;
   /** Forwarded to generateTargetsWithAi - see its own comment. */
   onProgress?: () => void;
+  /** Forwarded to generateTargetsWithAi - see its own comment. */
+  profileChangeOnly?: boolean;
 }): Promise<{
   payload: TargetGenerationPayload;
   source: "ai" | "heuristic";
@@ -150,6 +153,7 @@ export async function generateTargetsPayload({
         medicalDocumentsContext: medicalDocumentsContext ?? undefined,
         recentCustomTargetLogs,
         onProgress,
+        profileChangeOnly,
       });
       source = "ai";
     } catch (error) {

@@ -86,8 +86,14 @@ export type NegotiateActiveTargetsResult =
  */
 export async function negotiateActiveTargetsAction({
   message,
+  profileChangeOnly,
 }: {
   message: string;
+  /** Set only by the chat's "your profile changed" reminder (TCK-140): the
+   * background review then replies about the changed item(s) only and
+   * NEVER applies anything - any target change is reported as a
+   * suggestion the user can ask for explicitly. */
+  profileChangeOnly?: boolean;
 }): Promise<NegotiateActiveTargetsResult> {
   const supabase = await createClient();
   const {
@@ -144,7 +150,9 @@ export async function negotiateActiveTargetsAction({
   // regardless, and sleep/steps aren't the reported failure mode.
   let explicitFieldRequest: ExplicitFieldRequest | undefined;
 
-  if (aiConfig && hasConsent) {
+  // A profile-change review is never a single-field ask - skip quick-apply
+  // entirely so nothing can be written synchronously in this mode.
+  if (aiConfig && hasConsent && !profileChangeOnly) {
     try {
       const classification = await classifyTargetsFieldEdit({
         config: aiConfig,
@@ -236,8 +244,21 @@ export async function negotiateActiveTargetsAction({
       aiConfig,
       hasConsent,
       explicitFieldRequest,
+      profileChangeOnly,
     }),
   );
+
+  if (profileChangeOnly) {
+    return {
+      quickApplied: false,
+      queued: true,
+      reply: tr(
+        locale,
+        "Got it - I'll check how this change affects your targets and let you know. I won't change anything without asking you.",
+        "קיבלתי - אבדוק איך השינוי הזה משפיע על היעדים שלך ואעדכן אותך. לא אשנה שום דבר בלי לשאול אותך.",
+      ),
+    };
+  }
 
   return {
     quickApplied: false,
@@ -270,6 +291,7 @@ async function runTargetsBackgroundReview({
   aiConfig,
   hasConsent,
   explicitFieldRequest,
+  profileChangeOnly,
 }: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   userId: string;
@@ -285,6 +307,9 @@ async function runTargetsBackgroundReview({
    * message first came in - closes a narrow staleness gap if the active
    * plan changed in between. */
   explicitFieldRequest?: ExplicitFieldRequest;
+  /** See negotiateActiveTargetsAction's own param comment - when true this
+   * only ever notifies (a suggestion at most), never locks a new plan. */
+  profileChangeOnly?: boolean;
 }): Promise<void> {
   try {
     const { data: activeRow } = await supabase
@@ -326,6 +351,7 @@ async function runTargetsBackgroundReview({
       explicitFieldRequest: effectiveFieldRequest,
       supabase,
       userId,
+      profileChangeOnly,
     });
 
     // Supersession check: if a newer FULL-REVIEW request has replaced this
@@ -374,8 +400,8 @@ async function runTargetsBackgroundReview({
         severity: "info",
         message: tr(
           locale,
-          `I reviewed version ${currentTargets.version ?? "?"}, but your plan is now at version ${currentActiveRow?.version ?? "?"} - it changed while I was thinking this over, so I didn't want to risk overwriting your update. Ask me to take another look if you'd still like a full review.`,
-          `בדקתי את גרסה ${currentTargets.version ?? "?"}, אך התוכנית שלך נמצאת כעת בגרסה ${currentActiveRow?.version ?? "?"} - היא השתנתה בזמן שחשבתי על כך, ולכן לא רציתי לסכן דריסה של העדכון שלך. אפשר לבקש ממני לבדוק שוב אם עדיין תרצה/י סקירה מלאה.`,
+          "I reviewed your plan, but it changed while I was thinking this over, so I didn't want to risk overwriting your update. Ask me to take another look if you'd still like a full review.",
+          "בדקתי את התוכנית שלך, אך היא השתנתה בזמן שחשבתי על כך, ולכן לא רציתי לסכן דריסה של העדכון שלך. אפשר לבקש ממני לבדוק שוב אם עדיין תרצה/י סקירה מלאה.",
         ),
         fieldKeys: [],
       });
@@ -416,6 +442,56 @@ async function runTargetsBackgroundReview({
         fieldKeys: [],
       });
       await markComplete("failed");
+      return;
+    }
+
+    // Profile-change mode (TCK-140): never apply anything here - report a
+    // short note about the changed item(s) and, at most, list the changes
+    // the review would suggest so the user can ask for one explicitly
+    // (the single-field chat edit applies it). Returns before
+    // performTargetsLock/markAllTargetsNotificationsRead below.
+    if (profileChangeOnly) {
+      // When notActionableMessage is set, rawPayload is just currentTargets
+      // (see generateTargetsPayload) - its rationale is the OLD plan's text,
+      // so prefer the not-actionable message itself in that case.
+      const explanation = (notActionableMessage ?? (rawPayload.aiRationaleExplanation.trim() || "")).trim();
+      const leadIn = explanation ? `${explanation}\n\n` : "";
+      const suggestedRows = notActionableMessage ? [] : computeTargetsDiff(currentTargets, rawPayload, locale);
+
+      if (suggestedRows.length === 0) {
+        await createNotification({
+          supabase,
+          userId,
+          targetProfileId: activeRow.id,
+          severity: "info",
+          message:
+            leadIn +
+            tr(locale, "Your targets stay as they are - no change needed.", "היעדים שלך נשארים כפי שהם - אין צורך בשינוי."),
+          fieldKeys: [],
+        });
+        await markComplete("complete");
+        return;
+      }
+
+      const suggestedSummary = suggestedRows
+        .slice(0, 6)
+        .map((row) => `${tr(locale, row.labelEn, row.labelHe)}: ${row.before} → ${row.after}`)
+        .join("\n");
+      await createNotification({
+        supabase,
+        userId,
+        targetProfileId: activeRow.id,
+        severity: "info",
+        message:
+          leadIn +
+          tr(
+            locale,
+            `Suggested (not applied):\n${suggestedSummary}\n\nYour targets have not changed. If you want any of these, ask me in the chat to update it.`,
+            `הצעה (לא הוחלה):\n${suggestedSummary}\n\nהיעדים שלך לא שונו. אם תרצו אחד מהשינויים, אפשר לבקש ממני בצ'אט לעדכן אותו.`,
+          ),
+        fieldKeys: [],
+      });
+      await markComplete("complete");
       return;
     }
 
@@ -461,8 +537,8 @@ async function runTargetsBackgroundReview({
         severity: "info",
         message: tr(
           locale,
-          `I reviewed version ${currentTargets.version ?? "?"} and your targets are still accurate as-is - no changes needed.`,
-          `בדקתי את גרסה ${currentTargets.version ?? "?"} והיעדים שלך עדיין מדויקים כפי שהם - אין צורך בשינויים.`,
+          "I reviewed your current targets and they're still accurate as-is - no changes needed.",
+          "בדקתי את היעדים הנוכחיים שלך והם עדיין מדויקים כפי שהם - אין צורך בשינויים.",
         ),
         fieldKeys: [],
       });
@@ -484,11 +560,7 @@ async function runTargetsBackgroundReview({
       .slice(0, 6)
       .map((row) => `${tr(locale, row.labelEn, row.labelHe)}: ${row.before} → ${row.after}`)
       .join("\n");
-    const updatedLabel = tr(
-      locale,
-      `Updated (version ${currentTargets.version ?? "?"} → ${lockResult.version}):`,
-      `עודכן (גרסה ${currentTargets.version ?? "?"} → ${lockResult.version}):`,
-    );
+    const updatedLabel = tr(locale, "Updated:", "עודכן:");
     const message = payload.aiRationaleExplanation
       ? `${payload.aiRationaleExplanation}\n\n${updatedLabel}\n${changeSummary}`
       : tr(locale, `Here's what I updated:\n${changeSummary}`, `הנה מה שעודכן:\n${changeSummary}`);

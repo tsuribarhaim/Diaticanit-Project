@@ -291,8 +291,8 @@ export function GlobalChatWidget({
     const summary = changes.map((row) => `${tr(locale, row.labelEn, row.labelHe)}: ${row.before} → ${row.after}`).join("; ");
     const goalText = tr(
       locale,
-      `My profile changed (${summary}). Please review whether my targets still make sense and update anything that needs it.`,
-      `הפרופיל שלי השתנה (${summary}). בדוק/י בבקשה אם היעדים שלי עדיין הגיוניים ועדכן/י מה שצריך.`,
+      `My profile changed (${summary}). Briefly tell me what this specific change means for me, and suggest a target change only if this change really requires it. Do not change anything.`,
+      `הפרופיל שלי השתנה (${summary}). הסבר/י בקצרה מה המשמעות של השינוי הזה עבורי, והצע/י שינוי ביעד רק אם השינוי הזה באמת מחייב זאת. אל תשנה/י דבר.`,
     );
 
     // try/finally so a network failure or a request that outruns the
@@ -301,7 +301,7 @@ export function GlobalChatWidget({
     // stuck true, which would permanently disable the chat input until the
     // user reloads the page.
     try {
-      const result = await negotiateActiveTargetsAction({ message: goalText });
+      const result = await negotiateActiveTargetsAction({ message: goalText, profileChangeOnly: true });
       await clearTargetsReviewPendingAction();
 
       if ("error" in result) {
@@ -619,7 +619,7 @@ export function GlobalChatWidget({
                 role: "assistant",
                 content: tr(
                   locale,
-                  `Hi! Since we last talked, your ${summary} changed — want me to check whether your targets still make sense, and adjust anything that needs it?`,
+                  `Hi! Since we last talked, your ${summary} changed — want me to check whether this affects your targets? I won't change anything without asking you.`,
                   // "חל שינוי ב-X" rather than "X השתנה" - the latter needs
                   // its verb to agree in gender/number with whatever field
                   // name X happens to be (e.g. "רמת פעילות השתנה" is wrong,
@@ -627,7 +627,7 @@ export function GlobalChatWidget({
                   // field here, so no single fixed conjugation is ever
                   // correct for all of them. This phrasing needs no
                   // agreement at all, so it's correct for every field.
-                  `היי! חל שינוי ב${summary} מאז שדיברנו לאחרונה - רוצה שאבדוק אם היעדים שלך עדיין הגיוניים, ואתאים מה שצריך?`,
+                  `היי! חל שינוי ב${summary} מאז שדיברנו לאחרונה - רוצה שאבדוק אם זה משפיע על היעדים שלך? לא אשנה שום דבר בלי לשאול אותך.`,
                 ),
                 reviewPrompt: { changes: pendingReviewChanges, status: "pending" },
               },
