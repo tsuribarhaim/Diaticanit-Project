@@ -383,6 +383,8 @@ export function DailyReportChatPanel({
   const [streamError, setStreamError] = useState<string | null>(null);
   const [retryAction, setRetryAction] = useState<(() => void) | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
+  // The photo is picked but not yet sent; it goes out with the next Send (TCK-136).
+  const [stagedPhoto, setStagedPhoto] = useState<{ base64: string; mimeType: string; previewUrl: string } | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
   // The saved-list icon's popover (restyled to match the global chat
   // widget's simple "tap the icon, tap an item, it's logged" flow - see
@@ -1030,6 +1032,7 @@ export function DailyReportChatPanel({
     setMessages(buildInitialMessages());
     setInputValue("");
     setPhotoPreviewUrl(null);
+    setStagedPhoto(null);
     setPhotoError(null);
     setPendingDeleteOnSave(false);
     setStreamError(null);
@@ -1108,7 +1111,9 @@ export function DailyReportChatPanel({
       void handleLogSavedItem(exactItem);
       return;
     }
-    void sendMessage(inputValue);
+    const photo = stagedPhoto;
+    setStagedPhoto(null);
+    void sendMessage(inputValue, photo ?? undefined);
   }
 
   // Once the chat has read the photo, Save uses the chat's text instead (TCK-143).
@@ -1141,9 +1146,22 @@ export function DailyReportChatPanel({
     const previewUrl = URL.createObjectURL(photo);
     setPhotoPreviewUrl(previewUrl);
     const base64 = await readFileAsBase64(photo);
-    const textToSend = inputValue;
-    setInputValue("");
-    void sendMessage(textToSend, { base64, mimeType: photo.type, previewUrl });
+    // One photo per message: a new pick replaces the one already waiting.
+    if (stagedPhoto) URL.revokeObjectURL(stagedPhoto.previewUrl);
+    setStagedPhoto({ base64, mimeType: photo.type, previewUrl });
+    // Same desktop-only focus as the effect above, so the phone keyboard doesn't pop up.
+    if (!window.matchMedia?.("(pointer: coarse)").matches) textareaRef.current?.focus();
+  }
+
+  /** The × on the waiting photo: drops it, including from meal_photo, so
+   * Report won't submit it. Keeps photoPreviewUrl if a photo was already
+   * sent in this conversation. */
+  function removeStagedPhoto() {
+    if (stagedPhoto) URL.revokeObjectURL(stagedPhoto.previewUrl);
+    setStagedPhoto(null);
+    if (!messages.some((message) => message.imagePreviewUrl)) setPhotoPreviewUrl(null);
+    clearPhotoForSave();
+    setPhotoError(null);
   }
 
   /**
@@ -1486,6 +1504,24 @@ export function DailyReportChatPanel({
             }}
           />
 
+          {/* TCK-136: the picked photo waits here until Send, so a note can go with it. */}
+          {stagedPhoto && (
+            <div className="relative inline-block">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={stagedPhoto.previewUrl} alt="" className="h-16 w-16 rounded-lg border border-slate-300 object-cover dark:border-slate-700" />
+              <button
+                type="button"
+                onClick={removeStagedPhoto}
+                disabled={isStreaming}
+                aria-label={tr(locale, "Remove photo", "הסרת התמונה")}
+                title={tr(locale, "Remove photo", "הסרת התמונה")}
+                className="absolute -end-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-slate-700 text-xs leading-none text-white disabled:opacity-70"
+              >
+                ×
+              </button>
+            </div>
+          )}
+
           {/* Bigger than before (4 rows, not 2) now that it has the whole
               row to itself instead of sharing one with three icon
               buttons. */}
@@ -1499,7 +1535,11 @@ export function DailyReportChatPanel({
             // Singular, gender-correct Hebrew imperative (כתוב/כתבי) -
             // see the subtitle above for why the original plural form
             // ("כתבו") was wrong here too.
-            placeholder={trGendered(locale, userGender, "Type a message...", "כתוב הודעה...", "כתבי הודעה...")}
+            placeholder={
+              stagedPhoto
+                ? trGendered(locale, userGender, "Add a note about the photo (optional)...", "הוסף הערה על התמונה (לא חובה)...", "הוסיפי הערה על התמונה (לא חובה)...")
+                : trGendered(locale, userGender, "Type a message...", "כתוב הודעה...", "כתבי הודעה...")
+            }
             className="w-full resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 disabled:opacity-70 dark:border-slate-700"
             // Inline style, not dark:bg-slate-900/dark:text-slate-100 -
             // confirmed live (DevTools computed-style check) that this
@@ -1525,11 +1565,11 @@ export function DailyReportChatPanel({
               attach-icon row above (see its own comment there). */}
           <button
             type="button"
-            disabled={isStreaming || !inputValue.trim()}
+            disabled={isStreaming || (!inputValue.trim() && !stagedPhoto)}
             onClick={handleSendClick}
             onMouseDown={(event) => event.preventDefault()}
             className={`flex w-full items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold ${
-              !isStreaming && !inputValue.trim()
+              !isStreaming && !inputValue.trim() && !stagedPhoto
                 ? "cursor-not-allowed bg-slate-300 text-slate-500 dark:bg-slate-700 dark:text-slate-400"
                 : "bg-teal-700 text-white disabled:cursor-not-allowed disabled:opacity-70 enabled:hover:bg-teal-800 dark:bg-teal-600 dark:enabled:hover:bg-teal-500"
             }`}
