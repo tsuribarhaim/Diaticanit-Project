@@ -1,6 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 import { NavLink as Link } from "@/components/nav-link";
+import { Spinner } from "@/components/spinner";
 
 import { formatDateForLocale, tr, type AppLocale } from "@/lib/locale";
 
@@ -22,6 +25,18 @@ export function DailyReportDateJumpForm({
   selectedDate: string;
   todayDateString: string;
 }) {
+  // Picking a date reloads the page on that day (a GET form submission), which can take a moment on a phone - show a
+  // spinner until then instead of a field that looks like nothing happened. A page restored from the back/forward
+  // cache keeps this state, so it is reset there.
+  const [navigating, setNavigating] = useState(false);
+  useEffect(() => {
+    const reset = (event: PageTransitionEvent) => {
+      if (event.persisted) setNavigating(false);
+    };
+    window.addEventListener("pageshow", reset);
+    return () => window.removeEventListener("pageshow", reset);
+  }, []);
+
   return (
     <form method="GET" className="mt-2 flex items-center justify-center gap-2">
       {/* Native date input, not LocalizedDateInput (used everywhere else in
@@ -38,10 +53,14 @@ export function DailyReportDateJumpForm({
           an iOS date input with no size of its own can shrink to nothing. */}
       <span className="relative inline-flex min-w-[9.5rem] items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm ring-teal-600 focus-within:ring-2 dark:border-slate-700 dark:bg-slate-900">
         <span aria-hidden="true" className="inline-flex items-center gap-2 text-slate-700 dark:text-slate-200">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <rect x="3" y="4" width="18" height="18" rx="2" />
-            <path d="M16 2v4M8 2v4M3 10h18" />
-          </svg>
+          {navigating ? (
+            <Spinner className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="18" rx="2" />
+              <path d="M16 2v4M8 2v4M3 10h18" />
+            </svg>
+          )}
           <span dir="ltr">{formatDateForLocale(selectedDate, locale)}</span>
         </span>
         <input
@@ -50,15 +69,25 @@ export function DailyReportDateJumpForm({
           defaultValue={selectedDate}
           max={todayDateString}
           aria-label={tr(locale, "View date", "תאריך לצפייה")}
-          onChange={(event) => event.currentTarget.form?.requestSubmit()}
+          onChange={(event) => {
+            const input = event.currentTarget;
+            setNavigating(true);
+            // Let go of focus: on Android Chrome a still-focused (invisible) date field ignored the next taps.
+            input.blur();
+            input.form?.requestSubmit();
+          }}
           onClick={(event) => {
-            // With a mouse, a click on the (invisible) digits only focuses them - open the calendar instead. Phones open
-            // their own picker on tap, so this is skipped there (a second open could flicker or throw).
-            if (!window.matchMedia("(pointer: fine)").matches) return;
+            // Open the calendar ourselves on every tap where the browser can (Android Chrome, desktop): relying on the
+            // browser's own tap handling, Android Chrome opened it only on some taps and not again once the field was
+            // focused (TCK-146 test). The default is cancelled only after a successful open, so it never opens twice;
+            // where showPicker is missing or refused (older iOS Safari), the tap's own default still opens it.
+            const input = event.currentTarget;
+            if (typeof input.showPicker !== "function") return;
             try {
-              event.currentTarget.showPicker?.();
+              input.showPicker();
+              event.preventDefault();
             } catch {
-              // Not allowed here (e.g. inside a cross-origin frame): the focused field still works with the keyboard.
+              // Refused (e.g. inside a cross-origin frame): fall through to the browser's own behaviour.
             }
           }}
           className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
