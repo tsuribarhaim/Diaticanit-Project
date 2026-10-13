@@ -78,12 +78,12 @@ export default async function DailyReportDefaultsPage({
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 py-10">
       <section className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">{tr(locale, "Daily Report Saved List", "רשימה שמורה לדיווח יומי")}</h1>
+          <h1 className="text-lg font-bold text-slate-900 sm:text-2xl dark:text-slate-100">{tr(locale, "Daily Report Saved List", "רשימה שמורה לדיווח יומי")}</h1>
           <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
             {tr(
               locale,
               "Configure reusable items for one-click reporting - a single thing like water, or a bundle of several ingredients under one name, like \"My Breakfast\".",
-              "הגדירו פריטים לשימוש חוזר לדיווח בלחיצה אחת - דבר בודד כמו מים, או צירוף של כמה מרכיבים תחת שם אחד, כמו \"ארוחת הבוקר שלי\".",
+              "הגדירו פריטים לשימוש חוזר לדיווח בלחיצה אחת - דבר בודד כמו מים, או צירוף של כמה רכיבים תחת שם אחד, כמו \"ארוחת הבוקר שלי\".",
             )}
           </p>
         </div>
@@ -105,11 +105,11 @@ export default async function DailyReportDefaultsPage({
           </p>
           <label className="block space-y-1">
             <span className="text-xs font-medium text-slate-700 dark:text-slate-300">
-              {tr(locale, "Item name (only needed for a bundle of several ingredients)", "שם הפריט (נדרש רק עבור צירוף של כמה מרכיבים)")}
+              {tr(locale, "Item name (only needed for a bundle of several ingredients)", "שם הפריט (נדרש רק עבור צירוף של כמה רכיבים)")}
             </span>
             <input
               name="name"
-              placeholder={tr(locale, "e.g. My Breakfast - leave blank for a single ingredient", "לדוגמה: ארוחת הבוקר שלי - ניתן להשאיר ריק עבור מרכיב בודד")}
+              placeholder={tr(locale, "e.g. My Breakfast - leave blank for a single ingredient", "לדוגמה: ארוחת הבוקר שלי - ניתן להשאיר ריק עבור רכיב בודד")}
               className="w-full max-w-md rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
             />
           </label>
@@ -117,13 +117,6 @@ export default async function DailyReportDefaultsPage({
           <IngredientRowsFieldset locale={locale} />
 
           <div>
-            <p className="mb-2 text-xs text-slate-600 dark:text-slate-400">
-              {tr(
-                locale,
-                "Tip: for a single thing, just fill one ingredient row and leave the item name blank - it'll use that ingredient's own name.",
-                "טיפ: עבור פריט בודד, יש למלא שורת מרכיב אחת ולהשאיר את שם הפריט ריק - ייעשה שימוש בשם המרכיב עצמו.",
-              )}
-            </p>
             <PendingSubmitButton className="rounded-lg border border-emerald-300 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-400 dark:hover:bg-emerald-950/30">
               {tr(locale, "Add item to Saved List", "הוספת פריט לרשימה השמורה")}
             </PendingSubmitButton>
@@ -181,12 +174,12 @@ export default async function DailyReportDefaultsPage({
                     <input type="hidden" name="is_active" value={item.is_active ? "on" : "off"} />
                     <label className="block space-y-1">
                       <span className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                        {tr(locale, "Item name (only needed for a bundle of several ingredients)", "שם הפריט (נדרש רק עבור צירוף של כמה מרכיבים)")}
+                        {tr(locale, "Item name (only needed for a bundle of several ingredients)", "שם הפריט (נדרש רק עבור צירוף של כמה רכיבים)")}
                       </span>
                       <input
                         name="name"
                         defaultValue={isBundle ? displayName : ""}
-                        placeholder={tr(locale, "e.g. My Breakfast - leave blank for a single ingredient", "לדוגמה: ארוחת הבוקר שלי - ניתן להשאיר ריק עבור מרכיב בודד")}
+                        placeholder={tr(locale, "e.g. My Breakfast - leave blank for a single ingredient", "לדוגמה: ארוחת הבוקר שלי - ניתן להשאיר ריק עבור רכיב בודד")}
                         className="w-full max-w-md rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
                       />
                     </label>
