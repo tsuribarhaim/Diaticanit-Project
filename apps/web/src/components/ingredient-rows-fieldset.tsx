@@ -198,7 +198,7 @@ export function IngredientRowsFieldset({
             className="grid items-end gap-2 rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-800 dark:bg-slate-900 sm:grid-cols-[2fr_1fr_1fr_1fr_auto]"
           >
             <label className="space-y-1">
-              <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Ingredient name", "שם המרכיב")}</span>
+              <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Ingredient name", "שם הרכיב")}</span>
               <input
                 name="ingredient_name"
                 defaultValue={row.name}
@@ -253,7 +253,7 @@ export function IngredientRowsFieldset({
         className="mt-2 rounded-lg border border-teal-300 px-3 py-1.5 text-xs font-semibold text-teal-700 hover:bg-teal-50 dark:border-teal-700 dark:text-teal-400 dark:hover:bg-teal-950/40"
       >
         {"+ "}
-        {tr(locale, "Add ingredient", "הוספת מרכיב")}
+        {tr(locale, "Add ingredient", "הוספת רכיב")}
       </button>
     </div>
   );

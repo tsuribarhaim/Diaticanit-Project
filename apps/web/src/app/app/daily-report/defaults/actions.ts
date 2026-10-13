@@ -76,7 +76,7 @@ function resolveBundleFields(
   locale: AppLocale,
 ): { name: string; kind: string; defaultQuantity: number; defaultUnit: string } | { error: string } {
   if (ingredients.length === 0) {
-    return { error: tr(locale, "Add at least one ingredient.", "יש להוסיף לפחות מרכיב אחד.") };
+    return { error: tr(locale, "Add at least one ingredient.", "יש להוסיף לפחות רכיב אחד.") };
   }
 
   if (ingredients.length === 1) {
@@ -94,7 +94,7 @@ function resolveBundleFields(
       error: tr(
         locale,
         "Please name this saved item (e.g. \"My Breakfast\") since it bundles more than one ingredient.",
-        "יש לתת שם לפריט השמור הזה (למשל \"ארוחת הבוקר שלי\") מכיוון שהוא מאגד יותר ממרכיב אחד.",
+        "יש לתת שם לפריט השמור הזה (למשל \"ארוחת הבוקר שלי\") מכיוון שהוא מאגד יותר מרכיב אחד.",
       ),
     };
   }
