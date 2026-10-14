@@ -1,9 +1,11 @@
 "use server";
 
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
+import { tr } from "@/lib/locale";
+import { queuePasswordReset } from "@/lib/password-reset";
 import { logServerError } from "@/lib/server-log";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -341,9 +343,13 @@ export async function forgotPasswordAction(
     email: formData.get("email"),
   });
 
+  const locale = normalizeLocaleCookieValue((await cookies()).get(LOCALE_COOKIE)?.value);
   const genericSuccess = {
-    success:
-      "If that email has an account, a password reset link is on its way. Check your inbox (and spam folder).",
+    success: tr(
+      locale,
+      "If that email has an account, a password reset link is on its way from Daffy. Check your inbox (and spam folder).",
+      "אם לכתובת הזו יש חשבון, קישור לאיפוס הסיסמה בדרך אליך מ-Daffy. כדאי לבדוק גם בתיקיית הספאם.",
+    ),
   };
 
   if (!parsed.success) {
@@ -353,23 +359,8 @@ export async function forgotPasswordAction(
     return genericSuccess;
   }
 
-  const supabase = await createClient();
-  const headerList = await headers();
-  // Derived from the incoming request rather than a hardcoded env var, so
-  // this resolves correctly whichever of dev/staging/the Vercel pilot the
-  // request actually came in on, with nothing to keep in sync between them.
-  const origin = headerList.get("origin") ?? `https://${headerList.get("host")}`;
-
-  const { error } = await supabase.auth.resetPasswordForEmail(parsed.data.email, {
-    redirectTo: `${origin}/auth/reset-password`,
-  });
-
-  if (error) {
-    logServerError("auth.forgotPassword", "reset_email_failed", {
-      email: parsed.data.email,
-      error: error.message,
-    });
-  }
-
+  // TCK-3: Daffy sends the email itself (lib/password-reset.ts), with a link that is checked on the server, so it works in
+  // whichever browser opens it. Unknown addresses and a flood of requests are skipped silently - the reply is the same.
+  await queuePasswordReset(parsed.data.email, locale, null);
   return genericSuccess;
 }

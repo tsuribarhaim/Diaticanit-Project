@@ -30,8 +30,8 @@ function Spinner({ className }: { className: string }) {
  * mount covers the (unlikely but possible) case where the exchange
  * resolved before this listener was attached.
  */
-export function ResetPasswordForm({ locale }: { locale: AppLocale }) {
-  const [status, setStatus] = useState<"checking" | "ready" | "invalid">("checking");
+export function ResetPasswordForm({ locale, linkInvalid = false }: { locale: AppLocale; linkInvalid?: boolean }) {
+  const [status, setStatus] = useState<"checking" | "ready" | "invalid">(linkInvalid ? "invalid" : "checking");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -39,6 +39,8 @@ export function ResetPasswordForm({ locale }: { locale: AppLocale }) {
   const supabaseRef = useRef(createClient());
 
   useEffect(() => {
+    // The server already checked the link and found it used or expired: nothing to wait for.
+    if (linkInvalid) return;
     const supabase = supabaseRef.current;
 
     const {
@@ -65,7 +67,7 @@ export function ResetPasswordForm({ locale }: { locale: AppLocale }) {
       subscription.unsubscribe();
       clearTimeout(timeoutId);
     };
-  }, []);
+  }, [linkInvalid]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();

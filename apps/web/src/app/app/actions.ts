@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { revalidateNavChrome } from "@/lib/nav-chrome";
+import { queuePasswordReset } from "@/lib/password-reset";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
 
@@ -235,6 +236,28 @@ export async function changePasswordAction(
   }
 
   redirect("/auth/sign-in?reason=password_changed");
+}
+
+/**
+ * TCK-3: a signed-in person who forgot their current password asks for a reset link to their own address. Opening the email
+ * proves it is them, so no current password is needed; the link leads to the same new-password form as "Forgot your password?"
+ * on the sign-in page.
+ */
+export async function requestOwnPasswordResetAction(): Promise<{ success?: string; error?: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user || !user.email) redirect("/auth/sign-in");
+  const locale = await resolveUserLocale(supabase, user.id);
+  await queuePasswordReset(user.email, locale, user.id);
+  return {
+    success: tr(
+      locale,
+      `A link to choose a new password is on its way to ${user.email}. It can take a minute; check the spam folder too.`,
+      `קישור לבחירת סיסמה חדשה בדרך אל ${user.email}. זה יכול לקחת דקה; כדאי לבדוק גם בתיקיית הספאם.`,
+    ),
+  };
 }
 
 export async function signOutAction() {
