@@ -1336,8 +1336,6 @@ export async function addReportToDefaultsAction(formData: FormData): Promise<voi
     );
   }
 
-  const fallbackName = `Saved report ${new Date(reportRow.report_at).toISOString().slice(0, 10)}`;
-  const defaultName = customName || fallbackName;
 
   // Without this, a default item created this way (saving a whole logged
   // report as one Saved List entry, as opposed to the dedicated multi-
@@ -1358,6 +1356,16 @@ export async function addReportToDefaultsAction(formData: FormData): Promise<voi
     ...parsedFoodItems.map((item) => ({ name: item.name, kind: "food", quantity: item.quantity, unit: item.unit })),
     ...parsedExerciseItems.map((item) => ({ name: item.name, kind: "exercise", quantity: item.minutes, unit: "min" })),
   ];
+  // TCK-148: saved without a name, the item is named after what it holds (like "Add item" does for a single ingredient):
+  // one item -> its name, two or three -> joined, more -> the first two "+ N more". The date is only a last resort.
+  const itemNames = ingredients.map((ingredient) => String(ingredient.name ?? "").trim()).filter(Boolean);
+  const fallbackName =
+    itemNames.length === 0
+      ? tr(locale, `Saved report ${new Date(reportRow.report_at).toISOString().slice(0, 10)}`, `דיווח שמור ${new Date(reportRow.report_at).toLocaleDateString("he-IL", { day: "2-digit", month: "2-digit" })}`)
+      : itemNames.length <= 3
+        ? itemNames.join(" + ")
+        : `${itemNames.slice(0, 2).join(" + ")} ${tr(locale, `+ ${itemNames.length - 2} more`, `ועוד ${itemNames.length - 2}`)}`;
+  const defaultName = (customName || fallbackName).slice(0, 80);
 
   const { data: existingNameMatch } = await supabase
     .from("user_default_items")
