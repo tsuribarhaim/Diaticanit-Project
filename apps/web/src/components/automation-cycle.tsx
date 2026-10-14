@@ -591,14 +591,15 @@ function AgentRunBar({ locale, kind, tickets, status }: { locale: AppLocale; kin
   const running = kind === "analyze" ? status.analysisInProgress : status.runInProgress;
   const requested = kind === "analyze" ? status.requested.analyze : status.requested.night;
   const count = tickets.length;
+  // The daily batch lock comes right after Pause: it explains why the button is off even when the bridge is offline too.
   const reason = status.paused
     ? tr(locale, "Automation is paused - resume it first", "האוטומציה מושהית - יש לחדש אותה קודם")
+    : status.batchActive
+      ? tr(locale, "Daily batch in progress - manual runs are locked until it closes", "חבילה יומית בתהליך - הפעלה ידנית נעולה עד שתיסגר")
     : !status.bridgeOnline
       ? tr(locale, "The bridge is offline - your laptop must be on", "הגשר כבוי - המחשב הנייד חייב להיות דלוק")
       : running
         ? tr(locale, "Running now - an e-mail follows when it ends", "רץ עכשיו - מייל יישלח בסיומו")
-        : status.batchActive
-          ? tr(locale, "Daily batch in progress - manual runs are locked until it closes", "חבילה יומית בתהליך - הפעלה ידנית נעולה עד שתיסגר")
         : status.agentBusy && status.agentBusy !== kind
           ? tr(locale, `One agent at a time: ${busyAgentLabel(status.agentBusy, "en")} is running`, `סוכן אחד בכל פעם: ${busyAgentLabel(status.agentBusy, "he")} בפעולה עכשיו`)
         : requested
@@ -614,7 +615,7 @@ function AgentRunBar({ locale, kind, tickets, status }: { locale: AppLocale; kin
   return (
     <>
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-teal-700 px-4 py-3 text-white dark:bg-teal-600">
-        <span className="text-sm font-semibold">{reason && (running || requested) ? <span className="inline-flex items-center gap-2"><Spinner className="h-4 w-4 animate-spin" />{reason}</span> : (reason && count === 0) || status.paused || !status.bridgeOnline ? reason : summary}</span>
+        <span className="text-sm font-semibold">{reason && (running || requested) ? <span className="inline-flex items-center gap-2"><Spinner className="h-4 w-4 animate-spin" />{reason}</span> : (reason && count === 0) || status.paused || status.batchActive || !status.bridgeOnline || (status.agentBusy && status.agentBusy !== kind) ? reason : summary}</span>
         <button type="button" disabled={reason !== null} onClick={() => setOpen(true)} className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-teal-800 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-60">
           {label}
         </button>
