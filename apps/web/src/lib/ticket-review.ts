@@ -1,4 +1,7 @@
 import type { createClient } from "@/lib/supabase/server";
+import { busyAgent, busyAgentLabel, type BridgeHealth, type BusyAgent } from "@/lib/agent-lock";
+
+const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 import { tr, type AppLocale } from "@/lib/locale";
 import {
   buildAnswersEntry,
@@ -455,10 +458,16 @@ export async function requestAgentRun(supabase: Client, adminId: string, locale:
   if ((recent ?? []).length > 0) return { success: tr(locale, "It was just started - it is running.", "זה הותחל זה עתה - והוא רץ.") };
   if (kind !== "digest") {
     const { data: beat } = await supabase.from("automation_settings").select("bridge_seen_at, bridge_status").eq("id", true).maybeSingle();
-    const status = (beat?.bridge_status ?? {}) as { analysisInProgress?: boolean; runInProgress?: boolean };
-    const fresh = beat?.bridge_seen_at && Date.now() - new Date(beat.bridge_seen_at as string).getTime() < 3 * 60 * 1000;
-    if (fresh && (kind === "analyze" ? status.analysisInProgress : status.runInProgress)) {
-      return { error: tr(locale, "It is already running - wait for it to finish.", "זה כבר רץ - יש להמתין לסיומו.") };
+    const status = (beat?.bridge_status ?? {}) as BridgeHealth;
+    const fresh = Boolean(beat?.bridge_seen_at && Date.now() - new Date(beat.bridge_seen_at as string).getTime() < 3 * 60 * 1000);
+    // One agent at a time: nothing starts by hand while any agent runs (or another one was just requested).
+    const busy = busyAgent(status, fresh);
+    if (busy === kind) return { error: tr(locale, "It is already running - wait for it to finish.", "זה כבר רץ - יש להמתין לסיומו.") };
+    if (busy) return { error: tr(locale, `${capitalize(busyAgentLabel(busy, "en"))} is running - one agent at a time. Try again when it ends.`, `${busyAgentLabel(busy, "he")} בפעולה עכשיו - סוכן אחד בכל פעם. אפשר לנסות שוב בסיום.`) };
+    const { data: otherOpen } = await supabase.from("automation_requests").select("kind").in("kind", ["analyze", "night"]).neq("kind", kind).is("completed_at", null).limit(1);
+    if ((otherOpen ?? []).length > 0) {
+      const other = (otherOpen as { kind: BusyAgent }[])[0].kind;
+      return { error: tr(locale, `${capitalize(busyAgentLabel(other, "en"))} was just requested - one agent at a time.`, `כבר יש בקשה פתוחה: ${busyAgentLabel(other, "he")} - סוכן אחד בכל פעם.`) };
     }
   }
   const { error } = await supabase.from("automation_requests").insert({ kind, requested_by: adminId });

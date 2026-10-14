@@ -1,4 +1,5 @@
 import { loadOverlapBlockers } from "@/lib/automation-overlap";
+import { busyAgent, type BridgeHealth, type BusyAgent } from "@/lib/agent-lock";
 import { collectFiles, filesFromText, sharedFiles, suggestBundles } from "@/lib/overlap";
 import type { createClient } from "@/lib/supabase/server";
 
@@ -90,6 +91,8 @@ export type AutomationStatus = {
   analysisInProgress: boolean;
   runInProgress: boolean;
   promoteInProgress: boolean;
+  /** Any agent running or about to start (requested) - the run buttons stay off while it is set. */
+  agentBusy: BusyAgent | null;
   autoMerge: boolean;
   lastNight: RunInfo | null;
   lastAnalyst: RunInfo | null;
@@ -195,7 +198,7 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
   const requests = (requestRows ?? []) as RowRequest[];
 
   const { data: settingsRow } = await settingsP;
-  const health = ((settingsRow?.bridge_status ?? {}) as { analysisInProgress?: boolean; runInProgress?: boolean; promoteInProgress?: boolean; autoMerge?: boolean });
+  const health = ((settingsRow?.bridge_status ?? {}) as BridgeHealth & { autoMerge?: boolean });
   const seenAt = (settingsRow?.bridge_seen_at as string | null) ?? null;
   const bridgeOnline = seenAt !== null && now() - new Date(seenAt).getTime() < 3 * 60 * 1000;
   const { data: runRows } = await runsP;
@@ -321,6 +324,7 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
     analysisInProgress: bridgeOnline && Boolean(health.analysisInProgress),
     runInProgress: bridgeOnline && Boolean(health.runInProgress),
     promoteInProgress: bridgeOnline && Boolean(health.promoteInProgress),
+    agentBusy: busyAgent(health, bridgeOnline) ?? (buildRunning ? "night" : analysisRunning ? "analyze" : null),
     autoMerge: Boolean(health.autoMerge),
     lastNight: runOf("night"),
     lastAnalyst: runOf("analyst"),

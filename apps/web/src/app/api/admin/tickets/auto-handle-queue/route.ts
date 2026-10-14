@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { loadOverlapBlockers } from "@/lib/automation-overlap";
 import type { Blocker } from "@/lib/overlap";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { attachmentLinksFor } from "@/lib/ticket-attachment-links";
 import { logServerError } from "@/lib/server-log";
 
 export const dynamic = "force-dynamic";
@@ -49,6 +50,7 @@ export async function GET(request: Request) {
     const { data: bundleRows } = await adminClient.from("automation_bundles").select("id, letter").in("id", bundleIds);
     for (const row of (bundleRows ?? []) as { id: string; letter: string }[]) letters.set(row.id, row.letter);
   }
-  const tickets = (data ?? []).map((ticket) => ({ ...ticket, bundleLetter: ticket.bundle_id ? letters.get(ticket.bundle_id as string) ?? null : null, heldBy: (blockers.get(ticket.id) ?? []).map((b) => ({ seq: b.seq, why: b.why, files: b.files.slice(0, 5) })) }));
+  const attachments = await attachmentLinksFor(adminClient, (data ?? []).map((ticket) => ticket.id as string));
+  const tickets = (data ?? []).map((ticket) => ({ ...ticket, attachments: attachments.get(ticket.id as string) ?? [], bundleLetter: ticket.bundle_id ? letters.get(ticket.bundle_id as string) ?? null : null, heldBy: (blockers.get(ticket.id) ?? []).map((b) => ({ seq: b.seq, why: b.why, files: b.files.slice(0, 5) })) }));
   return NextResponse.json({ tickets }, { headers: { "Cache-Control": "no-store" } });
 }
