@@ -13,7 +13,8 @@ import type { createClient } from "@/lib/supabase/server";
 export const MAX_BATCH_TICKETS = 8;
 /** States of a ticket inside a batch. */
 export type BatchTicketState = "proposed" | "unselected" | "queued" | "analysing" | "building" | "built" | "out" | "released";
-export type BatchTicket = { ticketId: string; seq: number; subject: string; reason: string; needsMigration: boolean; state: BatchTicketState; note?: string | null };
+/** retried: the fix stopped once and was requeued (a second stop takes it out); summary: what the fix changed (for the emails). */
+export type BatchTicket = { ticketId: string; seq: number; subject: string; reason: string; needsMigration: boolean; state: BatchTicketState; note?: string | null; retried?: boolean; summary?: string | null };
 export type BatchStatus = "proposed" | "approved" | "building" | "ready" | "promoting" | "done" | "rejected" | "expired" | "failed";
 export type Batch = {
   id: string;
@@ -24,6 +25,7 @@ export type Batch = {
   triage_cost_usd: number | null;
   created_at: string;
   approved_at: string | null;
+  approved_by: string | null;
   ready_at: string | null;
   promoted_at: string | null;
   version: string | null;
@@ -79,5 +81,59 @@ export function renderBatchProposalEmail(batch: Pick<Batch, "batch_date" | "tick
 <div style="color:#61716e;font-size:12px;text-align:center;">האישור נעשה רק בדף החבילה באפליקציה. חבילה שלא אושרה עד הסריקה הבאה מתבטלת.</div>
 </div></body></html>`;
   const text = [`${picks.length} פניות פשוטות לאישור (חבילה ${date})`, "", ...picks.map((t) => `TCK-${t.seq}: ${t.subject} - ${t.reason}${t.needsMigration ? " [שינוי במסד הנתונים]" : ""}`), "", `לאישור: ${appUrl}/app/tickets/batch`].join("\n");
+  return { subject, html, text };
+}
+
+function batchEmailShell(title: string, lede: string, sections: string[], button: { href: string; label: string } | null): string {
+  const card = "background:#ffffff;border:1px solid #e2e8e6;border-radius:12px;padding:16px 18px;margin:0 0 12px;";
+  return `<!doctype html><html dir="rtl" lang="he"><body style="margin:0;background:#f6f8f7;"><div dir="rtl" style="font-family:Arial,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:18px 12px;color:#17302c;font-size:14px;line-height:1.55;">
+<div style="${card}"><div style="font-size:19px;font-weight:bold;margin-bottom:6px;">${esc(title)}</div><div style="color:#61716e;">${esc(lede)}</div></div>
+${sections.map((html) => `<div style="${card}">${html}</div>`).join("\n")}
+${button ? `<div style="${card}"><a href="${button.href}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;font-weight:bold;border-radius:10px;padding:10px 18px;">${esc(button.label)}</a></div>` : ""}
+</div></body></html>`;
+}
+
+function ticketRows(tickets: BatchTicket[], detail: (t: BatchTicket) => string): string {
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${tickets
+    .map(
+      (t, i) =>
+        `<tr><td style="${i ? "border-top:1px solid #eef1f0;" : ""}padding:8px 0;vertical-align:top;width:72px;"><span dir="ltr" style="font-family:Consolas,monospace;font-size:12px;background:#eef1f0;border-radius:6px;padding:1px 6px;">TCK-${t.seq}</span></td>` +
+        `<td style="${i ? "border-top:1px solid #eef1f0;" : ""}padding:8px 0;"><div style="font-weight:bold;" dir="auto">${esc(t.subject)}</div>${detail(t) ? `<div style="color:#61716e;font-size:13px;" dir="auto">${esc(detail(t))}</div>` : ""}</td></tr>`,
+    )
+    .join("")}</table>`;
+}
+
+/** After the night run: every ticket of the batch is fixed on dev or out - approve the promotion on the batch page. */
+export function renderBatchReadyEmail(batch: Pick<Batch, "batch_date" | "tickets">, appUrl: string): { subject: string; html: string; text: string } {
+  const built = batch.tickets.filter((t) => t.state === "built");
+  const out = batch.tickets.filter((t) => t.state === "out");
+  const date = ddmm(batch.batch_date);
+  const subject = `דפי – החבילה מוכנה להעלאה: ${built.length === 1 ? "תיקון אחד" : `${built.length} תיקונים`} (חבילה ${date})`;
+  const sections = [ticketRows(built, (t) => t.summary ?? t.reason)];
+  if (out.length) sections.push(`<div style="font-weight:bold;margin-bottom:4px;">יצאו מהחבילה</div>${ticketRows(out, (t) => t.note ?? "")}`);
+  const html = batchEmailShell(
+    `${built.length === 1 ? "תיקון אחד מוכן" : `${built.length} תיקונים מוכנים`} ובדוקים`,
+    `כולם נבנו על גרסת הייצור, עברו בדיקת קוד ומוזגו לסביבת הפיתוח.${out.length ? ` ${out.length === 1 ? "פנייה אחת יצאה" : `${out.length} פניות יצאו`} מהחבילה.` : ""} אפשר לבדוק קודם בפיתוח.`,
+    sections,
+    { href: `${appUrl}/app/tickets/batch`, label: "אישור העלאה בדף החבילה" },
+  );
+  const text = [subject, "", ...built.map((t) => `TCK-${t.seq}: ${t.subject}`), ...(out.length ? ["", "יצאו מהחבילה:", ...out.map((t) => `TCK-${t.seq}: ${t.note ?? ""}`)] : []), "", `${appUrl}/app/tickets/batch`].join("\n");
+  return { subject, html, text };
+}
+
+/** After Promote resolved the batch's tickets: the batch is closed. */
+export function renderBatchDoneEmail(batch: Pick<Batch, "batch_date" | "tickets" | "version">, appUrl: string): { subject: string; html: string; text: string } {
+  const released = batch.tickets.filter((t) => t.state === "released");
+  const out = batch.tickets.filter((t) => t.state === "out");
+  const subject = `דפי – החבילה הועלתה${batch.version ? `: גרסה ${batch.version}` : ""}, ${released.length === 1 ? "פנייה אחת טופלה" : `${released.length} פניות טופלו`}`;
+  const sections = [ticketRows(released, () => "טופלה, ונשלחה הודעה על כך")];
+  if (out.length) sections.push(`<div style="font-weight:bold;margin-bottom:4px;">ממתינות לך</div>${ticketRows(out, (t) => t.note ?? "")}`);
+  const html = batchEmailShell(
+    batch.version ? `גרסה ${batch.version} באוויר` : "החבילה הועלתה",
+    `${released.length === 1 ? "פנייה אחת סומנה כפתורה" : `${released.length} פניות סומנו כפתורות`}. החבילה של ${ddmm(batch.batch_date)} נסגרה, והחבילה הבאה תוצע ב-16:00.`,
+    sections,
+    { href: `${appUrl}/app/tickets/batch`, label: "פתיחת דף החבילה" },
+  );
+  const text = [subject, "", ...released.map((t) => `TCK-${t.seq}: ${t.subject}`)].join("\n");
   return { subject, html, text };
 }

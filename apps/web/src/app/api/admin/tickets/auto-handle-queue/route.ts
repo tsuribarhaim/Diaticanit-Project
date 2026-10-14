@@ -4,6 +4,7 @@ import { loadOverlapBlockers } from "@/lib/automation-overlap";
 import type { Blocker } from "@/lib/overlap";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { attachmentLinksFor } from "@/lib/ticket-attachment-links";
+import { loadActiveBatch } from "@/lib/daily-batch";
 import { logServerError } from "@/lib/server-log";
 
 export const dynamic = "force-dynamic";
@@ -51,6 +52,9 @@ export async function GET(request: Request) {
     for (const row of (bundleRows ?? []) as { id: string; letter: string }[]) letters.set(row.id, row.letter);
   }
   const attachments = await attachmentLinksFor(adminClient, (data ?? []).map((ticket) => ticket.id as string));
-  const tickets = (data ?? []).map((ticket) => ({ ...ticket, attachments: attachments.get(ticket.id as string) ?? [], bundleLetter: ticket.bundle_id ? letters.get(ticket.bundle_id as string) ?? null : null, heldBy: (blockers.get(ticket.id) ?? []).map((b) => ({ seq: b.seq, why: b.why, files: b.files.slice(0, 5) })) }));
+  // Tickets of the daily batch in progress may carry a small additive migration (decided 2026-10-14).
+  const batch = await loadActiveBatch(adminClient);
+  const inBatch = new Set(batch && ["approved", "building"].includes(batch.status) ? batch.tickets.filter((t) => !["unselected", "out"].includes(t.state)).map((t) => t.ticketId) : []);
+  const tickets = (data ?? []).map((ticket) => ({ ...ticket, inBatch: inBatch.has(ticket.id as string), attachments: attachments.get(ticket.id as string) ?? [], bundleLetter: ticket.bundle_id ? letters.get(ticket.bundle_id as string) ?? null : null, heldBy: (blockers.get(ticket.id) ?? []).map((b) => ({ seq: b.seq, why: b.why, files: b.files.slice(0, 5) })) }));
   return NextResponse.json({ tickets }, { headers: { "Cache-Control": "no-store" } });
 }

@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { checkAutomationSecret } from "@/lib/automation-auth";
+import { autoApproveBatchProposal } from "@/lib/daily-batch-progress";
 import { logServerError } from "@/lib/server-log";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { ProposalPayload } from "@/lib/ticket-proposals";
 
 export const dynamic = "force-dynamic";
 
@@ -84,6 +86,12 @@ export async function POST(request: Request) {
     if (flagError) {
       logServerError("adminProposalResult", "flag_update_failed", { ticketId, error: flagError.message });
       return NextResponse.json({ error: "Saved, but the ticket flag could not be updated." }, { status: 500 });
+    }
+    // A ticket of the daily batch: approved right away with the analyst's recommendations (lib/daily-batch-progress.ts).
+    try {
+      await autoApproveBatchProposal(adminClient, ticketId, inserted.id, payload as ProposalPayload);
+    } catch (err) {
+      logServerError("adminProposalResult", "batch_auto_approve_failed", { ticketId, error: err instanceof Error ? err.message : String(err) });
     }
   }
 
