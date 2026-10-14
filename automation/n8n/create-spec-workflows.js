@@ -212,6 +212,11 @@ for (const r of (list.requests || [])) {
       await call({ method: 'POST', url: 'http://localhost:5678/webhook/daffy-welcome-invite', body: { requestId: r.id } });
       done.push({ id: r.id, kind: r.kind, ok: true, result: 'welcome email started' });
       continue;
+    } else if (r.kind === 'password_reset') {
+      // TCK-3: the reset email: handed to the "Password Reset" workflow (create-password-reset-workflow.js), which sends it and completes this request itself.
+      await call({ method: 'POST', url: 'http://localhost:5678/webhook/daffy-password-reset', body: { requestId: r.id } });
+      done.push({ id: r.id, kind: r.kind, ok: true, result: 'password reset email started' });
+      continue;
     } else if (r.kind === 'revert') {
       const res = await call({ method: 'POST', url: BRIDGE_URL + '/revert', headers: { 'x-bridge-secret': BRIDGE_SECRET }, body: { ticketSeq: r.ticketSeq } });
       ok = res.ok === true;
