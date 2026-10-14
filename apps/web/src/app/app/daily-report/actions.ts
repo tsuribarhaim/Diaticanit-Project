@@ -26,6 +26,7 @@ import { getAiExtractionConfig } from "@/lib/ai/env";
 import { buildBmiWarningMessage } from "@/lib/bmi";
 import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
+import { savedListNameFor } from "@/lib/saved-list-name";
 import { createClient } from "@/lib/supabase/server";
 import { resyncTargetsReviewFlag } from "@/lib/targets-review-flag";
 import { computeProfileDiff, normalizeUserTargetsJson, parseProfileSnapshot, type ProfileDiffRow, type ProfileForTargets } from "@/lib/targets";
@@ -1356,15 +1357,8 @@ export async function addReportToDefaultsAction(formData: FormData): Promise<voi
     ...parsedFoodItems.map((item) => ({ name: item.name, kind: "food", quantity: item.quantity, unit: item.unit })),
     ...parsedExerciseItems.map((item) => ({ name: item.name, kind: "exercise", quantity: item.minutes, unit: "min" })),
   ];
-  // TCK-148: saved without a name, the item is named after what it holds (like "Add item" does for a single ingredient):
-  // one item -> its name, two or three -> joined, more -> the first two "+ N more". The date is only a last resort.
-  const itemNames = ingredients.map((ingredient) => String(ingredient.name ?? "").trim()).filter(Boolean);
-  const fallbackName =
-    itemNames.length === 0
-      ? tr(locale, `Saved report ${new Date(reportRow.report_at).toISOString().slice(0, 10)}`, `דיווח שמור ${new Date(reportRow.report_at).toLocaleDateString("he-IL", { day: "2-digit", month: "2-digit" })}`)
-      : itemNames.length <= 3
-        ? itemNames.join(" + ")
-        : `${itemNames.slice(0, 2).join(" + ")} ${tr(locale, `+ ${itemNames.length - 2} more`, `ועוד ${itemNames.length - 2}`)}`;
+  // TCK-148: saved without a name, the entry is named after what it holds (lib/saved-list-name.ts).
+  const fallbackName = savedListNameFor(ingredients.map((ingredient) => String(ingredient.name ?? "")), reportRow.report_at, locale);
   const defaultName = (customName || fallbackName).slice(0, 80);
 
   const { data: existingNameMatch } = await supabase
