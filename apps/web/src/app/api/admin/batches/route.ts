@@ -36,7 +36,13 @@ export async function POST(request: Request) {
       { headers: { "Cache-Control": "no-store" } },
     );
   }
-  if (body.action !== "create") return NextResponse.json({ error: "action must be create or sync." }, { status: 400 });
+  if (body.action === "promotion_failed") {
+    // The promotion of the batch failed (and was rolled back): back to "ready" so the admin can retry, with the reason.
+    const note = typeof (body as { note?: unknown }).note === "string" ? String((body as { note?: unknown }).note).slice(0, 300) : "The promotion failed.";
+    await admin.from("automation_batches").update({ status: "ready", note: `Promotion failed: ${note}` }).eq("status", "promoting");
+    return NextResponse.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
+  }
+  if (body.action !== "create") return NextResponse.json({ error: "action must be create, sync or promotion_failed." }, { status: 400 });
 
   const picks = (Array.isArray(body.picks) ? (body.picks as Pick[]) : []).filter((pick) => Number.isInteger(Number(pick.ticketSeq)) && typeof pick.reason === "string" && pick.reason.trim());
   const seqs = [...new Set(picks.map((pick) => Number(pick.ticketSeq)))].slice(0, MAX_BATCH_TICKETS);
