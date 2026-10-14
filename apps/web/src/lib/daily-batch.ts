@@ -125,11 +125,13 @@ export function renderBatchReadyEmail(batch: Pick<Batch, "batch_date" | "tickets
 export function renderBatchDoneEmail(batch: Pick<Batch, "batch_date" | "tickets" | "version">, appUrl: string): { subject: string; html: string; text: string } {
   const released = batch.tickets.filter((t) => t.state === "released");
   const out = batch.tickets.filter((t) => t.state === "out");
-  const subject = `דפי – החבילה הועלתה${batch.version ? `: גרסה ${batch.version}` : ""}, ${released.length === 1 ? "פנייה אחת טופלה" : `${released.length} פניות טופלו`}`;
+  // The version is isolated left-to-right (U+2066..U+2069) so "1.1.88" never reads backwards inside the Hebrew text.
+  const version = batch.version ? `⁦${batch.version}⁩` : null;
+  const subject = `דפי – החבילה הועלתה${version ? `: גרסה ${version}` : ""}, ${released.length === 1 ? "פנייה אחת טופלה" : `${released.length} פניות טופלו`}`;
   const sections = [ticketRows(released, () => "טופלה, ונשלחה הודעה על כך")];
   if (out.length) sections.push(`<div style="font-weight:bold;margin-bottom:4px;">ממתינות לך</div>${ticketRows(out, (t) => t.note ?? "")}`);
   const html = batchEmailShell(
-    batch.version ? `גרסה ${batch.version} באוויר` : "החבילה הועלתה",
+    version ? `גרסה ${version} באוויר` : "החבילה הועלתה",
     `${released.length === 1 ? "פנייה אחת סומנה כפתורה" : `${released.length} פניות סומנו כפתורות`}. החבילה של ${ddmm(batch.batch_date)} נסגרה, והחבילה הבאה תוצע ב-16:00.`,
     sections,
     { href: `${appUrl}/app/tickets/batch`, label: "פתיחת דף החבילה" },
