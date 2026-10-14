@@ -9,13 +9,14 @@ import { NAV_HREF, navLabel, parseFrom, type NavFrom } from "@/lib/tickets-nav";
 /** Which of the three main screens a page belongs to: a ticket or proposal opened from the dashboard still counts as Automation. */
 function activeTab(pathname: string, from: string | null): NavFrom {
   if (pathname.startsWith("/app/tickets/automation")) return "automation";
+  if (pathname.startsWith("/app/tickets/batch")) return "batch";
   if (pathname === "/app/tickets/review") return "review";
   if (pathname.startsWith("/app/tickets/review/")) return parseFrom(from, "review");
   if (pathname === "/app/tickets") return "tickets";
   return parseFrom(from, "tickets");
 }
 
-/** The bar on every admin ticket screen: the three main places, one click away, with what is waiting for you. */
+/** The bar on every admin ticket screen: the main places, one click away, with what is waiting for you. */
 export function TicketsAreaNav({ locale, waiting }: { locale: AppLocale; waiting: number }) {
   const pathname = usePathname();
   const active = activeTab(pathname, useSearchParams().get("from"));
@@ -23,6 +24,7 @@ export function TicketsAreaNav({ locale, waiting }: { locale: AppLocale; waiting
     { key: "tickets", badge: 0 },
     { key: "automation", badge: 0 },
     { key: "review", badge: waiting },
+    { key: "batch", badge: 0 },
   ];
   return (
     <nav aria-label={tr(locale, "Tickets sections", "אזורי הפניות")} className="flex flex-wrap gap-1">

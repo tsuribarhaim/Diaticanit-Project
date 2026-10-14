@@ -31,6 +31,7 @@ import {
   type ReviewResult,
 } from "@/lib/ticket-review";
 import { isCurrentUserAdmin } from "@/lib/tickets";
+import { approveBatch, rejectBatch } from "@/lib/daily-batch-review";
 
 /** Thin server-action wrappers around lib/ticket-review.ts: sign-in and admin checks first (RLS
  * still enforces it underneath), then the step, then a refresh of the screens that show it. */
@@ -50,8 +51,17 @@ async function withAdmin(run: (ctx: { supabase: Awaited<ReturnType<typeof create
     revalidatePath("/app/tickets");
     revalidatePath("/app/tickets/review");
     revalidatePath("/app/tickets/automation");
+    revalidatePath("/app/tickets/batch");
   }
   return result;
+}
+
+/** The daily batch page: approve the ticked tickets, or reject the whole batch (lib/daily-batch-review.ts). */
+export async function approveBatchAction(batchId: string, ticketIds: string[]): Promise<ReviewResult> {
+  return withAdmin(({ supabase, adminId, locale }) => approveBatch(supabase, adminId, locale, batchId, ticketIds));
+}
+export async function rejectBatchAction(batchId: string): Promise<ReviewResult> {
+  return withAdmin(({ supabase, locale }) => rejectBatch(supabase, locale, batchId));
 }
 
 export async function approveProposalAction(proposalId: string, chosen: Record<string, number>, comment: string): Promise<ReviewResult> {

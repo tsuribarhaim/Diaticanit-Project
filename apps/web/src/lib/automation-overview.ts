@@ -1,5 +1,6 @@
 import { loadOverlapBlockers } from "@/lib/automation-overlap";
 import { busyAgent, type BridgeHealth, type BusyAgent } from "@/lib/agent-lock";
+import { batchLockActive } from "@/lib/daily-batch";
 import { collectFiles, filesFromText, sharedFiles, suggestBundles } from "@/lib/overlap";
 import type { createClient } from "@/lib/supabase/server";
 
@@ -93,6 +94,8 @@ export type AutomationStatus = {
   promoteInProgress: boolean;
   /** Any agent running or about to start (requested) - the run buttons stay off while it is set. */
   agentBusy: BusyAgent | null;
+  /** An approved daily batch is in progress: manual runs are locked until it closes. */
+  batchActive: boolean;
   autoMerge: boolean;
   lastNight: RunInfo | null;
   lastAnalyst: RunInfo | null;
@@ -136,6 +139,7 @@ const start = <T>(query: PromiseLike<T>): Promise<T> => Promise.resolve(query);
 export async function getAutomationOverview(supabase: Client): Promise<AutomationOverview> {
   const requestsP = start(supabase.from("automation_requests").select("kind, ticket_id, picked_at, details").is("completed_at", null));
   const settingsP = start(supabase.from("automation_settings").select("paused, bridge_seen_at, bridge_status").eq("id", true).maybeSingle());
+  const batchLockP = batchLockActive(supabase);
   const runsP = start(supabase.from("automation_runs").select("kind, finished_at, tickets_count, cost_usd, result").order("started_at", { ascending: false }).limit(12));
   const recentP = start(supabase.from("automation_requests").select("kind").in("kind", ["analyze", "night", "digest"]).gte("completed_at", new Date(now() - 2 * 60 * 1000).toISOString()));
   const releasesP = start(supabase.from("automation_requests").select("requested_at, completed_at, report:details->report").eq("kind", "promote").not("completed_at", "is", null).order("requested_at", { ascending: false }).limit(3));
@@ -325,6 +329,7 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
     runInProgress: bridgeOnline && Boolean(health.runInProgress),
     promoteInProgress: bridgeOnline && Boolean(health.promoteInProgress),
     agentBusy: busyAgent(health, bridgeOnline) ?? (buildRunning ? "night" : analysisRunning ? "analyze" : null),
+    batchActive: await batchLockP,
     autoMerge: Boolean(health.autoMerge),
     lastNight: runOf("night"),
     lastAnalyst: runOf("analyst"),
