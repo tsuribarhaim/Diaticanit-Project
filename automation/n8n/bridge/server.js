@@ -104,6 +104,8 @@ const ANALYST_TIMEOUT_MS = Number(env.ANALYST_TIMEOUT_MS || 900000);
 const TRIAGE_MAX_BUDGET_USD = env.TRIAGE_MAX_BUDGET_USD || "4.00";
 const TRIAGE_TIMEOUT_MS = Number(env.TRIAGE_TIMEOUT_MS || 1500000);
 const TRIAGE_MAX_PICKS = 8;
+/** n8n's "Daffy - Batch Mail" workflow (create-batch-mail-workflow.js): sends the batch's ready/done emails to the admin. */
+const BATCH_MAIL_WEBHOOK = env.BATCH_MAIL_WEBHOOK || "http://localhost:5678/webhook/daffy-batch-mail";
 const SHOT_TOOL = path.join(__dirname, "tools", "shot.js");
 // Outside every worktree on purpose: the bridge commits with `git add -A`, and screenshots must never end up in a fix.
 const SHOTS_BASE = path.join(__dirname, "shots");
@@ -1483,6 +1485,30 @@ async function runTriage({ dryRun = false, candidates = null } = {}) {
   return { scanned: tickets.length, picked: picks.length, picks, alreadyFixed, costUsd: Math.round(costUsd * 100) / 100, ...created };
 }
 
+/**
+ * After the analyst, the night run or a promotion: the app brings the daily batch up to date (POST /api/admin/batches
+ * action "sync") and, when the batch just became ready or done, returns that email - mailed here through n8n.
+ * Never fatal: a run's own result does not depend on it.
+ */
+async function syncBatchAndMail() {
+  try {
+    const res = await fetch(`${DAFFY_BASE_URL}/api/admin/batches`, {
+      method: "POST",
+      headers: { "x-ticket-automation-secret": TICKET_SECRET, "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "sync" }),
+    });
+    const out = await res.json();
+    if (out.emailSubject && out.emailBody) {
+      const mail = await fetch(BATCH_MAIL_WEBHOOK, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subject: out.emailSubject, html: out.emailBody }) });
+      out.mailed = mail.ok;
+    }
+    return out;
+  } catch (err) {
+    console.warn(`syncBatchAndMail skipped: ${err.message}`);
+    return null;
+  }
+}
+
 async function runAnalysis() {
   const tickets = await fetchAnalyzeQueue();
   if (tickets.length > 0) await refreshLessons();
@@ -1671,6 +1697,11 @@ const server = http.createServer(async (req, res) => {
         },
       });
       const picked = report.tickets.filter((t) => t.status !== "skipped").length;
+      // The daily batch being promoted: closed (and the done email sent) on success; back to "ready" with the reason on failure.
+      if (!dryRun) {
+        if (report.ok) await syncBatchAndMail();
+        else await fetch(`${DAFFY_BASE_URL}/api/admin/batches`, { method: "POST", headers: { "x-ticket-automation-secret": TICKET_SECRET, "Content-Type": "application/json" }, body: JSON.stringify({ action: "promotion_failed", note: String((report.steps[report.steps.length - 1] || {}).detail || "see the promotion report").slice(0, 300) }) }).catch(() => {});
+      }
       // Production moved: record that in dev's history too, so the next fixes (built on production) merge into dev cleanly.
       if (report.ok && !dryRun) {
         const sync = await syncDevWithProduction();
@@ -1755,7 +1786,8 @@ const server = http.createServer(async (req, res) => {
       } else if (wait) {
         await recordRun("analyst", startedAt, { ticketsCount: 0, result: `Nothing left to analyse${waitNote(wait)}.` });
       }
-      return sendJson(res, 200, { ...outcome, ...(wait ? { waitedFor: wait.blockedBy, waitedMinutes: wait.minutes } : {}) });
+      const batch = await syncBatchAndMail();
+      return sendJson(res, 200, { ...outcome, ...(wait ? { waitedFor: wait.blockedBy, waitedMinutes: wait.minutes } : {}), ...(batch ? { batch } : {}) });
     } catch (err) {
       return sendJson(res, 500, { error: err.message });
     } finally {
@@ -1790,7 +1822,8 @@ const server = http.createServer(async (req, res) => {
     } else if (wait) {
       await recordRun("night", startedAt, { ticketsCount: 0, result: `Nothing left to build${waitNote(wait)}.` });
     }
-    return sendJson(res, 200, { ...outcome, ...(wait ? { waitedFor: wait.blockedBy, waitedMinutes: wait.minutes } : {}) });
+    const batch = await syncBatchAndMail();
+    return sendJson(res, 200, { ...outcome, ...(wait ? { waitedFor: wait.blockedBy, waitedMinutes: wait.minutes } : {}), ...(batch ? { batch } : {}) });
   } catch (err) {
     return sendJson(res, 500, { error: err.message });
   } finally {
