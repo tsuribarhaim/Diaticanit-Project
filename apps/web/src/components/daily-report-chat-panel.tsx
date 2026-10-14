@@ -1186,7 +1186,10 @@ export function DailyReportChatPanel({
   // form), extended here with this panel's own in-progress signals that the
   // parent can't see yet: text typed but not sent, a photo attached this
   // turn, or a saved-list item picked but not folded into a message.
-  const canSave = hasChanges || inputValue.trim().length > 0 || Boolean(photoPreviewUrl);
+  // TCK-87: typed text turns Save on only once it holds a real word (two letters or more, any language - "תה" counts),
+  // not after the first keystroke.
+  const hasMeaningfulText = /\p{L}{2,}/u.test(inputValue);
+  const canSave = hasChanges || hasMeaningfulText || Boolean(photoPreviewUrl);
 
   // The panel's own thread/banners/composer JSX - a fixed-size floating
   // panel now (see the bottom of this file), not a desktop inline card
@@ -1281,7 +1284,7 @@ export function DailyReportChatPanel({
                       >
                         <span className="font-semibold text-slate-800 dark:text-slate-200">{formatDefaultItemName(item.name, locale)}</span>
                         <span className="text-slate-500 dark:text-slate-400">
-                          {item.quantity} {formatDefaultUnit(item.unit, locale)}
+                          {item.quantity} {formatDefaultUnit(item.unit, locale, Number(item.quantity))}
                         </span>
                       </div>
                     ))}

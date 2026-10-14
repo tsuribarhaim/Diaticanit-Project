@@ -7,7 +7,8 @@ import { QuickEditSheet } from "@/components/profile-quick-edit";
 import { formatTicketStatus, tr, type AppLocale } from "@/lib/locale";
 import { ticketStatusBadgeClass, ticketStatusOptions, type TicketStatus } from "@/lib/tickets";
 
-const STATUSES_NEEDING_REASON: readonly TicketStatus[] = ["cancelled", "deferred"];
+// TCK-124: "reopened" asks why too (saved in the ticket's history).
+const STATUSES_NEEDING_REASON: readonly TicketStatus[] = ["cancelled", "deferred", "reopened"];
 
 /**
  * The admin-only free status dropdown (see docs/design/
@@ -116,7 +117,9 @@ export function AdminStatusDropdown({
           helpText={
             pendingStatus === "duplicate"
               ? tr(locale, "Which ticket is this a duplicate of?", "לאיזו פנייה זו כפולה?")
-              : tr(locale, "A reason is required for this status.", "נדרשת סיבה עבור סטטוס זה.")
+              : pendingStatus === "reopened"
+                ? tr(locale, "Why is it reopened? This is added to the ticket's history.", "למה הפנייה נפתחת מחדש? ההסבר יתווסף להיסטוריית הפנייה.")
+                : tr(locale, "A reason is required for this status.", "נדרשת סיבה עבור סטטוס זה.")
           }
         >
           <div className="space-y-3">

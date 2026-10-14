@@ -146,7 +146,7 @@ export function InstallAppPrompt({ locale }: { locale: AppLocale }) {
                 'Installing from Samsung Internet is blocked on newer Android ("Unsafe app blocked"). Open this page in Chrome and install from there.',
                 'התקנה מ-Samsung Internet נחסמת ב-Android החדש ("אפליקציה לא בטוחה נחסמה"). יש לפתוח את העמוד ב-Chrome ולהתקין משם.',
               )
-            : tr(locale, "Install Daffy for quicker access.", "התקינו את Daffy לגישה מהירה יותר.")}
+            : tr(locale, "Install Daffy for quicker access.", "התקינו את דפי לגישה מהירה יותר.")}
       </span>
       <div className="flex shrink-0 items-center gap-2">
         {showSamsungInstructions ? (

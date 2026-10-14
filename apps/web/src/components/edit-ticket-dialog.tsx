@@ -16,7 +16,9 @@ const inputClassName =
   "w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
 
 function SaveButton({ locale, disabled, isDraft }: { locale: AppLocale; disabled: boolean; isDraft: boolean }) {
-  const { pending } = useFormStatus();
+  // TCK-126: only the pressed button says "Saving..."; the other waits, disabled.
+  const { pending, data } = useFormStatus();
+  const busy = pending && data?.get("intent") !== "submit";
   return (
     <button
       type="submit"
@@ -29,7 +31,7 @@ function SaveButton({ locale, disabled, isDraft }: { locale: AppLocale; disabled
           : "bg-teal-700 text-white disabled:cursor-not-allowed disabled:opacity-60 enabled:hover:bg-teal-800 dark:bg-teal-600 dark:enabled:hover:bg-teal-500"
       }`}
     >
-      {pending ? tr(locale, "Saving...", "שומר...") : isDraft ? tr(locale, "Save", "שמירה") : tr(locale, "Save changes", "שמירת שינויים")}
+      {busy ? tr(locale, "Saving...", "שומר...") : isDraft ? tr(locale, "Save", "שמירה") : tr(locale, "Save changes", "שמירת שינויים")}
     </button>
   );
 }
@@ -37,7 +39,8 @@ function SaveButton({ locale, disabled, isDraft }: { locale: AppLocale; disabled
 /** TCK-110: drafts only - saves and flips draft -> open in one step (see
  * updateTicketAction's intent="submit" branch). */
 function SaveAndSubmitButton({ locale, disabled }: { locale: AppLocale; disabled: boolean }) {
-  const { pending } = useFormStatus();
+  const { pending, data } = useFormStatus();
+  const busy = pending && data?.get("intent") === "submit";
   return (
     <button
       type="submit"
@@ -46,7 +49,7 @@ function SaveAndSubmitButton({ locale, disabled }: { locale: AppLocale; disabled
       disabled={pending || disabled}
       className="flex-1 rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
     >
-      {pending ? tr(locale, "Saving...", "שומר...") : tr(locale, "Save & submit", "שמירה ושליחה")}
+      {busy ? tr(locale, "Sending...", "שולח...") : tr(locale, "Save & submit", "שמירה ושליחה")}
     </button>
   );
 }

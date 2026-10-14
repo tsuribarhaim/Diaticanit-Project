@@ -53,7 +53,7 @@ export function AppUpdateBanner({ locale }: { locale: AppLocale }) {
 
   return (
     <div className="fixed inset-x-0 top-0 z-50 flex items-center justify-center gap-3 bg-teal-700 px-4 py-2 text-sm text-white shadow-md dark:bg-teal-600">
-      <span>{tr(locale, "A new version of Daffy is available.", "גרסה חדשה של Daffy זמינה.")}</span>
+      <span>{tr(locale, "A new version of Daffy is available.", "גרסה חדשה של דפי זמינה.")}</span>
       <button
         type="button"
         onClick={() => window.location.reload()}

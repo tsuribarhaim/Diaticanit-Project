@@ -179,7 +179,7 @@ export function OnboardingTargetsStep({
           {tr(
             locale,
             "Nothing is locked in yet - review the numbers, ask Daffy anything, and adjust before you begin.",
-            "עדיין שום דבר לא ננעל - סקרו את המספרים, שאלו את Daffy כל דבר, והתאימו לפני שתתחילו.",
+            "עדיין שום דבר לא ננעל - סקרו את המספרים, שאלו את דפי כל דבר, והתאימו לפני שתתחילו.",
           )}
         </p>
       </div>

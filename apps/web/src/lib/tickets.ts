@@ -21,6 +21,9 @@ export const ticketAreaOptions = [
   "notifications",
   "settings",
   "account_auth",
+  // TCK-29: the support tickets screens themselves, and the saved list / quick add (migration 080).
+  "tickets",
+  "quick_add",
   "other",
 ] as const;
 export type TicketArea = (typeof ticketAreaOptions)[number];

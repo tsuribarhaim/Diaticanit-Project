@@ -130,7 +130,7 @@ export function computeUsageWeek(input: UsageInput): UsageWeek {
     }
   }
   const away = people.filter((w) => w.tier === "inactive" && (!w.person.lastActiveAt || daysBetweenDates(israelDate(w.person.lastActiveAt), end) >= AWAY_DAYS));
-  if (away.length > 0) suggestions.push(`${away.map((w) => w.person.name).join(", ")}: לא נכנסו ל-Daffy ${AWAY_DAYS} ימים או יותר.`);
+  if (away.length > 0) suggestions.push(`${away.map((w) => w.person.name).join(", ")}: לא נכנסו לדפי ${AWAY_DAYS} ימים או יותר.`);
 
   const active = people.filter((w) => w.tier !== "inactive");
   return {
@@ -188,7 +188,7 @@ const TIERS: Record<Tier, { label: string; title: string; hint: string; bg: stri
   heavy: { label: "פעילים מאוד", title: "דיווחו רוב ימי השבוע", hint: `${HEAVY_REPORTS} דיווחים או יותר, ב-${HEAVY_DAYS} ימים לפחות.`, bg: "#ccebe6", fg: "#0f766e" },
   light: { label: "פעילים", title: "השתמשו, אבל לא כל יום", hint: "לפחות דיווח אחד השבוע.", bg: "#eef1f0", fg: "#4b5b58" },
   opened: { label: "נכנסו בלבד", title: "נכנסו לאפליקציה, בלי דיווח", hint: "נכנסו השבוע אבל לא דיווחו כלום.", bg: "#fdecc8", fg: "#b45309" },
-  inactive: { label: "לא פעילים", title: "לא נכנסו ל-Daffy השבוע", hint: "לפי הכניסה האחרונה.", bg: "#fde2e7", fg: "#be123c" },
+  inactive: { label: "לא פעילים", title: "לא נכנסו לדפי השבוע", hint: "לפי הכניסה האחרונה.", bg: "#fde2e7", fg: "#be123c" },
 };
 
 export type UsageEmail = { subject: string; html: string; text: string };
@@ -197,7 +197,7 @@ export function renderUsageReport(week: UsageWeek, now: Date, appUrl: string): U
   const t = week.totals;
   const range = `${ddmm(week.start)}–${ddmm(week.end)}`;
   const rangeHtml = `<span dir="ltr">${range}</span>`;
-  const subject = `Daffy – שימוש שבועי ${range}: ${t.active} מתוך ${t.people} פעילים, ${t.reports} דיווחים`;
+  const subject = `דפי – שימוש שבועי ${range}: ${t.active} מתוך ${t.people} פעילים, ${t.reports} דיווחים`;
 
   const byReports = week.people.filter((w) => w.reports > 0);
   const [first, second] = byReports;
@@ -212,7 +212,7 @@ export function renderUsageReport(week: UsageWeek, now: Date, appUrl: string): U
   const inactiveCount = week.people.filter((w) => w.tier === "inactive").length;
   const lede = [
     t.joined ? `${t.joined === 1 ? "הצטרף/ה אדם חדש אחד" : `הצטרפו ${t.joined} אנשים חדשים`}.` : "",
-    inactiveCount ? `${inactiveCount} אנשים לא נכנסו ל-Daffy השבוע.` : "כולם נכנסו ל-Daffy השבוע.",
+    inactiveCount ? `${inactiveCount} אנשים לא נכנסו לדפי השבוע.` : "כולם נכנסו לדפי השבוע.",
   ].filter(Boolean).join(" ");
 
   const font = "font-family:Arial,'Segoe UI',sans-serif;";
@@ -257,7 +257,7 @@ export function renderUsageReport(week: UsageWeek, now: Date, appUrl: string): U
   }
   if (week.suggestions.length > 0) {
     const items = week.suggestions.map((s) => `<li style="margin:0 0 8px;" dir="rtl">${escapeHtml(s)}</li>`).join("");
-    sections.push(`<div style="${card}"><div style="font-size:15px;font-weight:bold;color:#17302c;margin-bottom:8px;">כדאי לשלוח הודעה</div><ul style="margin:0;padding-right:18px;font-size:13.5px;color:#17302c;">${items}</ul><a href="${appUrl}/app" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;padding:9px 16px;border-radius:8px;font-weight:bold;font-size:13px;margin-top:8px;">פתיחת Daffy</a></div>`);
+    sections.push(`<div style="${card}"><div style="font-size:15px;font-weight:bold;color:#17302c;margin-bottom:8px;">כדאי לשלוח הודעה</div><ul style="margin:0;padding-right:18px;font-size:13.5px;color:#17302c;">${items}</ul><a href="${appUrl}/app" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;padding:9px 16px;border-radius:8px;font-weight:bold;font-size:13px;margin-top:8px;">פתיחת דפי</a></div>`);
   }
 
   const shareColors = ["#0f766e", "#5eb8ad", "#a7d8d1", "#d3e6e3"];
@@ -269,14 +269,14 @@ export function renderUsageReport(week: UsageWeek, now: Date, appUrl: string): U
     : "";
 
   const html = `<!doctype html><html dir="rtl" lang="he"><body style="margin:0;background:#f6f8f7;"><div dir="rtl" style="${font}max-width:640px;margin:0 auto;padding:20px 12px;color:#17302c;font-size:14px;line-height:1.5;">
-<div style="padding:4px 4px 14px;"><span style="font-weight:bold;font-size:16px;">דוח שימוש ב-Daffy</span><span style="float:left;color:${muted};font-size:12.5px;">${rangeHtml}</span></div>
+<div style="padding:4px 4px 14px;"><span style="font-weight:bold;font-size:16px;">דוח שימוש בדפי</span><span style="float:left;color:${muted};font-size:12.5px;">${rangeHtml}</span></div>
 <div style="${card}"><div style="font-size:21px;font-weight:bold;line-height:1.3;margin-bottom:6px;" dir="auto">${escapeHtml(headline)}</div><div style="color:${muted};">${escapeHtml(lede)}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:14px;"><tr>${kpi(`${t.active}<span style="font-size:14px;color:${muted};">/${t.people}</span>`, "אנשים פעילים", t.joined ? `${t.joined} חדשים השבוע` : "ללא חדשים")}${kpi(String(t.reports), "דיווחים יומיים", `${Math.round(t.reports / 7)} ביום בממוצע`)}${kpi(String(t.weight), "שקילות", `מ-${t.weightPeople} אנשים`)}${kpi(String(t.tickets), "פניות חדשות", t.ticketPeople ? `מ-${t.ticketPeople} אנשים` : "אין")}</tr></table>${shareBar}</div>
 ${sections.join("\n")}
 <div style="color:${muted};font-size:12px;text-align:center;padding:8px 4px 0;">נשלח בכל יום ראשון בבוקר. הנתונים מהמערכת עצמה, משבוע ${rangeHtml} (שעון ישראל). חשבונות בדיקה ובוט אינם נכללים.</div>
 </div></body></html>`;
 
-  const lines = [`דוח שימוש ב-Daffy, ${range}`, "", headline, lede, "", `${t.active}/${t.people} פעילים · ${t.reports} דיווחים · ${t.weight} שקילות · ${t.tickets} פניות חדשות`, ""];
+  const lines = [`דוח שימוש בדפי, ${range}`, "", headline, lede, "", `${t.active}/${t.people} פעילים · ${t.reports} דיווחים · ${t.weight} שקילות · ${t.tickets} פניות חדשות`, ""];
   for (const tier of ["heavy", "light", "opened", "inactive"] as Tier[]) {
     const rows = week.people.filter((w) => w.tier === tier);
     if (rows.length === 0) continue;

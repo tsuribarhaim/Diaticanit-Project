@@ -20,15 +20,17 @@ function Spinner({ className }: { className: string }) {
 }
 
 function SubmitTicketButton({ locale }: { locale: AppLocale }) {
-  const { pending } = useFormStatus();
+  // TCK-126: the form's pending state covers both buttons; only the one that was pressed shows it (the other just waits, disabled).
+  const { pending, data } = useFormStatus();
+  const busy = pending && data?.get("intent") !== "draft";
   return (
     <button
       type="submit"
       disabled={pending}
       className="flex items-center justify-center gap-2 rounded-xl bg-teal-700 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70 hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
     >
-      {pending ? <Spinner className="h-4 w-4 animate-spin" /> : null}
-      {pending ? tr(locale, "Submitting...", "שולח...") : tr(locale, "Submit Ticket", "שליחת פנייה")}
+      {busy ? <Spinner className="h-4 w-4 animate-spin" /> : null}
+      {busy ? tr(locale, "Submitting...", "שולח...") : tr(locale, "Submit Ticket", "שליחת פנייה")}
     </button>
   );
 }
@@ -47,7 +49,8 @@ function SubmitTicketButton({ locale }: { locale: AppLocale }) {
  * submission React's own form-action handling otherwise gives both
  * buttons uniformly. */
 function SaveDraftButton({ locale }: { locale: AppLocale }) {
-  const { pending } = useFormStatus();
+  const { pending, data } = useFormStatus();
+  const busy = pending && data?.get("intent") === "draft";
   return (
     <button
       type="submit"
@@ -56,8 +59,8 @@ function SaveDraftButton({ locale }: { locale: AppLocale }) {
       disabled={pending}
       className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-70 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
     >
-      {pending ? <Spinner className="h-4 w-4 animate-spin" /> : null}
-      {pending ? tr(locale, "Saving...", "שומר...") : tr(locale, "Save as Draft", "שמירה כטיוטה")}
+      {busy ? <Spinner className="h-4 w-4 animate-spin" /> : null}
+      {busy ? tr(locale, "Saving...", "שומר...") : tr(locale, "Save as Draft", "שמירה כטיוטה")}
     </button>
   );
 }

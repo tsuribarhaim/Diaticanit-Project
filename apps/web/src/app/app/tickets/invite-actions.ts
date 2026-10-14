@@ -90,7 +90,7 @@ export async function addPilotUserAction(_previous: AddUserState, formData: Form
   const admin = createAdminClient();
   try {
     if (await accountExists(admin, checked.email)) {
-      return { error: tr(locale, "This email already has a Daffy account, so there is nothing to add.", "לכתובת האימייל הזו כבר יש חשבון ב-Daffy, ולכן אין מה להוסיף.") };
+      return { error: tr(locale, "This email already has a Daffy account, so there is nothing to add.", "לכתובת האימייל הזו כבר יש חשבון בדפי, ולכן אין מה להוסיף.") };
     }
   } catch (accountError) {
     logServerError("tickets.addPilotUser", "account_lookup_failed", { error: accountError instanceof Error ? accountError.message : String(accountError) });

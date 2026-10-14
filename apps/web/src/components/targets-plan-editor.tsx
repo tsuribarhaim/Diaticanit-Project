@@ -200,7 +200,7 @@ function BannerView({
           {tr(
             locale,
             "Want Daffy to check what this changes elsewhere in your plan?",
-            "רוצה ש-Daffy תבדוק מה זה משנה בשאר התכנית?",
+            "רוצה שדפי תבדוק מה זה משנה בשאר התכנית?",
           )}
         </p>
         <div className="mt-2 flex gap-2">
@@ -209,7 +209,7 @@ function BannerView({
             onClick={onAskDaffy}
             className="rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
           >
-            {tr(locale, "Yes, ask Daffy", "כן, שאל את Daffy")}
+            {tr(locale, "Yes, ask Daffy", "כן, לשאול את דפי")}
           </button>
           <button
             type="button"
@@ -227,7 +227,7 @@ function BannerView({
     return (
       <div className="mt-2 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-400">
         <Spinner className="h-3.5 w-3.5 animate-spin" />
-        {tr(locale, "Daffy is checking the impact…", "Daffy בודקת את ההשפעה…")}
+        {tr(locale, "Daffy is checking the impact…", "דפי בודקת את ההשפעה…")}
       </div>
     );
   }

@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { ALLOWED_DOCUMENT_MIME_TYPES, MAX_DOCUMENT_SIZE_BYTES, sanitizeFileName } from "@/lib/documents";
-import { formatTicketArea, formatTicketPriority, formatTicketType, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
+import { formatTicketArea, formatTicketPriority, formatTicketStatus, formatTicketType, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
 import { approveProposal, logAutomationEvent } from "@/lib/ticket-review";
@@ -828,7 +828,8 @@ export type AdminStatusUpdateResult = { error?: string };
  * every single time, with no way to tell why (reported live: "some I can
  * update, some I can't" - the pattern is exactly these three). Every
  * other status has no such constraint and keeps writing just `{status}`. */
-const STATUSES_REQUIRING_REASON: readonly TicketStatus[] = ["cancelled", "deferred"];
+// TCK-124: reopening also asks why - the reason goes into the ticket's own history, where the tester reads it.
+const STATUSES_REQUIRING_REASON: readonly TicketStatus[] = ["cancelled", "deferred", "reopened"];
 
 export type AdminStatusUpdateExtra = {
   /** Required when status is "cancelled" or "deferred". */
@@ -886,6 +887,20 @@ export async function updateTicketStatusAdminAction(
     if (status === "cancelled") {
       patch.cancelled_reason = reason;
       patch.cancelled_at = new Date().toISOString();
+    } else if (status === "reopened") {
+      if (reason.length > 2000) {
+        return { error: tr(locale, "The reason is too long.", "הסיבה ארוכה מדי.") };
+      }
+      const { data: ticketRow } = await supabase.from("tickets").select("description, status, created_by").eq("id", ticketId).maybeSingle();
+      if (!ticketRow) {
+        return { error: tr(locale, "That ticket could not be found.", "הפנייה לא נמצאה.") };
+      }
+      patch.description = appendTicketDescriptionEntry({
+        currentDescription: ticketRow.description ?? "",
+        changeLines: [`Status: ${formatTicketStatus(ticketRow.status, "en")} → ${formatTicketStatus("reopened", "en")}`],
+        note: reason,
+        authoredBySupport: ticketRow.created_by !== user.id,
+      });
     } else {
       patch.deferred_reason = reason;
     }
