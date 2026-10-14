@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { DailyBatchApprove } from "@/components/daily-batch-approve";
+import { DailyBatchPromote } from "@/components/daily-batch-promote";
 import { NavLink as Link } from "@/components/nav-link";
 import { loadLatestBatch, type Batch, type BatchTicketState } from "@/lib/daily-batch";
 import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
@@ -104,14 +105,22 @@ export default async function DailyBatchPage() {
               <span className="min-w-0 flex-1">
                 <span className="flex flex-wrap items-baseline gap-x-2">
                   <span dir="ltr" className="rounded bg-slate-100 px-1.5 font-mono text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-300">TCK-{t.seq}</span>
-                  <Link href={`/app/tickets/${t.ticketId}?from=batch`} dir="auto" className="text-sm font-semibold text-slate-900 hover:underline dark:text-slate-100">{t.subject}</Link>
+                  <Link href={t.state === "built" ? `/app/tickets/review/${t.ticketId}?from=batch` : `/app/tickets/${t.ticketId}?from=batch`} dir="auto" className="text-sm font-semibold text-slate-900 hover:underline dark:text-slate-100">{t.subject}</Link>
                 </span>
+                {t.state === "built" && t.summary ? <span dir="auto" className="mt-0.5 block text-xs text-slate-600 dark:text-slate-400">{t.summary}</span> : null}
                 {t.note ? <span className="mt-0.5 block text-xs text-slate-600 dark:text-slate-400">{t.note}</span> : null}
               </span>
               <span className={`whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATE_LABEL[t.state].tone}`}>{tr(locale, STATE_LABEL[t.state].en, STATE_LABEL[t.state].he)}</span>
             </li>
           ))}
         </ul>
+      ) : null}
+
+      {batch && batch.status === "ready" ? <DailyBatchPromote locale={locale} batchId={batch.id} count={batch.tickets.filter((t) => t.state === "built").length} /> : null}
+      {batch && batch.status === "promoting" ? (
+        <p className="rounded-xl border border-teal-300 bg-teal-50 px-4 py-3 text-sm text-teal-900 dark:border-teal-800 dark:bg-teal-950/30 dark:text-teal-200">
+          {tr(locale, "Promotion in progress. You get an email when it is live; the batch then closes.", "ההעלאה לייצור בתהליך. יישלח אליך מייל כשהיא תהיה באוויר, ואז החבילה תיסגר.")}
+        </p>
       ) : null}
     </main>
   );

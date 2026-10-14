@@ -32,6 +32,7 @@ import {
 } from "@/lib/ticket-review";
 import { isCurrentUserAdmin } from "@/lib/tickets";
 import { approveBatch, rejectBatch } from "@/lib/daily-batch-review";
+import { promoteBatch } from "@/lib/daily-batch-progress";
 
 /** Thin server-action wrappers around lib/ticket-review.ts: sign-in and admin checks first (RLS
  * still enforces it underneath), then the step, then a refresh of the screens that show it. */
@@ -62,6 +63,9 @@ export async function approveBatchAction(batchId: string, ticketIds: string[]): 
 }
 export async function rejectBatchAction(batchId: string): Promise<ReviewResult> {
   return withAdmin(({ supabase, locale }) => rejectBatch(supabase, locale, batchId));
+}
+export async function promoteBatchAction(batchId: string, devTested: boolean): Promise<ReviewResult> {
+  return withAdmin(({ supabase, adminId, locale }) => promoteBatch(supabase, adminId, locale, batchId, devTested));
 }
 
 export async function approveProposalAction(proposalId: string, chosen: Record<string, number>, comment: string): Promise<ReviewResult> {

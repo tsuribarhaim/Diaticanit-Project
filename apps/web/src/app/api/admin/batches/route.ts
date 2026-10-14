@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { checkAutomationSecret } from "@/lib/automation-auth";
-import { MAX_BATCH_TICKETS, renderBatchProposalEmail, type BatchTicket } from "@/lib/daily-batch";
+import { MAX_BATCH_TICKETS, renderBatchDoneEmail, renderBatchProposalEmail, renderBatchReadyEmail, type BatchTicket } from "@/lib/daily-batch";
+import { syncActiveBatch } from "@/lib/daily-batch-progress";
 import { logServerError } from "@/lib/server-log";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { DAFFY_PUBLIC_URL } from "@/lib/welcome-email";
@@ -24,9 +25,19 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
-  if (body.action !== "create") return NextResponse.json({ error: "action must be create." }, { status: 400 });
-
   const admin = createAdminClient();
+  const appUrl = (process.env.RESET_LINK_BASE_URL || DAFFY_PUBLIC_URL).replace(/\/+$/, "");
+  if (body.action === "sync") {
+    // After the night run or a promotion: bring the batch up to date; when it just became ready or done, hand back the email.
+    const synced = await syncActiveBatch(admin);
+    const email = synced.batch && synced.becameReady ? renderBatchReadyEmail(synced.batch, appUrl) : synced.batch && synced.becameDone ? renderBatchDoneEmail(synced.batch, appUrl) : null;
+    return NextResponse.json(
+      { status: synced.batch?.status ?? null, ...(email ? { emailSubject: email.subject, emailBody: email.html, emailText: email.text } : {}) },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+  }
+  if (body.action !== "create") return NextResponse.json({ error: "action must be create or sync." }, { status: 400 });
+
   const picks = (Array.isArray(body.picks) ? (body.picks as Pick[]) : []).filter((pick) => Number.isInteger(Number(pick.ticketSeq)) && typeof pick.reason === "string" && pick.reason.trim());
   const seqs = [...new Set(picks.map((pick) => Number(pick.ticketSeq)))].slice(0, MAX_BATCH_TICKETS);
   const { data: rows } = seqs.length
@@ -57,6 +68,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ batchId: null, reason: "Another batch is still in progress." }, { status: 409 });
   }
   // The link points at the app that sent it (dev: the laptop, see RESET_LINK_BASE_URL; otherwise production).
-  const email = renderBatchProposalEmail(created as { batch_date: string; tickets: BatchTicket[]; scanned_count: number }, (process.env.RESET_LINK_BASE_URL || DAFFY_PUBLIC_URL).replace(/\/+$/, ""));
+  const email = renderBatchProposalEmail(created as { batch_date: string; tickets: BatchTicket[]; scanned_count: number }, appUrl);
   return NextResponse.json({ batchId: created.id, emailSubject: email.subject, emailBody: email.html, emailText: email.text }, { headers: { "Cache-Control": "no-store" } });
 }

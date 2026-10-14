@@ -62,5 +62,7 @@ export async function POST(request: Request) {
       if ((left ?? []).length === 0) await adminClient.from("automation_bundles").delete().eq("id", bundleId);
     }
   }
+  // The daily batch being promoted records the version (the bridge's batch sync then closes it and mails the "done" email).
+  if (resolved > 0) await adminClient.from("automation_batches").update({ version }).eq("status", "promoting");
   return NextResponse.json({ success: true, resolved, skipped }, { headers: { "Cache-Control": "no-store" } });
 }
