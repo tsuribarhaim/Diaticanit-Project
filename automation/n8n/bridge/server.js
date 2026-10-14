@@ -1374,6 +1374,30 @@ function readJsonBody(req) {
 
 let analysisInProgress = false;
 let promoteInProgress = false;
+/** The daily batch's 16:00 triage scan (set by /triage). */
+let triageInProgress = false;
+
+// ---- One agent at a time (daily batch design) -----------------------------------------------------------------------
+// The analyst, the night run, the triage scan and a promotion never run together - whether the admin started one by hand
+// or a schedule did. A run of the SAME kind already going is skipped (a second one would re-pick the same tickets); a
+// DIFFERENT agent is waited for, and the wait is recorded so the admin sees why a scheduled run started late.
+const AGENT_WAIT_MAX_MS = 60 * 60 * 1000;
+function agentBusy() {
+  if (runInProgress) return "the night run";
+  if (analysisInProgress) return "the analyst";
+  if (triageInProgress) return "the daily triage";
+  if (promoteInProgress) return "a promotion";
+  return null;
+}
+/** Waits until no agent runs (or AGENT_WAIT_MAX_MS passes). Returns who was waited for and how long, or null if nothing ran. */
+async function waitForOtherAgents() {
+  const blockedBy = agentBusy();
+  if (!blockedBy) return null;
+  const start = Date.now();
+  while (agentBusy() && Date.now() - start < AGENT_WAIT_MAX_MS) await new Promise((r) => setTimeout(r, 10000));
+  return { blockedBy, minutes: Math.round((Date.now() - start) / 60000), timedOut: Boolean(agentBusy()) };
+}
+const waitNote = (wait) => (wait ? ` (waited ${wait.minutes ? `${wait.minutes} min` : "under a minute"} for ${wait.blockedBy})` : "");
 
 const server = http.createServer(async (req, res) => {
   const known = ["/run", "/analyze", "/merge", "/revert", "/promote", "/learn", "/health"];
@@ -1396,7 +1420,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.url === "/health") {
-    return sendJson(res, 200, { ok: true, runInProgress, analysisInProgress, promoteInProgress, autoMerge: AUTO_MERGE_TO_DEV, promoteEnabled: PROMOTE_ENABLED, reportedAt: new Date().toISOString() });
+    return sendJson(res, 200, { ok: true, runInProgress, analysisInProgress, promoteInProgress, triageInProgress, agentBusy: agentBusy(), autoMerge: AUTO_MERGE_TO_DEV, promoteEnabled: PROMOTE_ENABLED, reportedAt: new Date().toISOString() });
   }
 
   if (req.url === "/learn") {
@@ -1420,8 +1444,8 @@ const server = http.createServer(async (req, res) => {
     const releaseAwake = keepAwake();
     try {
       // A night run or an analysis may still be going: wait for it (up to 30 minutes) instead of racing it.
-      for (let waited = 0; (runInProgress || analysisInProgress) && waited < 30 * 60 * 1000; waited += 10000) await new Promise((r) => setTimeout(r, 10000));
-      if (runInProgress || analysisInProgress) return sendJson(res, 200, { ok: false, report: null, result: "A night run or analysis was still running after 30 minutes, so nothing was promoted. Request it again." });
+      for (let waited = 0; (runInProgress || analysisInProgress || triageInProgress) && waited < 30 * 60 * 1000; waited += 10000) await new Promise((r) => setTimeout(r, 10000));
+      if (runInProgress || analysisInProgress || triageInProgress) return sendJson(res, 200, { ok: false, report: null, result: "A night run, analysis or triage was still running after 30 minutes, so nothing was promoted. Request it again." });
       const report = await runPromote({
         tickets: body.tickets,
         dryRun,
@@ -1469,7 +1493,16 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.url === "/analyze") {
-    if (analysisInProgress || promoteInProgress) return sendJson(res, 200, { skipped: true, reason: "An analysis or a promotion is already running." });
+    if (analysisInProgress) {
+      await recordRun("analyst", new Date().toISOString(), { ticketsCount: 0, result: "Skipped: the analyst was already running." });
+      return sendJson(res, 200, { skipped: true, reason: "The analyst is already running." });
+    }
+    const wait = await waitForOtherAgents();
+    if (wait?.timedOut) {
+      await recordRun("analyst", new Date().toISOString(), { ticketsCount: 0, result: `Skipped: ${wait.blockedBy} was still running after ${wait.minutes} min.` });
+      return sendJson(res, 200, { skipped: true, reason: `${wait.blockedBy} is still running.` });
+    }
+    if (analysisInProgress) return sendJson(res, 200, { skipped: true, reason: "The analyst started meanwhile." });
     if (await automationPaused()) return sendJson(res, 200, { skipped: true, reason: "Automation is paused." });
     analysisInProgress = true;
     const releaseAwake = keepAwake();
@@ -1479,9 +1512,11 @@ const server = http.createServer(async (req, res) => {
       const done = (outcome.analyzed || []).length;
       const failed = (outcome.failed || []).length;
       if (outcome.totalRequested > 0) {
-        await recordRun("analyst", startedAt, { ticketsCount: outcome.totalRequested, costUsd: outcome.totalSpentUsd, result: `${done} proposal(s) ready${failed ? `, ${failed} failed` : ""}` });
+        await recordRun("analyst", startedAt, { ticketsCount: outcome.totalRequested, costUsd: outcome.totalSpentUsd, result: `${done} proposal(s) ready${failed ? `, ${failed} failed` : ""}${waitNote(wait)}` });
+      } else if (wait) {
+        await recordRun("analyst", startedAt, { ticketsCount: 0, result: `Nothing left to analyse${waitNote(wait)}.` });
       }
-      return sendJson(res, 200, outcome);
+      return sendJson(res, 200, { ...outcome, ...(wait ? { waitedFor: wait.blockedBy, waitedMinutes: wait.minutes } : {}) });
     } catch (err) {
       return sendJson(res, 500, { error: err.message });
     } finally {
@@ -1490,22 +1525,33 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // Two triggers (Windows task + n8n schedule) can overlap; a second batch would
-  // re-pick still-queued tickets and fight over the dev-server port.
-  if (runInProgress || promoteInProgress) {
-    return sendJson(res, 200, { skipped: true, reason: "A batch or a promotion is already running." });
+  // Two triggers (Windows task + n8n schedule, or a manual "run now") can overlap; a second night run would
+  // re-pick still-queued tickets and fight over the dev-server port, so it is skipped. Any other agent is waited for.
+  if (runInProgress) {
+    await recordRun("night", new Date().toISOString(), { ticketsCount: 0, result: "Skipped: the night run was already running." });
+    return sendJson(res, 200, { skipped: true, reason: "The night run is already running." });
   }
+  const wait = await waitForOtherAgents();
+  if (wait?.timedOut) {
+    await recordRun("night", new Date().toISOString(), { ticketsCount: 0, result: `Skipped: ${wait.blockedBy} was still running after ${wait.minutes} min.` });
+    return sendJson(res, 200, { skipped: true, reason: `${wait.blockedBy} is still running.` });
+  }
+  if (runInProgress) return sendJson(res, 200, { skipped: true, reason: "The night run started meanwhile." });
   if (await automationPaused()) return sendJson(res, 200, { skipped: true, reason: "Automation is paused." });
   runInProgress = true;
   const releaseAwake = keepAwake();
   const startedAt = new Date().toISOString();
   try {
+    // Test-only: lets a test hold the night run open to check the one-agent-at-a-time lock. Never set in the real env file.
+    if (Number(env.TEST_NIGHT_RUN_DELAY_MS) > 0) await new Promise((r) => setTimeout(r, Number(env.TEST_NIGHT_RUN_DELAY_MS)));
     const outcome = await runAll();
     if (outcome.totalEligible > 0) {
       const fixed = (outcome.succeeded || []).filter((r) => r.committed).length;
-      await recordRun("night", startedAt, { ticketsCount: outcome.totalEligible, costUsd: outcome.totalSpentUsd, result: `${fixed} fixed, ${(outcome.failed || []).length} failed`, details: { merged: (outcome.succeeded || []).filter((r) => r.mergedToDev).length } });
+      await recordRun("night", startedAt, { ticketsCount: outcome.totalEligible, costUsd: outcome.totalSpentUsd, result: `${fixed} fixed, ${(outcome.failed || []).length} failed${waitNote(wait)}`, details: { merged: (outcome.succeeded || []).filter((r) => r.mergedToDev).length } });
+    } else if (wait) {
+      await recordRun("night", startedAt, { ticketsCount: 0, result: `Nothing left to build${waitNote(wait)}.` });
     }
-    return sendJson(res, 200, outcome);
+    return sendJson(res, 200, { ...outcome, ...(wait ? { waitedFor: wait.blockedBy, waitedMinutes: wait.minutes } : {}) });
   } catch (err) {
     return sendJson(res, 500, { error: err.message });
   } finally {
