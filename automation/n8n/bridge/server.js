@@ -1385,10 +1385,16 @@ function buildTriagePrompt(tickets) {
   return lines.join("\n");
 }
 
-async function runTriage() {
-  const res = await fetch(`${DAFFY_BASE_URL}/api/admin/tickets/triage-candidates`, { headers: { "x-ticket-automation-secret": TICKET_SECRET } });
-  if (!res.ok) throw new Error(`Triage candidates fetch failed: HTTP ${res.status}`);
-  const tickets = (await res.json()).tickets || [];
+/** dryRun: pick only - no batch is recorded and no email is made (to check the triage against real tickets). A dry run may be
+ * given its candidates (same shape as the route returns), so it can be tried on tickets this bridge's app does not serve. */
+async function runTriage({ dryRun = false, candidates = null } = {}) {
+  let tickets;
+  if (dryRun && Array.isArray(candidates)) tickets = candidates;
+  else {
+    const res = await fetch(`${DAFFY_BASE_URL}/api/admin/tickets/triage-candidates`, { headers: { "x-ticket-automation-secret": TICKET_SECRET } });
+    if (!res.ok) throw new Error(`Triage candidates fetch failed: HTTP ${res.status}`);
+    tickets = (await res.json()).tickets || [];
+  }
   let picks = [];
   let alreadyFixed = [];
   let costUsd = 0;
@@ -1418,6 +1424,7 @@ async function runTriage() {
       await gitWorktreeRemove(worktreeDir);
     }
   }
+  if (dryRun) return { dryRun: true, scanned: tickets.length, picked: picks.length, picks, alreadyFixed, costUsd: Math.round(costUsd * 100) / 100 };
   // The app re-checks the picks, records the batch and renders the approval email (none when nothing was picked).
   const created = await fetch(`${DAFFY_BASE_URL}/api/admin/batches`, {
     method: "POST",
@@ -1651,6 +1658,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.url === "/triage") {
+    const triageBody = (await readJsonBody(req)) || {};
     if (triageInProgress) return sendJson(res, 200, { skipped: true, reason: "The daily triage is already running." });
     const wait = await waitForOtherAgents();
     if (wait?.timedOut) {
@@ -1663,8 +1671,8 @@ const server = http.createServer(async (req, res) => {
     const releaseAwake = keepAwake();
     const startedAt = new Date().toISOString();
     try {
-      const outcome = await runTriage();
-      await recordRun("triage", startedAt, { ticketsCount: outcome.scanned, costUsd: outcome.costUsd, result: `${outcome.picked} picked of ${outcome.scanned}${outcome.batchId ? "" : ` - no batch: ${outcome.reason || "nothing picked"}`}${waitNote(wait)}` });
+      const outcome = await runTriage({ dryRun: triageBody.dryRun === true, candidates: triageBody.candidates || null });
+      if (!outcome.dryRun) await recordRun("triage", startedAt, { ticketsCount: outcome.scanned, costUsd: outcome.costUsd, result: `${outcome.picked} picked of ${outcome.scanned}${outcome.batchId ? "" : ` - no batch: ${outcome.reason || "nothing picked"}`}${waitNote(wait)}` });
       return sendJson(res, 200, { ...outcome, ...(wait ? { waitedFor: wait.blockedBy, waitedMinutes: wait.minutes } : {}) });
     } catch (err) {
       return sendJson(res, 500, { error: err.message });
