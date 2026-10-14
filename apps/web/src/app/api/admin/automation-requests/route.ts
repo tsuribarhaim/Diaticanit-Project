@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { renderPromotionEmail, type PromoteReport } from "@/lib/promotion-email";
 import { appendTicketDescriptionEntry } from "@/lib/tickets";
 import { bundleOfTicket } from "@/lib/bundles";
+import { buildPasswordResetEmail } from "@/lib/password-reset";
 import { renderWelcomeEmail } from "@/lib/welcome-email";
 
 export const dynamic = "force-dynamic";
@@ -52,8 +53,8 @@ export async function POST(request: Request) {
   }
   const { id, action, result, ok, report } = body;
   if (typeof id !== "string" || !id) return NextResponse.json({ error: "id is required." }, { status: 400 });
-  if (action !== "claim" && action !== "complete" && action !== "email" && action !== "recipients" && action !== "invite_email") {
-    return NextResponse.json({ error: "action must be claim, complete, email, invite_email or recipients." }, { status: 400 });
+  if (action !== "claim" && action !== "complete" && action !== "email" && action !== "recipients" && action !== "invite_email" && action !== "reset_email") {
+    return NextResponse.json({ error: "action must be claim, complete, email, invite_email, reset_email or recipients." }, { status: 400 });
   }
 
   const adminClient = createAdminClient();
@@ -65,6 +66,17 @@ export async function POST(request: Request) {
       await Promise.all(((admins ?? []) as { user_id: string }[]).map(async (admin) => (await adminClient.auth.admin.getUserById(admin.user_id)).data.user?.email ?? null))
     ).filter((email): email is string => Boolean(email));
     return NextResponse.json({ adminEmails }, { headers: { "Cache-Control": "no-store" } });
+  }
+  if (action === "reset_email") {
+    // TCK-3: the "reset your password" email for a 'password_reset' request; the one-time link is made right now, never stored.
+    try {
+      const mail = await buildPasswordResetEmail(id);
+      if (!mail) return NextResponse.json({ error: "Not a password reset request." }, { status: 404 });
+      return NextResponse.json(mail, { headers: { "Cache-Control": "no-store" } });
+    } catch (error) {
+      logServerError("adminAutomationRequests", "reset_email_failed", { error: error instanceof Error ? error.message : String(error) });
+      return NextResponse.json({ error: "Could not prepare the reset email." }, { status: 500 });
+    }
   }
   if (action === "invite_email") {
     // The welcome email for an "Add new user" request: the poller's "Welcome Invite" workflow sends what this returns.

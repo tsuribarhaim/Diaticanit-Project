@@ -1,9 +1,9 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
 
-import { changePasswordAction, type ChangePasswordState } from "@/app/app/actions";
+import { changePasswordAction, requestOwnPasswordResetAction, type ChangePasswordState } from "@/app/app/actions";
 import { tr, type AppLocale } from "@/lib/locale";
 
 const initialState: ChangePasswordState = {};
@@ -28,6 +28,32 @@ function ChangePasswordSubmitButton({ locale }: { locale: AppLocale }) {
       {pending ? <Spinner className="h-4 w-4 animate-spin" /> : null}
       {pending ? tr(locale, "Updating...", "מעדכן...") : tr(locale, "Update password", "עדכון סיסמה")}
     </button>
+  );
+}
+
+/** TCK-3: for someone who does not remember the current password - a reset link to their own email instead. */
+function ForgotCurrentPassword({ locale }: { locale: AppLocale }) {
+  const [pending, startTransition] = useTransition();
+  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
+  if (message && !message.error) return <p className="max-w-xs text-xs text-emerald-700 dark:text-emerald-400">{message.text}</p>;
+  return (
+    <div className="max-w-xs">
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() =>
+          startTransition(async () => {
+            const result = await requestOwnPasswordResetAction();
+            setMessage(result.error ? { text: result.error, error: true } : { text: result.success ?? "", error: false });
+          })
+        }
+        className="inline-flex items-center gap-1.5 text-xs font-semibold text-teal-700 hover:underline disabled:opacity-60 dark:text-teal-400"
+      >
+        {pending ? <Spinner className="h-3.5 w-3.5 animate-spin" /> : null}
+        {tr(locale, "Forgot your current password? Email me a reset link", "שכחת את הסיסמה הנוכחית? שליחת קישור לאיפוס למייל")}
+      </button>
+      {message?.error ? <p className="mt-1 text-xs text-rose-700 dark:text-rose-400">{message.text}</p> : null}
+    </div>
   );
 }
 
@@ -67,6 +93,7 @@ export function ChangePasswordForm({ locale }: { locale: AppLocale }) {
       {state.success ? <p className="max-w-xs text-xs text-emerald-700 dark:text-emerald-400">{state.success}</p> : null}
 
       <ChangePasswordSubmitButton locale={locale} />
+      <ForgotCurrentPassword locale={locale} />
     </form>
   );
 }

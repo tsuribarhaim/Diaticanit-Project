@@ -101,7 +101,10 @@ export async function middleware(request: NextRequest) {
   // GET, so restricting this rule to actual navigations - not action calls
   // that merely happen to post to the same URL - loses nothing it was
   // meant to do.
-  if (pathname.startsWith("/auth") && user && !request.headers.get("next-action")) {
+  // TCK-3: the reset link signs the person in (/auth/confirm) and then needs the new-password form - and someone already
+  // signed in who forgot their password uses the same two pages - so those two are never bounced to the app.
+  const isPasswordReset = pathname === "/auth/confirm" || pathname === "/auth/reset-password";
+  if (pathname.startsWith("/auth") && user && !isPasswordReset && !request.headers.get("next-action")) {
     const redirectUrl = request.nextUrl.clone();
     // TCK-22: Daily Report is the default landing destination everywhere
     // now, not the unlinked Home dashboard - see sanitizeNextPath's own
