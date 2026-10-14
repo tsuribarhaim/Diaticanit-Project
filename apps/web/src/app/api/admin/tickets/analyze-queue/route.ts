@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { checkAutomationSecret } from "@/lib/automation-auth";
 import { logServerError } from "@/lib/server-log";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { attachmentLinksFor } from "@/lib/ticket-attachment-links";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +20,7 @@ export async function GET(request: Request) {
   const adminClient = createAdminClient();
   const { data: tickets, error } = await adminClient
     .from("tickets")
-    .select("id, ticket_seq, subject, ticket_type, area, priority, description, status, created_at")
+    .select("id, ticket_seq, subject, ticket_type, area, priority, description, status, created_at, fix_description")
     .not("status", "in", "(resolved,closed,cancelled,duplicate)")
     .eq("auto_handle", "S")
     .order("priority", { ascending: false })
@@ -46,8 +47,24 @@ export async function GET(request: Request) {
     }
   }
 
+  // The tickets' screenshots, and which of them already had a fix shipped (reopened by the tester since): the analyst then
+  // works from what is still wrong instead of starting over.
+  const attachments = await attachmentLinksFor(adminClient, ids);
+  const shipped = new Set<string>();
+  if (ids.length > 0) {
+    const { data: fixes } = await adminClient.from("ticket_proposals").select("ticket_id").eq("kind", "fix").in("status", ["released", "approved", "merged"]).in("ticket_id", ids);
+    for (const row of fixes ?? []) shipped.add(row.ticket_id);
+  }
+
   return NextResponse.json(
-    { tickets: (tickets ?? []).map((ticket) => ({ ...ticket, previousProposal: previousByTicket.get(ticket.id) ?? null })) },
+    {
+      tickets: (tickets ?? []).map((ticket) => ({
+        ...ticket,
+        previousProposal: previousByTicket.get(ticket.id) ?? null,
+        attachments: attachments.get(ticket.id) ?? [],
+        reopenedAfterFix: shipped.has(ticket.id) || Boolean(ticket.fix_description && ticket.status === "reopened"),
+      })),
+    },
     { headers: { "Cache-Control": "no-store" } },
   );
 }
