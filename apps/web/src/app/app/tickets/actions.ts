@@ -7,6 +7,7 @@ import { z } from "zod";
 import { ALLOWED_DOCUMENT_MIME_TYPES, MAX_DOCUMENT_SIZE_BYTES, sanitizeFileName } from "@/lib/documents";
 import { formatTicketArea, formatTicketPriority, formatTicketStatus, formatTicketType, normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { approveProposal, logAutomationEvent } from "@/lib/ticket-review";
 import {
@@ -637,6 +638,22 @@ export async function updateTicketAction(_prevState: TicketFormState, formData: 
  * edit's optional one) since reopening without saying what's still wrong
  * would leave support with nothing to act on.
  */
+/**
+ * A ticket reopened after its automated fix shipped (flag D/M/R) goes back to the analyst ('S') instead of sitting on no
+ * station: the analyst gets what shipped, the reopen note and any new screenshots (analyze-queue -> reopenedAfterFix).
+ * Before, such tickets stayed flagged "fixed" and no agent or dashboard station picked them up. Uses the service client
+ * because the reporter cannot change automation flags; it only ever moves this one ticket from D/M/R to S.
+ */
+async function sendReopenedTicketBackToAutomation(ticketId: string, actorId: string): Promise<void> {
+  const admin = createAdminClient();
+  const { data: moved, error } = await admin.from("tickets").update({ auto_handle: "S" }).eq("id", ticketId).in("auto_handle", ["D", "M", "R"]).select("id");
+  if (error) {
+    logServerError("tickets.reopen", "back_to_automation_failed", { ticketId, error: error.message });
+    return;
+  }
+  if ((moved ?? []).length > 0) await logAutomationEvent(admin, actorId, ticketId, "reopened_after_fix");
+}
+
 export async function reopenTicketAction(_prevState: TicketFormState, formData: FormData): Promise<TicketFormState> {
   const supabase = await createClient();
   const {
@@ -688,6 +705,7 @@ export async function reopenTicketAction(_prevState: TicketFormState, formData: 
     logServerError("tickets.reopen", "update_failed", { userId: user.id, ticketId, error: updateError.message });
     return { error: tr(locale, "Could not reopen this ticket. Please try again.", "לא ניתן היה לפתוח מחדש את הפנייה. יש לנסות שוב.") };
   }
+  await sendReopenedTicketBackToAutomation(ticketId, user.id);
 
   revalidatePath("/app/tickets");
   revalidatePath(`/app/tickets/${ticketId}`);
@@ -926,6 +944,7 @@ export async function updateTicketStatusAdminAction(
     return { error: tr(locale, "Could not update status. Please try again.", "לא ניתן היה לעדכן את הסטטוס. יש לנסות שוב.") };
   }
 
+  if (status === "reopened") await sendReopenedTicketBackToAutomation(ticketId, user.id);
   revalidatePath("/app/tickets");
   revalidatePath(`/app/tickets/${ticketId}`);
   return {};
