@@ -995,7 +995,13 @@ async function verifyAndCommitFix(worktreeDir, ticket, phase2Output) {
   }
   // Stage first so brand-new files count too (a plain `git diff` leaves untracked files out).
   await runGit(["add", "-A"], worktreeDir);
-  const changedFiles = await runGit(["diff", "--cached", "--name-only"], worktreeDir);
+  // Only the app's source and public files and migrations belong in a fix: anything else the agent left behind (a scratch
+  // script such as the .agent-diffcheck.ts that once reached production) is unstaged here and never committed.
+  const fixPaths = [`${WEB_APP_SUBDIR}/src/`, `${WEB_APP_SUBDIR}/public/`, "db/migrations/", "supabase/migrations/"];
+  const staged = (await runGit(["diff", "--cached", "--name-only"], worktreeDir)).split("\n").filter(Boolean);
+  const leftOut = staged.filter((file) => !fixPaths.some((prefix) => file.startsWith(prefix)));
+  if (leftOut.length > 0) await runGit(["reset", "-q", "--", ...leftOut], worktreeDir);
+  const changedFiles = staged.filter((file) => !leftOut.includes(file)).join("\n");
   if (!changedFiles) {
     return { committed: false, branch: null, reason: "Agent reported a fix but no files actually changed." };
   }
@@ -1017,8 +1023,8 @@ async function verifyAndCommitFix(worktreeDir, ticket, phase2Output) {
 
   const branch = `auto-fix/tck-${ticket.ticket_seq}`;
   const builtOn = await runGit(["rev-parse", "HEAD"], worktreeDir);
+  // The index already holds exactly the fix (see fixPaths above) - commit it as staged, never `add -A` again.
   await runGit(["checkout", "-b", branch], worktreeDir);
-  await runGit(["add", "-A"], worktreeDir);
   await runGit(
     [
       "commit",
@@ -1027,7 +1033,7 @@ async function verifyAndCommitFix(worktreeDir, ticket, phase2Output) {
     ],
     worktreeDir,
   );
-  return { committed: true, branch, reason: null, files: changedFiles.split("\n").filter(Boolean) };
+  return { committed: true, branch, reason: null, files: changedFiles.split("\n").filter(Boolean), leftOut };
 }
 
 function formatPhase1Notes(output) {
@@ -1054,6 +1060,7 @@ function formatPhase2Notes(output, commitResult) {
   if (output.testSummary) lines.push("", "Verification:", output.testSummary);
   if (commitResult.committed) {
     lines.push("", `Committed to local branch "${commitResult.branch}" (not pushed, not merged) - review and ask to promote when ready.`);
+    if (commitResult.leftOut && commitResult.leftOut.length) lines.push(`Left out of the commit (not app source, public files or migrations): ${commitResult.leftOut.join(", ")}`);
   } else if (commitResult.reason) {
     lines.push("", `Not committed: ${commitResult.reason}`);
   }
