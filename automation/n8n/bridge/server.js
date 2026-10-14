@@ -768,13 +768,15 @@ async function reportResult(ticketId, autoHandle, notes, status) {
  * have available) needs to be named there. */
 function runClaudeHeadless({ cwd, prompt, tools, allowedTools, disallowedTools, restricted, permissionPrompts, budget, timeoutMs, schema }) {
   return new Promise((resolve, reject) => {
-    const args = [CLAUDE_CLI_PATH, "-p", prompt];
+    // The prompt goes in on stdin, not as an argument: a bundle's Phase 2 prompt (every member's description + the Phase 1
+    // result + lessons) passed the ~32k-character Windows command-line limit and failed with "spawn ENAMETOOLONG".
+    const args = [CLAUDE_CLI_PATH, "-p"];
     if (restricted) args.push("--restricted");
     args.push("--tools", tools);
     if (allowedTools) args.push("--allowedTools", allowedTools);
     if (disallowedTools) args.push("--disallowedTools", disallowedTools);
     args.push("--permission-prompts", permissionPrompts || "none", "--output-format", "json", "--json-schema", schema, "--max-budget-usd", budget);
-    execFile(
+    const child = execFile(
       process.execPath,
       args,
       { cwd, timeout: timeoutMs, maxBuffer: 1024 * 1024 * 50, shell: false },
@@ -791,6 +793,9 @@ function runClaudeHeadless({ cwd, prompt, tools, allowedTools, disallowedTools, 
         resolve({ output: parsed.structured_output, costUsd: Number(parsed.total_cost_usd || 0) });
       },
     );
+    // A failed spawn closes stdin early; the error itself reaches the callback above.
+    child.stdin.on("error", () => {});
+    child.stdin.end(prompt, "utf8");
   });
 }
 
