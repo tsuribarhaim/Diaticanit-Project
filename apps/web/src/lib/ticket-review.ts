@@ -1,5 +1,6 @@
 import type { createClient } from "@/lib/supabase/server";
 import { busyAgent, busyAgentLabel, type BridgeHealth, type BusyAgent } from "@/lib/agent-lock";
+import { batchLockActive } from "@/lib/daily-batch";
 
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 import { tr, type AppLocale } from "@/lib/locale";
@@ -457,6 +458,10 @@ export async function requestAgentRun(supabase: Client, adminId: string, locale:
   const { data: recent } = await supabase.from("automation_requests").select("id").eq("kind", kind).gte("completed_at", new Date(Date.now() - 2 * 60 * 1000).toISOString()).limit(1);
   if ((recent ?? []).length > 0) return { success: tr(locale, "It was just started - it is running.", "זה הותחל זה עתה - והוא רץ.") };
   if (kind !== "digest") {
+    // A daily batch in progress owns the analyst and the night run until it closes (lib/daily-batch.ts).
+    if (await batchLockActive(supabase)) {
+      return { error: tr(locale, "A daily batch is in progress - the analyst and the night run run for it on their schedule. Manual runs are locked until it closes.", "חבילה יומית בתהליך - האנליסט וריצת הלילה רצים עבורה לפי הלוח. הפעלה ידנית נעולה עד שהחבילה תיסגר.") };
+    }
     const { data: beat } = await supabase.from("automation_settings").select("bridge_seen_at, bridge_status").eq("id", true).maybeSingle();
     const status = (beat?.bridge_status ?? {}) as BridgeHealth;
     const fresh = Boolean(beat?.bridge_seen_at && Date.now() - new Date(beat.bridge_seen_at as string).getTime() < 3 * 60 * 1000);

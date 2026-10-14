@@ -597,6 +597,8 @@ function AgentRunBar({ locale, kind, tickets, status }: { locale: AppLocale; kin
       ? tr(locale, "The bridge is offline - your laptop must be on", "הגשר כבוי - המחשב הנייד חייב להיות דלוק")
       : running
         ? tr(locale, "Running now - an e-mail follows when it ends", "רץ עכשיו - מייל יישלח בסיומו")
+        : status.batchActive
+          ? tr(locale, "Daily batch in progress - manual runs are locked until it closes", "חבילה יומית בתהליך - הפעלה ידנית נעולה עד שתיסגר")
         : status.agentBusy && status.agentBusy !== kind
           ? tr(locale, `One agent at a time: ${busyAgentLabel(status.agentBusy, "en")} is running`, `סוכן אחד בכל פעם: ${busyAgentLabel(status.agentBusy, "he")} בפעולה עכשיו`)
         : requested

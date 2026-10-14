@@ -17,7 +17,8 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
-  if (body.kind !== "analyst" && body.kind !== "night") return NextResponse.json({ error: "kind must be analyst or night." }, { status: 400 });
+  // triage: the daily batch scan at 16:00 (bridge POST /triage).
+  if (body.kind !== "analyst" && body.kind !== "night" && body.kind !== "triage") return NextResponse.json({ error: "kind must be analyst, night or triage." }, { status: 400 });
   const adminClient = createAdminClient();
   const { error } = await adminClient.from("automation_runs").insert({
     kind: body.kind,
