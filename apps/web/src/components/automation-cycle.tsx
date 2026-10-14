@@ -1,6 +1,7 @@
 "use client";
 
 import { NavLink as Link } from "@/components/nav-link";
+import { busyAgentLabel } from "@/lib/agent-lock";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 
@@ -596,6 +597,8 @@ function AgentRunBar({ locale, kind, tickets, status }: { locale: AppLocale; kin
       ? tr(locale, "The bridge is offline - your laptop must be on", "הגשר כבוי - המחשב הנייד חייב להיות דלוק")
       : running
         ? tr(locale, "Running now - an e-mail follows when it ends", "רץ עכשיו - מייל יישלח בסיומו")
+        : status.agentBusy && status.agentBusy !== kind
+          ? tr(locale, `One agent at a time: ${busyAgentLabel(status.agentBusy, "en")} is running`, `סוכן אחד בכל פעם: ${busyAgentLabel(status.agentBusy, "he")} בפעולה עכשיו`)
         : requested
           ? tr(locale, "Requested - it starts within a minute", "התבקש - יתחיל תוך דקה")
           : count === 0
