@@ -388,14 +388,51 @@ function shotsDirFor(ticket, label) {
  * there. It is added to the worktree's private git exclude list first, so `git add -A` never commits
  * it, and the whole worktree (folder included) is removed afterwards. */
 const AGENT_SHOTS_DIRNAME = ".agent-shots";
+/** The tickets' own screenshots, downloaded for the agent to look at (git-excluded like the shots, so never part of a fix). */
+const AGENT_ATTACHMENTS_DIRNAME = ".agent-attachments";
 async function excludeAgentShots(worktreeDir) {
   const excludeFile = path.resolve(worktreeDir, await runGit(["rev-parse", "--git-path", "info/exclude"], worktreeDir));
   fs.mkdirSync(path.dirname(excludeFile), { recursive: true });
-  // info/exclude is shared by every worktree of the repo (it lives in the common .git folder), so add the line only once.
+  // info/exclude is shared by every worktree of the repo (it lives in the common .git folder), so add each line only once.
   const existing = fs.existsSync(excludeFile) ? fs.readFileSync(excludeFile, "utf8") : "";
-  if (!existing.split("\n").map((line) => line.trim()).includes(`${AGENT_SHOTS_DIRNAME}/`)) {
-    fs.appendFileSync(excludeFile, `\n${AGENT_SHOTS_DIRNAME}/\n`);
+  const lines = existing.split("\n").map((line) => line.trim());
+  for (const dir of [AGENT_SHOTS_DIRNAME, AGENT_ATTACHMENTS_DIRNAME]) {
+    if (!lines.includes(`${dir}/`)) fs.appendFileSync(excludeFile, `\n${dir}/\n`);
   }
+}
+
+/**
+ * Downloads the screenshots attached to the ticket (and to every member of a bundle) into the worktree, from the short-lived
+ * links the queue route handed over. Returns the prompt paragraph that points the agent at them - or "" when there are none.
+ * TCK-1's cause and the TCK-90 evidence were in screenshots no agent had seen. Failures only shrink the list.
+ */
+async function attachmentsBlock(worktreeDir, ticket) {
+  const members = ticket.members || [ticket];
+  const saved = [];
+  await excludeAgentShots(worktreeDir);
+  const dir = path.join(worktreeDir, AGENT_ATTACHMENTS_DIRNAME);
+  for (const member of members) {
+    for (const [i, att] of (member.attachments || []).entries()) {
+      try {
+        const res = await fetch(att.url);
+        if (!res.ok) continue;
+        fs.mkdirSync(dir, { recursive: true });
+        const ext = (String(att.mimeType || "").split("/")[1] || "jpg").replace("jpeg", "jpg").replace(/[^a-z0-9]/gi, "");
+        const file = path.join(dir, `tck-${member.ticket_seq}-${i + 1}.${ext}`);
+        fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
+        saved.push(`- ${file} (TCK-${member.ticket_seq}, added ${String(att.addedAt || "").slice(0, 10)}, "${att.fileName}")`);
+      } catch {
+        // A missing screenshot never blocks the run.
+      }
+    }
+  }
+  if (saved.length === 0) return "";
+  return [
+    "",
+    "SCREENSHOTS FROM THE TICKET: the reporter attached these images. Open every one with the Read tool (it shows images) BEFORE you decide anything - they are the reporter's own evidence (the exact screen, wording, warning or wrong value), and the newest ones usually show what is still wrong. Do not edit or move them.",
+    ...saved,
+    "",
+  ].join("\n");
 }
 
 /** The bridge's own screenshots of the pages the agent named, taken while the dev server for the
@@ -1043,10 +1080,11 @@ async function processTicket(ticket, budgetTracker) {
   try {
     await moveStaleBranchAside(ticket.ticket_seq);
     await gitWorktreeAdd(worktreeDir, PRODUCTION_REF);
+    const screenshots = await attachmentsBlock(worktreeDir, ticket);
 
     const phase1 = await runClaudeHeadless({
       cwd: worktreeDir,
-      prompt: buildPhase1Prompt(ticket) + lessonsBlock("night"),
+      prompt: buildPhase1Prompt(ticket) + screenshots + lessonsBlock("night"),
       tools: "Read,Grep,Glob",
       restricted: true,
       budget: scaled(MAX_BUDGET_USD, ticket),
@@ -1085,7 +1123,7 @@ async function processTicket(ticket, budgetTracker) {
 
     const phase2 = await runClaudeHeadless({
       cwd: worktreeDir,
-      prompt: buildPhase2Prompt(ticket, phase1.output, DEV_SERVER_PORT, path.join(worktreeDir, AGENT_SHOTS_DIRNAME)) + lessonsBlock("night"),
+      prompt: buildPhase2Prompt(ticket, phase1.output, DEV_SERVER_PORT, path.join(worktreeDir, AGENT_SHOTS_DIRNAME)) + screenshots + lessonsBlock("night"),
       tools: "Read,Grep,Glob,Edit,Write,Bash",
       allowedTools: "Edit Write Bash(npx tsc*) Bash(npx eslint*) Bash(node *)",
       disallowedTools: "Bash(git *) Bash(npm *) Bash(yarn *) Bash(pnpm *) Bash(rm *) Bash(rmdir *) Bash(del *) Bash(taskkill*) Bash(npx next*)",
@@ -1196,7 +1234,15 @@ function buildAnalystPrompt(ticket) {
     `Description (including any admin notes and decisions already made): ${ticket.description}`,
     "",
   ];
-  const prev = ticket.previousProposal;
+  if (ticket.reopenedAfterFix) {
+    lines.push(
+      "REOPENED AFTER A FIX: this ticket was fixed and released before, and the reporter reopened it - the fix did not fully solve it.",
+      `What was shipped: ${ticket.fix_description || "(no note was saved)"}`,
+      "The NEWEST dated entry in the Description is what the reporter says is still wrong (often with a new screenshot). Find out why, keep what already works, and propose only what remains.",
+      "",
+    );
+  }
+  const prev = ticket.reopenedAfterFix ? null : ticket.previousProposal;
   if (prev && prev.payload) {
     lines.push(
       `This is a REVISION. The admin read version ${prev.version} of your proposal and asked for a change.`,
@@ -1248,9 +1294,10 @@ async function analyzeTicket(ticket, budgetTracker) {
   const worktreeDir = path.join(WORKTREE_BASE, `analyst-${ticket.ticket_seq}-${Date.now()}`);
   try {
     await gitWorktreeAdd(worktreeDir, PRODUCTION_REF);
+    const screenshots = await attachmentsBlock(worktreeDir, ticket);
     const run = await runClaudeHeadless({
       cwd: worktreeDir,
-      prompt: buildAnalystPrompt(ticket) + lessonsBlock("analyst"),
+      prompt: buildAnalystPrompt(ticket) + screenshots + lessonsBlock("analyst"),
       tools: "Read,Grep,Glob",
       restricted: true,
       budget: ANALYST_MAX_BUDGET_USD,
@@ -1567,5 +1614,5 @@ if (require.main === module) {
     console.log(`Phase 2: ${PHASE2_ENABLED ? "enabled" : "disabled"}`);
   });
 } else {
-  module.exports = { syncDevWithProduction, moveStaleBranchAside, conflictAdvice, nextMigrationNumber, mergeBranch, revertMerge, runAll, rebuildStaleFixes, groupQueue, bundleJob, bundleLines };
+  module.exports = { syncDevWithProduction, moveStaleBranchAside, conflictAdvice, nextMigrationNumber, mergeBranch, revertMerge, runAll, rebuildStaleFixes, groupQueue, bundleJob, bundleLines, attachmentsBlock };
 }
