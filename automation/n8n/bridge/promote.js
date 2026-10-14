@@ -34,12 +34,22 @@ const git = async (args, cwd) => {
 const npx = (args, cwd, timeout) => exec("npx", args, { cwd, timeout, shell: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Only plain additions are allowed to reach production unattended. */
+/**
+ * Only plain additions are allowed to reach production unattended. Returns what is not additive, or null.
+ * A drop of a constraint, policy, index, function or trigger is fine when the same migration creates that kind again - the
+ * normal way to replace one ("drop policy if exists" + "create policy"; a check constraint widened with a new allowed value,
+ * as in migrations 077/080/081). Tables, columns, schemas and types are never dropped; no truncate, delete, rename or type change.
+ */
 function nonAdditive(sql) {
   const text = sql.replace(/--.*$/gm, "").toLowerCase();
-  const bad = [/\bdrop\s+(table|column|schema|policy|index|function|trigger|type|constraint)\b/, /\btruncate\b/, /\bdelete\s+from\b/, /\balter\s+table[^;]*\balter\s+column[^;]*\btype\b/, /\brename\b/];
-  const hit = bad.find((re) => re.test(text));
-  return hit ? (text.match(hit) || [hit.source])[0].trim() : null;
+  const never = [/\bdrop\s+(table|column|schema|type)\b/, /\btruncate\b/, /\bdelete\s+from\b/, /\balter\s+table[^;]*\balter\s+column[^;]*\btype\b/, /\brename\b/];
+  const hit = never.find((re) => re.test(text));
+  if (hit) return (text.match(hit) || [hit.source])[0].trim();
+  const recreatedBy = { constraint: /\badd\s+constraint\b/, policy: /\bcreate\s+policy\b/, index: /\bcreate\s+(unique\s+)?index\b/, function: /\bcreate\s+(or\s+replace\s+)?function\b/, trigger: /\bcreate\s+(or\s+replace\s+)?trigger\b/ };
+  for (const [kind, recreate] of Object.entries(recreatedBy)) {
+    if (new RegExp(`\\bdrop\\s+${kind}\\b`).test(text) && !recreate.test(text)) return `drop ${kind} (not created again)`;
+  }
+  return null;
 }
 
 /** "TCK-203" for a ticket, "TCK-203 + TCK-204 (Bundle A)" for a bundle (one fix, several tickets). */

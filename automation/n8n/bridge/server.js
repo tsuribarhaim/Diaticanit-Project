@@ -59,7 +59,7 @@ const envFilePath = path.resolve(process.argv[2] || path.join(__dirname, ".env.l
 process.env.BRIDGE_ENV_FILE = envFilePath;
 const env = loadEnvLocal(envFilePath);
 
-const { runPromote } = require("./promote");
+const { runPromote, nonAdditive } = require("./promote");
 const { applyDeletions } = require("./deletions");
 const PORT = Number(env.BRIDGE_PORT || 7891);
 const LOCAL_SECRET = env.BRIDGE_LOCAL_SECRET;
@@ -177,6 +177,20 @@ function bundleLines(job) {
   ];
 }
 
+/**
+ * Daily batch tickets (the admin approved them into the batch, memory "daily-batch-process") may carry a small ADDITIVE
+ * database migration - ordinary night-run tickets still may not. The merge gate checks it with promote's nonAdditive() and
+ * applies it to the dev database; production gets it only through Promote, before the deploy.
+ */
+function batchMigrationLines(job) {
+  if (!job.inBatch) return [];
+  return [
+    "",
+    "DAILY BATCH: the admin approved this ticket in today's daily batch. For THIS ticket a small database change is allowed - it is NOT a reason for reproduced_needs_judgment - but only if it ADDS (a new allowed value in a check, a new nullable column, a new table). Never drop, rename, delete rows or change a column type.",
+    `If the fix needs one: write it as migration ${nextMigrationNumber()} in BOTH db/migrations/<number>_<short_name>.sql and supabase/migrations/20240101000<number>_<short_name>.sql with byte-identical SQL. When you replace a check constraint, find it by what it checks (like db/migrations/080_ticket_areas_tickets_quick_add.sql), never by an assumed name, and make sure no other constraint matches. Mention it in your summary.`,
+  ];
+}
+
 /** One job out of the tickets of a bundle: the lowest ticket leads (its number names the branch), the others ride along. */
 function bundleJob(tickets) {
   const members = [...tickets].sort((a, b) => a.ticket_seq - b.ticket_seq);
@@ -185,6 +199,7 @@ function bundleJob(tickets) {
     ...lead,
     members,
     bundleLetter: lead.bundleLetter || "",
+    inBatch: members.some((member) => member.inBatch),
     commitLabel: members.map((m) => `TCK-${m.ticket_seq}`).join(" + "),
     subject: members.length > 1 ? `${lead.subject} (+ ${members.slice(1).map((m) => `TCK-${m.ticket_seq} ${m.subject}`).join("; ")})`.slice(0, 220) : lead.subject,
     description: members.map((m) => `=== TCK-${m.ticket_seq}: ${m.subject} ===\nType: ${m.ticket_type} | Area: ${m.area} | Priority: ${m.priority}\n${m.description}`).join("\n\n"),
@@ -609,12 +624,28 @@ async function revertMerge(ticketSeq) {
  * branch for a human, and so does anything that breaks the type check or lint once merged. The
  * check runs in a throwaway copy of main, so the dev copy is not touched until everything passed.
  * Returns { merged, reason } - reason is shown to the admin when the fix was NOT merged. */
-async function autoMergeToDev(ticketSeq, files, { force = false } = {}) {
+async function autoMergeToDev(ticketSeq, files, { force = false, inBatch = false } = {}) {
   if (!AUTO_MERGE_TO_DEV && !force) return { merged: false, reason: null };
   const branch = `auto-fix/tck-${Number(ticketSeq)}`;
   const touches = (re) => files.find((file) => re.test(file.replace(/\\/g, "/")));
+  const migrationFiles = files.filter((file) => /(^|\/)(db|supabase)\/migrations\/.+\.sql$/.test(file.replace(/\\/g, "/")));
+  let migrationBlocked = null;
+  if (migrationFiles.length > 0) {
+    if (!inBatch) migrationBlocked = "it includes a database migration";
+    else {
+      // Daily batch: allowed if every migration only adds (the same check Promote runs before production).
+      for (const file of migrationFiles) {
+        const sql = await runGit(["show", `${branch}:${file.replace(/\\/g, "/")}`], REPO_PATH).catch(() => "");
+        const bad = sql ? nonAdditive(sql) : "it could not be read";
+        if (bad) {
+          migrationBlocked = `its migration ${file} is not additive (${bad})`;
+          break;
+        }
+      }
+    }
+  }
   const blocked =
-    (touches(/(^|\/)(db|supabase)\/migrations\//) && "it includes a database migration") ||
+    migrationBlocked ||
     (touches(/(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$/) && "it changes dependencies") ||
     (touches(/(^|\/)\.env/) && "it touches an env file") ||
     (touches(/(^|\/)middleware\.ts$/) && "it touches the middleware");
@@ -671,7 +702,25 @@ async function autoMergeToDev(ticketSeq, files, { force = false } = {}) {
   }
   if (failure) return { merged: false, reason: `Not merged automatically: ${failure}. The fix stays on its branch.` };
   const merge = await mergeBranch(ticketSeq);
-  return merge.ok ? { merged: true, reason: null } : { merged: false, reason: `Not merged automatically: ${merge.result}` };
+  if (!merge.ok) return { merged: false, reason: `Not merged automatically: ${merge.result}` };
+  if (migrationFiles.length > 0) {
+    // A batch ticket's migration goes to the DEV database now, so the fix can be tested on dev; Promote applies it to production.
+    const push = await applyDevMigrations();
+    if (!push.ok) {
+      await revertMerge(ticketSeq).catch(() => {});
+      return { merged: false, reason: `Not merged automatically: its migration could not be applied to the dev database (${push.output.slice(-200)}). The merge was undone; the fix stays on its branch.` };
+    }
+  }
+  return { merged: true, reason: null };
+}
+
+/** Pushes pending migrations from the dev repo to the dev database (scripts/supabase-db-push.ps1 -Environment dev). */
+function applyDevMigrations() {
+  return new Promise((resolve) => {
+    execFile("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(REPO_PATH, "scripts", "supabase-db-push.ps1"), "-Environment", "dev"], { cwd: REPO_PATH, timeout: 600000 }, (err, stdout, stderr) =>
+      resolve({ ok: !err, output: `${stdout || ""}${stderr || ""}` }),
+    );
+  });
 }
 
 // ------------------------------------------------------- dashboard hooks ----
@@ -1095,7 +1144,7 @@ async function processTicket(ticket, budgetTracker) {
 
     const phase1 = await runClaudeHeadless({
       cwd: worktreeDir,
-      prompt: buildPhase1Prompt(ticket) + screenshots + lessonsBlock("night"),
+      prompt: buildPhase1Prompt(ticket) + batchMigrationLines(ticket).join("\n") + screenshots + lessonsBlock("night"),
       tools: "Read,Grep,Glob",
       restricted: true,
       budget: scaled(MAX_BUDGET_USD, ticket),
@@ -1134,7 +1183,7 @@ async function processTicket(ticket, budgetTracker) {
 
     const phase2 = await runClaudeHeadless({
       cwd: worktreeDir,
-      prompt: buildPhase2Prompt(ticket, phase1.output, DEV_SERVER_PORT, path.join(worktreeDir, AGENT_SHOTS_DIRNAME)) + screenshots + lessonsBlock("night"),
+      prompt: buildPhase2Prompt(ticket, phase1.output, DEV_SERVER_PORT, path.join(worktreeDir, AGENT_SHOTS_DIRNAME)) + batchMigrationLines(ticket).join("\n") + screenshots + lessonsBlock("night"),
       tools: "Read,Grep,Glob,Edit,Write,Bash",
       allowedTools: "Edit Write Bash(npx tsc*) Bash(npx eslint*) Bash(node *)",
       disallowedTools: "Bash(git *) Bash(npm *) Bash(yarn *) Bash(pnpm *) Bash(rm *) Bash(rmdir *) Bash(del *) Bash(taskkill*) Bash(npx next*)",
@@ -1153,7 +1202,7 @@ async function processTicket(ticket, budgetTracker) {
 
     const commitResult = await verifyAndCommitFix(worktreeDir, ticket, phase2.output);
     // Night-run auto-merge: gated, and a no-op while AUTO_MERGE_TO_DEV is off.
-    const mergeResult = commitResult.committed ? await autoMergeToDev(ticket.ticket_seq, commitResult.files || []) : { merged: false, reason: null };
+    const mergeResult = commitResult.committed ? await autoMergeToDev(ticket.ticket_seq, commitResult.files || [], { inBatch: Boolean(ticket.inBatch) }) : { merged: false, reason: null };
     const finalAutoHandle = commitResult.committed ? (mergeResult.merged ? "M" : "D") : "P";
     const finalStatus = commitResult.committed ? "fixed" : "in_progress";
     for (const member of membersOf(ticket)) await reportResult(member.id, finalAutoHandle, formatPhase2Notes(phase2.output, commitResult), finalStatus);
