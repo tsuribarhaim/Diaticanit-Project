@@ -289,8 +289,31 @@ export function formatDefaultItemKind(value: string, locale: AppLocale): string 
   return locale === "he" ? value : titleCase(value);
 }
 
-export function formatDefaultUnit(value: string, locale: AppLocale): string {
+/** Countable units with their Hebrew singular (for a quantity of exactly 1) and plural. TCK-134: the AI's own units
+ * ("slice", "bowl"...) reached the chat card in English. */
+const COUNT_UNITS: Record<string, { en: [string, string]; he: [string, string] }> = {
+  cup: { en: ["cup", "cups"], he: ["כוס", "כוסות"] },
+  glass: { en: ["glass", "glasses"], he: ["כוס", "כוסות"] },
+  piece: { en: ["piece", "pieces"], he: ["יחידה", "יחידות"] },
+  serving: { en: ["serving", "servings"], he: ["מנה", "מנות"] },
+  slice: { en: ["slice", "slices"], he: ["פרוסה", "פרוסות"] },
+  bowl: { en: ["bowl", "bowls"], he: ["קערה", "קערות"] },
+  plate: { en: ["plate", "plates"], he: ["צלחת", "צלחות"] },
+  can: { en: ["can", "cans"], he: ["פחית", "פחיות"] },
+  bottle: { en: ["bottle", "bottles"], he: ["בקבוק", "בקבוקים"] },
+  handful: { en: ["handful", "handfuls"], he: ["חופן", "חופנים"] },
+  scoop: { en: ["scoop", "scoops"], he: ["סקופ", "סקופים"] },
+};
+const COUNT_UNIT_ALIASES: Record<string, string> = { cups: "cup", glasses: "glass", pieces: "piece", servings: "serving", slices: "slice", bowls: "bowl", plates: "plate", cans: "can", bottles: "bottle", handfuls: "handful", scoops: "scoop" };
+
+/** `quantity` (optional) picks the singular for exactly 1 - "1 פרוסה", "2 פרוסות"; without it the plural, as before. */
+export function formatDefaultUnit(value: string, locale: AppLocale, quantity?: number): string {
   const token = normalizeToken(value);
+  const countUnit = COUNT_UNITS[COUNT_UNIT_ALIASES[token] ?? token];
+  if (countUnit) {
+    const forms = locale === "he" ? countUnit.he : countUnit.en;
+    return quantity === 1 ? forms[0] : forms[1];
+  }
   if (token === "unit" || token === "entry" || token === "entries") return tr(locale, "unit", "יחידה");
   if (token === "ml") return tr(locale, "ml", "מ\"ל");
   if (token === "l" || token === "liters") return tr(locale, "liters", "ליטר");
@@ -298,12 +321,11 @@ export function formatDefaultUnit(value: string, locale: AppLocale): string {
   if (token === "kg" || token === "kilograms") return tr(locale, "kilograms", "ק\"ג");
   if (token === "m" || token === "meters") return tr(locale, "meters", "מטר");
   if (token === "km" || token === "kilometers") return tr(locale, "kilometers", "ק\"מ");
-  if (token === "cup" || token === "cups") return tr(locale, "cups", "כוסות");
-  if (token === "piece" || token === "pieces") return tr(locale, "pieces", "יחידות");
-  if (token === "serving" || token === "servings") return tr(locale, "servings", "מנות");
   if (token === "tbsp" || token === "tablespoon" || token === "tablespoons") return tr(locale, "tbsp", "כף");
   if (token === "tsp" || token === "teaspoon" || token === "teaspoons") return tr(locale, "tsp", "כפית");
   if (token === "min" || token === "minutes") return tr(locale, "minutes", "דקות");
+  if (token === "oz" || token === "ounce" || token === "ounces") return tr(locale, "oz", "אונקיות");
+  if (token === "lb" || token === "lbs" || token === "pound" || token === "pounds") return tr(locale, "lb", "ליברות");
   return value;
 }
 

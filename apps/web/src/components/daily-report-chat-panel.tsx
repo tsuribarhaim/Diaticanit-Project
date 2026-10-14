@@ -1284,7 +1284,7 @@ export function DailyReportChatPanel({
                       >
                         <span className="font-semibold text-slate-800 dark:text-slate-200">{formatDefaultItemName(item.name, locale)}</span>
                         <span className="text-slate-500 dark:text-slate-400">
-                          {item.quantity} {formatDefaultUnit(item.unit, locale)}
+                          {item.quantity} {formatDefaultUnit(item.unit, locale, Number(item.quantity))}
                         </span>
                       </div>
                     ))}
