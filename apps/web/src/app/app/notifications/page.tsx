@@ -74,7 +74,7 @@ export default async function NotificationsPage({
         {tr(
           locale,
           "Daffy wants to share insights, recommendations, and updates from your tracking - plus updates on tickets you've submitted.",
-          "דפי רוצה לשתף איתך תובנות, המלצות ועדכונים מהמעקב שלך - ועדכונים על פניות שהגשת.",
+          "דפי רוצה לשתף איתך תובנות, המלצות ועדכונים מהמעקב שלך, ועדכונים על פניות שהגשת.",
         )}
       </p>
       {/* TCK-66: replace + scroll={false} so switching the filter doesn't
