@@ -362,6 +362,8 @@ export function formatTicketArea(value: string, locale: AppLocale): string {
   if (token === "notifications") return tr(locale, "Notifications", "התראות");
   if (token === "settings") return tr(locale, "Settings", "הגדרות");
   if (token === "account_auth") return tr(locale, "Account & Sign-in", "חשבון והתחברות");
+  if (token === "tickets") return tr(locale, "Tickets", "פניות");
+  if (token === "quick_add") return tr(locale, "Quick add", "הוספה מהירה");
   if (token === "other") return tr(locale, "Other", "אחר");
   return locale === "he" ? value : titleCase(value.replace(/_/g, " "));
 }
