@@ -137,7 +137,7 @@ export function AddUserDialog({ locale }: { locale: AppLocale }) {
                             tr(
                               locale,
                               `${state.added} can now download Daffy, sign up and go through onboarding.`,
-                              `${state.added} יכול/ה עכשיו להוריד את Daffy, להירשם ולעבור את תהליך ההצטרפות.`,
+                              `${state.added} יכול/ה עכשיו להוריד את דפי, להירשם ולעבור את תהליך ההצטרפות.`,
                             ),
                             state.added ?? "",
                           )}
@@ -196,7 +196,7 @@ export function AddUserDialog({ locale }: { locale: AppLocale }) {
                       {tr(
                         locale,
                         "Type the email of the person to invite. They can then download Daffy, sign up and go through onboarding.",
-                        "יש להקליד את האימייל של האדם להזמנה. הוא/היא יוכלו להוריד את Daffy, להירשם ולעבור את תהליך ההצטרפות.",
+                        "יש להקליד את האימייל של האדם להזמנה. הוא/היא יוכלו להוריד את דפי, להירשם ולעבור את תהליך ההצטרפות.",
                       )}
                     </p>
                     <label htmlFor="add-user-email" className="mt-4 mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">
@@ -231,7 +231,7 @@ export function AddUserDialog({ locale }: { locale: AppLocale }) {
                             {tr(
                               locale,
                               "The link to Daffy, what it is for, and how to install it on Android and iPhone.",
-                              "הקישור ל-Daffy, למה הוא מיועד, ואיך מתקינים אותו באנדרואיד ובאייפון.",
+                              "הקישור לדפי, למה הוא מיועד, ואיך מתקינים אותו באנדרואיד ובאייפון.",
                             )}
                           </span>
                         </span>

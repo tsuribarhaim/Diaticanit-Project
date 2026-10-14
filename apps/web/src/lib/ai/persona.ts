@@ -23,7 +23,7 @@ export const ASSISTANT_PERSONA_INSTRUCTIONS: string[] = [
  * spread ASSISTANT_PERSONA_INSTRUCTIONS but still write text that mentions
  * Daffy - keeps "Daffy תבדוק" from drifting into a masculine "Daffy יבדוק".
  */
-export const DAFFY_HEBREW_GENDER_RULE = "In Hebrew text, Daffy (the app's AI coach - you) is always FEMININE: whenever you refer to Daffy in the third person or to yourself, use feminine verb and adjective forms - e.g. \"Daffy תבדוק\", \"Daffy בודקת\", \"היא תעדכן\", \"אני ממליצה\" - never masculine forms like \"Daffy יבדוק\", \"Daffy בודק\" or \"הוא יעדכן\". This applies only to Daffy herself, not to how you address the user. Irrelevant for English text.";
+export const DAFFY_HEBREW_GENDER_RULE = "In Hebrew text, Daffy (the app's AI coach - you) is written \"דפי\" (never \"Daffy\") and is always FEMININE: whenever you refer to Daffy in the third person or to yourself, use feminine verb and adjective forms - e.g. \"דפי תבדוק\", \"דפי בודקת\", \"היא תעדכן\", \"אני ממליצה\" - never masculine forms like \"דפי יבדוק\", \"דפי בודק\" or \"הוא יעדכן\". This applies only to Daffy herself, not to how you address the user. In English text she stays \"Daffy\".";
 
 /**
  * Normalizes a profile's self-identified gender + biological_sex into

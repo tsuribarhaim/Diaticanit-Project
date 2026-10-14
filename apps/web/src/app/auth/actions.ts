@@ -348,7 +348,7 @@ export async function forgotPasswordAction(
     success: tr(
       locale,
       "If that email has an account, a password reset link is on its way from Daffy. Check your inbox (and spam folder).",
-      "אם לכתובת הזו יש חשבון, קישור לאיפוס הסיסמה בדרך אליך מ-Daffy. כדאי לבדוק גם בתיקיית הספאם.",
+      "אם לכתובת הזו יש חשבון, קישור לאיפוס הסיסמה בדרך אליך מדפי. כדאי לבדוק גם בתיקיית הספאם.",
     ),
   };
 
