@@ -100,6 +100,10 @@ const AUTOFIX_BOT_PASSWORD = env.AUTOFIX_BOT_PASSWORD;
 const WEB_APP_SUBDIR = env.WEB_APP_SUBDIR || "apps/web";
 const ANALYST_MAX_BUDGET_USD = env.ANALYST_MAX_BUDGET_USD_PER_TICKET || "3.00";
 const ANALYST_TIMEOUT_MS = Number(env.ANALYST_TIMEOUT_MS || 900000);
+/** The daily batch triage (POST /triage, 16:00): one read-only run over all candidate tickets. */
+const TRIAGE_MAX_BUDGET_USD = env.TRIAGE_MAX_BUDGET_USD || "4.00";
+const TRIAGE_TIMEOUT_MS = Number(env.TRIAGE_TIMEOUT_MS || 1500000);
+const TRIAGE_MAX_PICKS = 8;
 const SHOT_TOOL = path.join(__dirname, "tools", "shot.js");
 // Outside every worktree on purpose: the bridge commits with `git add -A`, and screenshots must never end up in a fix.
 const SHOTS_BASE = path.join(__dirname, "shots");
@@ -1323,6 +1327,106 @@ async function analyzeTicket(ticket, budgetTracker) {
   }
 }
 
+// ---- Daily batch triage (memory "daily-batch-process"; app: lib/daily-batch.ts) ---------------------------------------------
+// At 16:00 one read-only Claude run reads every candidate ticket (open/reopened, not in automation - the app decides which),
+// with its newest screenshots, checks the real code, and picks at most TRIAGE_MAX_PICKS that are clear and small. The app
+// records them as a proposed batch and returns the approval email; nothing is fixed until the admin approves.
+const TRIAGE_SCHEMA = JSON.stringify({
+  type: "object",
+  properties: {
+    picks: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          ticketSeq: { type: "integer" },
+          reason: { type: "string" },
+          needsMigration: { type: "boolean" },
+          files: { type: "array", items: { type: "string" } },
+        },
+        required: ["ticketSeq", "reason", "needsMigration", "files"],
+      },
+    },
+    alreadyFixed: { type: "array", items: { type: "object", properties: { ticketSeq: { type: "integer" }, why: { type: "string" } }, required: ["ticketSeq", "why"] } },
+  },
+  required: ["picks", "alreadyFixed"],
+});
+
+function buildTriagePrompt(tickets) {
+  const lines = [
+    "You are TRIAGING the open support tickets of the Daffy app (this repository, the code that is live in production) for a daily batch.",
+    "You only have read-only tools (Read, Grep, Glob). Change nothing.",
+    `Pick AT MOST ${TRIAGE_MAX_PICKS} tickets that are clearly SIMPLE to fix unattended tonight - fewer is fine, none is fine. The admin approves your picks; the analyst and the night agent then fix them.`,
+    "",
+    "A ticket is SIMPLE only when ALL of these hold - check each one in the real code, never guess:",
+    "1. It says exactly what to change: the wording to use, the value, the one behaviour. No product or design decision is left open (if you would have to choose between real options, it is not simple).",
+    "2. You found where it lives in the code, and the change is small: one place or a few on one screen or one function.",
+    "3. It does not change how the AI behaves (prompts, model output) and does not need an AI answer to check it.",
+    "4. It is not a redesign, a new screen, a multi-step flow, or several features in one ticket.",
+    "5. The reporter did not ask to talk it over or to go through mockups together (e.g. \"נעבור יחד\", \"אפשר לדבר\").",
+    "6. If it was fixed before and reopened, the remaining point is itself clear and small.",
+    "7. A database change is allowed only if it is small and only ADDS (a new allowed value, a new column) - then set needsMigration true.",
+    "Look at the screenshots: they often decide what the reporter means. If the problem no longer exists in the code (already fixed), do NOT pick it - list it in alreadyFixed with one line why.",
+    "For each pick: reason = ONE short sentence in Hebrew, for the admin, saying why it is simple (e.g. \"משפט אחד בקוד, הנוסח נתון בפנייה.\"); files = the source files you expect to change (path from the repository root).",
+    "Prefer the clearest and safest. Never pick a ticket only because it is old or high priority.",
+    "",
+    `THE TICKETS (${tickets.length}):`,
+  ];
+  for (const t of tickets) {
+    lines.push(
+      "",
+      `=== TCK-${t.ticket_seq}: ${t.subject} ===`,
+      `Type: ${t.ticket_type} | Area: ${t.area} | Priority: ${t.priority} | Status: ${t.status}${t.fix_description ? " | Fixed before: " + String(t.fix_description).slice(0, 300) : ""}`,
+      String(t.description || "").slice(0, 3000),
+    );
+    if (t.screenshotLines && t.screenshotLines.length) lines.push("Screenshots:", ...t.screenshotLines);
+  }
+  lines.push("", "Output per the provided JSON schema.");
+  return lines.join("\n");
+}
+
+async function runTriage() {
+  const res = await fetch(`${DAFFY_BASE_URL}/api/admin/tickets/triage-candidates`, { headers: { "x-ticket-automation-secret": TICKET_SECRET } });
+  if (!res.ok) throw new Error(`Triage candidates fetch failed: HTTP ${res.status}`);
+  const tickets = (await res.json()).tickets || [];
+  let picks = [];
+  let alreadyFixed = [];
+  let costUsd = 0;
+  if (tickets.length > 0) {
+    const worktreeDir = path.join(WORKTREE_BASE, `triage-${Date.now()}`);
+    await gitWorktreeAdd(worktreeDir, PRODUCTION_REF);
+    try {
+      // The newest two screenshots per ticket (enough to see what is meant, without reading a whole gallery).
+      for (const t of tickets) {
+        const block = await attachmentsBlock(worktreeDir, { ...t, attachments: (t.attachments || []).slice(0, 2) });
+        t.screenshotLines = block.split("\n").filter((line) => line.startsWith("- "));
+      }
+      const run = await runClaudeHeadless({
+        cwd: worktreeDir,
+        prompt: buildTriagePrompt(tickets),
+        tools: "Read,Grep,Glob",
+        restricted: true,
+        budget: TRIAGE_MAX_BUDGET_USD,
+        timeoutMs: TRIAGE_TIMEOUT_MS,
+        schema: TRIAGE_SCHEMA,
+      });
+      costUsd = run.costUsd;
+      const known = new Set(tickets.map((t) => t.ticket_seq));
+      picks = (run.output.picks || []).filter((pick) => known.has(pick.ticketSeq)).slice(0, TRIAGE_MAX_PICKS);
+      alreadyFixed = run.output.alreadyFixed || [];
+    } finally {
+      await gitWorktreeRemove(worktreeDir);
+    }
+  }
+  // The app re-checks the picks, records the batch and renders the approval email (none when nothing was picked).
+  const created = await fetch(`${DAFFY_BASE_URL}/api/admin/batches`, {
+    method: "POST",
+    headers: { "x-ticket-automation-secret": TICKET_SECRET, "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "create", picks, scannedCount: tickets.length, costUsd }),
+  }).then((r) => r.json());
+  return { scanned: tickets.length, picked: picks.length, picks, alreadyFixed, costUsd: Math.round(costUsd * 100) / 100, ...created };
+}
+
 async function runAnalysis() {
   const tickets = await fetchAnalyzeQueue();
   if (tickets.length > 0) await refreshLessons();
@@ -1454,7 +1558,7 @@ async function waitForOtherAgents() {
 const waitNote = (wait) => (wait ? ` (waited ${wait.minutes ? `${wait.minutes} min` : "under a minute"} for ${wait.blockedBy})` : "");
 
 const server = http.createServer(async (req, res) => {
-  const known = ["/run", "/analyze", "/merge", "/revert", "/promote", "/learn", "/health"];
+  const known = ["/run", "/analyze", "/triage", "/merge", "/revert", "/promote", "/learn", "/health"];
   if (req.method !== "POST" || !known.includes(req.url)) {
     return sendJson(res, 404, { error: "Not found. POST /run, /analyze, /merge, /revert, /promote, /learn or /health." });
   }
@@ -1544,6 +1648,30 @@ const server = http.createServer(async (req, res) => {
     const body = await readJsonBody(req);
     if (!body || !Number.isInteger(Number(body.ticketSeq))) return sendJson(res, 400, { error: "ticketSeq is required." });
     return sendJson(res, 200, await revertMerge(body.ticketSeq));
+  }
+
+  if (req.url === "/triage") {
+    if (triageInProgress) return sendJson(res, 200, { skipped: true, reason: "The daily triage is already running." });
+    const wait = await waitForOtherAgents();
+    if (wait?.timedOut) {
+      await recordRun("triage", new Date().toISOString(), { ticketsCount: 0, result: `Skipped: ${wait.blockedBy} was still running after ${wait.minutes} min.` });
+      return sendJson(res, 200, { skipped: true, reason: `${wait.blockedBy} is still running.` });
+    }
+    if (triageInProgress) return sendJson(res, 200, { skipped: true, reason: "The daily triage started meanwhile." });
+    if (await automationPaused()) return sendJson(res, 200, { skipped: true, reason: "Automation is paused." });
+    triageInProgress = true;
+    const releaseAwake = keepAwake();
+    const startedAt = new Date().toISOString();
+    try {
+      const outcome = await runTriage();
+      await recordRun("triage", startedAt, { ticketsCount: outcome.scanned, costUsd: outcome.costUsd, result: `${outcome.picked} picked of ${outcome.scanned}${outcome.batchId ? "" : ` - no batch: ${outcome.reason || "nothing picked"}`}${waitNote(wait)}` });
+      return sendJson(res, 200, { ...outcome, ...(wait ? { waitedFor: wait.blockedBy, waitedMinutes: wait.minutes } : {}) });
+    } catch (err) {
+      return sendJson(res, 500, { error: err.message });
+    } finally {
+      releaseAwake();
+      triageInProgress = false;
+    }
   }
 
   if (req.url === "/analyze") {
