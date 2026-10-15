@@ -33,6 +33,7 @@ import {
 import { isCurrentUserAdmin } from "@/lib/tickets";
 import { approveBatch, rejectBatch } from "@/lib/daily-batch-review";
 import { promoteBatch } from "@/lib/daily-batch-progress";
+import { setJobPulled } from "@/lib/work-order";
 
 /** Thin server-action wrappers around lib/ticket-review.ts: sign-in and admin checks first (RLS
  * still enforces it underneath), then the step, then a refresh of the screens that show it. */
@@ -173,4 +174,13 @@ export async function splitBundleAction(bundleId: string): Promise<ReviewResult>
 
 export async function bundleTicketsAction(ticketIds: string[]): Promise<ReviewResult> {
   return withAdmin(({ supabase, adminId, locale }) => bundleTickets(supabase, adminId, locale, ticketIds));
+}
+
+/** Control room, tonight's plan: pull a job out of tonight (or put it back) - only while the plan has not started. */
+export async function setWorkOrderJobPulledAction(workOrderId: string, position: number, pulled: boolean): Promise<ReviewResult> {
+  return withAdmin(async ({ supabase, locale }) =>
+    (await setJobPulled(supabase, workOrderId, position, pulled))
+      ? { success: pulled ? tr(locale, "Pulled out of tonight. It stays queued for a later night.", "הוצאה מהלילה. נשארת בתור ללילה אחר.") : tr(locale, "Back in tonight's plan.", "חזרה לתוכנית הלילה.") }
+      : { error: tr(locale, "Tonight's plan has already started or changed. Refresh the page.", "תוכנית הלילה כבר התחילה או השתנתה. יש לרענן את הדף.") },
+  );
 }
