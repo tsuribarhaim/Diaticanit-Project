@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { checkAutomationSecret } from "@/lib/automation-auth";
 import { loadBusyFiles } from "@/lib/automation-overlap";
-import { MAX_BATCH_TICKETS, renderBatchDoneEmail, renderBatchProposalEmail, renderBatchReadyEmail, type BatchTicket } from "@/lib/daily-batch";
+import { MAX_BATCH_TICKETS, renderBatchDoneEmail, renderBatchProposalEmail, renderBatchReadyEmail, renderBatchStoppedEmail, type BatchTicket } from "@/lib/daily-batch";
 import { syncActiveBatch } from "@/lib/daily-batch-progress";
 import { collectFiles, sharedFiles } from "@/lib/overlap";
 import { logServerError } from "@/lib/server-log";
@@ -32,7 +32,8 @@ export async function POST(request: Request) {
   if (body.action === "sync") {
     // After the night run or a promotion: bring the batch up to date; when it just became ready or done, hand back the email.
     const synced = await syncActiveBatch(admin);
-    const email = synced.batch && synced.becameReady ? renderBatchReadyEmail(synced.batch, appUrl) : synced.batch && synced.becameDone ? renderBatchDoneEmail(synced.batch, appUrl) : null;
+    const b = synced.batch;
+    const email = !b ? null : synced.becameReady ? renderBatchReadyEmail(b, appUrl) : synced.becameDone ? renderBatchDoneEmail(b, appUrl) : synced.becameStopped ? renderBatchStoppedEmail(b, appUrl) : null;
     return NextResponse.json(
       { status: synced.batch?.status ?? null, ...(email ? { emailSubject: email.subject, emailBody: email.html, emailText: email.text } : {}) },
       { headers: { "Cache-Control": "no-store" } },

@@ -35,13 +35,21 @@ const STATE_LABEL: Record<BatchTicketState, { en: string; he: string; tone: stri
 
 const ddmm = (isoDate: string) => `${isoDate.slice(8, 10)}/${isoDate.slice(5, 7)}`;
 
-function Steps({ locale, status }: { locale: AppLocale; status: Batch["status"] }) {
+/** Approved outside 16:00-18:00, the analyst was requested at once (lib/daily-batch-review.ts) - no "18:00" on its step. */
+function analysisAtOnce(batch: Batch): boolean {
+  if (!batch.approved_at) return false;
+  const hour = Number(new Date(batch.approved_at).toLocaleString("en-GB", { timeZone: "Asia/Jerusalem", hour: "2-digit", hour12: false })) % 24;
+  return hour < 16 || hour >= 18;
+}
+
+function Steps({ locale, batch }: { locale: AppLocale; batch: Batch }) {
+  const status = batch.status;
   const current = STEPS.findIndex((step) => step.key.includes(status));
   return (
     <ol className="mt-3 flex flex-wrap gap-1.5">
       {STEPS.map((step, i) => (
         <li key={step.en} className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${i < current || status === "done" ? "bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300" : i === current ? "bg-teal-700 text-white dark:bg-teal-600" : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400"}`}>
-          {tr(locale, step.en, step.he)}
+          {step.key[0] === "approved" && analysisAtOnce(batch) ? tr(locale, "Analysis", "ניתוח") : tr(locale, step.en, step.he)}
         </li>
       ))}
     </ol>
@@ -60,6 +68,14 @@ export default async function DailyBatchPage() {
   const batch = await loadLatestBatch(supabase);
   const inProgress = batch && ["approved", "building", "ready", "promoting"].includes(batch.status);
   const visible = batch ? batch.tickets.filter((t) => batch.status === "proposed" || t.state !== "unselected") : [];
+  const paused = inProgress && Boolean((await supabase.from("automation_settings").select("paused").eq("id", true).maybeSingle()).data?.paused);
+  // Fixes the admin approved for production meanwhile: a manual promotion waits for the batch, so they go out with it.
+  let alsoIncluded: { seq: number; subject: string }[] = [];
+  if (batch && batch.status === "ready") {
+    const mine = new Set(batch.tickets.map((t) => t.ticketId));
+    const { data: extra } = await supabase.from("tickets").select("id, ticket_seq, subject").eq("auto_handle", "R").order("ticket_seq");
+    alsoIncluded = ((extra ?? []) as { id: string; ticket_seq: number; subject: string }[]).filter((t) => !mine.has(t.id)).map((t) => ({ seq: t.ticket_seq, subject: t.subject }));
+  }
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 px-6 py-8">
@@ -82,7 +98,7 @@ export default async function DailyBatchPage() {
                       ? tr(locale, `The batch stopped: ${batch.note ?? "see the automation page"}.`, `החבילה נעצרה: ${batch.note ?? "ראו בדף האוטומציה"}.`)
                       : tr(locale, `${visible.length} ticket${visible.length === 1 ? "" : "s"} in the batch.`, visible.length === 1 ? "פנייה אחת בחבילה." : `${visible.length} פניות בחבילה.`)}
         </p>
-        {batch && !["rejected", "expired", "failed"].includes(batch.status) ? <Steps locale={locale} status={batch.status} /> : null}
+        {batch && !["rejected", "expired", "failed"].includes(batch.status) ? <Steps locale={locale} batch={batch} /> : null}
       </section>
 
       {inProgress ? (
@@ -93,6 +109,13 @@ export default async function DailyBatchPage() {
             "Batch in progress: the analyst and the night run cannot be started by hand now, so fixes and files never overlap. You can still mark tickets for automation - they wait until the batch closes.",
             "חבילה בתהליך: אי אפשר להפעיל עכשיו ידנית את האנליסט או את ריצת הלילה, כדי שתיקונים וקבצים לא יתנגשו. אפשר להמשיך לסמן פניות לאוטומציה, והן ימתינו עד שהחבילה תיסגר.",
           )}
+        </p>
+      ) : null}
+
+      {paused ? (
+        <p className="flex gap-2 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-900 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
+          <span aria-hidden="true">⏸</span>
+          {tr(locale, "Automation is paused, so the batch is waiting. Resume it on the automation page; a batch not ready within 48 hours of its approval stops.", "האוטומציה מושהית, ולכן החבילה ממתינה. אפשר לחדש אותה בדף האוטומציה; חבילה שלא מוכנה תוך 48 שעות מהאישור נעצרת.")}
         </p>
       ) : null}
 
@@ -116,7 +139,17 @@ export default async function DailyBatchPage() {
         </ul>
       ) : null}
 
-      {batch && batch.status === "ready" ? <DailyBatchPromote locale={locale} batchId={batch.id} count={batch.tickets.filter((t) => t.state === "built").length} /> : null}
+      {alsoIncluded.length > 0 ? (
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm dark:border-slate-800 dark:bg-slate-900">
+          <p className="font-semibold text-slate-900 dark:text-slate-100">{tr(locale, "Also in this promotion (you approved them for production):", "גם בהעלאה הזו (אישרת אותם לייצור):")}</p>
+          <ul className="mt-1 space-y-0.5 text-slate-700 dark:text-slate-300">
+            {alsoIncluded.map((t) => (
+              <li key={t.seq}><span dir="ltr" className="font-mono text-xs">TCK-{t.seq}</span> <span dir="auto">{t.subject}</span></li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {batch && batch.status === "ready" ? <DailyBatchPromote locale={locale} batchId={batch.id} count={batch.tickets.filter((t) => t.state === "built").length + alsoIncluded.length} /> : null}
       {batch && batch.status === "promoting" ? (
         <p className="rounded-xl border border-teal-300 bg-teal-50 px-4 py-3 text-sm text-teal-900 dark:border-teal-800 dark:bg-teal-950/30 dark:text-teal-200">
           {tr(locale, "Promotion in progress. You get an email when it is live; the batch then closes.", "ההעלאה לייצור בתהליך. יישלח אליך מייל כשהיא תהיה באוויר, ואז החבילה תיסגר.")}

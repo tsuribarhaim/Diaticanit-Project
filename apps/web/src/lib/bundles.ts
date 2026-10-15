@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { loadActiveBatch, LOCKING_BATCH_STATUSES } from "@/lib/daily-batch";
 import { MAX_BUNDLE_SIZE, nextBundleLetter } from "@/lib/overlap";
 
 /** Fix bundles (docs/design/auto-ticket-handling.md, "Fix bundles"): tickets whose fixes change the same files are built, tested
@@ -44,7 +45,7 @@ export async function bundleIsBuilt(supabase: SupabaseClient, bundle: BundleInfo
 
 /** Groups the tickets into a new bundle. Refuses a group that is too small or too big, a ticket that is already in a bundle, or one
  * that is already built. Returns the bundle, or an error text (plain English; the callers turn it into the right language). */
-export async function createBundle(supabase: SupabaseClient, adminId: string, ticketIds: string[]): Promise<{ bundle: BundleInfo } | { error: "size" | "taken" | "built" | "db" }> {
+export async function createBundle(supabase: SupabaseClient, adminId: string, ticketIds: string[]): Promise<{ bundle: BundleInfo } | { error: "size" | "taken" | "built" | "batch" | "db" }> {
   const ids = [...new Set(ticketIds)];
   if (ids.length < 2 || ids.length > MAX_BUNDLE_SIZE) return { error: "size" };
   const { data: rows } = await supabase.from("tickets").select("id, ticket_seq, auto_handle, status, bundle_id").in("id", ids);
@@ -52,6 +53,13 @@ export async function createBundle(supabase: SupabaseClient, adminId: string, ti
   if (tickets.length !== ids.length) return { error: "db" };
   if (tickets.some((ticket) => ticket.bundle_id)) return { error: "taken" };
   if (tickets.some((ticket) => ["D", "M", "R"].includes(ticket.auto_handle ?? ""))) return { error: "built" };
+  // While a daily batch runs, its tickets are bundled only with each other.
+  const batch = await loadActiveBatch(supabase);
+  if (batch && LOCKING_BATCH_STATUSES.includes(batch.status)) {
+    const live = new Set(batch.tickets.filter((t) => !["unselected", "out"].includes(t.state)).map((t) => t.ticketId));
+    const inside = ids.filter((id) => live.has(id)).length;
+    if (inside > 0 && inside < ids.length) return { error: "batch" };
+  }
   const { data: used } = await supabase.from("automation_bundles").select("letter");
   const letter = nextBundleLetter(((used ?? []) as { letter: string }[]).map((row) => row.letter));
   const { data: created, error } = await supabase.from("automation_bundles").insert({ letter, created_by: adminId }).select("id").single();

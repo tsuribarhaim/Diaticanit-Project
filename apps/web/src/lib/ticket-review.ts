@@ -389,7 +389,11 @@ export async function sendBackFix(supabase: Client, adminId: string, locale: App
 
 /** "Promote to production": one request covering every fix approved right now. Fire and forget - the
  * laptop does the work and a confirmation email reports the outcome. */
-export async function requestPromote(supabase: Client, adminId: string, locale: AppLocale, proposalIds?: string[]): Promise<ReviewResult> {
+export async function requestPromote(supabase: Client, adminId: string, locale: AppLocale, proposalIds?: string[], options: { fromBatch?: boolean } = {}): Promise<ReviewResult> {
+  // A promotion during a daily batch would move production under the batch's fixes (built on it) - they would no longer promote.
+  if (!options.fromBatch && (await batchLockActive(supabase))) {
+    return { error: tr(locale, "A daily batch is in progress. Fixes you approve for production go out with the batch's promotion (on the batch page).", "חבילה יומית בתהליך. תיקונים שמאשרים לייצור יעלו יחד עם ההעלאה של החבילה (בדף החבילה).") };
+  }
   const { data: open } = await supabase.from("automation_requests").select("id").eq("kind", "promote").is("completed_at", null).limit(1);
   if ((open ?? []).length > 0) return { success: tr(locale, "A promotion is already requested or running.", "העלאה לייצור כבר התבקשה או רצה כעת.") };
   const { data: approved } = await supabase
@@ -554,6 +558,7 @@ export async function approveSuggestedGroup(supabase: Client, adminId: string, l
         size: tr(locale, `A bundle has 2 to ${MAX_BUNDLE_SIZE} tickets.`, `בחבילה יש 2 עד ${MAX_BUNDLE_SIZE} פניות.`),
         taken: tr(locale, "One of these tickets is already in a bundle.", "אחת הפניות כבר בחבילה."),
         built: tr(locale, "One of these tickets already has a fix built.", "לאחת הפניות כבר נבנה תיקון."),
+        batch: tr(locale, "A daily batch ticket can only be bundled with other tickets of the same batch while the batch runs.", "בזמן שהחבילה היומית רצה, אפשר לאחד פנייה שלה רק עם פניות אחרות מאותה חבילה."),
         db: dbError(locale).error!,
       }[created.error];
       return { error: text };
@@ -608,6 +613,7 @@ export async function bundleTickets(supabase: Client, adminId: string, locale: A
         size: tr(locale, `A bundle has 2 to ${MAX_BUNDLE_SIZE} tickets.`, `בחבילה יש 2 עד ${MAX_BUNDLE_SIZE} פניות.`),
         taken: tr(locale, "One of these tickets is already in a bundle.", "אחת הפניות כבר בחבילה."),
         built: tr(locale, "One of these tickets already has a fix built.", "לאחת הפניות כבר נבנה תיקון."),
+        batch: tr(locale, "A daily batch ticket can only be bundled with other tickets of the same batch while the batch runs.", "בזמן שהחבילה היומית רצה, אפשר לאחד פנייה שלה רק עם פניות אחרות מאותה חבילה."),
         db: dbError(locale).error!,
       }[created.error],
     };
