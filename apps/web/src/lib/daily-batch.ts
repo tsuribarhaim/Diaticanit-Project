@@ -13,8 +13,9 @@ import type { createClient } from "@/lib/supabase/server";
 export const MAX_BATCH_TICKETS = 8;
 /** States of a ticket inside a batch. */
 export type BatchTicketState = "proposed" | "unselected" | "queued" | "analysing" | "building" | "built" | "out" | "released";
-/** retried: the fix stopped once and was requeued (a second stop takes it out); summary: what the fix changed (for the emails). */
-export type BatchTicket = { ticketId: string; seq: number; subject: string; reason: string; needsMigration: boolean; state: BatchTicketState; note?: string | null; retried?: boolean; summary?: string | null };
+/** retried: the fix stopped once and was requeued (a second stop takes it out); summary: what the fix changed (for the emails);
+ * files: the source files the triage expects it to change (the overlap checks at creation and approval). */
+export type BatchTicket = { ticketId: string; seq: number; subject: string; reason: string; needsMigration: boolean; state: BatchTicketState; note?: string | null; retried?: boolean; summary?: string | null; files?: string[] };
 export type BatchStatus = "proposed" | "approved" | "building" | "ready" | "promoting" | "done" | "rejected" | "expired" | "failed";
 export type Batch = {
   id: string;
