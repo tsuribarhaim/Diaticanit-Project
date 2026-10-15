@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { attachmentLinksFor } from "@/lib/ticket-attachment-links";
 import { loadActiveBatch } from "@/lib/daily-batch";
 import { logServerError } from "@/lib/server-log";
+import { loadActiveWorkOrder } from "@/lib/work-order";
 
 export const dynamic = "force-dynamic";
 
@@ -55,6 +56,16 @@ export async function GET(request: Request) {
   // Tickets of the daily batch in progress may carry a small additive migration (decided 2026-10-14).
   const batch = await loadActiveBatch(adminClient);
   const inBatch = new Set(batch && ["approved", "building"].includes(batch.status) ? batch.tickets.filter((t) => !["unselected", "out"].includes(t.state)).map((t) => t.ticketId) : []);
-  const tickets = (data ?? []).map((ticket) => ({ ...ticket, inBatch: inBatch.has(ticket.id as string), attachments: attachments.get(ticket.id as string) ?? [], bundleLetter: ticket.bundle_id ? letters.get(ticket.bundle_id as string) ?? null : null, heldBy: (blockers.get(ticket.id) ?? []).map((b) => ({ seq: b.seq, why: b.why, files: b.files.slice(0, 5) })) }));
-  return NextResponse.json({ tickets }, { headers: { "Cache-Control": "no-store" } });
+  const all = (data ?? []).map((ticket) => ({ ...ticket, inBatch: inBatch.has(ticket.id as string), attachments: attachments.get(ticket.id as string) ?? [], bundleLetter: ticket.bundle_id ? letters.get(ticket.bundle_id as string) ?? null : null, heldBy: (blockers.get(ticket.id) ?? []).map((b) => ({ seq: b.seq, why: b.why, files: b.files.slice(0, 5) })) }));
+  // Tonight's work order (lib/work-order.ts), when there is one: only its jobs that were not pulled out, in its order, each
+  // with the migration number reserved for it. Without one (an older bridge), the queue is as before.
+  const order = await loadActiveWorkOrder(adminClient).catch(() => null);
+  if (!order) return NextResponse.json({ tickets: all }, { headers: { "Cache-Control": "no-store" } });
+  const place = new Map<string, { position: number; migrationNumber: number | null }>();
+  for (const job of order.jobs) if (!job.pulled) for (const id of job.ticketIds) place.set(id, { position: job.position, migrationNumber: job.migrationNumber });
+  const tickets = all
+    .filter((ticket) => place.has(ticket.id as string))
+    .sort((a, b) => place.get(a.id as string)!.position - place.get(b.id as string)!.position)
+    .map((ticket) => ({ ...ticket, migrationNumber: place.get(ticket.id as string)!.migrationNumber }));
+  return NextResponse.json({ tickets, workOrderId: order.id }, { headers: { "Cache-Control": "no-store" } });
 }
