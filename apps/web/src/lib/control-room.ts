@@ -100,7 +100,9 @@ export async function getControlRoom(supabase: Client, locale: AppLocale, dayOff
   const reopenedAfterFix = new Set(events.filter((e) => e.kind === "reopened_after_fix").map((e) => e.ticket_id));
   const sourceOf = (t: T): Source => (batchLive.has(t.id) ? "batch" : t.status === "reopened" || reopenedAfterFix.has(t.id) ? "reopen" : t.auto_handle ? "you" : "scan");
   const item = (t: T, chip?: QueueItem["chip"]): QueueItem => ({ ticketId: t.id, seq: t.ticket_seq, subject: t.subject, source: sourceOf(t), chip });
-  const live = tickets.filter((t) => ["open", "reopened"].includes(t.status) || ["D", "M", "R"].includes(t.auto_handle ?? ""));
+  // A finished ticket is never live, whatever its flag: mark-released leaves 'D' on a released ticket on purpose ("fixed by the
+  // automation", counted by the daily digest), so 'D' alone does not mean "built, waiting to be merged".
+  const live = tickets.filter((t) => !["resolved", "closed", "cancelled", "duplicate"].includes(t.status));
   const flagged = (flag: string) => live.filter((t) => t.auto_handle === flag);
   const pendingQuestions = new Set(proposals.filter((p) => p.kind === "questions" && p.status === "pending").map((p) => p.ticket_id));
 
