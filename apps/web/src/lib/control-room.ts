@@ -148,7 +148,11 @@ export async function getControlRoom(supabase: Client, locale: AppLocale, dayOff
   // ---- lanes
   const scanCandidates = live.filter((t) => !t.auto_handle && ["open", "reopened"].includes(t.status));
   const orderPlace = new Map<string, number>();
-  for (const j of order && order.status !== "done" ? order.jobs : []) for (const id of j.ticketIds) orderPlace.set(id, j.position);
+  const pulledIds = new Set<string>();
+  for (const j of order && order.status !== "done" ? order.jobs : []) for (const id of j.ticketIds) {
+    if (j.pulled) pulledIds.add(id);
+    else orderPlace.set(id, j.position);
+  }
   const deferredWhy = new Map((order && order.status !== "done" ? order.deferred : []).map((d) => [d.ticketId, d]));
   const lanes: Lane[] = [
     {
@@ -182,6 +186,7 @@ export async function getControlRoom(supabase: Client, locale: AppLocale, dayOff
             const d = deferredWhy.get(t.id);
             if (t.auto_handle === "P") return item(t, { tone: "ai", text: L("Being built now", "נבנית עכשיו") });
             if (place) return item(t, { tone: "plain", text: L(`Job ${place}`, `משימה ${place}`) });
+            if (pulledIds.has(t.id)) return item(t, { tone: "amber", text: L("You pulled it out of tonight", "הוצאת אותה מהלילה") });
             if (d) return item(t, { tone: d.reason === "budget" || d.reason === "pulled" ? "amber" : "rose", text: deferText(d.reason, d.waitsFor, locale) });
             return item(t, { tone: "plain", text: L("Waits for tonight's plan", "ממתינה לתוכנית הלילה") });
           }),
@@ -374,6 +379,7 @@ function requestLabel(kind: string, details: Record<string, unknown> | null, loc
   if (kind === "promote") return L("Promotion", "העלאה לייצור");
   if (kind === "learn") return L("Lesson for the agents", "לקח לסוכנים");
   if (kind === "invite") return L("Invitation email", "מייל הזמנה");
+  if (kind === "password_reset") return L("Password reset email", "מייל איפוס סיסמה");
   return kind;
 }
 

@@ -52,11 +52,11 @@ export function ControlRoomView({ locale, data, dayOffset, initialView }: { loca
     s === "batch" ? <Chip tone="batch">{L("Daily batch", "חבילה יומית")}</Chip> : s === "you" ? <Chip tone="you">{L("Marked by you", "סימנת ידנית")}</Chip> : s === "reopen" ? <Chip tone="amber">{L("Reopened", "נפתחה מחדש")}</Chip> : <Chip tone="auto">{L("Scan candidate", "מועמדת לסריקה")}</Chip>;
   const Tck = ({ id, seq }: { id?: string; seq: number }) =>
     id ? (
-      <button type="button" onClick={() => setJourneyId(id)} dir="ltr" className="rounded bg-slate-100 px-1.5 font-mono text-xs text-slate-800 hover:bg-teal-100 hover:text-teal-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-teal-950">
+      <button type="button" onClick={() => setJourneyId(id)} dir="ltr" className="whitespace-nowrap rounded bg-slate-100 px-1.5 font-mono text-xs text-slate-800 hover:bg-teal-100 hover:text-teal-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-teal-950">
         TCK-{seq}
       </button>
     ) : (
-      <span dir="ltr" className="rounded bg-slate-100 px-1.5 font-mono text-xs dark:bg-slate-800">TCK-{seq}</span>
+      <span dir="ltr" className="whitespace-nowrap rounded bg-slate-100 px-1.5 font-mono text-xs dark:bg-slate-800">TCK-{seq}</span>
     );
 
   useEffect(() => {
