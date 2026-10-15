@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { checkAutomationSecret } from "@/lib/automation-auth";
+import { loadBusyFiles } from "@/lib/automation-overlap";
 import { MAX_BATCH_TICKETS, renderBatchDoneEmail, renderBatchProposalEmail, renderBatchReadyEmail, type BatchTicket } from "@/lib/daily-batch";
 import { syncActiveBatch } from "@/lib/daily-batch-progress";
+import { collectFiles, sharedFiles } from "@/lib/overlap";
 import { logServerError } from "@/lib/server-log";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { DAFFY_PUBLIC_URL } from "@/lib/welcome-email";
@@ -14,7 +16,7 @@ export const dynamic = "force-dynamic";
  * the admin never approved expires), and the approval email is returned for n8n to send. Every pick is checked again here:
  * still open or reopened, not in automation, at most MAX_BATCH_TICKETS.
  */
-type Pick = { ticketSeq?: unknown; reason?: unknown; needsMigration?: unknown };
+type Pick = { ticketSeq?: unknown; reason?: unknown; needsMigration?: unknown; files?: unknown };
 
 export async function POST(request: Request) {
   const denied = checkAutomationSecret(request, "adminBatches");
@@ -50,17 +52,26 @@ export async function POST(request: Request) {
     ? await admin.from("tickets").select("id, ticket_seq, subject, status, auto_handle").in("ticket_seq", seqs)
     : { data: [] as { id: string; ticket_seq: number; subject: string; status: string; auto_handle: string | null }[] };
   const eligible = new Map(((rows ?? []) as { id: string; ticket_seq: number; subject: string; status: string; auto_handle: string | null }[]).filter((t) => ["open", "reopened"].includes(t.status) && !t.auto_handle).map((t) => [t.ticket_seq, t]));
-  const tickets: BatchTicket[] = seqs
+  const candidates: BatchTicket[] = seqs
     .filter((seq) => eligible.has(seq))
     .map((seq) => {
       const ticket = eligible.get(seq)!;
       const pick = picks.find((p) => Number(p.ticketSeq) === seq)!;
-      return { ticketId: ticket.id, seq, subject: ticket.subject, reason: String(pick.reason).trim().slice(0, 240), needsMigration: pick.needsMigration === true, state: "proposed" };
+      return { ticketId: ticket.id, seq, subject: ticket.subject, reason: String(pick.reason).trim().slice(0, 240), needsMigration: pick.needsMigration === true, state: "proposed", files: collectFiles(pick.files) };
     });
+  // A pick that touches a file a fix not promoted yet (or a ticket already queued) changes would only be held by the night
+  // run: it is left for a later scan (the triage sees it again once that work reaches production).
+  const busy = await loadBusyFiles(admin);
+  const heldBack: { seq: number; waitsFor: number[] }[] = [];
+  const tickets = candidates.filter((t) => {
+    const waitsFor = busy.filter((b) => sharedFiles(t.files ?? [], b.files).length > 0).map((b) => b.seq);
+    if (waitsFor.length > 0) heldBack.push({ seq: t.seq, waitsFor });
+    return waitsFor.length === 0;
+  });
 
   // The previous proposal the admin never approved is replaced by today's.
   await admin.from("automation_batches").update({ status: "expired", closed_at: new Date().toISOString(), note: "Not approved before the next scan." }).eq("status", "proposed");
-  if (tickets.length === 0) return NextResponse.json({ batchId: null, reason: "Nothing clear and small today." }, { headers: { "Cache-Control": "no-store" } });
+  if (tickets.length === 0) return NextResponse.json({ batchId: null, heldBack, reason: "Nothing clear and small today." }, { headers: { "Cache-Control": "no-store" } });
 
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jerusalem" });
   const { data: created, error } = await admin
@@ -75,5 +86,5 @@ export async function POST(request: Request) {
   }
   // The link points at the app that sent it (dev: the laptop, see RESET_LINK_BASE_URL; otherwise production).
   const email = renderBatchProposalEmail(created as { batch_date: string; tickets: BatchTicket[]; scanned_count: number }, appUrl);
-  return NextResponse.json({ batchId: created.id, emailSubject: email.subject, emailBody: email.html, emailText: email.text }, { headers: { "Cache-Control": "no-store" } });
+  return NextResponse.json({ batchId: created.id, heldBack, emailSubject: email.subject, emailBody: email.html, emailText: email.text }, { headers: { "Cache-Control": "no-store" } });
 }

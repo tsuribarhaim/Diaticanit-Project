@@ -5,6 +5,49 @@ import { collectFiles, filesFromText, overlapBlockers, type Blocker, type Ticket
 /** Events that put a ticket (back) in the night run's queue: an "overlap_override" only counts when it is newer than the last of these. */
 const QUEUED_EVENTS = ["spec_approved", "answered", "requeued", "auto_requeued", "sent_back", "returned"];
 
+type JoinedTicket = { ticket_seq: number; bundle_id: string | null; status: string; auto_handle: string | null };
+
+/** Fixes that are built (on their branch, on dev or approved) but not promoted yet, with what they really changed. */
+async function loadInFlightFixes(supabase: SupabaseClient): Promise<(TicketFiles & { bundleId: string | null })[]> {
+  const { data: fixRows } = await supabase
+    .from("ticket_proposals")
+    .select("ticket_id, files:payload->files, tickets!inner(ticket_seq, bundle_id, status, auto_handle)")
+    .eq("kind", "fix")
+    .in("status", ["pending", "merged", "approved"]);
+  const inFlight: (TicketFiles & { bundleId: string | null })[] = [];
+  for (const row of (fixRows ?? []) as unknown as { files: unknown; tickets: JoinedTicket | JoinedTicket[] }[]) {
+    const joined = Array.isArray(row.tickets) ? row.tickets[0] : row.tickets;
+    // Only a fix whose ticket is still waiting for it to reach production counts: an old fix row of a resolved ticket is history.
+    if (!joined || !["D", "M", "R"].includes(joined.auto_handle ?? "") || ["resolved", "closed", "cancelled", "duplicate"].includes(joined.status)) continue;
+    inFlight.push({ seq: joined.ticket_seq, files: collectFiles(row.files), bundleId: joined.bundle_id });
+  }
+  return inFlight;
+}
+
+/**
+ * Daily batch (lib/daily-batch-review.ts): every file something else is about to change - fixes not promoted yet, and tickets
+ * already queued for the night run (their approved proposal's files). A batch ticket that touches one of these would only be
+ * held by the night run, so it waits for the next batch instead.
+ */
+export async function loadBusyFiles(supabase: SupabaseClient): Promise<(TicketFiles & { why: "fix" | "queue" })[]> {
+  const busy: (TicketFiles & { why: "fix" | "queue" })[] = (await loadInFlightFixes(supabase)).map((fix) => ({ seq: fix.seq, files: fix.files, why: "fix" }));
+  const { data: queueRows } = await supabase.from("tickets").select("id, ticket_seq").eq("auto_handle", "Y").in("status", ["open", "reopened"]);
+  const queue = (queueRows ?? []) as { id: string; ticket_seq: number }[];
+  if (queue.length > 0) {
+    const { data: proposalRows } = await supabase
+      .from("ticket_proposals")
+      .select("ticket_id, created_at, brief:payload->>brief, expected:payload->expectedFiles")
+      .in("ticket_id", queue.map((row) => row.id))
+      .eq("kind", "proposal")
+      .eq("status", "approved")
+      .order("created_at", { ascending: false });
+    const newest = new Map<string, { brief: string | null; expected: unknown }>();
+    for (const row of (proposalRows ?? []) as { ticket_id: string; brief: string | null; expected: unknown }[]) if (!newest.has(row.ticket_id)) newest.set(row.ticket_id, row);
+    for (const row of queue) busy.push({ seq: row.ticket_seq, files: collectFiles(newest.get(row.id)?.expected, filesFromText(newest.get(row.id)?.brief)), why: "queue" });
+  }
+  return busy;
+}
+
 /** Who each queued ticket has to wait for, by ticket id (see lib/overlap.ts). Used by the night-run queue and by the dashboard,
  * so both always agree. */
 export async function loadOverlapBlockers(supabase: SupabaseClient): Promise<Map<string, Blocker[]>> {
@@ -30,21 +73,12 @@ export async function loadOverlapBlockers(supabase: SupabaseClient): Promise<Map
   });
 
   // Fixes that are built but not promoted yet: what they really changed.
-  const { data: fixRows } = await supabase
-    .from("ticket_proposals")
-    .select("ticket_id, files:payload->files, tickets!inner(ticket_seq, bundle_id, status, auto_handle)")
-    .eq("kind", "fix")
-    .in("status", ["pending", "merged", "approved"]);
   const inFlight: TicketFiles[] = [];
   const bundleOf = new Map<number, string>();
   for (const row of queue) if (row.bundle_id) bundleOf.set(row.ticket_seq, row.bundle_id);
-  type JoinedTicket = { ticket_seq: number; bundle_id: string | null; status: string; auto_handle: string | null };
-  for (const row of (fixRows ?? []) as unknown as { files: unknown; tickets: JoinedTicket | JoinedTicket[] }[]) {
-    const joined = Array.isArray(row.tickets) ? row.tickets[0] : row.tickets;
-    // Only a fix whose ticket is still waiting for it to reach production counts: an old fix row of a resolved ticket is history.
-    if (!joined || !["D", "M", "R"].includes(joined.auto_handle ?? "") || ["resolved", "closed", "cancelled", "duplicate"].includes(joined.status)) continue;
-    inFlight.push({ seq: joined.ticket_seq, files: collectFiles(row.files) });
-    if (joined.bundle_id) bundleOf.set(joined.ticket_seq, joined.bundle_id);
+  for (const fix of await loadInFlightFixes(supabase)) {
+    inFlight.push({ seq: fix.seq, files: fix.files });
+    if (fix.bundleId) bundleOf.set(fix.seq, fix.bundleId);
   }
 
   // "Build anyway": valid only if the admin said it after the ticket was last queued.

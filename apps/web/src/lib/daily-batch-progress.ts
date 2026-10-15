@@ -1,3 +1,5 @@
+import { loadOverlapBlockers } from "@/lib/automation-overlap";
+import { leaveBundle } from "@/lib/bundles";
 import { loadActiveBatch, type Batch, type BatchTicket } from "@/lib/daily-batch";
 import { tr, type AppLocale } from "@/lib/locale";
 import type { createAdminClient } from "@/lib/supabase/admin";
@@ -29,12 +31,14 @@ export async function autoApproveBatchProposal(admin: Admin, ticketId: string, p
   const member = batch.tickets.find((t) => t.ticketId === ticketId && ["queued", "analysing"].includes(t.state));
   if (!member) return;
   if (payload.needsPairing) {
+    await leaveBundle(admin, ticketId);
     member.state = "out";
     member.note = `האנליסט צריך החלטה שלך, ולכן הפנייה יצאה מהחבילה וממתינה בסקירה. ${String((payload as { pairingReason?: string }).pairingReason ?? "").slice(0, 300)}`.trim();
   } else {
     const chosen = Object.fromEntries(resolveChoices(payload.decisions ?? [], null).map((option, index) => [String(index), option]));
     const result = await approveProposal(asClient(admin), batch.approved_by, "he", proposalId, chosen, `Approved automatically - daily batch ${batch.batch_date} (the analyst's recommended choices).`);
     if (result.error) {
+      await leaveBundle(admin, ticketId);
       member.state = "out";
       member.note = `האישור האוטומטי נכשל: ${result.error}`;
     } else {
@@ -54,6 +58,9 @@ export type BatchSyncResult = { batch: Batch | null; becameReady: boolean; becam
  *   S/A -> analysing · Y -> building · M (fix merged on dev) or R (approved for production) -> built
  *   D (built, could not be merged to dev by itself) -> out, with a note · P (the fix stopped) -> requeued once, then out
  *   resolved/closed with a released fix -> released · anything else (taken out, flag cleared) -> out
+ *   Y but held by the night run's overlap guard (a fix not promoted yet, or a queued ticket outside the batch, changes the
+ *   same files) -> out, with a note: it stays queued and is built once that work is in production, but no longer keeps the
+ *   batch from becoming ready. A hold only on a bundle partner still being analysed is not a hold.
  */
 export async function syncActiveBatch(admin: Admin): Promise<BatchSyncResult> {
   const batch = await loadActiveBatch(admin);
@@ -66,6 +73,8 @@ export async function syncActiveBatch(admin: Admin): Promise<BatchSyncResult> {
   const latestFix = new Map<string, { status: string; payload: FixPayload }>();
   for (const row of (fixes ?? []) as { ticket_id: string; status: string; payload: FixPayload }[]) if (!latestFix.has(row.ticket_id)) latestFix.set(row.ticket_id, row);
 
+  const liveSeqs = new Set(members.map((t) => t.seq));
+  const blockers = [...byId.values()].some((row) => row.auto_handle === "Y") ? await loadOverlapBlockers(admin) : new Map();
   for (const member of members) {
     const ticket = byId.get(member.ticketId);
     const fix = latestFix.get(member.ticketId);
@@ -77,7 +86,14 @@ export async function syncActiveBatch(admin: Admin): Promise<BatchSyncResult> {
     } else if (ticket.auto_handle === "S" || ticket.auto_handle === "A") {
       member.state = "analysing";
     } else if (ticket.auto_handle === "Y") {
-      member.state = "building";
+      const held = (blockers.get(member.ticketId) ?? []).filter((b: { seq: number; why: string }) => b.why !== "bundle" && !liveSeqs.has(b.seq));
+      if (held.length > 0) {
+        const list = [...new Set(held.map((b: { seq: number }) => `TCK-${b.seq}`))].join(", ");
+        member.state = "out";
+        member.note = `ממתינה ל-${list} (אותם קבצים, עוד לא בייצור). נשארת בתור ותיבנה אחרי שהם יעלו, מחוץ לחבילה.`;
+      } else {
+        member.state = "building";
+      }
     } else if (ticket.auto_handle === "M" || ticket.auto_handle === "R") {
       member.state = "built";
       if (fix?.payload && "summary" in fix.payload) member.summary = String((fix.payload as { summary?: string }).summary ?? member.summary ?? "");
