@@ -122,6 +122,25 @@ export function renderBatchReadyEmail(batch: Pick<Batch, "batch_date" | "tickets
   return { subject, html, text };
 }
 
+/** The batch stopped before it was ready (nothing could be fixed, or the time limit): the lock is off, the tickets go on as usual. */
+export function renderBatchStoppedEmail(batch: Pick<Batch, "batch_date" | "tickets" | "note">, appUrl: string): { subject: string; html: string; text: string } {
+  const date = ddmm(batch.batch_date);
+  const built = batch.tickets.filter((t) => t.state === "built");
+  const rest = batch.tickets.filter((t) => !["unselected", "built", "released"].includes(t.state));
+  const subject = `דפי – החבילה היומית נעצרה (חבילה ${date})`;
+  const sections: string[] = [];
+  if (built.length) sections.push(`<div style="font-weight:bold;margin-bottom:4px;">תוקנו וממתינים לאישור העלאה בסקירה</div>${ticketRows(built, (t) => t.summary ?? "")}`);
+  if (rest.length) sections.push(`<div style="font-weight:bold;margin-bottom:4px;">ממשיכות באוטומציה הרגילה או ממתינות לך</div>${ticketRows(rest, (t) => t.note ?? "")}`);
+  const html = batchEmailShell(
+    "החבילה נעצרה",
+    `${batch.note ?? "החבילה נעצרה"}. הנעילה על הפעלה ידנית הוסרה, והחבילה הבאה תוצע ב-16:00.`,
+    sections,
+    { href: `${appUrl}/app/tickets/batch`, label: "פתיחת דף החבילה" },
+  );
+  const text = [subject, "", batch.note ?? "", ...built.map((t) => `TCK-${t.seq}: ${t.subject} (תוקנה)`), ...rest.map((t) => `TCK-${t.seq}: ${t.subject}`), "", `${appUrl}/app/tickets/batch`].join("\n");
+  return { subject, html, text };
+}
+
 /** After Promote resolved the batch's tickets: the batch is closed. */
 export function renderBatchDoneEmail(batch: Pick<Batch, "batch_date" | "tickets" | "version">, appUrl: string): { subject: string; html: string; text: string } {
   const released = batch.tickets.filter((t) => t.state === "released");

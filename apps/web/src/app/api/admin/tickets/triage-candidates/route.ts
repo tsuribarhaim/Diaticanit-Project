@@ -4,7 +4,7 @@ import { checkAutomationSecret } from "@/lib/automation-auth";
 import { logServerError } from "@/lib/server-log";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { attachmentLinksFor } from "@/lib/ticket-attachment-links";
-import type { Batch } from "@/lib/daily-batch";
+import { batchLockActive, type Batch } from "@/lib/daily-batch";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +17,8 @@ export async function GET(request: Request) {
   const denied = checkAutomationSecret(request, "adminTriageCandidates");
   if (denied) return denied;
   const admin = createAdminClient();
+  // Yesterday's batch is still running: no scan today (the bridge skips the triage agent).
+  if (await batchLockActive(admin)) return NextResponse.json({ tickets: [], batchActive: true }, { headers: { "Cache-Control": "no-store" } });
 
   const { data: tickets, error } = await admin
     .from("tickets")

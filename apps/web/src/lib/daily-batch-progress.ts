@@ -50,7 +50,9 @@ export async function autoApproveBatchProposal(admin: Admin, ticketId: string, p
   await saveTickets(admin, batch, stillAnalysing ? {} : { status: batch.status === "approved" ? "building" : batch.status });
 }
 
-export type BatchSyncResult = { batch: Batch | null; becameReady: boolean; becameDone: boolean };
+export type BatchSyncResult = { batch: Batch | null; becameReady: boolean; becameDone: boolean; becameStopped: boolean };
+/** A batch not ready this long after its approval stops: its tickets go on in the regular automation. */
+export const BATCH_TIME_LIMIT_HOURS = 48;
 
 /**
  * Brings the active batch up to date with the tickets' real flags. Called by the bridge after the night run and after a
@@ -64,7 +66,7 @@ export type BatchSyncResult = { batch: Batch | null; becameReady: boolean; becam
  */
 export async function syncActiveBatch(admin: Admin): Promise<BatchSyncResult> {
   const batch = await loadActiveBatch(admin);
-  if (!batch || batch.status === "proposed") return { batch, becameReady: false, becameDone: false };
+  if (!batch || batch.status === "proposed") return { batch, becameReady: false, becameDone: false, becameStopped: false };
   const members = batch.tickets.filter((t) => !["unselected", "out"].includes(t.state));
   const ids = members.map((t) => t.ticketId);
   const { data: rows } = ids.length ? await admin.from("tickets").select("id, status, auto_handle").in("id", ids) : { data: [] };
@@ -86,7 +88,8 @@ export async function syncActiveBatch(admin: Admin): Promise<BatchSyncResult> {
     } else if (ticket.auto_handle === "S" || ticket.auto_handle === "A") {
       member.state = "analysing";
     } else if (ticket.auto_handle === "Y") {
-      const held = (blockers.get(member.ticketId) ?? []).filter((b: { seq: number; why: string }) => b.why !== "bundle" && !liveSeqs.has(b.seq));
+      // Held by anything outside the batch - an overlapping fix or ticket, or a bundle partner that is not in the batch.
+      const held = (blockers.get(member.ticketId) ?? []).filter((b: { seq: number }) => !liveSeqs.has(b.seq));
       if (held.length > 0) {
         const list = [...new Set(held.map((b: { seq: number }) => `TCK-${b.seq}`))].join(", ");
         member.state = "out";
@@ -122,13 +125,21 @@ export async function syncActiveBatch(admin: Admin): Promise<BatchSyncResult> {
   const now = new Date().toISOString();
   let becameReady = false;
   let becameDone = false;
+  let becameStopped = false;
   const patch: Partial<Batch> = {};
   if (["approved", "building"].includes(batch.status)) {
+    const overdue = batch.approved_at && Date.now() - new Date(batch.approved_at).getTime() > BATCH_TIME_LIMIT_HOURS * 3600 * 1000;
     if (live.length === 0) {
-      Object.assign(patch, { status: "failed", closed_at: now, note: "No ticket of the batch could be fixed." });
+      Object.assign(patch, { status: "failed", closed_at: now, note: "לא ניתן היה לתקן אף פנייה בחבילה" });
+      becameStopped = true;
     } else if (live.every((t) => t.state === "built")) {
       Object.assign(patch, { status: "ready", ready_at: now });
       becameReady = true;
+    } else if (overdue) {
+      const { data: settings } = await admin.from("automation_settings").select("paused").eq("id", true).maybeSingle();
+      const why = settings?.paused ? "האוטומציה מושהית" : "האנליסט או ריצת הלילה לא השלימו אותה (המחשב כבוי, או שהתיקונים נעצרו)";
+      Object.assign(patch, { status: "failed", closed_at: now, note: `לא הייתה מוכנה תוך ${BATCH_TIME_LIMIT_HOURS} שעות - ${why}` });
+      becameStopped = true;
     } else if (!live.some((t) => ["queued", "analysing"].includes(t.state))) {
       patch.status = "building";
     }
@@ -137,7 +148,7 @@ export async function syncActiveBatch(admin: Admin): Promise<BatchSyncResult> {
     becameDone = true;
   }
   await saveTickets(admin, batch, patch);
-  return { batch: { ...batch, ...patch }, becameReady, becameDone };
+  return { batch: { ...batch, ...patch }, becameReady, becameDone, becameStopped };
 }
 
 /** "Approve and promote" on the batch page: every built fix is approved for production and one promotion is requested. */
@@ -151,7 +162,8 @@ export async function promoteBatch(supabase: Client, adminId: string, locale: Ap
     const result = await approveForProduction(supabase, adminId, locale, row.id);
     if (result.error && !/already|כבר/.test(result.error)) return { error: result.error };
   }
-  const result = await requestPromote(supabase, adminId, locale, rows.map((row) => row.id));
+  // No list: every fix approved for production goes - the batch's, and any the admin approved meanwhile (a manual promotion waits for the batch).
+  const result = await requestPromote(supabase, adminId, locale, undefined, { fromBatch: true });
   if (result.error) return result;
   await supabase.from("automation_batches").update({ status: "promoting", dev_tested: devTested }).eq("id", batchId).eq("status", "ready");
   return { success: tr(locale, "Promotion requested. It starts within a minute; you get an email when it is live.", "ההעלאה התבקשה. היא תתחיל תוך דקה; יישלח מייל כשהיא תהיה באוויר.") };
