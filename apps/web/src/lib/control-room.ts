@@ -401,9 +401,9 @@ export async function getTicketJourney(supabase: Client, locale: AppLocale, tick
   const [eventsR, proposalsR, batchesR, ordersR, promotesR] = await Promise.all([
     supabase.from("automation_events").select("kind, detail, created_at").eq("ticket_id", ticketId).order("created_at"),
     supabase.from("ticket_proposals").select("kind, status, created_at, decided_at").eq("ticket_id", ticketId).order("created_at"),
-    supabase.from("automation_batches").select("batch_date, created_at, approved_at, tickets").contains("tickets", [{ ticketId }]),
-    supabase.from("automation_work_orders").select("night_date, created_at, status, jobs, outcome").contains("jobs", [{ ticketIds: [ticketId] }]).neq("status", "superseded"),
-    supabase.from("automation_requests").select("completed_at, details").eq("kind", "promote").not("completed_at", "is", null).contains("details", { tickets: [{ ticketId }] }),
+    supabase.from("automation_batches").select("batch_date, created_at, approved_at, tickets").contains("tickets", JSON.stringify([{ ticketId }])),
+    supabase.from("automation_work_orders").select("night_date, created_at, status, jobs, outcome").contains("jobs", JSON.stringify([{ ticketIds: [ticketId] }])).neq("status", "superseded"),
+    supabase.from("automation_requests").select("completed_at, details").eq("kind", "promote").not("completed_at", "is", null).contains("details", JSON.stringify({ tickets: [{ ticketId }] })),
   ]);
   const steps: JourneyStep[] = [{ at: t.created_at as string, actor: "user", who: L("Reporter", "מדווח/ת"), text: L("reported the ticket", "דיווח/ה על הפנייה") }];
   for (const b of (batchesR.data ?? []) as Pick<Batch, "batch_date" | "created_at" | "approved_at" | "tickets">[]) {
