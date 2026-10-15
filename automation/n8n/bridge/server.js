@@ -189,7 +189,7 @@ function batchMigrationLines(job) {
   return [
     "",
     "DAILY BATCH: the admin approved this ticket in today's daily batch. For THIS ticket a small database change is allowed - it is NOT a reason for reproduced_needs_judgment - but only if it ADDS (a new allowed value in a check, a new nullable column, a new table). Never drop, rename, delete rows or change a column type.",
-    `If the fix needs one: write it as migration ${nextMigrationNumber()} in BOTH db/migrations/<number>_<short_name>.sql and supabase/migrations/20240101000<number>_<short_name>.sql with byte-identical SQL. When you replace a check constraint, find it by what it checks (like db/migrations/080_ticket_areas_tickets_quick_add.sql), never by an assumed name, and make sure no other constraint matches. Mention it in your summary.`,
+    `If the fix needs one: write it as migration ${job.migrationNumber ? String(job.migrationNumber).padStart(3, "0") : nextMigrationNumber()} in BOTH db/migrations/<number>_<short_name>.sql and supabase/migrations/20240101000<number>_<short_name>.sql with byte-identical SQL. When you replace a check constraint, find it by what it checks (like db/migrations/080_ticket_areas_tickets_quick_add.sql), never by an assumed name, and make sure no other constraint matches. Mention it in your summary.`,
   ];
 }
 
@@ -1514,6 +1514,47 @@ async function syncBatchAndMail() {
   }
 }
 
+/**
+ * The night planner (app: lib/work-order.ts). The app lists what each queued ticket will change and since when; git says
+ * which of those files changed in production since (a stale plan goes back to the analyst); the app then builds tonight's
+ * work order - bundles, order, budget, reserved migration numbers - and the night run's queue follows it. Never fatal.
+ */
+async function planNight(plannedBy) {
+  const startedAt = new Date().toISOString();
+  const appPost = (body) =>
+    fetch(`${DAFFY_BASE_URL}/api/admin/work-order`, { method: "POST", headers: { "x-ticket-automation-secret": TICKET_SECRET, "Content-Type": "application/json" }, body: JSON.stringify(body) }).then((r) => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    });
+  try {
+    const { candidates = [] } = await appPost({ action: "candidates" });
+    const stale = {};
+    for (const c of candidates) {
+      if (!c.since || !Array.isArray(c.files) || c.files.length === 0) continue;
+      const out = await runGit(["log", `--since=${c.since}`, "--name-only", "--pretty=format:", PRODUCTION_REF, "--", ...c.files], REPO_PATH).catch(() => "");
+      const changed = [...new Set(String(out).split(/\r?\n/).map((line) => line.trim()).filter(Boolean))];
+      if (changed.length > 0) stale[c.ticketId] = changed;
+    }
+    const baseRef = (await runGit(["rev-parse", "--short", PRODUCTION_REF], REPO_PATH).catch(() => "")).trim() || null;
+    const next = Number(nextMigrationNumber());
+    const { workOrder } = await appPost({ action: "plan", plannedBy, budgetUsd: DAILY_BUDGET_USD_CAP, baseRef, stale, nextMigration: Number.isFinite(next) ? next : null });
+    const staleCount = Object.keys(stale).length;
+    await recordRun("planner", startedAt, { ticketsCount: workOrder ? workOrder.jobs : 0, costUsd: 0, result: workOrder ? `${workOrder.jobs} job(s) planned, ${workOrder.deferred} waiting${staleCount ? ` (${staleCount} back to the analyst: code changed)` : ""}` : "No plan" });
+    return workOrder;
+  } catch (err) {
+    console.warn(`planNight(${plannedBy}) skipped: ${err.message}`);
+    return null;
+  }
+}
+
+async function workOrderOutcome() {
+  try {
+    await fetch(`${DAFFY_BASE_URL}/api/admin/work-order`, { method: "POST", headers: { "x-ticket-automation-secret": TICKET_SECRET, "Content-Type": "application/json" }, body: JSON.stringify({ action: "outcome" }) });
+  } catch (err) {
+    console.warn(`workOrderOutcome skipped: ${err.message}`);
+  }
+}
+
 async function runAnalysis() {
   const tickets = await fetchAnalyzeQueue();
   if (tickets.length > 0) await refreshLessons();
@@ -1788,10 +1829,11 @@ const server = http.createServer(async (req, res) => {
       const failed = (outcome.failed || []).length;
       if (outcome.totalRequested > 0) {
         await recordRun("analyst", startedAt, { ticketsCount: outcome.totalRequested, costUsd: outcome.totalSpentUsd, result: `${done} proposal(s) ready${failed ? `, ${failed} failed` : ""}${waitNote(wait)}` });
-      } else if (wait) {
+      } else {
         await recordRun("analyst", startedAt, { ticketsCount: 0, result: `Nothing left to analyse${waitNote(wait)}.` });
       }
       const batch = await syncBatchAndMail();
+      await planNight("analyst");
       return sendJson(res, 200, { ...outcome, ...(wait ? { waitedFor: wait.blockedBy, waitedMinutes: wait.minutes } : {}), ...(batch ? { batch } : {}) });
     } catch (err) {
       return sendJson(res, 500, { error: err.message });
@@ -1820,11 +1862,13 @@ const server = http.createServer(async (req, res) => {
   try {
     // Test-only: lets a test hold the night run open to check the one-agent-at-a-time lock. Never set in the real env file.
     if (Number(env.TEST_NIGHT_RUN_DELAY_MS) > 0) await new Promise((r) => setTimeout(r, Number(env.TEST_NIGHT_RUN_DELAY_MS)));
+    await planNight("night");
     const outcome = await runAll();
+    await workOrderOutcome();
     if (outcome.totalEligible > 0) {
       const fixed = (outcome.succeeded || []).filter((r) => r.committed).length;
       await recordRun("night", startedAt, { ticketsCount: outcome.totalEligible, costUsd: outcome.totalSpentUsd, result: `${fixed} fixed, ${(outcome.failed || []).length} failed${waitNote(wait)}`, details: { merged: (outcome.succeeded || []).filter((r) => r.mergedToDev).length } });
-    } else if (wait) {
+    } else {
       await recordRun("night", startedAt, { ticketsCount: 0, result: `Nothing left to build${waitNote(wait)}.` });
     }
     const batch = await syncBatchAndMail();
