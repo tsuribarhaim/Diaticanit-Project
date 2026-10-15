@@ -1442,9 +1442,14 @@ async function runTriage({ dryRun = false, candidates = null } = {}) {
   let tickets;
   if (dryRun && Array.isArray(candidates)) tickets = candidates;
   else {
+    // A batch past its time limit closes first (and its "stopped" email goes out), so today's scan can run.
+    if (!dryRun) await syncBatchAndMail();
     const res = await fetch(`${DAFFY_BASE_URL}/api/admin/tickets/triage-candidates`, { headers: { "x-ticket-automation-secret": TICKET_SECRET } });
     if (!res.ok) throw new Error(`Triage candidates fetch failed: HTTP ${res.status}`);
-    tickets = (await res.json()).tickets || [];
+    const body = await res.json();
+    // Yesterday's batch is still running: no scan (and no cost) today.
+    if (body.batchActive) return { skipped: true, reason: "A daily batch is still in progress.", scanned: 0, picked: 0, costUsd: 0 };
+    tickets = body.tickets || [];
   }
   let picks = [];
   let alreadyFixed = [];
