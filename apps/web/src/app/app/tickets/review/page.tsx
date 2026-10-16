@@ -221,6 +221,7 @@ export default async function TicketReviewPage({ searchParams }: { searchParams:
         locale={locale}
         approved={by("R").length}
         running={promoteRunning}
+        batchActive={Boolean(overview?.status.batchActive)}
         tickets={by("R")
           .filter((ticket) => approvedFixByTicket.has(ticket.id) && (!ticket.bundle_id || leadOfBundle.get(ticket.bundle_id)?.id === ticket.id))
           .map((ticket) => {
