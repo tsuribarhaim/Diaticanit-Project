@@ -77,16 +77,6 @@ export async function POST(request: NextRequest) {
 
   const locale = normalizeLocale(profileRow?.preferred_language);
   const userGender = resolveUserGenderForAddressing(profileRow?.gender, profileRow?.biological_sex);
-  const profile: DailyReportChatProfile = {
-    dietary_preference: profileRow?.dietary_preference ?? null,
-    allergies: Array.isArray(profileRow?.allergies) ? (profileRow.allergies as string[]) : null,
-    medical_conditions: Array.isArray(profileRow?.medical_conditions) ? (profileRow.medical_conditions as string[]) : null,
-    medical_conditions_details: profileRow?.medical_conditions_details ?? null,
-    regular_medications_details: profileRow?.regular_medications_details ?? null,
-    pregnancy_lactation_status: profileRow?.pregnancy_lactation_status ?? null,
-    first_name: profileRow?.first_name?.trim() || null,
-    user_gender: userGender,
-  };
 
   const { data: targetRow } = await supabase
     .from("user_target_profiles")
@@ -105,6 +95,24 @@ export async function POST(request: NextRequest) {
     getRecentDaysLoggedFoodItems({ supabase, userId: user.id, timeZone, excludeReportId: editingReportId }),
   ]);
   const todayLocalDate = getLocalDateString(timeZone);
+
+  const isFirstConversationOfDay =
+    chatHistory.length === 0 &&
+    !isEditingExistingEntry &&
+    todaysLoggedItems.foodItems.length === 0 &&
+    todaysLoggedItems.exerciseItems.length === 0 &&
+    todaysLoggedItems.weighIns.length === 0;
+  const profile: DailyReportChatProfile = {
+    dietary_preference: profileRow?.dietary_preference ?? null,
+    allergies: Array.isArray(profileRow?.allergies) ? (profileRow.allergies as string[]) : null,
+    medical_conditions: Array.isArray(profileRow?.medical_conditions) ? (profileRow.medical_conditions as string[]) : null,
+    medical_conditions_details: profileRow?.medical_conditions_details ?? null,
+    regular_medications_details: profileRow?.regular_medications_details ?? null,
+    pregnancy_lactation_status: profileRow?.pregnancy_lactation_status ?? null,
+    // TCK-128: the name is sent only on the first message of the day so Daffy greets by name once a day.
+    first_name: isFirstConversationOfDay ? profileRow?.first_name?.trim() || null : null,
+    user_gender: userGender,
+  };
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {

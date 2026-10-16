@@ -342,10 +342,10 @@ export default async function DailyReportPage({
   const locale = normalizeLocale(profileRow?.preferred_language);
   const userDisplayName = profileRow?.first_name?.trim() || tr(locale, "You", "אתה");
   // For the chat panel's own static greeting/intro copy (see
-  // DailyReportChatPanel) - grammatically correct Hebrew addressing and an
-  // occasional first-name mention, same rules the AI chat itself now
-  // follows (see lib/ai/persona.ts, which this shares its normalization
-  // logic with).
+  // DailyReportChatPanel) - grammatically correct Hebrew addressing, same
+  // rules the AI chat itself now follows (see lib/ai/persona.ts, which this
+  // shares its normalization logic with). TCK-128: the first name now appears
+  // only in the first conversation of today (see chatGreetingFirstName).
   const userFirstName = profileRow?.first_name?.trim() || null;
   const userGender = resolveUserGenderForAddressing(profileRow?.gender, profileRow?.biological_sex);
   const chartPreferences = normalizeDailyReportChartPreferences(profileRow?.daily_report_chart_preferences);
@@ -843,6 +843,10 @@ export default async function DailyReportPage({
     reports = reportsWithWeight.data;
   }
 
+  // TCK-128: the chat greets by name only in the first conversation of
+  // today - not on a past day, not while editing, not once today has entries.
+  const chatGreetingFirstName = isViewingToday && !editingReport && (reports?.length ?? 0) === 0 ? userFirstName : null;
+
   const defaultItems = defaultItemsResult.data;
 
   if (reportsError) {
@@ -1072,8 +1076,8 @@ export default async function DailyReportPage({
                 <p className="text-xs text-slate-500 dark:text-slate-400">
                   {tr(
                     locale,
-                    "Drag to reorder, or drag across a divider to move a value between groups - the top group always shows as bars; the middle group waits behind \"Show full detail\".",
-                    "ניתן לגרור לשינוי סדר, או לגרור מעבר לקו מפריד כדי להעביר ערך בין קבוצות - הקבוצה העליונה תמיד מוצגת כבארים; הקבוצה האמצעית ממתינה מתחת ל\"הצג פירוט מלא\".",
+                    "Drag a value to change its order or move it to another group.",
+                    "ניתן לגרור ערך כדי לשנות את הסדר או להעביר אותו לקבוצה אחרת.",
                   )}
                 </p>
                 {/* TCK-137: keyed on the saved preferences so the editor
@@ -1081,6 +1085,7 @@ export default async function DailyReportPage({
                 <DailyReportMetricOrderEditor
                   key={[...chartPreferences.coreMetrics, "|", ...chartPreferences.extraMetrics].join(",")}
                   locale={locale}
+                  userGender={userGender}
                   coreMetrics={chartPreferences.coreMetrics} extraMetrics={chartPreferences.extraMetrics} />
                 <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
                   <input
@@ -1629,7 +1634,7 @@ export default async function DailyReportPage({
           todaysCustomTargetValues={todaysCustomTargetValues}
           editingReport={editingReport}
           selectedDateParam={resolvedSearchParams.date}
-          userFirstName={userFirstName}
+          userFirstName={chatGreetingFirstName}
           userGender={userGender}
         />
       </section>
