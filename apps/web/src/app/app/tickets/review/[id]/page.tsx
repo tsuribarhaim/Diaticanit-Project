@@ -10,6 +10,7 @@ import { TicketTrail } from "@/components/ticket-trail";
 import { BundleBadge, SplitBundleControl } from "@/components/bundle-ui";
 import { hueOf } from "@/lib/bundle-hues";
 import { bundleOfTicket } from "@/lib/bundles";
+import { batchLockActive } from "@/lib/daily-batch";
 import { NavLink as Link } from "@/components/nav-link";
 import { NAV_HREF, navLabel, parseFrom } from "@/lib/tickets-nav";
 
@@ -71,6 +72,7 @@ export default async function TicketReviewDetailPage({ params, searchParams }: {
   // Fix bundles: this ticket may be built, tested and promoted as one fix with others; its merge and revert requests are on the first ticket.
   const bundle = await bundleOfTicket(supabase, id);
   const requestTicketId = bundle ? bundle.lead.id : id;
+  const batchActive = await batchLockActive(supabase);
 
   let mergeRequested = false;
   let mergeResult: string | null = null;
@@ -175,6 +177,7 @@ export default async function TicketReviewDetailPage({ params, searchParams }: {
           mergeResult={mergeResult}
           revertRequested={revertRequested}
           revertResult={revertResult}
+          batchActive={batchActive}
         />
       ) : (
         <p className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">

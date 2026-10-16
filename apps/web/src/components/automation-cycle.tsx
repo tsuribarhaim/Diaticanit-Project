@@ -432,6 +432,7 @@ export function AutomationCycle({ locale, overview }: { locale: AppLocale; overv
               locale={locale}
               approved={units.length}
               running={overview.counts.release > 0}
+              batchActive={overview.status.batchActive}
               tickets={units.filter((unit) => unit[0].proposalId).map((unit) => ({ seq: unit[0].seq, subject: unit[0].bundle ? `${tr(locale, "Bundle", "חבילה")} ${unit[0].bundle.letter} (${unit.map((ticket) => `TCK-${ticket.seq}`).join(" + ")}): ${unit[0].subject}` : unit[0].subject, proposalId: unit[0].proposalId as string, migration: unit.some((ticket) => ticket.hasMigration) }))}
             />
           </div>

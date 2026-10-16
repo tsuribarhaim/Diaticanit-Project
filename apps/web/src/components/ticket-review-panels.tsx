@@ -508,10 +508,13 @@ export function FixPanel({
   mergeResult,
   revertRequested = false,
   revertResult = null,
+  batchActive = false,
 }: {
   locale: AppLocale;
   proposalId: string;
   payload: FixPayload;
+  /** A daily batch is in progress: an approved fix ships with the batch's promotion, from the batch page. */
+  batchActive?: boolean;
   /** branch: built on a local branch (flag D); dev: merged on dev, waiting for the admin's test (M); approved: ready for the next promote (R). */
   stage: "branch" | "dev" | "approved";
   mergeRequested: boolean;
@@ -602,8 +605,15 @@ export function FixPanel({
               <p className="mb-2 text-sm font-semibold text-emerald-700 dark:text-emerald-400">
                 {stage === "dev"
                   ? tr(locale, "Merged on dev. Test it, then decide.", "מוזג בפיתוח. יש לבדוק ואז להחליט.")
-                  : tr(locale, "Approved for production. It ships with the next promote.", "אושר לייצור. הוא יעלה עם ההעלאה הבאה.")}
+                  : batchActive
+                    ? tr(locale, "Approved for production. A daily batch is in progress, so it ships with the batch's promotion.", "אושר לייצור. חבילה יומית בתהליך, ולכן הוא יעלה יחד עם ההעלאה של החבילה.")
+                    : tr(locale, "Approved for production. It ships with the next promote.", "אושר לייצור. הוא יעלה עם ההעלאה הבאה.")}
               </p>
+              {stage === "approved" && batchActive ? (
+                <NavLink href={NAV_HREF.batch} className="mb-3 inline-flex rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500">
+                  {tr(locale, "Promote from the batch page", "העלאה מדף החבילה")}
+                </NavLink>
+              ) : null}
               <textarea
                 value={comment}
                 onChange={(event) => setComment(event.target.value)}
@@ -705,11 +715,14 @@ export function PromoteBar({
   approved,
   running,
   tickets,
+  batchActive = false,
 }: {
   locale: AppLocale;
   approved: number;
   running: boolean;
   tickets: { seq: number; subject: string; proposalId: string; migration: boolean }[];
+  /** A daily batch is in progress: a manual promotion is locked, the approved fixes go out with the batch's promotion. */
+  batchActive?: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -731,6 +744,19 @@ export function PromoteBar({
     );
   }
   if (approved === 0) return null;
+  if (batchActive) {
+    return (
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-teal-700 px-4 py-3 text-white dark:bg-teal-600">
+        <span className="text-sm">
+          <span className="font-semibold">{tr(locale, `${approved} fix${approved === 1 ? "" : "es"} approved for production.`, approved === 1 ? "תיקון אחד אושר לייצור." : `${approved} תיקונים אושרו לייצור.`)}</span>{" "}
+          {tr(locale, "A daily batch is in progress, so they go out with the batch's promotion.", "חבילה יומית בתהליך, ולכן הם יעלו יחד עם ההעלאה של החבילה.")}
+        </span>
+        <NavLink href={NAV_HREF.batch} className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-teal-800 hover:bg-teal-50">
+          {tr(locale, "Promote from the batch page", "העלאה מדף החבילה")}
+        </NavLink>
+      </div>
+    );
+  }
   return (
     <>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-teal-700 px-4 py-3 text-white dark:bg-teal-600">

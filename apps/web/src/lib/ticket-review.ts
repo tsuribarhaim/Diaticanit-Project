@@ -334,6 +334,10 @@ export async function approveForProduction(supabase: Client, adminId: string, lo
   for (const id of ids) await logAutomationEvent(supabase, adminId, id, "approved_for_production");
   const what = group.bundle ? `Bundle ${group.bundle.letter} (${seqList(group.members)}) is` : `TCK-${loaded.ticket.ticket_seq} is`;
   const whatHe = group.bundle ? `חבילה ${group.bundle.letter} (${seqList(group.members)})` : `TCK-${loaded.ticket.ticket_seq}`;
+  // During a daily batch a manual promotion is locked: the fix only ships when the admin promotes the batch, so say where.
+  if (await batchLockActive(supabase)) {
+    return { success: tr(locale, `${what} approved for production. A daily batch is in progress: it ships when you promote the batch from the batch page.`, `${whatHe} אושרה לייצור. חבילה יומית בתהליך: היא תעלה עם העלאת החבילה מדף החבילה.`) };
+  }
   return { success: tr(locale, `${what} approved for production. It ships with the next promote.`, `${whatHe} אושרה לייצור. היא תעלה בהעלאה הבאה.`) };
 }
 
