@@ -570,6 +570,7 @@ export function DailyReportForm({
   // resubmission skip the same reasonableness check it just passed, instead
   // of looping back into the same confirmation dialog forever.
   const bypassRangeConfirmRef = useRef(false);
+  const reportAtInputRef = useRef<HTMLInputElement>(null);
   // Set (not null) when a custom target value looks like a likely typo
   // rather than a deliberate entry - currently only hour-denominated targets
   // (Sleep duration, etc.) reporting more than 12 hours in a single day -
@@ -599,7 +600,21 @@ export function DailyReportForm({
     return null;
   }
 
+  // Edits keep their original time; a new entry gets "now" (on the browsed
+  // day). Written straight into the DOM input too, since the form action
+  // reads FormData in this same submit event, before a state update renders.
+  function refreshReportAtForNewReport() {
+    if (editingReport || liveEditReportId) return;
+    const fresh = buildReportAtValueForSelectedDate(selectedDateParam);
+    if (reportAtInputRef.current) {
+      reportAtInputRef.current.value = new Date(fresh).toISOString();
+    }
+    setReportAtValue(fresh);
+  }
+
   function handleFormSubmit(event: React.FormEvent<HTMLFormElement>) {
+    // TCK-152: stamp a new entry at submit time - the form isn't remounted by router.refresh() (e.g. after a saved-list pick), so the mount-time value goes stale.
+    refreshReportAtForNewReport();
     if (bypassRangeConfirmRef.current) {
       bypassRangeConfirmRef.current = false;
       return;
@@ -888,7 +903,7 @@ export function DailyReportForm({
           local timezone. Always rendered here regardless of where the
           visible date/time control itself lives (see below) - it's what
           actually gets submitted. */}
-      <input type="hidden" name="report_at" value={reportAtValue ? new Date(reportAtValue).toISOString() : ""} />
+      <input ref={reportAtInputRef} type="hidden" name="report_at" value={reportAtValue ? new Date(reportAtValue).toISOString() : ""} />
 
       {/* No visible date/time picker anywhere in this form (AI or
           fallback branch) - reportAtValue is set once above, either to
