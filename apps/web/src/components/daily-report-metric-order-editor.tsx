@@ -10,9 +10,10 @@ import {
   isDailyReportChartMetric,
   type DailyReportChartMetric,
 } from "@/lib/daily-report-chart-preferences";
-import { tr, type AppLocale } from "@/lib/locale";
+import { tr, trGendered, type AppLocale } from "@/lib/locale";
 
 type MetricId = DailyReportChartMetric;
+type Zone = "primary" | "additional" | "untracked";
 
 /**
  * TCK-16: two sentinels, not a separate "how many are primary" count - they
@@ -46,6 +47,83 @@ function labelFor(id: MetricId, locale: AppLocale): string {
   return tr(locale, info.labelEn, info.labelHe);
 }
 
+function GroupIcon({ zone }: { zone: Zone }) {
+  const common = {
+    width: 15,
+    height: 15,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+  };
+  if (zone === "primary") {
+    return (
+      <svg {...common}>
+        <path d="M12 17v5" />
+        <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+      </svg>
+    );
+  }
+  if (zone === "additional") {
+    return (
+      <svg {...common}>
+        <path d="m6 9 6 6 6-6" />
+      </svg>
+    );
+  }
+  return (
+    <svg {...common}>
+      <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+      <path d="M6.61 6.61A13.53 13.53 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+      <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
+      <path d="m2 2 20 20" />
+    </svg>
+  );
+}
+
+/** TCK-151: icon, title, one-line subtitle and a live item count per group. */
+function GroupHeader({ zone, count, locale }: { zone: Zone; count: number; locale: AppLocale }) {
+  const tileClass =
+    zone === "primary"
+      ? "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-400"
+      : zone === "additional"
+        ? "bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300"
+        : "bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500";
+  const title =
+    zone === "primary"
+      ? tr(locale, "Always on screen", "תמיד על המסך")
+      : zone === "additional"
+        ? tr(locale, "In full detail", "בפירוט מלא")
+        : tr(locale, "Not shown", "לא מוצג");
+  const subtitle =
+    zone === "primary"
+      ? tr(locale, "Shown at the top of the daily report", "מופיע בראש הדיווח היומי")
+      : zone === "additional"
+        ? tr(locale, "Shown only after \"Show full detail\"", "מופיע רק אחרי \"הצג פירוט מלא\"")
+        : tr(locale, "Not shown in the daily report", "לא מופיע בדיווח היומי");
+
+  return (
+    <div className="flex items-center gap-2 px-1 pb-0.5">
+      <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${tileClass}`}>
+        <GroupIcon zone={zone} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">{title}</div>
+        <div className="text-[11px] text-slate-500 dark:text-slate-400">{subtitle}</div>
+      </div>
+      <span
+        aria-label={tr(locale, `${count} values`, `${count} ערכים`)}
+        className="inline-flex min-w-[22px] shrink-0 items-center justify-center rounded-full bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+      >
+        {count}
+      </span>
+    </div>
+  );
+}
+
 /**
  * Drag-to-reorder replacement for the old flat checkbox grid - lets the
  * user set both WHICH metrics show as the always-visible goal bars
@@ -65,13 +143,21 @@ function labelFor(id: MetricId, locale: AppLocale): string {
  * corrected by how far its natural position moved), picks the drop spot
  * from the other rows only, draws above its neighbours, and cleans up on
  * pointercancel as well as pointerup.
+ *
+ * TCK-151: every group has a header (icon, title, subtitle, count) instead of
+ * per-row badges. The two dividers double as the headers of the group that
+ * follows them, so the drag maths is unchanged; the primary header sits in a
+ * non-row wrapper above everything. An empty group shows a dashed drop zone
+ * (inside its divider's row, or in that top wrapper) so it can be refilled.
  */
 export function DailyReportMetricOrderEditor({
   locale,
+  userGender,
   coreMetrics,
   extraMetrics,
 }: {
   locale: AppLocale;
+  userGender?: "male" | "female" | null;
   coreMetrics: DailyReportChartMetric[];
   extraMetrics: DailyReportChartMetric[];
 }) {
@@ -82,11 +168,16 @@ export function DailyReportMetricOrderEditor({
   const primaryDivIdx = order.indexOf(DIVIDER_PRIMARY);
   const untrackedDivIdx = order.indexOf(DIVIDER_UNTRACKED);
 
-  function zoneFor(index: number): "primary" | "additional" | "untracked" {
-    if (index < primaryDivIdx) return "primary";
-    if (index < untrackedDivIdx) return "additional";
-    return "untracked";
-  }
+  const primaryCount = primaryDivIdx;
+  const additionalCount = untrackedDivIdx - primaryDivIdx - 1;
+  const untrackedCount = order.length - untrackedDivIdx - 1;
+
+  const emptyDropZone = (
+    <div className="rounded-lg border-2 border-dashed border-slate-300 px-3 py-3 text-center text-xs text-slate-400 dark:border-slate-600 dark:text-slate-500">
+      {trGendered(locale, userGender, "Drag a value here", "גרור לכאן ערך", "גררי לכאן ערך")}
+    </div>
+  );
+
 
   function rowNodes(): HTMLElement[] {
     const container = listRef.current;
@@ -187,31 +278,29 @@ export function DailyReportMetricOrderEditor({
   return (
     <div>
       <div ref={listRef} className="space-y-1.5">
-        {order.map((row, index) => {
+        {/* Not a data-row: rowNodes() skips it, and a pointer over it is above
+            DIVIDER_PRIMARY's midpoint, so a drop here lands at index 0. */}
+        <div className="space-y-1.5">
+          <GroupHeader zone="primary" count={primaryCount} locale={locale} />
+          {primaryCount === 0 ? emptyDropZone : null}
+        </div>
+        {order.map((row) => {
           if (row === DIVIDER_PRIMARY || row === DIVIDER_UNTRACKED) {
+            // One data-row per divider, so the drop zone sits in its lower
+            // half and a drop there lands right after it - in that group.
+            const isPrimaryDivider = row === DIVIDER_PRIMARY;
+            const groupEmpty = isPrimaryDivider ? additionalCount === 0 : untrackedCount === 0;
             return (
-              <div
-                key={row}
-                data-row
-                data-row-id={row}
-                className="my-1 rounded-lg border border-dashed border-teal-300 bg-teal-50 px-3 py-1.5 text-center text-[11px] font-semibold text-teal-700 dark:border-teal-700 dark:bg-teal-950/30 dark:text-teal-400"
-              >
-                {row === DIVIDER_PRIMARY
-                  ? tr(locale, "— always shown above —", "— מוצג תמיד למעלה —")
-                  : tr(locale, "— not tracked —", "— לא במעקב —")}
+              <div key={row} data-row data-row-id={row} className="space-y-1.5 pt-3">
+                <GroupHeader
+                  zone={isPrimaryDivider ? "additional" : "untracked"}
+                  count={isPrimaryDivider ? additionalCount : untrackedCount}
+                  locale={locale}
+                />
+                {groupEmpty ? emptyDropZone : null}
               </div>
             );
           }
-
-          const zone = zoneFor(index);
-          const badgeClass =
-            zone === "primary"
-              ? "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-400"
-              : zone === "additional"
-                ? "bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300"
-                : "bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500";
-          const badgeLabel =
-            zone === "primary" ? tr(locale, "Primary", "עיקרי") : zone === "additional" ? tr(locale, "Additional", "נוסף") : tr(locale, "Hidden", "מוסתר");
 
           return (
             <div
@@ -240,9 +329,7 @@ export function DailyReportMetricOrderEditor({
                   <circle cx="15" cy="18" r="1.6" />
                 </svg>
               </button>
-              <span className="flex-1 truncate text-slate-700 dark:text-slate-300">{labelFor(row, locale)}</span>
-              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${badgeClass}`}>{badgeLabel}</span>
-            </div>
+              <span className="flex-1 truncate text-slate-700 dark:text-slate-300">{labelFor(row, locale)}</span>            </div>
           );
         })}
       </div>
