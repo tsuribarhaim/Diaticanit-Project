@@ -202,6 +202,8 @@ export function QuickEditSheet({
   children: ReactNode;
 }) {
   if (!isOpen) return null;
+  // The app sets data-theme on its own wrapper, which this portal into document.body sits outside of: carry it over so dark mode applies (same as add-user-dialog / saved-list-quick-picker).
+  const theme = document.querySelector("[data-theme]")?.getAttribute("data-theme") ?? undefined;
 
   // A bottom sheet on mobile, a centered modal on desktop - both from the
   // same markup via `items-end sm:items-center`, no viewport measurement
@@ -209,7 +211,7 @@ export function QuickEditSheet({
   // this app - these are short forms that just need native scroll if they
   // overflow, not a computed height/position).
   return createPortal(
-    <div dir={directionForLocale(locale)} className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
+    <div dir={directionForLocale(locale)} data-theme={theme} className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
       <div role="presentation" onClick={onClose} className="absolute inset-0 bg-slate-900/40 dark:bg-black/60" />
       <div className="relative z-10 max-h-[85vh] w-full overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl dark:bg-slate-900 sm:max-w-md sm:rounded-2xl sm:p-6">
         <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-slate-200 dark:bg-slate-700 sm:hidden" />
