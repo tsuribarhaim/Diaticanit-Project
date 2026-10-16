@@ -1346,26 +1346,17 @@ function joinedOrNone(
   return [...formatted].sort().join(", ");
 }
 
-function exerciseScheduleSummary(
-  schedule: ProfileForTargets["exercise_schedule_by_modality"],
-  locale: AppLocale,
-): string {
-  if (!schedule) return tr(locale, "None", "ללא");
-  const entries = Object.entries(schedule)
-    .map(([modality, value]) => `${formatExerciseModality(modality, locale)} ${value.days_per_week}x/${value.minutes_per_session}min`)
-    .sort();
-  return entries.length ? entries.join(", ") : tr(locale, "None", "ללא");
-}
-
-function otherActivitiesSummary(
+/** Groups "other" activities by their normalized name, so each one gets its
+ * own diff row (and a unique label) even if the user typed a name twice. */
+function groupOtherActivitiesByName(
   activities: ProfileForTargets["exercise_other_activities"],
-  locale: AppLocale,
-): string {
-  if (!activities.length) return tr(locale, "None", "ללא");
-  const entries = activities
-    .map((activity) => `${activity.name} ${activity.days_per_week}x/${activity.minutes_per_session}min`)
-    .sort();
-  return entries.join(", ");
+): Map<string, ProfileForTargets["exercise_other_activities"]> {
+  const groups = new Map<string, ProfileForTargets["exercise_other_activities"]>();
+  for (const activity of activities) {
+    const key = activity.name.trim().toLowerCase();
+    groups.set(key, [...(groups.get(key) ?? []), activity]);
+  }
+  return groups;
 }
 
 /** Compares the target-relevant fields of two profile snapshots and returns
@@ -1435,18 +1426,34 @@ export function computeProfileDiff(before: ProfileForTargets, after: ProfileForT
     joinedOrNone(before.exercise_modalities, locale, formatExerciseModality),
     joinedOrNone(after.exercise_modalities, locale, formatExerciseModality),
   );
-  addIfChanged(
-    "Other exercise activities",
-    "פעילויות גופניות אחרות",
-    otherActivitiesSummary(before.exercise_other_activities, locale),
-    otherActivitiesSummary(after.exercise_other_activities, locale),
-  );
-  addIfChanged(
-    "Exercise schedule",
-    "לו\"ז פעילות",
-    exerciseScheduleSummary(before.exercise_schedule_by_modality, locale),
-    exerciseScheduleSummary(after.exercise_schedule_by_modality, locale),
-  );
+  // One row per activity, so changing one doesn't repeat the unchanged ones.
+  const beforeOther = groupOtherActivitiesByName(before.exercise_other_activities);
+  const afterOther = groupOtherActivitiesByName(after.exercise_other_activities);
+  const otherActivityText = (activities: ProfileForTargets["exercise_other_activities"] | undefined) =>
+    activities?.length
+      ? activities.map((activity) => `${activity.days_per_week}x/${activity.minutes_per_session}min`).sort().join(", ")
+      : tr(locale, "None", "ללא");
+  for (const key of [...new Set([...beforeOther.keys(), ...afterOther.keys()])].sort()) {
+    const name = (afterOther.get(key) ?? beforeOther.get(key))?.[0]?.name.trim() ?? key;
+    addIfChanged(
+      `Other activity – ${name}`,
+      `פעילות אחרת – ${name}`,
+      otherActivityText(beforeOther.get(key)),
+      otherActivityText(afterOther.get(key)),
+    );
+  }
+  const beforeSchedule = before.exercise_schedule_by_modality ?? {};
+  const afterSchedule = after.exercise_schedule_by_modality ?? {};
+  const scheduleText = (entry: { days_per_week: number; minutes_per_session: number } | undefined) =>
+    entry ? `${entry.days_per_week}x/${entry.minutes_per_session}min` : tr(locale, "None", "ללא");
+  for (const modality of [...new Set([...Object.keys(beforeSchedule), ...Object.keys(afterSchedule)])].sort()) {
+    addIfChanged(
+      `Exercise schedule – ${formatExerciseModality(modality, "en")}`,
+      `לו"ז פעילות – ${formatExerciseModality(modality, "he")}`,
+      scheduleText(beforeSchedule[modality]),
+      scheduleText(afterSchedule[modality]),
+    );
+  }
   addIfChanged("Habits", "הרגלים", joinedOrNone(before.habits, locale, formatHabit), joinedOrNone(after.habits, locale, formatHabit));
   addIfChanged(
     "Pregnancy / lactation status",

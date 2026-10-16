@@ -82,8 +82,8 @@ export function TargetsStaleModal({
           <p className="text-sm text-slate-700 dark:text-slate-300">
             {tr(
               locale,
-              "The following changed, which might impact your targets:",
-              "הפרטים הבאים השתנו, מה שעשוי להשפיע על היעדים שלך:",
+              "These changed since your targets were last set, which might impact them:",
+              "הפרטים הבאים השתנו מאז שהיעדים שלך נקבעו, מה שעשוי להשפיע עליהם:",
             )}
           </p>
           <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto text-sm text-slate-700 dark:text-slate-300">
