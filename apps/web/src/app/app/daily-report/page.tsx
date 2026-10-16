@@ -1163,6 +1163,8 @@ export default async function DailyReportPage({
               const reportCustomTargetRows = Object.entries(reportCustomTargetValues)
                 .map(([id, value]) => ({ target: customTargetById.get(id), value }))
                 .filter((row): row is { target: LoggableCustomTarget; value: number } => Boolean(row.target));
+              const isConversationOnly =
+                !hasFood && !hasExercise && !hasWeight && reportCustomTargetRows.length === 0 && fullConversation.length > 0;
 
               // Which of this report's own nutrient totals are directly
               // editable in "Edit" below, and whether each is currently
@@ -1516,8 +1518,12 @@ export default async function DailyReportPage({
                             Kept immediately next to "Edit" (rather than
                             after "Add to Saved List") since both are edit
                             actions on the same entry - grouping them avoids
-                            the two "Edit..." labels reading as unrelated. */}
-                        {hasFood || hasExercise ? (
+                            the two "Edit..." labels reading as unrelated.
+                            A saved conversation with no items (e.g. a
+                            consultation) also gets it - it has no inline
+                            "Edit", and continuing the conversation is the
+                            only way to build on it (TCK-14). */}
+                        {hasFood || hasExercise || isConversationOnly ? (
                           <Link
                             href={editHref}
                             prefetch={false}
