@@ -127,7 +127,13 @@ type Client = Awaited<ReturnType<typeof createClient>>;
 
 type RowTicket = { id: string; ticket_seq: number; subject: string; status: string; auto_handle: string | null; updated_at: string; bundle_id: string | null };
 type RowProposal = { brief: string | null; expected: unknown; questions: unknown; id: string; ticket_id: string; kind: string; status: string; summary: string | null; why: string | null; pairing: boolean | null; files: unknown };
-type RowRequest = { kind: string; ticket_id: string | null; picked_at: string | null; details: { tickets?: { ticketId?: string }[] } | null };
+type PromoteItem = { ticketId?: string; alsoTickets?: { ticketId?: string }[] };
+type RowRequest = { kind: string; ticket_id: string | null; picked_at: string | null; details: { tickets?: PromoteItem[] } | null };
+
+/** Every ticket a promote request ships: a bundle is one item, its lead in ticketId and the others in alsoTickets. */
+function promoteItemTicketIds(items: PromoteItem[] | undefined): string[] {
+  return (items ?? []).flatMap((item) => [item.ticketId, ...(item.alsoTickets ?? []).map((also) => also.ticketId)]).filter((id): id is string => Boolean(id));
+}
 
 // Wrapped so the clock can be read in one place (the render must not call Date.now directly).
 const now = () => Date.now();
@@ -231,7 +237,7 @@ export async function getAutomationOverview(supabase: Client): Promise<Automatio
   const promoteTickets = new Set<string>();
   for (const request of requests) {
     if (request.kind !== "promote") continue;
-    for (const item of request.details?.tickets ?? []) if (item.ticketId) promoteTickets.add(item.ticketId);
+    for (const id of promoteItemTicketIds(request.details?.tickets)) promoteTickets.add(id);
   }
 
   const letterById = new Map<string, string>();
@@ -359,13 +365,13 @@ export async function getWaitingCount(supabase: Client): Promise<number> {
   ]);
   const tickets = (ticketRes.data ?? []) as { id: string; status: string; auto_handle: string | null; bundle_id: string | null }[];
   const rows = (proposalRes.data ?? []) as unknown as { ticket_id: string; kind: string; status: string; questions: unknown }[];
-  const requests = (requestRes.data ?? []) as unknown as { kind: string; details: { tickets?: { ticketId?: string }[] } | null }[];
+  const requests = (requestRes.data ?? []) as unknown as { kind: string; details: { tickets?: PromoteItem[] } | null }[];
   const health = (settingsRes.data?.bridge_status ?? {}) as { runInProgress?: boolean };
   const seenAt = (settingsRes.data?.bridge_seen_at as string | null) ?? null;
   const online = seenAt !== null && now() - new Date(seenAt).getTime() < 3 * 60 * 1000;
   const buildRunning = (online && Boolean(health.runInProgress)) || requests.some((request) => request.kind === "night");
   const promoteTickets = new Set<string>();
-  for (const request of requests) if (request.kind === "promote") for (const item of request.details?.tickets ?? []) if (item.ticketId) promoteTickets.add(item.ticketId);
+  for (const request of requests) if (request.kind === "promote") for (const id of promoteItemTicketIds(request.details?.tickets)) promoteTickets.add(id);
   const waiting = new Set<string>();
   for (const ticket of tickets) {
     const own = rows.filter((row) => row.ticket_id === ticket.id);
