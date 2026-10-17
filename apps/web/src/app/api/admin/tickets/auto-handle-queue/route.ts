@@ -33,7 +33,7 @@ export async function GET(request: Request) {
   const adminClient = createAdminClient();
   const { data, error } = await adminClient
     .from("tickets")
-    .select("id, ticket_seq, subject, ticket_type, area, priority, description, status, created_at, bundle_id")
+    .select("id, ticket_seq, subject, ticket_type, area, priority, description, status, created_at, bundle_id, auto_handle_notes")
     .in("status", ["open", "reopened"])
     .eq("auto_handle", "Y")
     .order("priority", { ascending: false })

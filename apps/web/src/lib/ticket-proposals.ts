@@ -37,10 +37,15 @@ export type ProposalPayload = {
   pairingReason?: string;
 };
 
+/** Why the night run stopped (set by the bridge since 2026-10-17; older cards have none). tooling = the run's own tools failed,
+ * not the ticket; judgment = needs a decision; checks_failed = the change fails the type check or lint. */
+export type StopKind = "tooling" | "judgment" | "not_reproduced" | "unfinished" | "checks_failed";
+
 /** kind "questions": the night run read the real code and stopped. */
 export type QuestionsPayload = {
   why: string;
   questions: ProposalDecision[];
+  stopKind?: StopKind;
 };
 
 /** kind "fix": the night run committed a fix on a local branch. */
