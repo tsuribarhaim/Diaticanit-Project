@@ -1520,13 +1520,13 @@ export function OnboardingProfileForm({
                 <p>
                   {tr(effectiveLocale, "Scale min", "מינימום סקאלה")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{BMI_SCALE_MIN}</span>
                 </p>
-                <p className="text-right">
+                <p className="text-end">
                   {tr(effectiveLocale, "Scale max", "מקסימום סקאלה")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{BMI_SCALE_MAX}</span>
                 </p>
                 <p>
                   {tr(effectiveLocale, "Healthy min", "מינימום תקין")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{BMI_GOOD_MIN}</span>
                 </p>
-                <p className="text-right">
+                <p className="text-end">
                   {tr(effectiveLocale, "Healthy max", "מקסימום תקין")}: <span className="font-semibold text-slate-900 dark:text-slate-100">{BMI_GOOD_MAX}</span>
                 </p>
               </div>
@@ -1811,7 +1811,7 @@ export function OnboardingProfileForm({
                     type="button"
                     disabled={disabled}
                     onClick={() => updateDraft({ nutritional_goal: goal })}
-                    className={`rounded-xl border px-3 py-2 text-left text-xs ${selected ? "border-teal-700 bg-teal-50 dark:bg-teal-950/40" : "border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900"} ${disabled ? "cursor-not-allowed opacity-50" : "hover:border-teal-400"}`}
+                    className={`rounded-xl border px-3 py-2 text-start text-xs ${selected ? "border-teal-700 bg-teal-50 dark:bg-teal-950/40" : "border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900"} ${disabled ? "cursor-not-allowed opacity-50" : "hover:border-teal-400"}`}
                   >
                     <p className="font-semibold text-slate-900 dark:text-slate-100">{goalLabel(goal, effectiveLocale)}</p>
                     <p className="mt-1 text-slate-600 dark:text-slate-400">{goalEnergyTarget(goal, effectiveLocale)}</p>
@@ -1973,7 +1973,7 @@ export function OnboardingProfileForm({
                       key={condition}
                       type="button"
                       onClick={() => toggleMedicalCondition(condition)}
-                      className={`rounded-xl border px-3 py-2 text-left text-xs font-medium ${selected ? "border-teal-700 bg-teal-50 text-teal-900 dark:bg-teal-950/40 dark:text-teal-300" : "border-slate-300 bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700"}`}
+                      className={`rounded-xl border px-3 py-2 text-start text-xs font-medium ${selected ? "border-teal-700 bg-teal-50 text-teal-900 dark:bg-teal-950/40 dark:text-teal-300" : "border-slate-300 bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700"}`}
                     >
                       {formatMedicalCondition(condition, effectiveLocale)}
                     </button>
