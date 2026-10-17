@@ -1,4 +1,4 @@
-const CACHE_NAME = "daffy-static-v1";
+const CACHE_NAME = "daffy-static-v2";
 const PRECACHE_URLS = ["/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {
