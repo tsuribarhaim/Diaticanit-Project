@@ -414,12 +414,14 @@ export async function getTicketJourney(supabase: Client, locale: AppLocale, tick
   const L = (en: string, he: string) => tr(locale, en, he);
   const { data: t } = await supabase.from("tickets").select("id, ticket_seq, subject, created_at, status, resolved_at").eq("id", ticketId).maybeSingle();
   if (!t) return null;
-  const [eventsR, proposalsR, batchesR, ordersR, promotesR] = await Promise.all([
+  const [eventsR, proposalsR, batchesR, ordersR, promotesR, promotesAlsoR] = await Promise.all([
     supabase.from("automation_events").select("kind, detail, created_at").eq("ticket_id", ticketId).order("created_at"),
     supabase.from("ticket_proposals").select("kind, status, created_at, decided_at, stop_kind:payload->>stopKind").eq("ticket_id", ticketId).order("created_at"),
     supabase.from("automation_batches").select("batch_date, created_at, approved_at, tickets").contains("tickets", JSON.stringify([{ ticketId }])),
     supabase.from("automation_work_orders").select("night_date, created_at, status, jobs, outcome").contains("jobs", JSON.stringify([{ ticketIds: [ticketId] }])).neq("status", "superseded"),
     supabase.from("automation_requests").select("completed_at, details").eq("kind", "promote").not("completed_at", "is", null).contains("details", JSON.stringify({ tickets: [{ ticketId }] })),
+    // A bundle ships as one item led by its first ticket: the other tickets are in alsoTickets.
+    supabase.from("automation_requests").select("completed_at, details").eq("kind", "promote").not("completed_at", "is", null).contains("details", JSON.stringify({ tickets: [{ alsoTickets: [{ ticketId }] }] })),
   ]);
   const steps: JourneyStep[] = [{ at: t.created_at as string, actor: "user", who: L("Reporter", "מדווח/ת"), text: L("reported the ticket", "דיווח/ה על הפנייה") }];
   for (const b of (batchesR.data ?? []) as Pick<Batch, "batch_date" | "created_at" | "approved_at" | "tickets">[]) {
@@ -441,7 +443,7 @@ export async function getTicketJourney(supabase: Client, locale: AppLocale, tick
     const job = o.jobs.find((j) => j.ticketIds.includes(ticketId));
     if (job) steps.push({ at: o.created_at, actor: "auto", who: L("Planner", "מתכנן"), text: L(`job ${job.position} for the night of ${ddmm(o.night_date)}`, `משימה ${job.position} ללילה של ${ddmm(o.night_date)}`) + (job.pulled ? L(" (you pulled it out)", " (הוצאת אותה)") : "") });
   }
-  for (const r of (promotesR.data ?? []) as { completed_at: string; details: { report?: { version?: string; ok?: boolean } } | null }[]) {
+  for (const r of [...(promotesR.data ?? []), ...(promotesAlsoR.data ?? [])] as { completed_at: string; details: { report?: { version?: string; ok?: boolean } } | null }[]) {
     const report = r.details?.report;
     steps.push({ at: r.completed_at, actor: "auto", who: L("Promotion", "העלאה לייצור"), text: report?.ok ? L(`released in version ${report.version}`, `עלתה בגרסה ${report.version}`) : L("the promotion failed and was rolled back", "ההעלאה נכשלה וחזרה לאחור") });
   }

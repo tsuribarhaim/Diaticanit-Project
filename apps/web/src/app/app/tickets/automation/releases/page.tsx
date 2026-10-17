@@ -15,7 +15,7 @@ type ReleaseRow = {
   requested_at: string;
   completed_at: string | null;
   result: string | null;
-  details: { report?: PromoteReport; tickets?: { ticketSeq: number; subject: string }[] } | null;
+  details: { report?: PromoteReport; tickets?: { ticketSeq: number; subject: string; alsoTickets?: { ticketSeq: number; subject: string }[] }[] } | null;
 };
 
 function formatWhen(iso: string | null, locale: AppLocale): string {
@@ -64,7 +64,7 @@ export default async function ReleaseHistoryPage() {
             {releases.map((release) => {
               const report = release.details?.report;
               const state = releaseState(release, locale);
-              const tickets = report?.tickets ?? release.details?.tickets?.map((t) => ({ seq: t.ticketSeq, subject: t.subject, commit: null, status: "pending", reason: "" })) ?? [];
+              const tickets = report?.tickets ?? release.details?.tickets?.flatMap((t) => [t, ...(t.alsoTickets ?? [])]).map((t) => ({ seq: t.ticketSeq, subject: t.subject, commit: null, status: "pending", reason: "" })) ?? [];
               return (
                 <li key={release.id} className="rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
                   <div className="flex flex-wrap items-center justify-between gap-2">
