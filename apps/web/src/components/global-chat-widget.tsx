@@ -483,6 +483,39 @@ export function GlobalChatWidget({
     router.refresh();
   }
 
+  /** TCK-122: several ticked saved items - same as daily-report-chat-panel's
+   * own handleLogSavedItems (one report row each, one summary toast). */
+  async function handleLogSavedItems(items: QuickLogSavedItem[]) {
+    if (items.length === 1) {
+      await handleLogSavedItem(items[0]);
+      return;
+    }
+    setIsSavedListOpen(false);
+    const n = items.length;
+    let ok = 0;
+    let firstError: string | null = null;
+    for (const item of items) {
+      const result = await logSavedItemFromChatAction(item.id);
+      if (result.error) firstError ??= result.error;
+      else ok += 1;
+    }
+    if (ok === n) {
+      if (savedItemToastTimerRef.current) clearTimeout(savedItemToastTimerRef.current);
+      setSavedItemToast({ message: tr(locale, `${n} reports were saved to today's log.`, `${n} דיווחים נשמרו ביומן היום.`) });
+      savedItemToastTimerRef.current = setTimeout(() => {
+        savedItemToastTimerRef.current = null;
+        setSavedItemToast({ message: null });
+      }, SAVE_TOAST_DURATION_MS);
+    } else {
+      const content =
+        ok > 0
+          ? tr(locale, `${ok} of ${n} items were saved. Please try the rest again.`, `נשמרו ${ok} מתוך ${n} פריטים. יש לנסות שוב את השאר.`)
+          : firstError!;
+      pushMessage({ role: "assistant", content });
+    }
+    if (ok > 0) router.refresh();
+  }
+
   async function handleSendMessage() {
     const trimmed = chatInput.trim();
     if (!trimmed || isSending) return;
@@ -898,6 +931,11 @@ export function GlobalChatWidget({
                   const item = savedItems?.find((entry) => entry.id === id);
                   if (item) void handleLogSavedItem(item);
                 }}
+                onSelectMany={(ids) =>
+                  void handleLogSavedItems(
+                    ids.map((id) => savedItems?.find((entry) => entry.id === id)).filter((entry): entry is QuickLogSavedItem => Boolean(entry)),
+                  )
+                }
                 triggerRef={savedListTriggerRef}
               />
   

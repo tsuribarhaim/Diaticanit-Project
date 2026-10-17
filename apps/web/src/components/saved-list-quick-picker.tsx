@@ -48,6 +48,9 @@ const VIEWPORT_MARGIN_PX = 12;
  * button's own rect on open (a fixed floating chat widget doesn't move
  * under the trigger while a picker is open, so one measurement suffices)
  * rather than anchored via a non-portaled ancestor.
+ *
+ * TCK-122: each row also has a checkbox - once any is ticked, row taps only
+ * tick/untick and an "Add selected" bar logs them all via onSelectMany.
  */
 export function SavedListQuickPicker({
   isOpen,
@@ -56,6 +59,7 @@ export function SavedListQuickPicker({
   isLoading,
   locale,
   onSelect,
+  onSelectMany,
   triggerRef,
 }: {
   isOpen: boolean;
@@ -64,11 +68,14 @@ export function SavedListQuickPicker({
   isLoading?: boolean;
   locale: AppLocale;
   onSelect: (id: string) => void;
+  /** TCK-122: the ticked ids, in the list's display order. */
+  onSelectMany: (ids: string[]) => void;
   /** The saved-list toggle button each caller already renders - measured
    * once on open to place the desktop popover just above it. */
   triggerRef: RefObject<HTMLButtonElement | null>;
 }) {
   const [query, setQuery] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [desktopAnchor, setDesktopAnchor] = useState<{ left: number; bottom: number } | null>(null);
   // TCK-93: the mobile sheet below used to anchor purely off
   // window.innerHeight (the LAYOUT viewport), which on Android does not
@@ -94,6 +101,7 @@ export function SavedListQuickPicker({
     // effect body.
     const timeout = setTimeout(() => {
       setQuery("");
+      setSelectedIds([]);
       setTheme(
         trigger?.closest("[data-theme]")?.getAttribute("data-theme") ??
           document.querySelector("[data-theme]")?.getAttribute("data-theme") ??
@@ -132,6 +140,17 @@ export function SavedListQuickPicker({
   const normalizedQuery = query.trim().toLowerCase();
   const filtered = normalizedQuery ? items.filter((item) => item.name.toLowerCase().includes(normalizedQuery)) : items;
 
+  function toggleSelected(id: string) {
+    setSelectedIds((previous) => (previous.includes(id) ? previous.filter((entry) => entry !== id) : [...previous, id]));
+  }
+
+  // TCK-122: with nothing ticked a row tap still logs that one item right
+  // away; once anything is ticked, it only ticks/unticks the row.
+  function handleRowActivate(id: string) {
+    if (selectedIds.length === 0) onSelect(id);
+    else toggleSelected(id);
+  }
+
   function renderList(maxHeightClassName: string) {
     if (isLoading) {
       return <p className="px-3 py-3 text-xs text-slate-500 dark:text-slate-400">{tr(locale, "Loading…", "טוען…")}</p>;
@@ -147,14 +166,35 @@ export function SavedListQuickPicker({
     }
     return (
       <div className={`overflow-y-auto ${maxHeightClassName}`}>
-        {filtered.map((item) => (
-          <button
+        {filtered.map((item) => {
+          const isSelected = selectedIds.includes(item.id);
+          const displayName = formatDefaultItemName(item.name, locale);
+          return (
+          <div
             key={item.id}
-            type="button"
-            onClick={() => onSelect(item.id)}
-            className="flex w-full items-center justify-between gap-2 border-b border-slate-100 px-3 py-2.5 text-start last:border-0 hover:bg-slate-50 dark:border-slate-800/60 dark:hover:bg-slate-800"
+            role="button"
+            tabIndex={0}
+            onClick={() => handleRowActivate(item.id)}
+            onKeyDown={(event) => {
+              if (event.target !== event.currentTarget) return;
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                handleRowActivate(item.id);
+              }
+            }}
+            className={`flex w-full cursor-pointer items-center gap-2 border-b border-slate-100 px-3 py-2.5 text-start last:border-0 dark:border-slate-800/60 ${
+              isSelected ? "bg-teal-50 dark:bg-teal-950/30" : "hover:bg-slate-50 dark:hover:bg-slate-800"
+            }`}
           >
-            <span className="min-w-0">
+            <input
+              type="checkbox"
+              checked={isSelected}
+              onChange={() => toggleSelected(item.id)}
+              onClick={(event) => event.stopPropagation()}
+              aria-label={tr(locale, `Select ${displayName}`, `בחירת ${displayName}`)}
+              className="h-4 w-4 shrink-0 accent-teal-700"
+            />
+            <span className="min-w-0 flex-1">
               <span className="block truncate text-xs font-semibold text-slate-800 dark:text-slate-200">
                 {formatDefaultItemName(item.name, locale)}
               </span>
@@ -171,11 +211,34 @@ export function SavedListQuickPicker({
                 {formatDefaultItemKind(item.kind, locale)}
               </span>
             ) : null}
-          </button>
-        ))}
+          </div>
+          );
+        })}
       </div>
     );
   }
+
+  // TCK-122: shown only while something is ticked. Ids go out in the list's
+  // own order (not click order), including rows the search currently hides.
+  const actionBar =
+    selectedIds.length > 0 ? (
+      <div className="flex items-center gap-2 border-t border-slate-200 px-3 py-2 dark:border-slate-800">
+        <button
+          type="button"
+          onClick={() => onSelectMany(items.filter((item) => selectedIds.includes(item.id)).map((item) => item.id))}
+          className="flex-1 rounded-lg bg-teal-700 px-3 py-2 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+        >
+          {tr(locale, `Add selected (${selectedIds.length})`, `הוספת הנבחרים (${selectedIds.length})`)}
+        </button>
+        <button
+          type="button"
+          onClick={() => setSelectedIds([])}
+          className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+        >
+          {tr(locale, "Clear", "ניקוי")}
+        </button>
+      </div>
+    ) : null;
 
   const searchBox =
     items.length > 5 ? (
@@ -232,6 +295,7 @@ export function SavedListQuickPicker({
             {searchBox}
           </div>
           {renderList("max-h-56")}
+          {actionBar}
         </div>
       ) : null}
 
@@ -255,6 +319,7 @@ export function SavedListQuickPicker({
             {searchBox}
           </div>
           {renderList("max-h-full flex-1")}
+          {actionBar}
           <button
             type="button"
             onClick={onClose}
