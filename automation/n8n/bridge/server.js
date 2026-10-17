@@ -107,6 +107,12 @@ const TRIAGE_MAX_PICKS = 8;
 /** n8n's "Daffy - Batch Mail" workflow (create-batch-mail-workflow.js): sends the batch's ready/done emails to the admin. */
 const BATCH_MAIL_WEBHOOK = env.BATCH_MAIL_WEBHOOK || "http://localhost:5678/webhook/daffy-batch-mail";
 const SHOT_TOOL = path.join(__dirname, "tools", "shot.js");
+// The agent's single verify command (tsc + eslint in apps/web + the diff): `node` is always allowed, so it can never be denied.
+const VERIFY_TOOL = path.join(__dirname, "tools", "verify.js");
+// Written at the start of the notes of a ticket stopped by the tooling (not by the ticket): the work order counts it apart, and
+// TOOLING_RETRY marks the first such stop, after which the ticket goes back in the queue once by itself.
+const TOOLING_MARK = "[tooling]";
+const TOOLING_RETRY = "will retry once on the next run";
 // Outside every worktree on purpose: the bridge commits with `git add -A`, and screenshots must never end up in a fix.
 const SHOTS_BASE = path.join(__dirname, "shots");
 const MAX_SHOTS = 4;
@@ -276,6 +282,9 @@ const PHASE2_RESULT_SCHEMA = JSON.stringify({
       type: "string",
       enum: ["reproduced_and_fixed", "reproduced_needs_judgment", "could_not_reproduce", "incomplete"],
     },
+    // Only for incomplete: verification_blocked = the fix is written but the checks could not be run (the bridge then runs
+    // them itself and commits when they pass); unfinished = the change is not done; other = anything else.
+    incompleteReason: { type: ["string", "null"], enum: ["verification_blocked", "unfinished", "other", null] },
     reproductionSummary: { type: "string" },
     diagnosis: { type: "string" },
     fixSummary: { type: ["string", "null"] },
@@ -293,7 +302,7 @@ const PHASE2_RESULT_SCHEMA = JSON.stringify({
       },
     },
   },
-  required: ["reproduced", "nature", "classification", "reproductionSummary", "diagnosis", "fixSummary", "testSummary", "filesChanged", "filesToDelete", "testSteps", "screenshotPages"],
+  required: ["reproduced", "nature", "classification", "incompleteReason", "reproductionSummary", "diagnosis", "fixSummary", "testSummary", "filesChanged", "filesToDelete", "testSteps", "screenshotPages"],
   additionalProperties: false,
 });
 
@@ -337,10 +346,17 @@ function buildPhase2Prompt(ticket, phase1Output, port, shotsDir) {
     "   - nature: tag it bug (a real defect), logic (business-rule/behavior gap), or ui_ux (presentation/interaction) - " +
       "whichever best describes it, regardless of which classification you picked.",
     "",
-    "3. FIX (only for reproduced_and_fixed): make the narrowest change that fixes it. Then verify: run `npx tsc --noEmit` " +
-      "and `npx eslint .` yourself (both must pass with zero errors) and re-run whatever you used in step 1 to confirm the " +
-      "behavior actually changed. If anything doesn't come out clean, downgrade classification to incomplete rather than " +
-      "claiming success - do not leave half-working changes reported as fixed.",
+    "3. FIX (only for reproduced_and_fixed): make the narrowest change that fixes it. Then verify with exactly this one command, " +
+      `run from the folder you started in: \`node "${VERIFY_TOOL.replace(/\\/g, "/")}"\` (give the Bash call a timeout of 300000 - the type ` +
+      "check takes a minute or two). It runs the type check and lint inside apps/web and prints your diff. Do NOT call tsc, eslint, " +
+      "npm or git yourself, and do not add cd: those shapes are denied or run the wrong tools. Both checks must say PASS; if one " +
+      "fails, fix your change and run it again. Also re-run whatever you used in step 1 to confirm the behavior actually changed. " +
+      "If something doesn't come out clean, downgrade classification to incomplete rather than claiming success - do not leave " +
+      "half-working changes reported as fixed.",
+    "   - incompleteReason (null unless classification is incomplete): verification_blocked when your fix is fully written but " +
+      "the checks could not be run at all (the command was denied, crashed or timed out - NOT when they ran and reported errors); " +
+      "the bridge then runs the same checks itself and keeps the fix if they pass. unfinished when the change itself is not done. " +
+      "other for anything else.",
     "",
     "LOOKING AT YOUR CHANGE: you can take a real screenshot of any page of the running dev server and then read it. Run " +
       `\`node "${SHOT_TOOL.replace(/\\/g, "/")}" <page> "${shotsDir.replace(/\\/g, "/")}/<name>.jpg"\` where <page> is the app path WITHOUT a leading slash ` +
@@ -1044,7 +1060,10 @@ async function verifyAndCommitFix(worktreeDir, ticket, phase2Output) {
   const webDir = path.join(worktreeDir, WEB_APP_SUBDIR);
   // Files the agent asked to have deleted (it has no delete tool): only plainly safe ones, and only for a fix it claims is done.
   let deletions = { deleted: [], rejected: [] };
-  if (phase2Output.classification === "reproduced_and_fixed") deletions = applyDeletions(worktreeDir, phase2Output.filesToDelete);
+  // A fix the agent wrote but could not check (its checks were denied or crashed) gets the bridge's own checks below, exactly like a
+  // claimed fix: those checks are the real gate anyway. Before this, TCK-154's correct one-line fix was thrown away.
+  const rescue = phase2Output.classification === "incomplete" && phase2Output.incompleteReason === "verification_blocked";
+  if (phase2Output.classification === "reproduced_and_fixed" || rescue) deletions = applyDeletions(worktreeDir, phase2Output.filesToDelete);
   if (deletions.rejected.length > 0) {
     return { committed: false, branch: null, reason: `The agent asked to delete files the bridge will not delete (${deletions.rejected.map((r) => `${r.file}: ${r.why}`).join("; ")}).` };
   }
@@ -1060,7 +1079,7 @@ async function verifyAndCommitFix(worktreeDir, ticket, phase2Output) {
   if (!changedFiles) {
     return { committed: false, branch: null, reason: "Agent reported a fix but no files actually changed." };
   }
-  if (phase2Output.classification !== "reproduced_and_fixed") {
+  if (phase2Output.classification !== "reproduced_and_fixed" && !rescue) {
     // The agent itself didn't claim success - whatever it touched (if
     // anything) is discarded, not partially applied.
     return { committed: false, branch: null, reason: null };
@@ -1069,10 +1088,17 @@ async function verifyAndCommitFix(worktreeDir, ticket, phase2Output) {
   const tsc = await runNpx(["tsc", "--noEmit"], webDir, 180000);
   const eslint = await runNpx(["eslint", "."], webDir, 180000);
   if (!tsc.ok || !eslint.ok) {
+    // The first error lines, so the stop card says what is wrong instead of only "failed".
+    const errorsOf = (output) => output.split(/\r?\n/).filter((line) => /error/i.test(line)).slice(0, 6).join("\n");
     return {
       committed: false,
       branch: null,
-      reason: `Bridge-run verification failed (not the agent's own claim) - tsc ok=${tsc.ok}, eslint ok=${eslint.ok}.`,
+      checksFailed: true,
+      reason: [
+        `Bridge-run verification failed (not the agent's own claim) - tsc ok=${tsc.ok}, eslint ok=${eslint.ok}.`,
+        !tsc.ok ? `Type check:\n${errorsOf(tsc.output) || "(no error lines captured)"}` : "",
+        !eslint.ok ? `Lint:\n${errorsOf(eslint.output) || "(no error lines captured)"}` : "",
+      ].filter(Boolean).join("\n"),
     };
   }
 
@@ -1088,7 +1114,7 @@ async function verifyAndCommitFix(worktreeDir, ticket, phase2Output) {
     ],
     worktreeDir,
   );
-  return { committed: true, branch, reason: null, files: changedFiles.split("\n").filter(Boolean), leftOut };
+  return { committed: true, branch, reason: null, files: changedFiles.split("\n").filter(Boolean), leftOut, rescued: rescue };
 }
 
 function formatPhase1Notes(output) {
@@ -1098,6 +1124,17 @@ function formatPhase1Notes(output) {
     lines.push("", "Files likely involved: " + output.filesLikelyInvolved.join(", "));
   }
   return lines.join("\n");
+}
+
+/** Why a night-run job stopped, for the stop card and the numbers: tooling = the bridge or the agent's tools failed (not the
+ * ticket - see TOOLING_MARK); judgment = needs a decision; not_reproduced; unfinished = the agent did not finish the change;
+ * checks_failed = the change does not pass the bridge's type check or lint. */
+function stopKindOf(output, commitResult) {
+  if (output.classification === "reproduced_needs_judgment") return "judgment";
+  if (output.classification === "could_not_reproduce") return "not_reproduced";
+  if (commitResult.checksFailed) return "checks_failed";
+  if (output.classification === "incomplete" && output.incompleteReason === "verification_blocked") return "tooling";
+  return "unfinished";
 }
 
 function formatPhase2Notes(output, commitResult) {
@@ -1114,6 +1151,7 @@ function formatPhase2Notes(output, commitResult) {
   if (output.fixSummary) lines.push("", "Fix:", output.fixSummary);
   if (output.testSummary) lines.push("", "Verification:", output.testSummary);
   if (commitResult.committed) {
+    if (commitResult.rescued) lines.push("", "The agent could not run its own checks; the bridge ran the type check and lint itself and both passed, so the fix was kept.");
     lines.push("", `Committed to local branch "${commitResult.branch}" (not pushed, not merged) - review and ask to promote when ready.`);
     if (commitResult.leftOut && commitResult.leftOut.length) lines.push(`Left out of the commit (not app source, public files or migrations): ${commitResult.leftOut.join(", ")}`);
   } else if (commitResult.reason) {
@@ -1160,6 +1198,7 @@ async function processTicket(ticket, budgetTracker) {
       for (const member of membersOf(ticket)) await reportProposal(member.id, "questions", {
         why: [phase1.output.diagnosis, phase1.output.proposedFix ? `Proposed fix if approved:\n${phase1.output.proposedFix}` : ""].filter(Boolean).join("\n\n"),
         questions: phase1.output.questions || [],
+        stopKind: "judgment",
       });
     }
 
@@ -1197,7 +1236,8 @@ async function processTicket(ticket, budgetTracker) {
     budgetTracker.spentUsd += phase2.costUsd;
 
     // Screenshots need the dev server, so they are taken before it is stopped.
-    const shots = phase2.output.classification === "reproduced_and_fixed" ? await captureShots(ticket, phase2.output.screenshotPages) : [];
+    const claimsFix = phase2.output.classification === "reproduced_and_fixed" || (phase2.output.classification === "incomplete" && phase2.output.incompleteReason === "verification_blocked");
+    const shots = claimsFix ? await captureShots(ticket, phase2.output.screenshotPages) : [];
 
     await stopDevServer(devServerProc);
     devServerProc = null;
@@ -1207,7 +1247,9 @@ async function processTicket(ticket, budgetTracker) {
     const mergeResult = commitResult.committed ? await autoMergeToDev(ticket.ticket_seq, commitResult.files || [], { inBatch: Boolean(ticket.inBatch) }) : { merged: false, reason: null };
     const finalAutoHandle = commitResult.committed ? (mergeResult.merged ? "M" : "D") : "P";
     const finalStatus = commitResult.committed ? "fixed" : "in_progress";
-    for (const member of membersOf(ticket)) await reportResult(member.id, finalAutoHandle, formatPhase2Notes(phase2.output, commitResult), finalStatus);
+    const stopKind = commitResult.committed ? null : stopKindOf(phase2.output, commitResult);
+    const notes = `${stopKind === "tooling" ? `${TOOLING_MARK} ` : ""}${formatPhase2Notes(phase2.output, commitResult)}`;
+    for (const member of membersOf(ticket)) await reportResult(member.id, finalAutoHandle, notes, finalStatus);
     if (commitResult.committed) {
       for (const member of membersOf(ticket)) await reportProposal(member.id, "fix", {
         summary: phase2.output.fixSummary || phase2.output.diagnosis,
@@ -1215,6 +1257,7 @@ async function processTicket(ticket, budgetTracker) {
         branch: commitResult.branch,
         files: commitResult.files || [],
         checks: [
+          ...(commitResult.rescued ? [{ ok: true, text: "The agent could not run its own checks - the bridge ran them and kept the fix" }] : []),
           { ok: true, text: "Type check passes (run by the bridge, not taken from the agent)" },
           { ok: true, text: "Lint passes with 0 errors (run by the bridge)" },
           ...(mergeResult.merged ? [{ ok: true, text: "Merged into dev after type check and lint passed on the merged result" }] : []),
@@ -1228,6 +1271,7 @@ async function processTicket(ticket, budgetTracker) {
       for (const member of membersOf(ticket)) await reportProposal(member.id, "questions", {
         why: [phase2.output.diagnosis, commitResult.reason ? `Not committed: ${commitResult.reason}` : ""].filter(Boolean).join("\n\n"),
         questions: [],
+        stopKind,
       });
     }
 
@@ -1243,11 +1287,19 @@ async function processTicket(ticket, budgetTracker) {
     };
   } catch (err) {
     // The ticket was flagged P when its read-only pass finished, so after a failure it would sit there with nothing for the
-    // dashboard to show. Say so on the ticket instead: a "stopped" card with the reason, which the admin can put back in the queue
-    // with one click. It is deliberately not retried automatically every night: a broken ticket would cost money each time.
+    // dashboard to show. An error here is the tooling's (dev server, CLI, network), not the ticket's: the first time, the ticket goes
+    // straight back in the queue for the next run; the second time in a row it stops with a "stopped by tooling" card the admin can
+    // re-queue with one click. Never more than one automatic retry: a ticket that keeps breaking the run would cost money every night.
+    // The queue sends each ticket's notes as they were before this run. An app that does not send them yet cannot tell a first
+    // stop from a second one, so it never retries (the old behaviour) rather than risk a retry every night.
+    const canRetry = "auto_handle_notes" in ticket && !membersOf(ticket).some((member) => String(member.auto_handle_notes || "").startsWith(TOOLING_MARK));
     for (const member of membersOf(ticket)) {
-      await reportProposal(member.id, "questions", { why: `The night run hit an error and stopped: ${err.message}`, questions: [] }).catch(() => {});
-      await reportResult(member.id, "P", `Night run error: ${err.message}`, "in_progress").catch(() => {});
+      if (canRetry) {
+        await reportResult(member.id, "Y", `${TOOLING_MARK} Night run error (${TOOLING_RETRY}): ${err.message}`, member.status === "reopened" ? "reopened" : "open").catch(() => {});
+      } else {
+        await reportProposal(member.id, "questions", { why: `The night run hit an error and stopped: ${err.message}`, questions: [], stopKind: "tooling" }).catch(() => {});
+        await reportResult(member.id, "P", `${TOOLING_MARK} Night run error: ${err.message}`, "in_progress").catch(() => {});
+      }
     }
     return { ticketId: ticket.id, ticketSeq: ticket.ticket_seq, subject: ticket.subject, outcome: "failed", error: err.message };
   } finally {
@@ -1888,5 +1940,5 @@ if (require.main === module) {
     console.log(`Phase 2: ${PHASE2_ENABLED ? "enabled" : "disabled"}`);
   });
 } else {
-  module.exports = { syncDevWithProduction, moveStaleBranchAside, conflictAdvice, nextMigrationNumber, mergeBranch, revertMerge, runAll, rebuildStaleFixes, groupQueue, bundleJob, bundleLines, attachmentsBlock };
+  module.exports = { syncDevWithProduction, moveStaleBranchAside, conflictAdvice, nextMigrationNumber, mergeBranch, revertMerge, runAll, rebuildStaleFixes, groupQueue, bundleJob, bundleLines, attachmentsBlock, verifyAndCommitFix, stopKindOf };
 }
