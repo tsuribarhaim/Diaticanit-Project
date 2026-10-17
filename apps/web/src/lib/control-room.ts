@@ -33,7 +33,7 @@ export type ControlRoom = {
   };
   lanes: Lane[];
   timeline: { from: string; to: string; nowH: number | null; rows: { key: string; title: string; kind: string }[]; blocks: TimelineBlock[] };
-  tonight: { id: string; status: WorkOrder["status"]; nightDate: string; createdAt: string; plannedBy: WorkOrder["planned_by"]; baseRef: string | null; budgetUsd: number | null; estimateUsd: number | null; successEstimate: number | null; jobs: TonightJob[]; deferred: TonightDeferred[]; successRate: number | null } | null;
+  tonight: { id: string; status: WorkOrder["status"]; nightDate: string; createdAt: string; plannedBy: WorkOrder["planned_by"]; baseRef: string | null; budgetUsd: number | null; estimateUsd: number | null; successEstimate: number | null; jobs: TonightJob[]; deferred: TonightDeferred[]; successRate: number | null; toolingStops: number } | null;
   history: { nightDate: string; rate: number }[];
   log: LogEntry[];
 };
@@ -70,7 +70,7 @@ export async function getControlRoom(supabase: Client, locale: AppLocale, dayOff
     supabase.from("automation_runs").select("kind, trigger, started_at, finished_at, tickets_count, cost_usd, result").gte("started_at", new Date(Math.min(day.from.getTime(), Date.parse(since3d))).toISOString()).order("started_at"),
     supabase.from("automation_events").select("ticket_id, kind, actor, detail, created_at").gte("created_at", since3d).order("created_at"),
     supabase.from("automation_requests").select("id, kind, ticket_id, requested_at, picked_at, completed_at, result, details").gte("requested_at", since3d).order("requested_at"),
-    supabase.from("ticket_proposals").select("ticket_id, kind, status, created_at").gte("created_at", since3d).order("created_at"),
+    supabase.from("ticket_proposals").select("ticket_id, kind, status, created_at, stop_kind:payload->>stopKind").gte("created_at", since3d).order("created_at"),
     loadActiveBatch(supabase),
     supabase.from("automation_work_orders").select("*").neq("status", "superseded").order("created_at", { ascending: false }).limit(1),
     supabase.from("automation_work_orders").select("night_date, success_rate").eq("status", "done").not("success_rate", "is", null).order("night_date", { ascending: false }).limit(10),
@@ -82,7 +82,7 @@ export async function getControlRoom(supabase: Client, locale: AppLocale, dayOff
   const byId = new Map(tickets.map((t) => [t.id, t]));
   const events = (eventsR.data ?? []) as { ticket_id: string; kind: string; actor: string | null; detail: Record<string, unknown> | null; created_at: string }[];
   const requests = (requestsR.data ?? []) as { id: string; kind: string; ticket_id: string | null; requested_at: string; picked_at: string | null; completed_at: string | null; result: string | null; details: Record<string, unknown> | null }[];
-  const proposals = (proposalsR.data ?? []) as { ticket_id: string; kind: string; status: string; created_at: string }[];
+  const proposals = (proposalsR.data ?? []) as { ticket_id: string; kind: string; status: string; created_at: string; stop_kind: string | null }[];
   const runs = (runsR.data ?? []) as { kind: string; trigger: Trigger | null; started_at: string; finished_at: string | null; tickets_count: number; cost_usd: number | null; result: string | null }[];
   const order = ((ordersR.data ?? [])[0] as WorkOrder | undefined) ?? null;
 
@@ -105,13 +105,15 @@ export async function getControlRoom(supabase: Client, locale: AppLocale, dayOff
   const live = tickets.filter((t) => !["resolved", "closed", "cancelled", "duplicate"].includes(t.status));
   const flagged = (flag: string) => live.filter((t) => t.auto_handle === flag);
   const pendingQuestions = new Set(proposals.filter((p) => p.kind === "questions" && p.status === "pending").map((p) => p.ticket_id));
+  // Stopped by the run's own tools (not the ticket): shown as such, never as "a question".
+  const toolingStopped = new Set(proposals.filter((p) => p.kind === "questions" && p.status === "pending" && p.stop_kind === "tooling").map((p) => p.ticket_id));
 
   // ---- now
   const jobStateOf = (ids: string[]): TonightJob["state"] => {
     const flags = ids.map((id) => byId.get(id)?.auto_handle ?? null);
     if (flags.every((f) => f === "M" || f === "R")) return { tone: "green", text: L("Merged to dev", "מוזג לפיתוח") };
     if (flags.some((f) => f === "D")) return { tone: "amber", text: L("Built, not merged", "נבנה, לא מוזג") };
-    if (flags.some((f) => f === "P")) return busy === "night" && !ids.some((id) => pendingQuestions.has(id)) ? { tone: "ai", text: L("Being built now", "נבנית עכשיו") } : { tone: "amber", text: L("Stopped with a question", "נעצרה עם שאלה") };
+    if (flags.some((f) => f === "P")) return busy === "night" && !ids.some((id) => pendingQuestions.has(id)) ? { tone: "ai", text: L("Being built now", "נבנית עכשיו") } : ids.some((id) => toolingStopped.has(id)) ? { tone: "amber", text: L("Stopped by tooling", "נעצרה בגלל הכלים") } : { tone: "amber", text: L("Stopped with a question", "נעצרה עם שאלה") };
     if (flags.some((f) => f === "S" || f === "A")) return { tone: "rose", text: L("Back to the analyst", "חזרה לאנליסט") };
     return { tone: "plain", text: L("Queued", "בתור") };
   };
@@ -286,6 +288,11 @@ export async function getControlRoom(supabase: Client, locale: AppLocale, dayOff
   };
 
   // ---- tonight
+  // A job the tooling stopped and the bridge put straight back in the queue is flagged Y again, which would read "Queued".
+  const toolingRetry = (position: number): TonightJob["state"] | null => {
+    const o = order?.status === "done" ? (order.outcome ?? []).find((x) => x.position === position) : undefined;
+    return o?.result === "tooling" ? { tone: "amber", text: L("Stopped by tooling - retried next run", "נעצרה בגלל הכלים - תנוסה שוב בריצה הבאה") } : null;
+  };
   const tonight: ControlRoom["tonight"] = order
     ? {
         id: order.id,
@@ -298,7 +305,8 @@ export async function getControlRoom(supabase: Client, locale: AppLocale, dayOff
         estimateUsd: order.estimate_usd === null ? null : Number(order.estimate_usd),
         successEstimate: order.success_estimate === null ? null : Number(order.success_estimate),
         successRate: order.success_rate === null ? null : Number(order.success_rate),
-        jobs: order.jobs.map((j) => ({ ...j, pulled: Boolean(j.pulled), state: j.pulled ? null : order.status === "planned" ? null : jobStateOf(j.ticketIds) })),
+        jobs: order.jobs.map((j) => ({ ...j, pulled: Boolean(j.pulled), state: j.pulled ? null : order.status === "planned" ? null : toolingRetry(j.position) ?? jobStateOf(j.ticketIds) })),
+        toolingStops: (order.outcome ?? []).filter((o) => o.result === "tooling").length,
         deferred: order.deferred.map((d) => ({ ticketId: d.ticketId, seq: d.seq, subject: d.subject, why: deferText(d.reason, d.waitsFor, locale, d.detail) })),
       }
     : null;
@@ -408,7 +416,7 @@ export async function getTicketJourney(supabase: Client, locale: AppLocale, tick
   if (!t) return null;
   const [eventsR, proposalsR, batchesR, ordersR, promotesR] = await Promise.all([
     supabase.from("automation_events").select("kind, detail, created_at").eq("ticket_id", ticketId).order("created_at"),
-    supabase.from("ticket_proposals").select("kind, status, created_at, decided_at").eq("ticket_id", ticketId).order("created_at"),
+    supabase.from("ticket_proposals").select("kind, status, created_at, decided_at, stop_kind:payload->>stopKind").eq("ticket_id", ticketId).order("created_at"),
     supabase.from("automation_batches").select("batch_date, created_at, approved_at, tickets").contains("tickets", JSON.stringify([{ ticketId }])),
     supabase.from("automation_work_orders").select("night_date, created_at, status, jobs, outcome").contains("jobs", JSON.stringify([{ ticketIds: [ticketId] }])).neq("status", "superseded"),
     supabase.from("automation_requests").select("completed_at, details").eq("kind", "promote").not("completed_at", "is", null).contains("details", JSON.stringify({ tickets: [{ ticketId }] })),
@@ -424,9 +432,9 @@ export async function getTicketJourney(supabase: Client, locale: AppLocale, tick
     const actor = actorOf(e);
     steps.push({ at: e.created_at, actor, who: actor === "auto" ? L("Planner", "מתכנן") : actor === "user" ? L("Reporter", "מדווח/ת") : L("You", "את/ה"), text: eventText(e.kind, locale, e.detail).replace(/[:\s]+$/, "") });
   }
-  for (const p of (proposalsR.data ?? []) as { kind: string; status: string; created_at: string; decided_at: string | null }[]) {
+  for (const p of (proposalsR.data ?? []) as { kind: string; status: string; created_at: string; decided_at: string | null; stop_kind: string | null }[]) {
     if (p.kind === "proposal") steps.push({ at: p.created_at, actor: "ai", who: L("Analyst", "אנליסט"), text: L("wrote a proposal", "כתב הצעה") + (p.status === "approved" ? L(" (approved)", " (אושרה)") : "") });
-    if (p.kind === "questions") steps.push({ at: p.created_at, actor: "ai", who: L("Night run", "ריצת לילה"), text: L("stopped with questions", "נעצרה עם שאלות") });
+    if (p.kind === "questions") steps.push({ at: p.created_at, actor: "ai", who: L("Night run", "ריצת לילה"), text: p.stop_kind === "tooling" ? L("stopped by its own tools (not the ticket)", "נעצרה בגלל הכלים שלה (לא בגלל הפנייה)") : L("stopped with questions", "נעצרה עם שאלות") });
     if (p.kind === "fix") steps.push({ at: p.created_at, actor: "ai", who: L("Night run", "ריצת לילה"), text: L("built the fix", "בנתה את התיקון") + (["merged", "approved", "released"].includes(p.status) ? L(" and merged it to dev", " ומיזגה לפיתוח") : "") });
   }
   for (const o of (ordersR.data ?? []) as Pick<WorkOrder, "night_date" | "created_at" | "jobs">[]) {

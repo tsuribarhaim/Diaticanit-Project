@@ -37,7 +37,9 @@ export type WorkOrderJob = {
 };
 export type DeferReason = "held_fix" | "held_queue" | "bundle_partner" | "stale" | "budget" | "pulled";
 export type WorkOrderDeferred = { ticketId: string; seq: number; subject: string; reason: DeferReason; detail: string; waitsFor: number[] };
-export type JobResult = "merged" | "built" | "stopped" | "not_reached";
+export type JobResult = "merged" | "built" | "stopped" | "tooling" | "not_reached";
+/** The bridge starts a ticket's notes with this when the run's own tools failed, not the ticket (TOOLING_MARK in server.js). */
+export const TOOLING_MARK = "[tooling]";
 export type WorkOrder = {
   id: string;
   night_date: string;
@@ -288,8 +290,10 @@ async function estimateSuccess(admin: Admin, jobs: WorkOrderJob[]): Promise<numb
 
 /**
  * After the night run: what became of every planned job, read from the tickets' flags. merged = on dev (the goal);
- * built = a fix that could not be merged by itself; stopped = questions; not_reached = still queued (budget or time).
- * The success rate is merged jobs out of the jobs the night run was meant to build (pulled ones do not count).
+ * built = a fix that could not be merged by itself; stopped = questions; tooling = stopped (or sent back to the queue) because the
+ * run's own tools failed, not the ticket; not_reached = still queued (budget or time).
+ * The success rate is merged jobs out of the jobs the night run was meant to build (pulled ones do not count); tooling stops stay
+ * in it (they are a real miss) but are counted apart, so they point at the bridge rather than at the tickets.
  */
 export async function recordWorkOrderOutcome(admin: Admin): Promise<WorkOrder | null> {
   const { data } = await admin.from("automation_work_orders").select("*").eq("status", "running").order("created_at", { ascending: false }).limit(1).maybeSingle();
@@ -297,11 +301,20 @@ export async function recordWorkOrderOutcome(admin: Admin): Promise<WorkOrder | 
   if (!order) return null;
   const planned = order.jobs.filter((j) => !j.pulled);
   const ids = planned.flatMap((j) => j.ticketIds);
-  const { data: rows } = ids.length ? await admin.from("tickets").select("id, status, auto_handle").in("id", ids) : { data: [] };
-  const byId = new Map(((rows ?? []) as { id: string; status: string; auto_handle: string | null }[]).map((r) => [r.id, r]));
+  const { data: rows } = ids.length ? await admin.from("tickets").select("id, status, auto_handle, auto_handle_notes").in("id", ids) : { data: [] };
+  const byId = new Map(((rows ?? []) as { id: string; status: string; auto_handle: string | null; auto_handle_notes: string | null }[]).map((r) => [r.id, r]));
   const outcome = planned.map((job) => {
     const flags = job.ticketIds.map((id) => byId.get(id)?.auto_handle ?? null);
-    const result: JobResult = flags.every((f) => f === "M" || f === "R") ? "merged" : flags.some((f) => f === "D") ? "built" : flags.some((f) => f === "P") ? "stopped" : "not_reached";
+    const tooling = job.ticketIds.some((id) => (byId.get(id)?.auto_handle_notes ?? "").startsWith(TOOLING_MARK));
+    const result: JobResult = flags.every((f) => f === "M" || f === "R")
+      ? "merged"
+      : flags.some((f) => f === "D")
+        ? "built"
+        : tooling
+          ? "tooling"
+          : flags.some((f) => f === "P")
+            ? "stopped"
+            : "not_reached";
     return { position: job.position, seqs: job.seqs, result };
   });
   const successRate = planned.length ? Math.round((outcome.filter((o) => o.result === "merged").length / planned.length) * 1000) / 1000 : null;

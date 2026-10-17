@@ -25,7 +25,7 @@ import { NavLink } from "@/components/nav-link";
 import { Spinner } from "@/components/spinner";
 import { tr, type AppLocale } from "@/lib/locale";
 import { NAV_HREF, parseFrom } from "@/lib/tickets-nav";
-import { buildPairingPrompt, resolveChoices, type FixPayload, type ProposalDecision, type ProposalPayload, type QuestionsPayload } from "@/lib/ticket-proposals";
+import { buildPairingPrompt, resolveChoices, type FixPayload, type ProposalDecision, type ProposalPayload, type QuestionsPayload, type StopKind } from "@/lib/ticket-proposals";
 
 const REVIEW_HREF = "/app/tickets/review";
 
@@ -441,6 +441,17 @@ export function ProposalPanel({ locale, proposalId, ticketId, payload, ticketSeq
   );
 }
 
+/** One line on the stop card: what kind of stop this is, so a tooling failure never looks like a question about the ticket. */
+function stopKindText(locale: AppLocale, kind: StopKind): string {
+  switch (kind) {
+    case "tooling": return tr(locale, "Stopped by the night run's own tools (not by the ticket).", "נעצרה בגלל הכלים של ריצת הלילה (לא בגלל הפנייה).");
+    case "judgment": return tr(locale, "Stopped because it needs a decision from you.", "נעצרה כי נדרשת החלטה שלך.");
+    case "not_reproduced": return tr(locale, "Stopped because the problem could not be reproduced.", "נעצרה כי לא ניתן היה לשחזר את הבעיה.");
+    case "checks_failed": return tr(locale, "Stopped because the change fails the type check or lint.", "נעצרה כי השינוי לא עובר בדיקת טיפוסים או lint.");
+    case "unfinished": return tr(locale, "Stopped before the change was finished.", "נעצרה לפני שהשינוי הושלם.");
+  }
+}
+
 export function QuestionsPanel({ locale, proposalId, payload }: { locale: AppLocale; proposalId: string; payload: QuestionsPayload }) {
   const questions = payload.questions ?? [];
   const [answers, setAnswers] = useState<(number | undefined)[]>(() => questions.map(() => undefined));
@@ -453,6 +464,11 @@ export function QuestionsPanel({ locale, proposalId, payload }: { locale: AppLoc
       <div className="space-y-4">
         <div className={cardClass}>
           <h3 className={headingClass}>{tr(locale, "Why the night run stopped", "למה ריצת הלילה נעצרה")}</h3>
+          {payload.stopKind ? (
+            <p className={`mb-2 rounded-lg px-3 py-2 text-sm font-semibold ${payload.stopKind === "tooling" ? "bg-sky-50 text-sky-900 dark:bg-sky-950/30 dark:text-sky-200" : "bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200"}`}>
+              {stopKindText(locale, payload.stopKind)}
+            </p>
+          ) : null}
           <p dir="auto" className="whitespace-pre-wrap text-sm text-slate-800 dark:text-slate-200">{payload.why}</p>
         </div>
         {questions.length > 0 ? (
@@ -492,7 +508,12 @@ export function QuestionsPanel({ locale, proposalId, payload }: { locale: AppLoc
           {allDone
             ? tr(locale, "Your answers go into the ticket and it runs again tonight.", "התשובות שלך נכנסות לפנייה והיא תרוץ שוב הלילה.")
             : tr(locale, "Answer every question to re-queue.", "יש לענות על כל השאלות כדי להכניס לתור.")}
-          {questions.length === 0 ? " " + tr(locale, "The run stopped on an error, not on a question. Putting it back means a fresh attempt tonight.", "הריצה נעצרה בגלל שגיאה ולא בגלל שאלה. החזרה לתור תגרום לניסיון חדש הלילה.") : null}
+          {questions.length === 0
+            ? " " +
+              (payload.stopKind === "tooling"
+                ? tr(locale, "Nothing is wrong with the ticket itself, so putting it back is the usual answer: it gets a fresh attempt tonight.", "אין בעיה בפנייה עצמה, ולכן בדרך כלל פשוט מחזירים אותה לתור: היא תקבל ניסיון חדש הלילה.")
+                : tr(locale, "The run stopped without a question. Putting it back means a fresh attempt tonight.", "הריצה נעצרה בלי שאלה. החזרה לתור תגרום לניסיון חדש הלילה."))
+            : null}
         </p>
       </div>
     </div>
