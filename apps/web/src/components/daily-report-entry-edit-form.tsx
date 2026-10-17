@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 
 import { adjustDailyReportItemQuantitiesAction } from "@/app/app/daily-report/actions";
+import { limitToOneDecimal } from "@/components/daily-report-form";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { formatDefaultUnit, formatMeasurementUnit, tr, trGendered, type AppLocale } from "@/lib/locale";
 
@@ -143,7 +144,11 @@ export function DailyReportEntryEditForm({
             max={400}
             step="0.1"
             inputMode="decimal"
-            defaultValue={reportedWeightKg ?? undefined}
+            defaultValue={reportedWeightKg != null ? limitToOneDecimal(String(reportedWeightKg)) : undefined}
+            onChange={(event) => {
+              const limited = limitToOneDecimal(event.currentTarget.value);
+              if (limited !== event.currentTarget.value) event.currentTarget.value = limited;
+            }}
             className="w-24 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none ring-teal-600 focus:ring-2 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
           />
           <span className="text-xs text-slate-500 dark:text-slate-400">{formatMeasurementUnit("kg", locale)}</span>

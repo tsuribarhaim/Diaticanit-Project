@@ -54,6 +54,11 @@ const REPORT_MAX_LENGTH = 2000;
  * saved-list one-tap log toast, so every "saved" toast lasts the same. */
 export const SAVE_TOAST_DURATION_MS = 2000;
 
+/** TCK-102: cuts (never rounds) a weight string to one decimal digit, so a second digit can't be typed. */
+export function limitToOneDecimal(raw: string): string {
+  return raw.replace(/^(-?\d*[.,]\d)\d+$/, "$1");
+}
+
 function getLocalDateTimeValue(date: Date): string {
   const copy = new Date(date);
   copy.setSeconds(0, 0);
@@ -407,12 +412,13 @@ export function DailyReportForm({
   // (if any) - there's no "the user hasn't touched this yet" ambiguity to
   // protect here, and leaving it blank would silently drop the original
   // weight on save.
-  const initialWeightValue =
+  const initialWeightValue = limitToOneDecimal(
     editingReport?.reportedWeightKg != null
       ? String(editingReport.reportedWeightKg)
       : todaysWeightKg != null
         ? String(todaysWeightKg)
-        : "";
+        : "",
+  );
   const [weightValue, setWeightValue] = useState(initialWeightValue);
   // The baseline weightValue is compared against for "has this been
   // edited" - starts at the same already-logged-today value as weightValue
@@ -1052,7 +1058,9 @@ export function DailyReportForm({
                         inputMode="decimal"
                         value={weightValue}
                         onChange={(event) => {
-                          setWeightValue(event.target.value);
+                          const limited = limitToOneDecimal(event.target.value);
+                          if (limited !== event.target.value) event.currentTarget.value = limited;
+                          setWeightValue(limited);
                           // The browser's own native validation bubble (from
                           // min/max/step below) always renders in the BROWSER's
                           // own language, never this app's selected locale -
