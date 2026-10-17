@@ -279,7 +279,7 @@ export function GlobalChatWidget({
     updateReviewPromptStatus(index, "answered");
     pushMessage({
       role: "assistant",
-      content: tr(locale, "No problem — just let me know whenever you'd like me to check.", "אין בעיה - פשוט תגיד/י לי מתי שתרצה/י שאבדוק."),
+      content: trGendered(locale, userGender, "No problem — just let me know whenever you'd like me to check.", "אין בעיה - פשוט תגיד לי מתי שתרצה שאבדוק.", "אין בעיה - פשוט תגידי לי מתי שתרצי שאבדוק."),
     });
     await clearTargetsReviewPendingAction();
   }
