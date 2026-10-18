@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { AiExtractionConfig } from "@/lib/ai/env";
+import { DAFFY_HEBREW_GENDER_RULE } from "@/lib/ai/persona";
 import { callAiChatCompletion } from "@/lib/ai/provider-client";
 import type { AppLocale } from "@/lib/locale";
 import {
@@ -110,6 +111,7 @@ export async function negotiateProfileChange({
       role: "user" as const,
       content: [
         `Reply in ${locale === "he" ? "Hebrew" : "English"}, in Daffy's normal warm, concise voice.`,
+        locale === "he" ? DAFFY_HEBREW_GENDER_RULE : "",
         "The user's current Profile (only fields you're allowed to change):",
         JSON.stringify(profile, null, 2),
         outOfScopeNote,

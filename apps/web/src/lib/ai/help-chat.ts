@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { APP_HELP_CONTENT } from "@/lib/ai/help-content";
 import type { AiExtractionConfig } from "@/lib/ai/env";
+import { DAFFY_HEBREW_GENDER_RULE } from "@/lib/ai/persona";
 import { callAiChatCompletion } from "@/lib/ai/provider-client";
 import type { AppLocale } from "@/lib/locale";
 import { ticketAreaOptions, ticketPriorityOptions, ticketTypeOptions } from "@/lib/tickets";
@@ -95,6 +96,7 @@ export async function answerHelpQuestion({
       role: "user" as const,
       content: [
         `Reply in ${locale === "he" ? "Hebrew" : "English"}, in Daffy's normal warm, concise voice.`,
+        locale === "he" ? DAFFY_HEBREW_GENDER_RULE : "",
         "Reference material - the ONLY source of truth about what the app can do and where:",
         APP_HELP_CONTENT,
         `The user opened this chat from: ${currentScreen}`,
