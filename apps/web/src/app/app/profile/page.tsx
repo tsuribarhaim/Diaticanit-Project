@@ -27,6 +27,7 @@ import { ExpandableRow, ProfileRow, ProfileRowGroup, ProfileSectionTitle, QuickB
 import { LanguageToggle } from "@/components/language-toggle";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { TargetsStaleModal } from "@/components/targets-stale-modal";
+import { resolveUserGenderForAddressing } from "@/lib/ai/persona";
 import { DEFAULT_AVATAR_COLOR, isAvatarColorId } from "@/lib/avatar-colors";
 import { formatFileSize } from "@/lib/documents";
 import { getEnvironmentBadgeLabel } from "@/lib/environment-badge";
@@ -128,6 +129,8 @@ export default async function ProfilePage({
     redirect("/app/onboarding");
   }
 
+  const userGender = resolveUserGenderForAddressing(profile.gender, profile.biological_sex);
+
   let preferredLanguage: string | null = localeAndAvatarSelect.data?.preferred_language ?? null;
   let avatarColorRaw: string | null = localeAndAvatarSelect.data?.avatar_color ?? null;
   if (localeAndAvatarSelect.error?.message.includes("avatar_color")) {
@@ -194,7 +197,7 @@ export default async function ProfilePage({
 
   return (
     <main dir="auto" className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-5 px-4 py-8 sm:px-6 sm:py-10">
-      {targetsStaleChanges ? <TargetsStaleModal locale={locale} changes={targetsStaleChanges} dismissHref="/app/profile" /> : null}
+      {targetsStaleChanges ? <TargetsStaleModal locale={locale} changes={targetsStaleChanges} dismissHref="/app/profile" userGender={userGender} /> : null}
 
       <ProfileHeaderCard
         locale={locale}
