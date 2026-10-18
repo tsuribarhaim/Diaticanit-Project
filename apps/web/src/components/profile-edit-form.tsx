@@ -9,6 +9,7 @@ import {
   updateProfileAction,
   type ProfileUpdateActionState,
 } from "@/app/app/profile/actions";
+import { limitToOneDecimal } from "@/components/daily-report-form";
 import { LifestyleHabitsFields } from "@/components/lifestyle-habits-fields";
 import { LocalizedDateInput } from "@/components/localized-date-input";
 import { useUnsavedPreview } from "@/components/unsaved-preview-context";
@@ -334,7 +335,7 @@ function createInitialDraft(defaults: ProfileEditFormProps["defaults"]): Profile
     date_of_birth_display: defaults.date_of_birth,
     biological_sex: defaults.biological_sex,
     height_cm: String(defaults.height_cm),
-    weight_kg: String(defaults.weight_kg),
+    weight_kg: limitToOneDecimal(String(defaults.weight_kg)),
     activity_level: defaults.activity_level,
     exercise_modalities: initialExerciseModalities,
     exercise_other_activities: initialOtherActivities,
@@ -874,7 +875,7 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
           </label>
           <label className="block" data-field="weight_kg">
             <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Weight (kg)", "משקל (ק\"ג)")}</span>
-            <input type="number" name="weight_kg" required min={20} max={400} step="0.1" value={draft.weight_kg} onChange={(event) => updateDraft({ weight_kg: event.target.value })} className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("weight_kg")}`} />
+            <input type="number" name="weight_kg" required min={20} max={400} step="0.1" value={draft.weight_kg} onChange={(event) => { const limited = limitToOneDecimal(event.target.value); if (limited !== event.target.value) event.currentTarget.value = limited; updateDraft({ weight_kg: limited }); }} className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("weight_kg")}`} />
             {renderFieldError("weight_kg")}
           </label>
         </div>

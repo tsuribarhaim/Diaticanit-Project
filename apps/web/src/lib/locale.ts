@@ -1,3 +1,5 @@
+import type { PreferredExerciseActivityKey } from "@/lib/profile";
+
 export type AppLocale = "en" | "he";
 
 export function normalizeLocale(value: unknown): AppLocale {
@@ -189,6 +191,34 @@ export function formatExerciseModality(value: string, locale: AppLocale): string
   if (token === "other") return tr(locale, "Other", "אחר");
   if (token === "none") return tr(locale, "None", "ללא");
   return locale === "he" ? value : titleCase(value.replace(/_/g, " "));
+}
+
+const preferredExerciseActivityLabels: Record<PreferredExerciseActivityKey, { en: string; he: string }> = {
+  walking: { en: "Walking", he: "הליכה" },
+  running: { en: "Running", he: "ריצה" },
+  cycling: { en: "Cycling", he: "רכיבה על אופניים" },
+  swimming: { en: "Swimming", he: "שחייה" },
+  strength: { en: "Strength training", he: "אימון כוח" },
+  pilates: { en: "Pilates", he: "פילאטיס" },
+  yoga: { en: "Yoga", he: "יוגה" },
+  intervals: { en: "Interval training", he: "אימון אינטרוולים" },
+};
+
+export function formatPreferredExerciseActivity(key: PreferredExerciseActivityKey, locale: AppLocale): string {
+  const labels = preferredExerciseActivityLabels[key];
+  return tr(locale, labels.en, labels.he);
+}
+
+/** Maps a stored activity name back to its default key (in either language),
+ * or null for a user's own custom activity. */
+export function matchPreferredExerciseActivity(name: string): PreferredExerciseActivityKey | null {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) return null;
+  for (const key of Object.keys(preferredExerciseActivityLabels) as PreferredExerciseActivityKey[]) {
+    const labels = preferredExerciseActivityLabels[key];
+    if (labels.en.toLowerCase() === normalized || labels.he.toLowerCase() === normalized) return key;
+  }
+  return null;
 }
 
 export function formatGender(value: string, locale: AppLocale): string {
