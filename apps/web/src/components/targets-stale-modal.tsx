@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { ProfileDiffValue } from "@/components/profile-diff-value";
-import { tr, type AppLocale } from "@/lib/locale";
+import { tr, trGendered, type AppLocale } from "@/lib/locale";
 import type { ProfileDiffRow } from "@/lib/targets";
 
 /**
@@ -36,6 +36,7 @@ export function TargetsStaleModal({
   locale,
   changes,
   dismissHref,
+  userGender,
 }: {
   locale: AppLocale;
   changes: ProfileDiffRow[];
@@ -50,6 +51,9 @@ export function TargetsStaleModal({
    * /app/profile unconditionally on dismiss, which would have navigated
    * Daily Report users away just for closing the modal. */
   dismissHref?: string;
+  /** Used for Hebrew addressing - null falls back to the masculine form
+   * (see trGendered). */
+  userGender?: "male" | "female" | null;
 }) {
   const [isOpen, setIsOpen] = useState(true);
   const router = useRouter();
@@ -94,10 +98,12 @@ export function TargetsStaleModal({
             ))}
           </ul>
           <p className="mt-3 text-sm text-slate-700 dark:text-slate-300">
-            {tr(
+            {trGendered(
               locale,
+              userGender,
               "Next time you open chat with Daffy, she'll remind you to check and adjust anything that needs it.",
-              "בפעם הבאה שתפתח/י צ'אט עם דפי, היא תזכיר לך לבדוק ולהתאים את מה שצריך.",
+              "בפעם הבאה שתפתח צ'אט עם דפי, היא תזכיר לך לבדוק ולהתאים את מה שצריך.",
+              "בפעם הבאה שתפתחי צ'אט עם דפי, היא תזכיר לך לבדוק ולהתאים את מה שצריך.",
             )}
           </p>
         </div>
