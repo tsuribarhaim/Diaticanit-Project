@@ -97,7 +97,7 @@ export function TargetsStaleModal({
             {tr(
               locale,
               "Next time you open chat with Daffy, she'll remind you to check and adjust anything that needs it.",
-              "בפעם הבאה שתפתח/י צ'אט עם Daffy, היא תזכיר לך לבדוק ולהתאים את מה שצריך.",
+              "בפעם הבאה שתפתח/י צ'אט עם דפי, היא תזכיר לך לבדוק ולהתאים את מה שצריך.",
             )}
           </p>
         </div>
