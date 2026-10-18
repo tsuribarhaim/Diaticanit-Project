@@ -36,7 +36,7 @@ import {
   validateMedicalConditionOtherDetails,
   validateMedicationDetails,
 } from "@/lib/profile";
-import { normalizeLocale, tr } from "@/lib/locale";
+import { matchPreferredExerciseActivity, normalizeLocale, tr } from "@/lib/locale";
 import { logProfileWeightAsWeighIn } from "@/lib/profile-weight-weigh-in";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
@@ -981,6 +981,8 @@ export async function updateExercisePreferencesAction(_prevState: QuickEditState
       return { error: tr(locale, "Add at least one other activity type.", "יש להוסיף לפחות פעילות אחרת אחת.") };
     }
     for (const activity of otherActivities) {
+      // TCK-150: the sheet's own default activities are always meaningful.
+      if (matchPreferredExerciseActivity(activity.name) !== null) continue;
       const validation = validateExerciseOtherDetails(activity.name);
       if (!validation.isMeaningful) {
         return {
