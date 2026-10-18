@@ -827,7 +827,7 @@ export function DailyReportForm({
             // sheet/dialogs).
             <div dir={directionForLocale(locale)}>
               {state.targetsStaleChanges?.length ? (
-                <TargetsStaleModal locale={locale} changes={state.targetsStaleChanges} />
+                <TargetsStaleModal locale={locale} changes={state.targetsStaleChanges} userGender={userGender} />
               ) : null}
 
               {pendingRangeConfirm ? (
