@@ -219,6 +219,7 @@ export async function evaluateProfileTextWithAi({
   let contentText: string;
   try {
     contentText = await callAiChatCompletion({
+        usage: { feature: "profile_text" },
       config,
       jsonMode: true,
       signal: controller.signal,

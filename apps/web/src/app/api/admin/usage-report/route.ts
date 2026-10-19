@@ -77,6 +77,24 @@ export async function GET(request: Request) {
     if (!lastReportAt[id]) lastReportAt[id] = String(r.created_at);
   }
 
+  // AI cost (ai_usage_daily, db/migrations/083_ai_usage.sql): this week and the one before, one row per day x person x page x
+  // feature x model, so it stays small. Read on its own: if it fails, the report still goes out, without the AI section.
+  let aiCalls: UsageInput["aiCalls"] = null;
+  const aiSince = new Date(now.getTime() - 16 * 86400000).toLocaleDateString("en-CA", { timeZone: "Asia/Jerusalem" });
+  const aiDaily = await admin.from("ai_usage_daily").select("day, user_id, is_admin, page, cost_usd, calls").gte("day", aiSince).limit(20000);
+  if (aiDaily.error) {
+    logServerError("adminUsageReport", "ai_usage_query_failed", { error: aiDaily.error.message });
+  } else {
+    aiCalls = ((aiDaily.data ?? []) as Row[]).map((r) => ({
+      userId: (r.user_id as string | null) ?? null,
+      day: String(r.day),
+      page: (r.page as string | null) ?? null,
+      costUsd: Number(r.cost_usd ?? 0),
+      calls: Number(r.calls ?? 0),
+      isAdmin: Boolean(r.is_admin),
+    }));
+  }
+
   const ticketUpdates: UsageInput["ticketUpdates"] = [];
   for (const t of (ticketsUpdated.data ?? []) as Row[]) {
     // Every dated entry in the ticket's own log ("=== 2026-10-10T15:28:56.573Z ===") is one update.
@@ -101,6 +119,7 @@ export async function GET(request: Request) {
     notifications: ((notifications.data ?? []) as Row[]).map((r) => ({ userId: String(r.user_id), at: String(r.created_at), read: Boolean(r.read_at) })),
     ticketsOpened: ((ticketsOpened.data ?? []) as Row[]).map((r) => ({ userId: String(r.created_by), at: String(r.created_at) })),
     ticketUpdates,
+    aiCalls,
   };
 
   const week = computeUsageWeek(input);

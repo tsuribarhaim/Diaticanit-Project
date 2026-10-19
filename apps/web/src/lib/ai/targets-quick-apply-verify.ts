@@ -94,6 +94,7 @@ export async function verifyQuickAppliedFieldSafety({
   ];
 
   const contentText = await callAiChatCompletion({
+      usage: { feature: "targets_quick_safety" },
     config,
     messages,
     temperature: 0,

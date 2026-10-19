@@ -301,5 +301,5 @@ export async function openDailyReportChatReplyStream({
       },
     ];
 
-  return streamAiChatCompletion({ config, messages, temperature: 0.4 });
+  return streamAiChatCompletion({ config, messages, temperature: 0.4, usage: { feature: "report_chat" } });
 }

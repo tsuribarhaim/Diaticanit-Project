@@ -239,9 +239,11 @@ function computeMetrics({
 async function callDailyReportChatCompletion({
   config,
   messages,
+  feature,
 }: {
   config: AiExtractionConfig;
   messages: AiChatMessage[];
+  feature: "report_parse" | "report_photo";
 }): Promise<DailyReportParseResult> {
   if (config.provider === "github") {
     throw new Error(
@@ -249,7 +251,7 @@ async function callDailyReportChatCompletion({
     );
   }
 
-  const contentText = await callAiChatCompletion({ config, messages, jsonMode: true });
+  const contentText = await callAiChatCompletion({ config, messages, jsonMode: true, usage: { feature } });
 
   const parsed = aiDailyReportSchema.parse(parseJsonPayload(contentText));
 
@@ -328,6 +330,7 @@ export async function parseDailyReportWithAi({
 
   return callDailyReportChatCompletion({
     config,
+    feature: "report_parse",
     messages: [
       {
         role: "system",
@@ -382,6 +385,7 @@ export async function parseDailyReportPhotoWithAi({
 
   return callDailyReportChatCompletion({
     config,
+    feature: "report_photo",
     messages: [
       {
         role: "system",
@@ -491,6 +495,7 @@ export async function reconcileCustomTargetValueUnits({
   try {
     const contentText = await callAiChatCompletion({
       config,
+      usage: { feature: "report_unit_match" },
       messages: [
         {
           role: "system",
@@ -604,6 +609,7 @@ export async function checkDailyReportNeedsClarification({
   try {
     const contentText = await callAiChatCompletion({
       config,
+      usage: { feature: "report_clarify_check" },
       messages: [
         {
           role: "system",

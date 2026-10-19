@@ -110,6 +110,7 @@ export async function classifyTargetsFieldEdit({
   ];
 
   const contentText = await callAiChatCompletion({
+      usage: { feature: "targets_quick_classify" },
     config,
     messages,
     temperature: 0,

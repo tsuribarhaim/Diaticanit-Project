@@ -140,6 +140,7 @@ export async function generateHomeCoachNarrative({
   let contentText: string;
   try {
     contentText = await callAiChatCompletion({
+        usage: { feature: "home_coach", page: "/app" },
       config,
       jsonMode: true,
       signal: controller.signal,
