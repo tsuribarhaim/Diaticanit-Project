@@ -358,7 +358,8 @@ export function renderUsageReport(week: UsageWeek, now: Date, appUrl: string): U
 <div style="font-size:13.5px;font-weight:bold;color:#17302c;margin:14px 0 2px;">${ai.top.length === 1 ? "המשתמש" : `${ai.top.length} המשתמשים`} עם העלות הגבוהה</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>${th("משתמש")}${th("עלות", "left")}${th("פעולות", "left")}${th("עמוד מוביל", "left")}</tr>${topRows}</table>
 <div style="font-size:13.5px;font-weight:bold;color:#17302c;margin:14px 0 2px;">עלות לפי עמוד</div>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>${th("עמוד")}${th("עלות", "left")}${th("משתמשים", "left")}${th("ממוצע למשתמש", "left")}</tr>${pageRows}</table></div>`);
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>${th("עמוד")}${th("עלות", "left")}${th("משתמשים", "left")}${th("ממוצע למשתמש", "left")}</tr>${pageRows}</table>
+<a href="${appUrl}/app/tickets/ai-usage?gran=week&amp;date=${week.start}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;padding:9px 16px;border-radius:8px;font-weight:bold;font-size:13px;margin-top:12px;">פתיחת השימוש ב-AI בדפי</a></div>`);
     }
   }
   if (week.suggestions.length > 0) {

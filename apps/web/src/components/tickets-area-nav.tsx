@@ -11,6 +11,7 @@ function activeTab(pathname: string, from: string | null): NavFrom {
   if (pathname.startsWith("/app/tickets/automation")) return "automation";
   if (pathname.startsWith("/app/tickets/batch")) return "batch";
   if (pathname.startsWith("/app/tickets/control")) return "control";
+  if (pathname.startsWith("/app/tickets/ai-usage")) return "aiusage";
   if (pathname === "/app/tickets/review") return "review";
   if (pathname.startsWith("/app/tickets/review/")) return parseFrom(from, "review");
   if (pathname === "/app/tickets") return "tickets";
@@ -27,6 +28,7 @@ export function TicketsAreaNav({ locale, waiting }: { locale: AppLocale; waiting
     { key: "review", badge: waiting },
     { key: "batch", badge: 0 },
     { key: "control", badge: 0 },
+    { key: "aiusage", badge: 0 },
   ];
   return (
     <nav aria-label={tr(locale, "Tickets sections", "אזורי הפניות")} className="flex flex-wrap gap-1">
