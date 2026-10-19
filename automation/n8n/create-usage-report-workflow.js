@@ -5,7 +5,7 @@
 //   node create-usage-report-workflow.js [activate|deactivate]
 //
 // The request and e-mail nodes are cloned from "Daffy - Daily Admin Digest", so they carry the same x-digest-secret and the
-// same "Daffy SMTP" credential (neither is written into this file). Recipients: the admin only, for now (RECIPIENTS below).
+// same "Daffy SMTP" credential (neither is written into this file). Recipients: Tsuri and Orit (RECIPIENTS below).
 // Manual test send:  curl -X POST http://localhost:5678/webhook/daffy-weekly-usage-manual
 // Failures go to "Daffy - Error Alert", like the digest.
 const fs = require("fs");
@@ -30,7 +30,7 @@ const H = { "X-N8N-API-KEY": n8nEnv.N8N_API_KEY, "Content-Type": "application/js
 const NAME = "Daffy - Weekly Usage Report";
 const HOOK_PATH = "daffy-weekly-usage-manual";
 const REPORT_URL = "https://daffy-pilot.vercel.app/api/admin/usage-report";
-const RECIPIENTS = ["tsuri.barhaim@gmail.com"];
+const RECIPIENTS = ["tsuri.barhaim@gmail.com", "shenhar.orit@gmail.com"];
 const uuid = () => crypto.randomUUID();
 
 async function api(method, p, body) {
