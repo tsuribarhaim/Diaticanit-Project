@@ -100,6 +100,7 @@ export async function extractComponentsWithAi({
   const clippedText = documentText.slice(0, 24000);
 
   const contentText = await callAiChatCompletion({
+      usage: { feature: "doc_extract" },
     config,
     jsonMode: true,
     messages: [

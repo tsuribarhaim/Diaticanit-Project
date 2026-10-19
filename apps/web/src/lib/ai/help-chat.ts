@@ -112,6 +112,7 @@ export async function answerHelpQuestion({
   ];
 
   const contentText = await callAiChatCompletion({
+      usage: { feature: "help_answer" },
     config,
     messages,
     temperature: 0.2,

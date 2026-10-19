@@ -142,6 +142,7 @@ export async function negotiateProfileChange({
   ];
 
   const contentText = await callAiChatCompletion({
+      usage: { feature: "profile_chat" },
     config,
     messages,
     temperature: 0.2,

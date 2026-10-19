@@ -1,5 +1,6 @@
 import { anthropicFetch } from "@/lib/ai/anthropic-fetch";
 import type { AiExtractionConfig } from "@/lib/ai/env";
+import { anthropicTokens, beginAiUsage, failureOutcome, NO_TOKENS, openAiTokens, type AiCallOutcome, type AiTokens, type AiUsageTag } from "@/lib/ai/usage";
 
 /**
  * The common message shape every call site in lib/ai already builds today
@@ -30,7 +31,12 @@ export type AiChatCompletionParams = {
   /** Overrides DEFAULT_AI_REQUEST_TIMEOUT_MS for this call only - see
    * callAiChatCompletion's targets-generation caller for why this exists. */
   timeoutMs?: number;
+  /** Which feature this call serves - every call is recorded per person, page and feature (lib/ai/usage.ts). */
+  usage: AiUsageTag;
 };
+
+/** What a provider call returns inside this file: the text callers get, plus what to record about the call. */
+type ProviderResult = { text: string; outcome: AiCallOutcome };
 
 const ANTHROPIC_API_VERSION = "2023-06-01";
 const ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com/v1";
@@ -108,7 +114,7 @@ async function callOpenAiCompatibleChatCompletion({
   temperature,
   jsonMode,
   signal,
-}: AiChatCompletionParams): Promise<string> {
+}: AiChatCompletionParams): Promise<ProviderResult> {
   const requestBody = {
     model: config.model,
     temperature: temperature ?? 0,
@@ -151,11 +157,18 @@ async function callOpenAiCompatibleChatCompletion({
     throw new Error(summarizeTransportError("openai", lastBody, lastStatus || 404));
   }
 
-  const payload = (await response.json()) as Parameters<typeof extractOpenAiContentText>[0];
-  return extractOpenAiContentText(payload);
+  const payload = (await response.json()) as Parameters<typeof extractOpenAiContentText>[0] & {
+    id?: string;
+    model?: string;
+    usage?: Parameters<typeof openAiTokens>[0];
+  };
+  return {
+    text: extractOpenAiContentText(payload),
+    outcome: { provider: config.provider, model: payload.model ?? config.model, tokens: openAiTokens(payload.usage), status: "ok", requestId: payload.id ?? null, streamed: false },
+  };
 }
 
-async function callAnthropicChatCompletion({ config, messages, signal }: AiChatCompletionParams): Promise<string> {
+async function callAnthropicChatCompletion({ config, messages, signal }: AiChatCompletionParams): Promise<ProviderResult> {
   const { system, messages: anthropicMessages } = toAnthropicRequestParts(messages);
 
   const response = await anthropicFetch(`${(config.baseUrl || ANTHROPIC_DEFAULT_BASE_URL).replace(/\/+$/, "")}/messages`, {
@@ -192,11 +205,20 @@ async function callAnthropicChatCompletion({ config, messages, signal }: AiChatC
     throw new Error(summarizeTransportError("anthropic", body, response.status));
   }
 
-  const payload = (await response.json()) as { content?: Array<{ type?: string; text?: string }> };
-  return (payload.content ?? [])
+  const payload = (await response.json()) as {
+    id?: string;
+    model?: string;
+    content?: Array<{ type?: string; text?: string }>;
+    usage?: Parameters<typeof anthropicTokens>[0];
+  };
+  const text = (payload.content ?? [])
     .filter((block) => block.type === "text" && typeof block.text === "string")
     .map((block) => block.text)
     .join("\n");
+  return {
+    text,
+    outcome: { provider: "anthropic", model: payload.model ?? config.model, tokens: anthropicTokens(payload.usage), status: "ok", requestId: payload.id ?? null, streamed: false },
+  };
 }
 
 /** No caller of callAiChatCompletion currently passes its own `signal`, so
@@ -214,15 +236,28 @@ function withDefaultTimeout(signal: AbortSignal | undefined, timeoutMs: number):
   return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 }
 
+/** Runs one provider call and records it (lib/ai/usage.ts) - success or failure - then hands back exactly what the
+ * call returned or threw, so recording never changes what a caller sees. */
+async function recorded(params: AiChatCompletionParams, streamed: boolean, run: () => Promise<ProviderResult>): Promise<string> {
+  const finish = beginAiUsage(params.usage);
+  try {
+    const result = await run();
+    void finish(result.outcome);
+    return result.text;
+  } catch (err) {
+    void finish(failureOutcome(err, params.config.provider, params.config.model, streamed));
+    throw err;
+  }
+}
+
 /** Single entry point for every non-streaming "give me back JSON" AI call
  * in this app - branches to the right provider's request/response shape
  * internally so call sites never need to know the difference. */
 export async function callAiChatCompletion(params: AiChatCompletionParams): Promise<string> {
   const boundedParams = { ...params, signal: withDefaultTimeout(params.signal, params.timeoutMs ?? DEFAULT_AI_REQUEST_TIMEOUT_MS) };
-  if (params.config.provider === "anthropic") {
-    return callAnthropicChatCompletion(boundedParams);
-  }
-  return callOpenAiCompatibleChatCompletion(boundedParams);
+  return recorded(params, false, () =>
+    params.config.provider === "anthropic" ? callAnthropicChatCompletion(boundedParams) : callOpenAiCompatibleChatCompletion(boundedParams),
+  );
 }
 
 export type AiChatCompletionProgressParams = AiChatCompletionParams & {
@@ -256,7 +291,8 @@ async function callAnthropicChatCompletionStreaming({
   messages,
   signal,
   onProgress,
-}: AiChatCompletionProgressParams): Promise<string> {
+}: AiChatCompletionProgressParams): Promise<ProviderResult> {
+  const startedAt = Date.now();
   const { system, messages: anthropicMessages } = toAnthropicRequestParts(messages);
 
   const response = await anthropicFetch(`${(config.baseUrl || ANTHROPIC_DEFAULT_BASE_URL).replace(/\/+$/, "")}/messages`, {
@@ -292,6 +328,7 @@ async function callAnthropicChatCompletionStreaming({
   let buffer = "";
   let fullText = "";
   let lastProgressAt = 0;
+  const usage = new AnthropicStreamUsage(startedAt);
 
   while (true) {
     const { done, value } = await reader.read();
@@ -307,10 +344,8 @@ async function callAnthropicChatCompletionStreaming({
       if (!jsonText) continue;
 
       try {
-        const event = JSON.parse(jsonText) as {
-          type?: string;
-          delta?: { type?: string; text?: string };
-        };
+        const event = JSON.parse(jsonText) as AnthropicStreamEvent;
+        usage.read(event);
         if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && event.delta.text) {
           fullText += event.delta.text;
           const now = Date.now();
@@ -326,7 +361,7 @@ async function callAnthropicChatCompletionStreaming({
     }
   }
 
-  return fullText;
+  return { text: fullText, outcome: usage.outcome(config.model) };
 }
 
 /** Progress-reporting counterpart to callAiChatCompletion - same contract
@@ -335,10 +370,40 @@ async function callAnthropicChatCompletionStreaming({
  * onProgress can fire as real output arrives. */
 export async function callAiChatCompletionWithProgress(params: AiChatCompletionProgressParams): Promise<string> {
   const boundedParams = { ...params, signal: withDefaultTimeout(params.signal, params.timeoutMs ?? DEFAULT_AI_REQUEST_TIMEOUT_MS) };
-  if (params.config.provider === "anthropic") {
-    return callAnthropicChatCompletionStreaming(boundedParams);
+  return recorded(params, params.config.provider === "anthropic", () =>
+    params.config.provider === "anthropic" ? callAnthropicChatCompletionStreaming(boundedParams) : callOpenAiCompatibleChatCompletion(boundedParams),
+  );
+}
+
+type AnthropicStreamEvent = {
+  type?: string;
+  delta?: { type?: string; text?: string };
+  message?: { id?: string; model?: string; usage?: Parameters<typeof anthropicTokens>[0] };
+  usage?: Parameters<typeof anthropicTokens>[0];
+};
+
+/** Collects a streamed reply's usage: message_start carries the input side (and the request id), message_delta the
+ * running output count - the last one seen is the total. */
+class AnthropicStreamUsage {
+  private tokens: AiTokens = { ...NO_TOKENS };
+  private requestId: string | null = null;
+  private model: string | null = null;
+  private firstTokenMs: number | null = null;
+  constructor(private readonly startedAt: number) {}
+  read(event: AnthropicStreamEvent) {
+    if (event.type === "message_start" && event.message) {
+      this.requestId = event.message.id ?? null;
+      this.model = event.message.model ?? null;
+      this.tokens = anthropicTokens(event.message.usage);
+    } else if (event.type === "message_delta" && event.usage?.output_tokens !== undefined) {
+      this.tokens = { ...this.tokens, output: event.usage.output_tokens };
+    } else if (event.type === "content_block_delta" && this.firstTokenMs === null) {
+      this.firstTokenMs = Date.now() - this.startedAt;
+    }
   }
-  return callOpenAiCompatibleChatCompletion(boundedParams);
+  outcome(configModel: string, status: AiCallOutcome["status"] = "ok", errorCode: string | null = null): AiCallOutcome {
+    return { provider: "anthropic", model: this.model ?? configModel, tokens: this.tokens, status, errorCode, requestId: this.requestId, streamed: true, firstTokenMs: this.firstTokenMs };
+  }
 }
 
 /**
@@ -351,22 +416,46 @@ export async function callAiChatCompletionWithProgress(params: AiChatCompletionP
  * parsing logic (which already expects exactly this OpenAI shape) never
  * needs to know which provider is active.
  */
-export async function streamAiChatCompletion({
-  config,
-  messages,
-  temperature,
-}: AiChatCompletionParams): Promise<Response> {
-  if (config.provider === "anthropic") {
-    return streamAnthropicAsOpenAiSse({ config, messages, temperature });
+export async function streamAiChatCompletion(params: AiChatCompletionParams): Promise<Response> {
+  const finish = beginAiUsage(params.usage);
+  try {
+    return params.config.provider === "anthropic" ? await streamAnthropicAsOpenAiSse(params, finish) : await streamOpenAiCompatible(params, finish);
+  } catch (err) {
+    void finish(failureOutcome(err, params.config.provider, params.config.model, true));
+    throw err;
   }
-  return streamOpenAiCompatible({ config, messages, temperature });
 }
 
-async function streamOpenAiCompatible({ config, messages, temperature }: AiChatCompletionParams): Promise<Response> {
+type FinishUsage = ReturnType<typeof beginAiUsage>;
+
+/** Hands the stream on unchanged; onCancel runs when the reader stops early (the person closed the chat mid-reply). */
+function withCancelHook(stream: ReadableStream<Uint8Array>, onCancel: () => Promise<void>): ReadableStream<Uint8Array> {
+  const reader = stream.getReader();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) controller.close();
+      else controller.enqueue(value);
+    },
+    async cancel(reason) {
+      await onCancel();
+      await reader.cancel(reason);
+    },
+  });
+}
+
+/** A stream that did not start (bad status) is recorded as an error and handed back unchanged for the route to report. */
+function recordFailedStream(response: Response, provider: string, model: string, finish: FinishUsage): Response {
+  void finish({ provider, model, tokens: NO_TOKENS, status: "error", errorCode: `http_${response.status}`, streamed: true });
+  return response;
+}
+
+async function streamOpenAiCompatible({ config, messages, temperature }: AiChatCompletionParams, finish: FinishUsage): Promise<Response> {
+  const startedAt = Date.now();
   const normalizedBaseUrl = config.baseUrl.replace(/\/+$/, "");
   const url = normalizedBaseUrl.endsWith("/v1") ? `${normalizedBaseUrl}/chat/completions` : `${normalizedBaseUrl}/v1/chat/completions`;
 
-  return fetch(url, {
+  const upstream = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -376,15 +465,52 @@ async function streamOpenAiCompatible({ config, messages, temperature }: AiChatC
       model: config.model,
       temperature: temperature ?? 0.4,
       stream: true,
+      // The last chunk then carries the token counts (choices: []) - the route's parser skips chunks without content.
+      stream_options: { include_usage: true },
       messages,
     }),
   });
+  if (!upstream.ok || !upstream.body) return recordFailedStream(upstream, config.provider, config.model, finish);
+
+  // Passes every byte through untouched; only reads the usage chunk on the way.
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let tokens: AiTokens = { ...NO_TOKENS };
+  let model = config.model;
+  let requestId: string | null = null;
+  let firstTokenMs: number | null = null;
+  const record = (status: AiCallOutcome["status"], errorCode: string | null) =>
+    finish({ provider: config.provider, model, tokens, status, errorCode, requestId, streamed: true, firstTokenMs }, { wait: true });
+  const tap = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      controller.enqueue(chunk);
+      buffer += decoder.decode(chunk, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const jsonText = line.trim().startsWith("data:") ? line.trim().slice(5).trim() : "";
+        if (!jsonText || jsonText === "[DONE]") continue;
+        try {
+          const event = JSON.parse(jsonText) as { id?: string; model?: string; usage?: Parameters<typeof openAiTokens>[0]; choices?: unknown[] };
+          requestId = event.id ?? requestId;
+          model = event.model ?? model;
+          if (firstTokenMs === null && (event.choices?.length ?? 0) > 0) firstTokenMs = Date.now() - startedAt;
+          if (event.usage) tokens = openAiTokens(event.usage);
+        } catch {
+          // A partial frame - the route's own parser tolerates these too.
+        }
+      }
+    },
+    flush: () => record("ok", null),
+  });
+  const body = withCancelHook(upstream.body.pipeThrough(tap), () => record("error", "client_disconnected"));
+  return new Response(body, { status: upstream.status, headers: upstream.headers });
 }
 
 /** Rewrites Claude's SSE event stream (content_block_delta / message_stop
  * etc.) into OpenAI-shaped delta frames as bytes flow through, so the
  * consumer's existing parsing code is unaware anything is different. */
-function anthropicToOpenAiSseTransform(): TransformStream<Uint8Array, Uint8Array> {
+function anthropicToOpenAiSseTransform(onEvent: (event: AnthropicStreamEvent) => void, onEnd: (completed: true) => Promise<void>): TransformStream<Uint8Array, Uint8Array> {
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
   let buffer = "";
@@ -402,10 +528,8 @@ function anthropicToOpenAiSseTransform(): TransformStream<Uint8Array, Uint8Array
         if (!jsonText) continue;
 
         try {
-          const event = JSON.parse(jsonText) as {
-            type?: string;
-            delta?: { type?: string; text?: string };
-          };
+          const event = JSON.parse(jsonText) as AnthropicStreamEvent;
+          onEvent(event);
           if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && event.delta.text) {
             const shaped = { choices: [{ delta: { content: event.delta.text } }] };
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(shaped)}\n\n`));
@@ -416,14 +540,17 @@ function anthropicToOpenAiSseTransform(): TransformStream<Uint8Array, Uint8Array
         }
       }
     },
-    flush(controller) {
+    async flush(controller) {
+      // Recorded before the final frame, so the row is written while the request is still open.
+      await onEnd(true);
       controller.enqueue(encoder.encode("data: [DONE]\n\n"));
     },
   });
 }
 
-async function streamAnthropicAsOpenAiSse({ config, messages, signal }: AiChatCompletionParams): Promise<Response> {
+async function streamAnthropicAsOpenAiSse({ config, messages, signal }: AiChatCompletionParams, finish: FinishUsage): Promise<Response> {
   const { system, messages: anthropicMessages } = toAnthropicRequestParts(messages);
+  const usage = new AnthropicStreamUsage(Date.now());
 
   // No `temperature` - see the note in callAnthropicChatCompletion.
   const upstream = await anthropicFetch(`${(config.baseUrl || ANTHROPIC_DEFAULT_BASE_URL).replace(/\/+$/, "")}/messages`, {
@@ -448,10 +575,16 @@ async function streamAnthropicAsOpenAiSse({ config, messages, signal }: AiChatCo
   });
 
   if (!upstream.ok || !upstream.body) {
-    return upstream;
+    return recordFailedStream(upstream, "anthropic", config.model, finish);
   }
 
-  const transformedBody = upstream.body.pipeThrough(anthropicToOpenAiSseTransform());
+  const recordEnd = (completed: boolean) =>
+    finish(completed ? usage.outcome(config.model) : usage.outcome(config.model, "error", "client_disconnected"), { wait: true });
+  // A reader that stops early (closed the chat) still cost the tokens produced so far: recorded as a disconnect.
+  const transformedBody = withCancelHook(
+    upstream.body.pipeThrough(anthropicToOpenAiSseTransform((event) => usage.read(event), recordEnd)),
+    () => recordEnd(false),
+  );
   return new Response(transformedBody, {
     status: upstream.status,
     headers: { "Content-Type": "text/event-stream" },

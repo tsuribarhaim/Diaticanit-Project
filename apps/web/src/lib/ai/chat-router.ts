@@ -85,6 +85,7 @@ export async function classifyChatDomain({
   ];
 
   const contentText = await callAiChatCompletion({
+      usage: { feature: "chat_route" },
     config,
     messages,
     temperature: 0,
