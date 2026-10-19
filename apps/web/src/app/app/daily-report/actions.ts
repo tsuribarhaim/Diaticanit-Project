@@ -470,7 +470,7 @@ export type DailyReportBreakdownItem = { name: string; quantity: number; unit: s
  */
 export async function getDailyReportBreakdownAction(
   transcriptText: string,
-): Promise<{ items: DailyReportBreakdownItem[] } | { error: string }> {
+): Promise<{ items: DailyReportBreakdownItem[]; exerciseCount: number } | { error: string }> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -499,7 +499,10 @@ export async function getDailyReportBreakdownAction(
       weightKg: Number(profileRow?.weight_kg ?? 0),
       locale,
     });
-    return { items: parsed.foodItems.map((item) => ({ name: item.name, quantity: item.quantity, unit: item.unit })) };
+    return {
+      items: parsed.foodItems.map((item) => ({ name: item.name, quantity: item.quantity, unit: item.unit })),
+      exerciseCount: parsed.exerciseItems.length,
+    };
   } catch (error) {
     logServerError("dailyReport.getBreakdown", "parse_failed", {
       userId: user.id,

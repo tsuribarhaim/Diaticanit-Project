@@ -665,6 +665,13 @@ export function DailyReportForm({
   // ever meant to be written from an effect or event handler.
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [pendingEditExit, setPendingEditExit] = useState<{ date?: string; highlightId?: string } | null>(null);
+  // TCK-125: set by the chat's in-bubble "Add to log" button right before it
+  // submits (undefined = this save didn't come from it; null = item count
+  // unknown). Once that save succeeds it becomes addedToLogNotice, which the
+  // remounted chat shows as its "Added to log · N items ✓" pill instead of
+  // the centered toast.
+  const [pendingAddToLogCount, setPendingAddToLogCount] = useState<number | null | undefined>(undefined);
+  const [addedToLogNotice, setAddedToLogNotice] = useState<{ count: number | null } | null>(null);
 
   /** "Conclude & Report" both saves and starts a fresh conversation - the
    * chat is a scratchpad for composing one report, not a running log, so
@@ -683,8 +690,16 @@ export function DailyReportForm({
   const [prevState, setPrevState] = useState(state);
   if (state !== prevState) {
     setPrevState(state);
+    setPendingAddToLogCount(undefined);
+    const isAddToLogSave = Boolean(state.success) && !state.wasEditing && pendingAddToLogCount !== undefined;
+    // TCK-125: an "Add to log" save shows the chat's own pill instead - the
+    // centered toast only when the message carries more than the plain
+    // "saved" (profile updated, weight notice).
+    setAddedToLogNotice(isAddToLogSave ? { count: pendingAddToLogCount ?? null } : null);
     if (state.success) {
-      setToastMessage(state.success);
+      if (!isAddToLogSave || state.success !== tr(locale, "Daily report saved.", "הדיווח היומי נשמר.")) {
+        setToastMessage(state.success);
+      }
       if (state.wasEditing) {
         setPendingEditExit({ date: selectedDateParam, highlightId: state.savedReportId });
       } else {
@@ -773,6 +788,7 @@ export function DailyReportForm({
   if (saveBlockedSignal !== prevSaveBlockedSignal) {
     setPrevSaveBlockedSignal(saveBlockedSignal);
     setQuickSavePending(false);
+    setPendingAddToLogCount(undefined);
   }
   useEffect(() => {
     if (!quickSaveError) return;
@@ -1268,6 +1284,8 @@ export function DailyReportForm({
             saveBlockedSignal={saveBlockedSignal}
             userFirstName={userFirstName}
             userGender={userGender}
+            onAddToLog={(count) => setPendingAddToLogCount(count)}
+            addedToLogNotice={addedToLogNotice}
           />
           <textarea name="report_text" value={reportText} readOnly hidden />
           <input type="hidden" name="parse_mode" value="ai" />

@@ -36,6 +36,11 @@ type ChatMessage = {
    * computed separately from the save itself, which still works exactly
    * as before off the free-text transcript. */
   breakdown?: DailyReportBreakdownItem[];
+  /** TCK-125: this reply has items to save, so it gets the in-bubble "Add to
+   * log" button (only on the latest such reply). count = food + exercise
+   * items from the same breakdown call, or null when the reply had items but
+   * the count couldn't be fetched (the button then shows without a count). */
+  addToLog?: { count: number | null };
 };
 type SseEvent =
   | { type: "token"; text: string }
@@ -222,11 +227,11 @@ function readFileAsBase64(file: File): Promise<string> {
  * onTranscriptChange, which keeps a hidden report_text field (and whatever
  * photo/defaults are attached here) in sync so "Conclude & Report" - and
  * everything it already does (safety gate, AI parsing) - handles it exactly
- * as if this had been typed/attached directly into that field. The
- * "Conclude & Report" button itself is rendered here too (right under the
- * compose row) so the fast path never requires a Send round-trip first: its
- * click handler folds in whatever's currently typed but not yet sent before
- * the form submits, so typing something and immediately saving just works.
+ * as if this had been typed/attached directly into that field. TCK-125:
+ * a new entry is saved from the "Add to log" button inside the latest reply
+ * that lists items (see addToLogIndex); Send is only the arrow inside the
+ * compose box. Edit mode keeps its own "Save changes" icon (handleQuickSave),
+ * which still folds in whatever's typed but not yet sent before submitting.
  */
 export function DailyReportChatPanel({
   locale,
@@ -245,6 +250,8 @@ export function DailyReportChatPanel({
   saveBlockedSignal,
   userFirstName,
   userGender,
+  onAddToLog,
+  addedToLogNotice,
 }: {
   locale: AppLocale;
   defaultItems: DailyReportDefaultItem[];
@@ -324,6 +331,15 @@ export function DailyReportChatPanel({
    * normalization is shared with). */
   userFirstName?: string | null;
   userGender?: "male" | "female" | null;
+  /** TCK-125: called right before the in-bubble "Add to log" button submits
+   * the form, with that reply's item count (null if unknown) - so
+   * DailyReportForm knows this save came from it and can show the pill
+   * below once it succeeds. */
+  onAddToLog?: (count: number | null) => void;
+  /** TCK-125: set by DailyReportForm after a successful "Add to log" save -
+   * the remounted (cleared) chat stays open on its welcome screen and shows
+   * a short "Added to log · N items ✓" pill at the top. */
+  addedToLogNotice?: { count: number | null } | null;
 }) {
   // Editing an existing report reopens its original conversation instead of
   // starting blank - appends one local (non-AI) prompt so it's obvious this
@@ -377,7 +393,18 @@ export function DailyReportChatPanel({
   // regardless of isEditing, so on mobile the transcript was silently
   // restored into state but stayed hidden behind the unopened sheet, which
   // read as "the chat history isn't being copied over" even though it was.
-  const [isOpen, setIsOpen] = useState(() => isEditing);
+  // TCK-125: also starts open right after an "Add to log" save, which
+  // remounts this panel fresh - back on the welcome screen, not closed.
+  const [isOpen, setIsOpen] = useState(() => isEditing || Boolean(addedToLogNotice));
+  // TCK-125: the "Added to log" pill - shown from the prop on mount, then
+  // hidden after SAVE_TOAST_DURATION_MS (see the effect below).
+  const [addedToLogPill, setAddedToLogPill] = useState(addedToLogNotice ?? null);
+  useEffect(() => {
+    if (!addedToLogPill) return;
+    // setTimeout - same react-hooks/set-state-in-effect idiom as isMounted below.
+    const timeoutId = setTimeout(() => setAddedToLogPill(null), SAVE_TOAST_DURATION_MS);
+    return () => clearTimeout(timeoutId);
+  }, [addedToLogPill]);
   const [inputValue, setInputValue] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
@@ -916,16 +943,25 @@ export function DailyReportChatPanel({
         .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`)
         .join("\n");
       void getDailyReportBreakdownAction(transcriptSoFar).then((result) => {
-        if ("items" in result && result.items.length > 0) {
-          setMessages((previous) => {
-            const next = [...previous];
-            const lastIndex = next.length - 1;
-            if (next[lastIndex]?.role === "assistant" && next[lastIndex].content === assistantText) {
-              next[lastIndex] = { ...next[lastIndex], breakdown: result.items };
-            }
-            return next;
-          });
-        }
+        // TCK-125: the same call also counts the items for "Add to log" -
+        // food + exercise. A failed call or a zero total still shows the
+        // button, just without a count, so the user can always save.
+        const total = "items" in result ? result.items.length + result.exerciseCount : 0;
+        setMessages((previous) => {
+          const next = [...previous];
+          const lastIndex = next.length - 1;
+          if (next[lastIndex]?.role === "assistant" && next[lastIndex].content === assistantText) {
+            next[lastIndex] =
+              "items" in result && total > 0
+                ? {
+                    ...next[lastIndex],
+                    ...(result.items.length > 0 ? { breakdown: result.items } : {}),
+                    addToLog: { count: total },
+                  }
+                : { ...next[lastIndex], addToLog: { count: null } };
+          }
+          return next;
+        });
       });
     }
   }
@@ -980,6 +1016,20 @@ export function DailyReportChatPanel({
       onTranscriptChange(transcript);
     });
     setInputValue("");
+  }
+
+  /** TCK-125: the in-bubble "Add to log" button - a plain submit of the
+   * same form, so it saves the same transcript the old report icon did.
+   * Same reportValidity() guard as handleQuickSave, but unlike it, nothing
+   * typed and not yet sent is folded in: the button belongs to the reply
+   * above it, not to the compose box. */
+  function handleAddToLog(count: number | null) {
+    const form = document.getElementById("daily-report-form") as HTMLFormElement | null;
+    if (form && !form.reportValidity()) {
+      return;
+    }
+    setIsSaving(true);
+    onAddToLog?.(count);
   }
 
   // Whether "New chat" has anything to actually lose - a fresh, never-typed-
@@ -1226,6 +1276,21 @@ export function DailyReportChatPanel({
   const hasMeaningfulText = /\p{L}{2,}/u.test(inputValue);
   const canSave = hasChanges || hasMeaningfulText || Boolean(photoPreviewUrl);
 
+  // TCK-125: only the latest reply with items gets "Add to log", and only
+  // while nothing real has been said after it (a localOnly confirmation
+  // doesn't count) - hidden while a reply streams and in edit mode, which
+  // keeps its own Save changes icon.
+  let addToLogIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].addToLog) {
+      addToLogIndex = index;
+      break;
+    }
+  }
+  if (addToLogIndex !== -1 && (isStreaming || isEditing || messages.slice(addToLogIndex + 1).some((message) => !message.localOnly))) {
+    addToLogIndex = -1;
+  }
+
   // The panel's own thread/banners/composer JSX - a fixed-size floating
   // panel now (see the bottom of this file), not a desktop inline card
   // plus a differently-shaped mobile sheet, so there's only ever one copy
@@ -1291,6 +1356,15 @@ export function DailyReportChatPanel({
             and nothing scrolls". The classic flexbox-scroll-area fix. */}
         <div className="flex min-h-0 flex-1 flex-col">
           <div ref={threadRef} onScroll={handleThreadScroll} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+          {addedToLogPill ? (
+            <p className="mx-auto w-fit rounded-full border border-teal-300 bg-teal-50 px-3 py-1 text-xs font-semibold text-teal-800 dark:border-teal-700 dark:bg-teal-950/40 dark:text-teal-300">
+              {addedToLogPill.count === null
+                ? tr(locale, "Added to log ✓", "נוסף ליומן ✓")
+                : addedToLogPill.count === 1
+                  ? tr(locale, "Added to log · 1 item ✓", "נוסף ליומן · פריט אחד ✓")
+                  : tr(locale, `Added to log · ${addedToLogPill.count} items ✓`, `נוסף ליומן · ${addedToLogPill.count} פריטים ✓`)}
+            </p>
+          ) : null}
           {messages.map((message, index) => (
             <div key={index} className={`flex flex-col ${message.role === "user" ? "items-end" : "items-start"}`}>
               <div
@@ -1324,6 +1398,30 @@ export function DailyReportChatPanel({
                       </div>
                     ))}
                   </div>
+                ) : null}
+                {/* TCK-125: "Add to log" belongs to the reply - see
+                    addToLogIndex for which one shows it. */}
+                {index === addToLogIndex && message.addToLog ? (
+                  <button
+                    type="submit"
+                    form="daily-report-form"
+                    disabled={isSaving}
+                    onClick={() => handleAddToLog(message.addToLog!.count)}
+                    className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-xl border border-teal-600 bg-teal-50 px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-70 dark:border-teal-500 dark:bg-teal-950/30 dark:text-teal-300"
+                  >
+                    {isSaving ? (
+                      <Spinner className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M20 6 9 17l-5-5" />
+                      </svg>
+                    )}
+                    {message.addToLog.count === null
+                      ? tr(locale, "Add to log", "הוסף ליומן")
+                      : message.addToLog.count === 1
+                        ? tr(locale, "Add to log · 1 item", "הוסף ליומן · פריט אחד")
+                        : tr(locale, `Add to log · ${message.addToLog.count} items`, `הוסף ליומן · ${message.addToLog.count} פריטים`)}
+                  </button>
                 ) : null}
               </div>
             </div>
@@ -1404,9 +1502,9 @@ export function DailyReportChatPanel({
               {trGendered(
                 locale,
                 userGender,
-                `${userFirstName ? `Hi ${userFirstName}, tell` : "Tell"} me what you ate, drank, or did for exercise today (or attach a photo), and I'll help fill in the details. When you're ready, tap the report icon to add it to today's log.`,
-                `${userFirstName ? `היי ${userFirstName}, ` : ""}ספר לי מה אכלת, שתית או עשית מבחינת פעילות גופנית היום (או צרף תמונה), ואעזור להשלים את הפרטים. כשתהיה מוכן, לחץ על סמל הדיווח כדי להוסיף זאת ליומן של היום.`,
-                `${userFirstName ? `היי ${userFirstName}, ` : ""}ספרי לי מה אכלת, שתית או עשית מבחינת פעילות גופנית היום (או צרפי תמונה), ואעזור להשלים את הפרטים. כשתהיי מוכנה, לחצי על סמל הדיווח כדי להוסיף זאת ליומן של היום.`,
+                `${userFirstName ? `Hi ${userFirstName}, tell` : "Tell"} me what you ate, drank, or did for exercise today (or attach a photo), and I'll help fill in the details. When I list the items, tap "Add to log" to save them.`,
+                `${userFirstName ? `היי ${userFirstName}, ` : ""}ספר לי מה אכלת, שתית או עשית מבחינת פעילות גופנית היום (או צרף תמונה), ואעזור להשלים את הפרטים. כשאציג את הפריטים, לחץ על "הוסף ליומן" כדי לשמור אותם.`,
+                `${userFirstName ? `היי ${userFirstName}, ` : ""}ספרי לי מה אכלת, שתית או עשית מבחינת פעילות גופנית היום (או צרפי תמונה), ואעזור להשלים את הפרטים. כשאציג את הפריטים, לחצי על "הוסף ליומן" כדי לשמור אותם.`,
               )}
             </p>
           ) : null}
@@ -1490,21 +1588,15 @@ export function DailyReportChatPanel({
               triggerRef={savedListTriggerRef}
             />
 
-            {/* Report, moved here from a full-width button under Send
-                (reported as "too big, wrongly placed, keeps getting hit
-                instead of Send" - a full-width action right under Send,
-                tapped on every message, is exactly backwards: the rare,
-                session-ending action had the easiest-to-hit spot on the
-                whole panel). A small, permanently filled circle at the far
-                end of this row - opposite the neutral attach icons, so it
-                doesn't blend in - puts real distance between it and
-                wherever a thumb lands to hit Send. Skipped entirely during
-                the delete-entry-confirmation state below, which keeps its
-                own full-width warning treatment - that one's a deliberate,
-                already-confirmed destructive action, not a routine save,
-                so it doesn't carry the same "too easy to hit by accident"
-                risk this change is fixing. */}
-            {isEditing && pendingDeleteOnSave ? null : (
+            {/* Edit mode only (TCK-125): "Save changes" as a small filled
+                circle at the far end of this row. A new entry has no save
+                icon here any more - it's saved from the "Add to log" button
+                inside the reply that lists its items. Skipped entirely
+                during the delete-entry-confirmation state below, which keeps
+                its own full-width warning treatment - that one's a
+                deliberate, already-confirmed destructive action, not a
+                routine save. */}
+            {!isEditing || pendingDeleteOnSave ? null : (
               <>
                 <span className="flex-1" />
                 {/* disabled={!canSave}: this icon is always visible now (a
@@ -1567,7 +1659,9 @@ export function DailyReportChatPanel({
 
           {/* Bigger than before (4 rows, not 2) now that it has the whole
               row to itself instead of sharing one with three icon
-              buttons. */}
+              buttons. TCK-125: Send is a round arrow inside the box's
+              bottom-end corner (pe-12 keeps text from running under it). */}
+          <div className="relative">
           <textarea
             ref={textareaRef}
             value={inputValue}
@@ -1583,7 +1677,7 @@ export function DailyReportChatPanel({
                 ? trGendered(locale, userGender, "Add a note about the photo (optional)...", "הוסף הערה על התמונה (לא חובה)...", "הוסיפי הערה על התמונה (לא חובה)...")
                 : trGendered(locale, userGender, "Type a message...", "כתוב הודעה...", "כתבי הודעה...")
             }
-            className="w-full resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none ring-teal-600 focus:ring-2 disabled:opacity-70 dark:border-slate-700"
+            className="w-full resize-none rounded-xl border border-slate-300 px-3 py-2 pe-12 text-sm outline-none ring-teal-600 focus:ring-2 disabled:opacity-70 dark:border-slate-700"
             // Inline style, not dark:bg-slate-900/dark:text-slate-100 -
             // confirmed live (DevTools computed-style check) that this
             // specific textarea keeps a plain white background under
@@ -1601,43 +1695,45 @@ export function DailyReportChatPanel({
             // properly dark.
             style={mirroredTheme === "dark" ? { backgroundColor: "#0f172a", color: "#f1f5f9" } : undefined}
           />
-          {/* Send is now the composer's own full-width primary action - the
-              one actually tapped on every single message - instead of
-              sharing a cramped row with the textarea next to a big Report
-              button right below it. Report itself moved up into the
-              attach-icon row above (see its own comment there). */}
           <button
             type="button"
             disabled={isStreaming || (!inputValue.trim() && !stagedPhoto)}
             onClick={handleSendClick}
             onMouseDown={(event) => event.preventDefault()}
-            className={`flex w-full items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold ${
-              !isStreaming && !inputValue.trim() && !stagedPhoto
-                ? "cursor-not-allowed bg-slate-300 text-slate-500 dark:bg-slate-700 dark:text-slate-400"
-                : "bg-teal-700 text-white disabled:cursor-not-allowed disabled:opacity-70 enabled:hover:bg-teal-800 dark:bg-teal-600 dark:enabled:hover:bg-teal-500"
-            }`}
+            aria-label={tr(locale, "Send", "שליחה")}
+            title={tr(locale, "Send", "שליחה")}
+            className="absolute bottom-2 end-2 flex h-8 w-8 items-center justify-center rounded-full bg-teal-700 text-white disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 dark:bg-teal-600 dark:disabled:bg-slate-700"
           >
-            {isStreaming ? <Spinner className="h-4 w-4 animate-spin" /> : tr(locale, "Send", "שליחה")}
-          </button>
-
-          {/* TCK-38's standing disclaimer, now also the short save reminder
-              for every turn after the first. This footer is the only place
-              the disclaimer appears in this panel - per the admin's request
-              it was removed from the welcome text. Deliberately no
-              directional wording ("above"/"below") - which spot in the
-              text this reads next to isn't fixed relative to the icon
-              once the thread scrolls, so a direction would sometimes be
-              wrong. isEditing branches the icon's own name - SubmitButton's
-              idleLabel is "Report" for a new entry but "Save changes" once
-              editing an existing one (see its own definition), so this
-              stays accurate in both modes instead of picking one label and
-              being wrong in the other. */}
-          <p className="text-center text-[11px] text-slate-400 dark:text-slate-500">
-            {tr(
-              locale,
-              `Daffy is an AI companion, not a substitute for professional medical or nutrition advice. Tap the ${isEditing ? "save" : "report"} icon to save.`,
-              `דפי היא מלווה מבוססת AI ואינה תחליף לייעוץ רפואי או תזונתי מקצועי. לחצו על סמל ה${isEditing ? "שמירה" : "דיווח"} כדי לשמור.`,
+            {isStreaming ? (
+              <Spinner className="h-4 w-4 animate-spin" />
+            ) : (
+              // Points in the reading direction: right in English, mirrored to the left in Hebrew.
+              <svg className="h-4 w-4 rtl:-scale-x-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M5 12h14" />
+                <path d="m13 6 6 6-6 6" />
+              </svg>
             )}
+          </button>
+          </div>
+
+          {/* TCK-38's standing disclaimer. This footer is the only place the
+              disclaimer appears in this panel - per the admin's request it
+              was removed from the welcome text. In edit mode it also
+              reminds the user to tap the "Save changes" icon; a new entry
+              is saved from the reply's own "Add to log" button instead
+              (TCK-125), which needs no reminder here. */}
+          <p className="text-center text-[11px] text-slate-400 dark:text-slate-500">
+            {isEditing
+              ? tr(
+                  locale,
+                  "Daffy is an AI companion, not a substitute for professional medical or nutrition advice. Tap the save icon to save.",
+                  "דפי היא מלווה מבוססת AI ואינה תחליף לייעוץ רפואי או תזונתי מקצועי. לחצו על סמל השמירה כדי לשמור.",
+                )
+              : tr(
+                  locale,
+                  "Daffy is an AI companion, not a substitute for professional medical or nutrition advice.",
+                  "דפי היא מלווה מבוססת AI ואינה תחליף לייעוץ רפואי או תזונתי מקצועי.",
+                )}
           </p>
 
           {isEditing && pendingDeleteOnSave ? <DeleteEntrySubmitButton locale={locale} variant="text" /> : null}
@@ -1709,15 +1805,17 @@ export function DailyReportChatPanel({
               with locale via the dir set on this whole portaled tree
               above (unlike the physically-pinned bubble/panel corner
               below, which is deliberately NOT locale-mirrored - see its
-              own comment). Only rendered while closed (once the panel is
-              open, Report lives inside it instead - see chatBodyContent's
-              own full-width SubmitButton) AND only while there's actually
+              own comment). Edit mode only (TCK-125 - a new entry is saved
+              from the reply's own "Add to log" button inside the chat).
+              Only rendered while closed (once the panel is open, Save
+              changes lives inside it instead - see chatBodyContent's icon
+              row) AND only while there's actually
               something to save: canSave already reflects LIVE dirty state
               (weight/report text compared against their saved baselines,
               not a one-way "was this ever touched" flag), so undoing a
               change - e.g. typing a weight then deleting it back to empty
               - correctly makes this disappear again, not just gray out. */}
-          {!isOpen && (canSave || (isEditing && pendingDeleteOnSave)) ? (
+          {!isOpen && isEditing && (canSave || pendingDeleteOnSave) ? (
             <div className="fixed top-[calc(2rem+env(safe-area-inset-top))] end-4 z-50 transform-gpu">
               {isEditing && pendingDeleteOnSave ? (
                 <DeleteEntrySubmitButton locale={locale} variant="icon" />
