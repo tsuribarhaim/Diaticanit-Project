@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { type MouseEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal, flushSync, useFormStatus } from "react-dom";
 
@@ -277,8 +277,10 @@ export function DailyReportChatPanel({
    * exactly like a typed message, for a metric with something logged;
    * `notice` is a pre-built, already-localized sentence pushed directly
    * with no AI call, for an empty metric - there's nothing for the AI to
-   * explain about zero logged items. */
-  goalBarRequest?: { nonce: number; askedText: string; question?: string; notice?: string } | null;
+   * explain about zero logged items. TCK-156: `explanation` is a fixed,
+   * already-localized "what it is / why it matters" bubble shown after
+   * either answer (localOnly, like the notice). */
+  goalBarRequest?: { nonce: number; askedText: string; question?: string; notice?: string; explanation?: string } | null;
   /** The "User: ...\nAssistant: ..." transcript of a previously saved
    * report, when arriving via "Edit entry" - parsed back into chat bubbles
    * so a correction reads as a continuation of that same conversation
@@ -657,9 +659,13 @@ export function DailyReportChatPanel({
           ...previous,
           { role: "user", content: goalBarRequest.askedText, localOnly: true },
           { role: "assistant", content: goalBarRequest.notice!, localOnly: true },
+          ...(goalBarRequest.explanation ? [{ role: "assistant" as const, content: goalBarRequest.explanation, localOnly: true }] : []),
         ]);
       } else if (goalBarRequest.question) {
-        void sendMessage(goalBarRequest.question, undefined, { localOnly: true });
+        const explanation = goalBarRequest.explanation;
+        void sendMessage(goalBarRequest.question, undefined, { localOnly: true }).then((sent) => {
+          if (sent && explanation) setMessages((previous) => [...previous, { role: "assistant", content: explanation, localOnly: true }]);
+        });
       }
     }, 0);
     return () => clearTimeout(timeoutId);
@@ -778,7 +784,7 @@ export function DailyReportChatPanel({
     options?: { localOnly?: boolean },
   ) {
     const trimmed = text.trim();
-    if ((!trimmed && !image) || isStreaming) return;
+    if ((!trimmed && !image) || isStreaming) return false;
 
     setStreamError(null);
     setRetryAction(null);
@@ -964,6 +970,8 @@ export function DailyReportChatPanel({
         });
       });
     }
+
+    return !errorMessage && assistantText.length > 0;
   }
 
   /**
@@ -1022,10 +1030,18 @@ export function DailyReportChatPanel({
    * same form, so it saves the same transcript the old report icon did.
    * Same reportValidity() guard as handleQuickSave, but unlike it, nothing
    * typed and not yet sent is folded in: the button belongs to the reply
-   * above it, not to the compose box. */
-  function handleAddToLog(count: number | null) {
+   * above it, not to the compose box. The button deliberately never
+   * disables itself while isSaving - disabling it in its own click cancels
+   * the native submit (see SubmitButton's isDisabled comment) - so isSaving
+   * only shows the spinner, and a second tap is blocked here instead. */
+  function handleAddToLog(event: MouseEvent<HTMLButtonElement>, count: number | null) {
+    if (isSaving) {
+      event.preventDefault();
+      return;
+    }
     const form = document.getElementById("daily-report-form") as HTMLFormElement | null;
     if (form && !form.reportValidity()) {
+      event.preventDefault();
       return;
     }
     setIsSaving(true);
@@ -1405,9 +1421,9 @@ export function DailyReportChatPanel({
                   <button
                     type="submit"
                     form="daily-report-form"
-                    disabled={isSaving}
-                    onClick={() => handleAddToLog(message.addToLog!.count)}
-                    className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-xl border border-teal-600 bg-teal-50 px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-70 dark:border-teal-500 dark:bg-teal-950/30 dark:text-teal-300"
+                    aria-busy={isSaving}
+                    onClick={(event) => handleAddToLog(event, message.addToLog!.count)}
+                    className={`mt-2 flex w-full items-center justify-center gap-1.5 rounded-xl border border-teal-600 bg-teal-50 px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-100 dark:border-teal-500 dark:bg-teal-950/30 dark:text-teal-300${isSaving ? " cursor-wait opacity-70" : ""}`}
                   >
                     {isSaving ? (
                       <Spinner className="h-3.5 w-3.5 animate-spin" />
