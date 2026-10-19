@@ -16,6 +16,7 @@ import { SubmitButton } from "@/components/daily-report-submit-button";
 import { TargetsStaleModal } from "@/components/targets-stale-modal";
 import { useUnsavedPreview } from "@/components/unsaved-preview-context";
 import { directionForLocale, formatDefaultUnit, formatMeasurementUnit, formatNumberForLocale, tr, type AppLocale } from "@/lib/locale";
+import { getMetricExplanation } from "@/lib/metric-explanations";
 
 const initialState: DailyReportActionState = {};
 
@@ -555,15 +556,22 @@ export function DailyReportForm({
   // metric (nothing logged yet) skips the AI entirely - there's nothing for
   // it to explain - so `notice` is a plain, deterministic, already-localized
   // sentence pushed directly instead of a real `question` sent to the AI.
-  const [goalBarRequest, setGoalBarRequest] = useState<{ nonce: number; askedText: string; question?: string; notice?: string } | null>(
-    null,
-  );
+  // TCK-156: `explanation` adds a fixed "what it is / why it matters" bubble after either answer.
+  const [goalBarRequest, setGoalBarRequest] = useState<{
+    nonce: number;
+    askedText: string;
+    question?: string;
+    notice?: string;
+    explanation?: string;
+  } | null>(null);
   function handleGoalBarSelect(metric: RingMetric) {
     const label = tr(locale, metric.labelEn, metric.labelHe);
     const askedText = tr(locale, `Where does today's ${label} total come from?`, `מאיפה מגיע היום הערך של ${label}?`);
+    const explanation = getMetricExplanation(metric.id, locale);
     setGoalBarRequest((previous) => ({
       nonce: (previous?.nonce ?? 0) + 1,
       askedText,
+      ...(explanation ? { explanation } : {}),
       ...(metric.total > 0
         ? { question: askedText }
         : { notice: tr(locale, `You haven't logged anything with ${label} today.`, `לא נרשם היום כלום עם ${label}.`) }),
