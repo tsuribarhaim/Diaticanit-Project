@@ -237,7 +237,7 @@ export async function loadAiPerson(supabase: Client, userId: string, period: Per
   const end = period.to < today ? period.to : today;
   const start = shiftDate(end, -29);
   const from = period.from < start ? period.from : start;
-  const people = await loadPeople();
+  const { data: profile } = await createAdminClient().from("user_profile").select("first_name, last_name").eq("user_id", userId).maybeSingle();
   const daily = await readAll<DailyRow>((a, b) =>
     supabase.from("ai_usage_daily").select("day, user_id, is_admin, page, calls, failed_calls, cost_usd, unpriced_calls").eq("user_id", userId).gte("day", from).lte("day", period.to).range(a, b),
   );
@@ -259,7 +259,7 @@ export async function loadAiPerson(supabase: Client, userId: string, period: Per
     .order("created_at", { ascending: false })
     .limit(40);
   return {
-    name: people.get(userId)?.name ?? "?",
+    name: [profile?.first_name, profile?.last_name].filter(Boolean).join(" ").trim() || "?",
     isAdmin: daily.some((r) => r.is_admin),
     daily: days,
     pages: [...pageMap.entries()].map(([page, p]) => ({ page: page || null, ...p })).sort((a, b) => b.cost - a.cost),

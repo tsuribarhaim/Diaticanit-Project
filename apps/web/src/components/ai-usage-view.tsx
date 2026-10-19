@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 
 import { getAiPersonAction } from "@/app/app/tickets/ai-usage/actions";
 import { Spinner } from "@/components/spinner";
@@ -75,7 +75,7 @@ export function AiUsageView({ locale, data }: { locale: AppLocale; data: AiUsage
       setSort({ k: "cost", d: -1 });
       setTopN("3");
       const top = byCost.slice(0, 3);
-      return setAnswer({ title: L(`Top ${top.length} by cost:`, `${top.length} היקרים ביותר:`), items: top.map((r) => `${nameOf(r)} · ${money(r.cost)} · ${r.calls} ${L("actions", "פעולות")}`) });
+      return setAnswer({ title: top.length === 1 ? L("The most expensive person:", "המשתמש היקר ביותר:") : L(`Top ${top.length} by cost:`, `${top.length} המשתמשים היקרים ביותר:`), items: top.map((r) => `${nameOf(r)} · ${money(r.cost)} · ${r.calls} ${L("actions", "פעולות")}`) });
     }
     if (q === "page") {
       const top = data.pages[0];
@@ -394,20 +394,29 @@ function PersonPanel({ locale, userId, period, onClose }: { locale: AppLocale; u
   const L = (en: string, he: string) => tr(locale, en, he);
   const [detail, setDetail] = useState<AiPersonDetail | null>(null);
   const [error, setError] = useState(false);
+  // Loaded once per person and period; a re-render of the page around the panel never starts it again.
   useEffect(() => {
     let live = true;
-    getAiPersonAction(userId, period.gran, period.from).then((r) => {
-      if (!live) return;
-      if (r.detail) setDetail(r.detail);
-      else setError(true);
-    });
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    document.addEventListener("keydown", onKey);
+    getAiPersonAction(userId, period.gran, period.from)
+      .then((r) => {
+        if (!live) return;
+        if (r.detail) setDetail(r.detail);
+        else setError(true);
+      })
+      .catch(() => live && setError(true));
     return () => {
       live = false;
-      document.removeEventListener("keydown", onKey);
     };
-  }, [userId, period.gran, period.from, onClose]);
+  }, [userId, period.gran, period.from]);
+  const closeRef = useRef(onClose);
+  useEffect(() => {
+    closeRef.current = onClose;
+  }, [onClose]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && closeRef.current();
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
 
   const loc = locale === "he" ? "he-IL" : "en-GB";
   const inPeriod = detail ? detail.daily.filter((d) => d.day >= period.from && d.day <= period.to) : [];
