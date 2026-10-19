@@ -546,6 +546,7 @@ export async function generateTargetsWithAi({
     ];
 
   const contentText = await callAiChatCompletionWithProgress({
+      usage: { feature: "targets_generate" },
     config,
     messages,
     temperature: 0.2,

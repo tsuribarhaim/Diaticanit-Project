@@ -26,6 +26,8 @@ export type UsageInput = {
   ticketsOpened: UsageRow[];
   /** One row per dated update a ticket's creator added to their ticket. */
   ticketUpdates: UsageRow[];
+  /** AI cost per Israel day, person and page (the ai_usage_daily view) from the week before the report's week until now - both weeks are compared; null when it could not be read. */
+  aiCalls: UsageAiCall[] | null;
 };
 
 export type Tier = "heavy" | "light" | "opened" | "inactive";
@@ -50,6 +52,23 @@ export type PersonWeek = {
   joinedThisWeek: boolean;
 };
 
+/** One AI call from ai_usage (db/migrations/083_ai_usage.sql), for the AI cost section. */
+/** One row of ai_usage_daily (db/migrations/083_ai_usage.sql): one Israel day, person, page, feature and model. */
+export type UsageAiCall = { userId: string | null; day: string; page: string | null; costUsd: number; calls: number; isAdmin: boolean };
+
+export type AiPersonCost = { name: string; isAdmin: boolean; cost: number; calls: number; topPage: string | null };
+export type AiPageCost = { page: string | null; cost: number; calls: number; users: number; avgPerUser: number };
+export type AiWeek = {
+  cost: number;
+  previousCost: number;
+  calls: number;
+  users: number;
+  avgPerUser: number;
+  avgPerCall: number;
+  top: AiPersonCost[];
+  pages: AiPageCost[];
+};
+
 export type UsageWeek = {
   days: string[];
   start: string;
@@ -57,6 +76,8 @@ export type UsageWeek = {
   people: PersonWeek[];
   totals: { people: number; active: number; reports: number; weight: number; weightPeople: number; tickets: number; ticketPeople: number; joined: number };
   suggestions: string[];
+  /** null when the AI cost could not be read (the report then goes out without that section). */
+  ai: AiWeek | null;
 };
 
 const TZ = "Asia/Jerusalem";
@@ -134,6 +155,7 @@ export function computeUsageWeek(input: UsageInput): UsageWeek {
 
   const active = people.filter((w) => w.tier !== "inactive");
   return {
+    ai: input.aiCalls ? computeAiWeek(input.aiCalls, input.people, start, end) : null,
     days,
     start,
     end,
@@ -151,6 +173,64 @@ export function computeUsageWeek(input: UsageInput): UsageWeek {
     suggestions,
   };
 }
+
+/** The week's AI cost: per person (admins included and marked), per page, and against the week before. Calls of test and
+ * bot accounts are left out like everywhere else in the report (only people in the report's list count). */
+function computeAiWeek(calls: UsageAiCall[], people: UsagePerson[], start: string, end: string): AiWeek {
+  const names = new Map(people.map((p) => [p.id, p.name]));
+  const ofPeople = calls.filter((c) => c.userId && names.has(c.userId));
+  const previousStart = shiftDate(start, -7);
+  const week = ofPeople.filter((c) => c.day >= start && c.day <= end);
+  const previous = ofPeople.filter((c) => c.day >= previousStart && c.day < start);
+  const costOf = (rows: UsageAiCall[]) => rows.reduce((sum, c) => sum + c.costUsd, 0);
+
+  const byPerson = new Map<string, { cost: number; calls: number; isAdmin: boolean; pages: Map<string, number> }>();
+  const byPage = new Map<string, { cost: number; calls: number; users: Set<string> }>();
+  for (const c of week) {
+    const id = c.userId as string;
+    const person = byPerson.get(id) ?? { cost: 0, calls: 0, isAdmin: false, pages: new Map<string, number>() };
+    person.cost += c.costUsd;
+    person.calls += c.calls;
+    person.isAdmin ||= c.isAdmin;
+    person.pages.set(c.page ?? "", (person.pages.get(c.page ?? "") ?? 0) + c.costUsd);
+    byPerson.set(id, person);
+    const page = byPage.get(c.page ?? "") ?? { cost: 0, calls: 0, users: new Set<string>() };
+    page.cost += c.costUsd;
+    page.calls += c.calls;
+    page.users.add(id);
+    byPage.set(c.page ?? "", page);
+  }
+  const cost = costOf(week);
+  const callCount = week.reduce((sum, c) => sum + c.calls, 0);
+  return {
+    cost,
+    previousCost: costOf(previous),
+    calls: callCount,
+    users: byPerson.size,
+    avgPerUser: byPerson.size ? cost / byPerson.size : 0,
+    avgPerCall: callCount ? cost / callCount : 0,
+    top: [...byPerson.entries()]
+      .map(([id, p]) => ({ name: names.get(id) ?? "?", isAdmin: p.isAdmin, cost: p.cost, calls: p.calls, topPage: [...p.pages.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || null }))
+      .sort((a, b) => b.cost - a.cost)
+      .slice(0, 3),
+    pages: [...byPage.entries()]
+      .map(([page, p]) => ({ page: page || null, cost: p.cost, calls: p.calls, users: p.users.size, avgPerUser: p.cost / p.users.size }))
+      .sort((a, b) => b.cost - a.cost),
+  };
+}
+
+/** The app's pages by the names people know them by. */
+const PAGE_NAMES: Record<string, string> = {
+  "/app": "בית",
+  "/app/daily-report": "דיווח יומי",
+  "/app/targets": "יעדים",
+  "/app/profile": "פרופיל",
+  "/app/onboarding": "הרשמה",
+  "/app/documents": "מסמכים",
+  "/app/chat": "צ'אט עם דפי",
+};
+const pageName = (page: string | null) => (page ? (PAGE_NAMES[page] ?? PAGE_NAMES[page.split("/").slice(0, 3).join("/")] ?? page) : "לא ידוע");
+const usd = (value: number, digits = 2) => `$${value.toFixed(digits)}`;
 
 function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -255,6 +335,32 @@ export function renderUsageReport(week: UsageWeek, now: Date, appUrl: string): U
       .join("");
     sections.push(`<div style="${card}">${tierHead("inactive")}<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${cells}</table></div>`);
   }
+  const ai = week.ai;
+  if (ai) {
+    const head = `<div style="font-size:15px;font-weight:bold;color:#17302c;margin-bottom:2px;">עלות AI השבוע</div><div style="font-size:12.5px;color:${muted};margin-bottom:10px;">כל פעולת AI באפליקציה, לפי משתמש ולפי עמוד. מנהלים כלולים ומסומנים; האוטומציה של הפניות לא נכללת.</div>`;
+    if (ai.calls === 0) {
+      sections.push(`<div style="${card}">${head}<div style="font-size:13px;color:${muted};">לא נרשם שימוש ב-AI השבוע.</div></div>`);
+    } else {
+      const change = ai.previousCost > 0 ? Math.round(((ai.cost - ai.previousCost) / ai.previousCost) * 100) : null;
+      const changeText = change === null ? "אין נתונים משבוע שעבר" : `${change > 0 ? "+" : change < 0 ? "−" : ""}${Math.abs(change)}% לעומת שבוע שעבר`;
+      const money = (value: number, digits = 2) => `<span dir="ltr">${usd(value, digits)}</span>`;
+      const th = (label: string, align = "right") => `<td style="padding:6px 0;font-size:11.5px;color:${muted};text-align:${align};border-bottom:1px solid #e2e8e6;">${label}</td>`;
+      const td = (value: string, align = "right", first = false) => `<td style="padding:7px 0;font-size:13px;color:#17302c;text-align:${align};${first ? "" : "border-top:1px solid #e2e8e6;"}">${value}</td>`;
+      const adminTag = `<span style="background:#ebe5fb;color:#6d4fc2;border-radius:6px;padding:0 6px;font-size:10.5px;font-weight:bold;">מנהל</span>`;
+      const topRows = ai.top
+        .map((p, i) => `<tr>${td(`<span dir="auto">${escapeHtml(p.name)}</span>${p.isAdmin ? ` ${adminTag}` : ""}`, "right", i === 0)}${td(money(p.cost), "left", i === 0)}${td(String(p.calls), "left", i === 0)}${td(escapeHtml(pageName(p.topPage)), "left", i === 0)}</tr>`)
+        .join("");
+      const pageRows = ai.pages
+        .map((p, i) => `<tr>${td(escapeHtml(pageName(p.page)), "right", i === 0)}${td(money(p.cost), "left", i === 0)}${td(String(p.users), "left", i === 0)}${td(money(p.avgPerUser), "left", i === 0)}</tr>`)
+        .join("");
+      sections.push(`<div style="${card}">${head}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>${kpi(money(ai.cost), "עלות AI כוללת", changeText)}${kpi(String(ai.users), "משתמשים ב-AI", `${ai.calls} פעולות`)}${kpi(money(ai.avgPerUser), "ממוצע למשתמש", "השבוע")}${kpi(money(ai.avgPerCall, 4), "ממוצע לפעולה", "לכל קריאה ל-AI")}</tr></table>
+<div style="font-size:13.5px;font-weight:bold;color:#17302c;margin:14px 0 2px;">${ai.top.length === 1 ? "המשתמש" : `${ai.top.length} המשתמשים`} עם העלות הגבוהה</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>${th("משתמש")}${th("עלות", "left")}${th("פעולות", "left")}${th("עמוד מוביל", "left")}</tr>${topRows}</table>
+<div style="font-size:13.5px;font-weight:bold;color:#17302c;margin:14px 0 2px;">עלות לפי עמוד</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>${th("עמוד")}${th("עלות", "left")}${th("משתמשים", "left")}${th("ממוצע למשתמש", "left")}</tr>${pageRows}</table></div>`);
+    }
+  }
   if (week.suggestions.length > 0) {
     const items = week.suggestions.map((s) => `<li style="margin:0 0 8px;" dir="rtl">${escapeHtml(s)}</li>`).join("");
     sections.push(`<div style="${card}"><div style="font-size:15px;font-weight:bold;color:#17302c;margin-bottom:8px;">כדאי לשלוח הודעה</div><ul style="margin:0;padding-right:18px;font-size:13.5px;color:#17302c;">${items}</ul><a href="${appUrl}/app" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;padding:9px 16px;border-radius:8px;font-weight:bold;font-size:13px;margin-top:8px;">פתיחת דפי</a></div>`);
@@ -284,6 +390,16 @@ ${sections.join("\n")}
     for (const w of rows) {
       if (tier === "inactive") lines.push(`- ${w.person.name} (${w.person.lastActiveAt ? ddmm(israelDate(w.person.lastActiveAt)) : "אף פעם"})`);
       else lines.push(`- ${w.person.name}: ${counted(w.reports, "דיווח אחד", "דיווחים")}${activityParts(w).length ? ` (${activityParts(w).join(", ")})` : ""}`);
+    }
+    lines.push("");
+  }
+  if (ai) {
+    lines.push("עלות AI השבוע:");
+    if (ai.calls === 0) lines.push("- לא נרשם שימוש ב-AI השבוע.");
+    else {
+      lines.push(`- סה"כ ${usd(ai.cost)} (שבוע שעבר ${usd(ai.previousCost)}) · ${ai.users} משתמשים · ${ai.calls} פעולות · ממוצע למשתמש ${usd(ai.avgPerUser)}`);
+      for (const p of ai.top) lines.push(`- ${p.name}${p.isAdmin ? " (מנהל)" : ""}: ${usd(p.cost)}, ${p.calls} פעולות, בעיקר ${pageName(p.topPage)}`);
+      lines.push(`- לפי עמוד: ${ai.pages.map((p) => `${pageName(p.page)} ${usd(p.cost)}`).join(", ")}`);
     }
     lines.push("");
   }

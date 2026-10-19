@@ -8,6 +8,7 @@ import { classifyChatDomain, type ChatDomain } from "@/lib/ai/chat-router";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { checkDailyReportNeedsClarification, parseDailyReportWithAi } from "@/lib/ai/daily-report";
 import { answerHelpQuestion, type HelpTicketDraft } from "@/lib/ai/help-chat";
+import { runWithAiUsageContext } from "@/lib/ai/usage";
 import { detectDangerousSubstance, parseDailyReportText } from "@/lib/daily-report";
 import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
@@ -79,7 +80,13 @@ export type ChatRouterResult =
  * answerHelpQuestion for how-to questions and conversational ticket
  * filing.
  */
-export async function routeChatMessageAction({
+/** The floating chat's one entry point: every AI call it leads to (routing, help, a report typed into the chat, a profile
+ * or targets change) is recorded as floating-chat use, on the page the chat was opened from (lib/ai/usage.ts). */
+export async function routeChatMessageAction(input: { message: string; currentScreen: ChatDomain }): Promise<ChatRouterResult> {
+  return runWithAiUsageContext({ surface: "floating_chat" }, () => routeChatMessage(input));
+}
+
+async function routeChatMessage({
   message,
   currentScreen,
 }: {
