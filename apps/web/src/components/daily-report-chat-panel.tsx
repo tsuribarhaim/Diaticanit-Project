@@ -41,6 +41,8 @@ type ChatMessage = {
    * items from the same breakdown call, or null when the reply had items but
    * the count couldn't be fetched (the button then shows without a count). */
   addToLog?: { count: number | null };
+  /** TCK-160: true while getDailyReportBreakdownAction is still building this reply's item table - shows TypingDots under the bubble. UI only, never part of the transcript. */
+  breakdownPending?: boolean;
 };
 type SseEvent =
   | { type: "token"; text: string }
@@ -103,6 +105,22 @@ function Spinner({ className }: { className: string }) {
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
     </svg>
+  );
+}
+
+/** TCK-160: "not finished yet" signal - three bouncing dots, with an
+ * optional visible label, or a screen-reader-only ariaLabel when there's
+ * no label. */
+function TypingDots({ label, ariaLabel }: { label?: string; ariaLabel?: string }) {
+  return (
+    <span role="status" aria-label={label ? undefined : ariaLabel} className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+      <span className="flex items-center gap-1" aria-hidden="true">
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current motion-reduce:animate-none" style={{ animationDelay: "0ms" }} />
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current motion-reduce:animate-none" style={{ animationDelay: "150ms" }} />
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current motion-reduce:animate-none" style={{ animationDelay: "300ms" }} />
+      </span>
+      {label ? <span>{label}</span> : null}
+    </span>
   );
 }
 
@@ -948,6 +966,21 @@ export function DailyReportChatPanel({
       const transcriptSoFar = [...historyForRequest, { role: "user" as const, content: userContent }, { role: "assistant" as const, content: assistantText }]
         .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`)
         .join("\n");
+      // TCK-160: the reply text is in, but its item table and "Add to log"
+      // button are still coming - flag it so the bubble shows TypingDots.
+      // Cleared again however the call ends (result, {error}, rejection),
+      // including when the user has already moved on to a newer message.
+      const clearBreakdownPending = (messagesToClear: ChatMessage[]) =>
+        messagesToClear.map((message) =>
+          message.breakdownPending && message.role === "assistant" && message.content === assistantText ? { ...message, breakdownPending: false } : message,
+        );
+      setMessages((previous) => {
+        const lastIndex = previous.length - 1;
+        if (previous[lastIndex]?.role !== "assistant" || previous[lastIndex].content !== assistantText) return previous;
+        const next = [...previous];
+        next[lastIndex] = { ...next[lastIndex], breakdownPending: true };
+        return next;
+      });
       void getDailyReportBreakdownAction(transcriptSoFar).then((result) => {
         // TCK-125: the same call also counts the items for "Add to log" -
         // food + exercise. A failed call or a zero total still shows the
@@ -963,11 +996,14 @@ export function DailyReportChatPanel({
                     ...next[lastIndex],
                     ...(result.items.length > 0 ? { breakdown: result.items } : {}),
                     addToLog: { count: total },
+                    breakdownPending: false,
                   }
-                : { ...next[lastIndex], addToLog: { count: null } };
+                : { ...next[lastIndex], addToLog: { count: null }, breakdownPending: false };
           }
-          return next;
+          return clearBreakdownPending(next);
         });
+      }).catch(() => {
+        setMessages(clearBreakdownPending);
       });
     }
 
@@ -1392,7 +1428,7 @@ export function DailyReportChatPanel({
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={message.imagePreviewUrl} alt="" className="mb-1.5 h-28 w-28 rounded-lg object-cover" />
                 ) : null}
-                {message.content || (isStreaming && index === messages.length - 1 ? "…" : "")}
+                {message.content || (isStreaming && index === messages.length - 1 ? <TypingDots ariaLabel={tr(locale, "Working on it…", "בעבודה…")} /> : "")}
                 {/* TCK-94: structured breakdown card, matching the design
                     from the ticket - display only, computed separately
                     (see getDailyReportBreakdownAction's own comment); what
@@ -1438,6 +1474,11 @@ export function DailyReportChatPanel({
                         ? tr(locale, "Add to log · 1 item", "הוסף ליומן · פריט אחד")
                         : tr(locale, `Add to log · ${message.addToLog.count} items`, `הוסף ליומן · ${message.addToLog.count} פריטים`)}
                   </button>
+                ) : null}
+                {message.breakdownPending && index === messages.length - 1 ? (
+                  <div className="mt-2">
+                    <TypingDots label={tr(locale, "Preparing the item list…", "רשימת הפריטים בהכנה…")} />
+                  </div>
                 ) : null}
               </div>
             </div>
