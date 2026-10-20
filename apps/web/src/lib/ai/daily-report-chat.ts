@@ -48,6 +48,10 @@ export type DailyReportChatTargets = {
   sodium_target_mg: number | null;
   added_sugar_target_g: number | null;
   calcium_target_mg: number | null;
+  magnesium_target_mg: number | null;
+  potassium_target_mg: number | null;
+  iron_target_mg: number | null;
+  zinc_target_mg: number | null;
   vit_c_target_mg: number | null;
   vit_b12_target_mcg: number | null;
   vit_d_target_mcg: number | null;
@@ -82,6 +86,10 @@ function buildTargetsSummary(targets: DailyReportChatTargets): string {
     `sodium: ${targets.sodium_target_mg ?? 0} mg`,
     `added sugar: ${targets.added_sugar_target_g ?? 0} g`,
     `calcium: ${targets.calcium_target_mg ?? 0} mg`,
+    `magnesium: ${targets.magnesium_target_mg ?? 0} mg`,
+    `potassium: ${targets.potassium_target_mg ?? 0} mg`,
+    `iron: ${targets.iron_target_mg ?? 0} mg`,
+    `zinc: ${targets.zinc_target_mg ?? 0} mg`,
     `vitamin C: ${targets.vit_c_target_mg ?? 0} mg`,
     `vitamin B12: ${targets.vit_b12_target_mcg ?? 0} mcg`,
     `vitamin D: ${targets.vit_d_target_mcg ?? 0} mcg`,
@@ -102,6 +110,10 @@ function buildTodaysTotalsSummary(totals: DailyReportMetrics): string {
     `sodium so far: ${totals.sodiumMg} mg`,
     `added sugar so far: ${totals.addedSugarG} g`,
     `calcium so far: ${totals.calciumMg} mg`,
+    `magnesium so far: ${totals.magnesiumMg} mg`,
+    `potassium so far: ${totals.potassiumMg} mg`,
+    `iron so far: ${totals.ironMg} mg`,
+    `zinc so far: ${totals.zincMg} mg`,
     `vitamin C so far: ${totals.vitCMg} mg`,
     `vitamin B12 so far: ${totals.vitB12Mcg} mcg`,
     `vitamin D so far: ${totals.vitDMcg} mcg`,
