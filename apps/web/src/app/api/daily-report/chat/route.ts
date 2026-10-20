@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
   const { data: targetRow } = await supabase
     .from("user_target_profiles")
     .select(
-      "calories_target, protein_target_g, carbs_target_g, fats_target_g, fiber_target_g, water_target_ml, sodium_target_mg, added_sugar_target_g, calcium_target_mg, vit_c_target_mg, vit_b12_target_mcg, vit_d_target_mcg, sat_fat_target_g, omega3_target_g, cholesterol_target_mg",
+      "calories_target, protein_target_g, carbs_target_g, fats_target_g, fiber_target_g, water_target_ml, sodium_target_mg, added_sugar_target_g, calcium_target_mg, vit_c_target_mg, vit_b12_target_mcg, vit_d_target_mcg, sat_fat_target_g, omega3_target_g, cholesterol_target_mg, magnesium_target_mg, potassium_target_mg, iron_target_mg, zinc_target_mg",
     )
     .eq("user_id", user.id)
     .eq("is_active", true)
