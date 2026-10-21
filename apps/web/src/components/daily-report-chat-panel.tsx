@@ -6,6 +6,7 @@ import { createPortal, flushSync, useFormStatus } from "react-dom";
 
 import { deleteDailyReportAction, getDailyReportBreakdownAction, type DailyReportBreakdownItem } from "@/app/app/daily-report/actions";
 import { logSavedItemFromChatAction } from "@/app/app/daily-report/quick-log-actions";
+import { ChatOverlay } from "@/components/chat-overlay";
 import type { DailyReportDefaultItem } from "@/components/daily-report-defaults-picker";
 import { SAVE_TOAST_DURATION_MS } from "@/components/daily-report-form";
 import { DailyReportSuccessToast } from "@/components/daily-report-success-toast";
@@ -416,6 +417,11 @@ export function DailyReportChatPanel({
   // TCK-125: also starts open right after an "Add to log" save, which
   // remounts this panel fresh - back on the welcome screen, not closed.
   const [isOpen, setIsOpen] = useState(() => isEditing || Boolean(addedToLogNotice));
+  // TCK-161: shared by the bubble's X, a tap on the scrim and Escape. Never
+  // clears this chat's conversation, same as the X always did.
+  function closeChat() {
+    setIsOpen(false);
+  }
   // TCK-125: the "Added to log" pill - shown from the prop on mount, then
   // hidden after SAVE_TOAST_DURATION_MS (see the effect below).
   const [addedToLogPill, setAddedToLogPill] = useState(addedToLogNotice ?? null);
@@ -1359,7 +1365,7 @@ export function DailyReportChatPanel({
           floating size everywhere (see the bottom of this file), not a
           full-width desktop card plus a separately-shaped mobile sheet
           that each needed their own header treatment. */}
-      <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-800/60">
+      <div className="chat-overlay-header flex items-center gap-2 px-4 py-2.5">
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-teal-700 text-white dark:bg-teal-600">
           <ChatBubbleBadgeIcon className="h-3 w-3" />
         </span>
@@ -1842,10 +1848,10 @@ export function DailyReportChatPanel({
           separate chat instance underneath (photo parsing, editing an
           existing entry, weight sync, Report), just presented through the
           same small surface instead of an always-visible full-width
-          desktop card or a large percentage-of-viewport mobile sheet. No
-          dimming backdrop either, to match that widget - tap the bubble
-          (X) again to close, rather than tapping
-          outside. */}
+          desktop card or a large percentage-of-viewport mobile sheet. Like
+          that widget, it sits over the shared dimming scrim
+          (chat-overlay.css, via ChatOverlay) and closes from the bubble's
+          X, a tap on the scrim, or Escape. */}
       {isMounted && createPortal(
         // dir set explicitly here - the app only applies dir="rtl"/"ltr"
         // on a wrapper <div> inside app/app/layout.tsx, not on
@@ -1896,7 +1902,7 @@ export function DailyReportChatPanel({
               floating chat bubble in the app. */}
           <button
             type="button"
-            onClick={() => setIsOpen((open) => !open)}
+            onClick={() => (isOpen ? closeChat() : setIsOpen(true))}
             aria-label={tr(locale, isOpen ? "Close chat" : "Open chat", isOpen ? "סגירת הצ'אט" : "פתיחת הצ'אט")}
             className="fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom)+0.75rem)] right-[calc(12.5vw_-_2rem)] z-50 flex h-14 w-14 items-center justify-center rounded-full bg-teal-700 text-white shadow-lg hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
           >
@@ -1909,11 +1915,15 @@ export function DailyReportChatPanel({
             )}
           </button>
 
-          {isOpen ? (
-            <div className="fixed bottom-[calc(8rem+env(safe-area-inset-bottom))] right-[calc(12.5vw_-_2rem)] z-50 flex max-h-[70vh] w-[calc(100vw-2rem)] max-w-sm flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
-              {chatBodyContent}
-            </div>
-          ) : null}
+          <ChatOverlay
+            isOpen={isOpen}
+            onClose={closeChat}
+            closeOnEscape={!isSavedListOpen && !pendingClearConfirm}
+            ariaLabel={tr(locale, "Chat about your day", "צ'אט על היום שלך")}
+            className="fixed bottom-[calc(8rem+env(safe-area-inset-bottom))] right-[calc(12.5vw_-_2rem)] flex max-h-[70vh] w-[calc(100vw-2rem)] max-w-sm flex-col overflow-hidden rounded-xl bg-white dark:bg-slate-900"
+          >
+            {chatBodyContent}
+          </ChatOverlay>
         </div>,
         document.body,
       )}

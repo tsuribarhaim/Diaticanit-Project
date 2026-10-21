@@ -10,6 +10,7 @@ import { applyActiveTargetsAction, clearTargetsReviewPendingAction, negotiateAct
 import { routeChatMessageAction, type ChatRouterResult } from "@/app/app/chat/actions";
 import { submitTicketFromChatAction } from "@/app/app/tickets/chat-actions";
 import { SAVE_TOAST_DURATION_MS } from "@/components/daily-report-form";
+import { ChatOverlay } from "@/components/chat-overlay";
 import { DailyReportSuccessToast } from "@/components/daily-report-success-toast";
 import { formatProfileDiffText, ProfileDiffValue } from "@/components/profile-diff-value";
 import { SavedListMatchChips } from "@/components/saved-list-match-chips";
@@ -232,6 +233,18 @@ export function GlobalChatWidget({
    * never clears out from under something still awaiting the user's own
    * answer/decision (a clarifying question, or any pending
    * profile/ticket/review card still showing its buttons). */
+  /** Shared by the bubble's X, a tap on the scrim and Escape (TCK-161).
+   * TCK-93: closing (not opening) an already-finished conversation resets
+   * it - see hasUnresolvedWork's own comment. */
+  function closeChat() {
+    if (!hasUnresolvedWork()) {
+      setMessages([]);
+      setPendingClarification(null);
+    }
+    setIsChatOpen(false);
+    setHasUnread(false);
+  }
+
   function hasUnresolvedWork(): boolean {
     if (pendingClarification) return true;
     return messages.some(
@@ -629,17 +642,12 @@ export function GlobalChatWidget({
       <button
         type="button"
         onClick={() => {
-          // TCK-93: closing (not opening) an already-finished conversation
-          // resets it - see hasUnresolvedWork's own comment. Checked here
-          // rather than inside the setIsChatOpen updater since it reads
-          // other state (messages/pendingClarification) the updater
-          // function form can't see.
-          if (isChatOpen && !hasUnresolvedWork()) {
-            setMessages([]);
-            setPendingClarification(null);
+          if (isChatOpen) {
+            closeChat();
+            return;
           }
-          if (!isChatOpen) void loadSavedItemsOnce();
-          setIsChatOpen((open) => !open);
+          void loadSavedItemsOnce();
+          setIsChatOpen(true);
           setHasUnread(false);
           if (!hasShownReviewPrompt && pendingReviewChanges && pendingReviewChanges.length > 0) {
             setHasShownReviewPrompt(true);
@@ -680,9 +688,14 @@ export function GlobalChatWidget({
         ) : null}
       </button>
 
-      {isChatOpen ? (
-        <div className="fixed bottom-[calc(8rem+env(safe-area-inset-bottom))] right-[calc(12.5vw_-_2rem)] z-50 flex max-h-[70vh] w-[calc(100vw-2rem)] max-w-sm flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-800/60">
+      <ChatOverlay
+        isOpen={isChatOpen}
+        onClose={closeChat}
+        closeOnEscape={!isSavedListOpen}
+        ariaLabel={tr(locale, "Chat with Daffy — your AI coach", "צ'אט עם דפי - מאמנת ה-AI שלך")}
+        className="fixed bottom-[calc(8rem+env(safe-area-inset-bottom))] right-[calc(12.5vw_-_2rem)] flex max-h-[70vh] w-[calc(100vw-2rem)] max-w-sm flex-col overflow-hidden rounded-xl bg-white dark:bg-slate-900"
+      >
+          <div className="chat-overlay-header flex items-center gap-2 px-4 py-2.5">
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-teal-700 text-white dark:bg-teal-600">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" /></svg>
             </span>
@@ -977,8 +990,7 @@ export function GlobalChatWidget({
               "דפי היא מלווה מבוססת AI ואינה תחליף לייעוץ רפואי או תזונתי מקצועי.",
             )}
           </p>
-        </div>
-      ) : null}
+      </ChatOverlay>
     </>
   );
 }
