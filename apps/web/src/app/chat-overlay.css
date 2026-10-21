@@ -1,0 +1,24 @@
+/*
+ * TCK-161: shared look for every chat panel (the floating GlobalChatWidget
+ * and Daily Report's own chat) - a full-screen dimming scrim, a turquoise
+ * frame with a glow, and a tinted header, so the chat stands out from the
+ * screen behind it. Used through components/chat-overlay.tsx; no screen
+ * defines these styles itself. Dark values follow the same explicit
+ * [data-theme="dark"] attribute as globals.css, not prefers-color-scheme.
+ */
+:root {
+  --chat-border: #0d9488;
+  --chat-glow: rgba(13, 148, 136, 0.16);
+  --chat-header-bg: rgba(13, 148, 136, 0.1);
+  --chat-scrim: rgba(15, 23, 42, 0.45);
+}
+[data-theme="dark"] {
+  --chat-border: #2dd4bf;
+  --chat-glow: rgba(20, 184, 166, 0.22);
+  --chat-header-bg: rgba(20, 184, 166, 0.16);
+  --chat-scrim: rgba(0, 0, 0, 0.6);
+}
+/* Between the floating bubbles/bottom nav (z-30..50) and the dialogs that must stay above an open chat: saved-list picker, range confirm, TargetsStaleModal (z-60), clear-chat confirm (z-70), toasts (z-80). */
+.chat-overlay-scrim { position: fixed; inset: 0; z-index: 55; background: var(--chat-scrim); }
+.chat-overlay-panel { z-index: 56; border: 1.5px solid var(--chat-border); box-shadow: 0 0 0 4px var(--chat-glow), 0 25px 50px -12px rgba(0, 0, 0, 0.25); }
+.chat-overlay-header { background: var(--chat-header-bg); border-bottom: 1.5px solid var(--chat-border); }
