@@ -7,6 +7,7 @@ import {
   type DailyReportChatTargets,
 } from "@/lib/ai/daily-report-chat";
 import { getAiExtractionConfig } from "@/lib/ai/env";
+import { createMojibakeStreamRepairer, repairHebrewMojibake } from "@/lib/ai/mojibake";
 import { resolveUserGenderForAddressing } from "@/lib/ai/persona";
 import { getRecentDaysLoggedFoodItems, getTodaysDailyReportTotals, getTodaysLoggedItems } from "@/lib/daily-report";
 import { normalizeLocale, tr } from "@/lib/locale";
@@ -52,6 +53,7 @@ export async function POST(request: NextRequest) {
             Boolean(entry) && (entry.role === "user" || entry.role === "assistant") && typeof entry.content === "string",
         )
         .slice(-20)
+        .map((entry) => ({ role: entry.role, content: repairHebrewMojibake(entry.content) }))
     : [];
   const imageBase64 = typeof body.imageBase64 === "string" && body.imageBase64 ? body.imageBase64 : undefined;
   const mimeType = typeof body.mimeType === "string" && body.mimeType ? body.mimeType : undefined;
@@ -154,9 +156,11 @@ export async function POST(request: NextRequest) {
         // so the normal new-entry stream is byte-for-byte unchanged.
         let deleteMarkerResolved = !isEditingExistingEntry;
         let markerPending = "";
+        const mojibakeRepairer = createMojibakeStreamRepairer();
 
         function emitToken(text: string) {
-          if (text) controller.enqueue(sseEvent({ type: "token", text }));
+          const repaired = mojibakeRepairer.push(text);
+          if (repaired) controller.enqueue(sseEvent({ type: "token", text: repaired }));
         }
 
         function resolveDeletePhase() {
@@ -263,6 +267,9 @@ export async function POST(request: NextRequest) {
           controller.enqueue(sseEvent({ type: "delete_intent", value: false }));
           emitToken(markerPending);
         }
+
+        const tail = mojibakeRepairer.flush();
+        if (tail) controller.enqueue(sseEvent({ type: "token", text: tail }));
 
         controller.enqueue(sseEvent({ type: "done" }));
         controller.close();
