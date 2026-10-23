@@ -1458,7 +1458,8 @@ export function DailyReportChatPanel({
                   </div>
                 ) : null}
                 {/* TCK-125: "Add to log" belongs to the reply - see
-                    addToLogIndex for which one shows it. */}
+                    addToLogIndex for which one shows it.
+                    TCK-163: no checkmark before saving - only the spinner while isSaving. */}
                 {index === addToLogIndex && message.addToLog ? (
                   <button
                     type="submit"
@@ -1467,13 +1468,7 @@ export function DailyReportChatPanel({
                     onClick={(event) => handleAddToLog(event, message.addToLog!.count)}
                     className={`mt-2 flex w-full items-center justify-center gap-1.5 rounded-xl border border-teal-600 bg-teal-50 px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-100 dark:border-teal-500 dark:bg-teal-950/30 dark:text-teal-300${isSaving ? " cursor-wait opacity-70" : ""}`}
                   >
-                    {isSaving ? (
-                      <Spinner className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M20 6 9 17l-5-5" />
-                      </svg>
-                    )}
+                    {isSaving ? <Spinner className="h-3.5 w-3.5 animate-spin" /> : null}
                     {message.addToLog.count === null
                       ? tr(locale, "Add to log", "הוסף ליומן")
                       : message.addToLog.count === 1
