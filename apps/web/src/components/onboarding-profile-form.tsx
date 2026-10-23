@@ -1985,7 +1985,7 @@ export function OnboardingProfileForm({
                   {tr(
                     effectiveLocale,
                     "Choosing not to disclose will prevent your Health Companion from considering your specific needs when processing your targets and progress.",
-                    "בחירה שלא לשתף תמנע מהמלווה הבריאותי שלך להתחשב בצרכים הייחודיים שלך בעת עיבוד היעדים וההתקדמות שלך.",
+                    "בחירה שלא לשתף תמנע מהמלווה הבריאותית שלך להתחשב בצרכים הייחודיים שלך בעת עיבוד היעדים וההתקדמות שלך.",
                   )}
                 </p>
               ) : null}
