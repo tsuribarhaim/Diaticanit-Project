@@ -20,7 +20,7 @@ import {
   type DailyReportChartMetric,
   type DailyReportChartPreferences,
 } from "@/lib/daily-report-chart-preferences";
-import { parseDailyReportPhotoWithAi, parseDailyReportWithAi, reconcileCustomTargetValueUnits } from "@/lib/ai/daily-report";
+import { extractDailyReportBreakdownWithAi, parseDailyReportPhotoWithAi, parseDailyReportWithAi, reconcileCustomTargetValueUnits } from "@/lib/ai/daily-report";
 import type { SavedListIngredient } from "@/app/app/daily-report/defaults/actions";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { buildBmiWarningMessage } from "@/lib/bmi";
@@ -493,16 +493,9 @@ export async function getDailyReportBreakdownAction(
   const locale = normalizeLocale(profileRow?.preferred_language);
 
   try {
-    const parsed = await parseDailyReportWithAi({
-      config: aiConfig,
-      reportText: transcriptText,
-      weightKg: Number(profileRow?.weight_kg ?? 0),
-      locale,
-    });
-    return {
-      items: parsed.foodItems.map((item) => ({ name: item.name, quantity: item.quantity, unit: item.unit })),
-      exerciseCount: parsed.exerciseItems.length,
-    };
+    // Names and amounts only (lib/ai/daily-report.ts): the card never showed the nutrients the full reader wrote.
+    const parsed = await extractDailyReportBreakdownWithAi({ config: aiConfig, reportText: transcriptText, locale });
+    return { items: parsed.foodItems, exerciseCount: parsed.exerciseCount };
   } catch (error) {
     logServerError("dailyReport.getBreakdown", "parse_failed", {
       userId: user.id,
