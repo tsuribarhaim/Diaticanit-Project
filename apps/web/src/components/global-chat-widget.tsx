@@ -305,7 +305,7 @@ export function GlobalChatWidget({
     const goalText = tr(
       locale,
       `My profile changed (${summary}). Briefly tell me what this specific change means for me, and suggest a target change only if this change really requires it. Do not change anything.`,
-      `הפרופיל שלי השתנה (${summary}). הסבר/י בקצרה מה המשמעות של השינוי הזה עבורי, והצע/י שינוי ביעד רק אם השינוי הזה באמת מחייב זאת. אל תשנה/י דבר.`,
+      `הפרופיל שלי השתנה (${summary}). הסבירי בקצרה מה המשמעות של השינוי הזה עבורי, והציעי שינוי ביעד רק אם השינוי הזה באמת מחייב זאת. אל תשני דבר.`,
     );
 
     // try/finally so a network failure or a request that outruns the
@@ -871,7 +871,7 @@ export function GlobalChatWidget({
                           onClick={() => void handleReviewAccept(index, message.reviewPrompt!.changes)}
                           className="rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
                         >
-                          {tr(locale, "Yes, please check", "כן, בדוק/י בבקשה")}
+                          {tr(locale, "Yes, please check", "כן, בדקי בבקשה")}
                         </button>
                         <button
                           type="button"

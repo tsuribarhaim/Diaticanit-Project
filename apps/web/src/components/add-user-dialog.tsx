@@ -231,7 +231,7 @@ export function AddUserDialog({ locale }: { locale: AppLocale }) {
                             {tr(
                               locale,
                               "The link to Daffy, what it is for, and how to install it on Android and iPhone.",
-                              "הקישור לדפי, למה הוא מיועד, ואיך מתקינים אותו באנדרואיד ובאייפון.",
+                              "הקישור לדפי, למה היא מיועדת, ואיך מתקינים אותה באנדרואיד ובאייפון.",
                             )}
                           </span>
                         </span>
