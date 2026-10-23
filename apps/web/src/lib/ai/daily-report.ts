@@ -314,6 +314,17 @@ const FOOD_ITEM_JSON_SHAPE =
 const METRICS_JSON_SHAPE =
   '{"caloriesKcal":number,"proteinG":number,"carbsG":number,"fatG":number,"fiberG":number,"waterMl":number,"magnesiumMg":number,"potassiumMg":number,"ironMg":number,"zincMg":number,"sodiumMg":number,"addedSugarG":number,"calciumMg":number,"vitCMg":number,"vitB12Mcg":number,"vitDMcg":number,"satFatG":number,"omega3G":number,"cholesterolMg":number,"exerciseMinutes":number,"estimatedBurnKcal":number}';
 
+/** The rules that decide what the items of a report are and how they are named - shared by the full reader and the light
+ * breakdown below, so the breakdown card always lists the same items the save will log. */
+function itemNamingRules(languageName: string): string[] {
+  return [
+    `- DRINK UNITS: for EVERY drink (water, coffee, tea, juice, milk, soda, alcohol, a shake, anything liquid), always report the amount in milliliters (unit "ml") - never a serving word like "cup"/"glass"/"can"/"bottle"/"mug"/"unit" as the unit itself. Convert whatever serving size the user mentioned yourself (a cup ≈ 250ml, a glass ≈ 200-250ml, a can ≈ 330ml, a bottle ≈ 500ml, a mug ≈ 300ml, a shot ≈ 30ml) rather than passing the serving word through as the unit. For plain drinking water specifically (still or sparkling, nothing else added), also always use exactly one foodItems[] name, "${languageName === "Hebrew" ? "מים" : "Water"}" - never a more specific name like "Cup of water"/"Glass of water"/"Bottle of water" - so the identical drink logged in different words always comes out as the identical name+unit, not a new variant each time; other drinks keep their own descriptive name (e.g. "Coffee", "Orange juice", "Cola") with only their unit standardized to ml.`,
+    `- Write dangerReason and every foodItems[].name / exerciseItems[].name entirely in ${languageName}, regardless of what language daily_report_text is written in. Do not mix languages within a single name.`,
+    "- STEPS: there is no separate steps field in this schema. If the user reports exercise as a step count instead of a duration (e.g. \"5000 steps\", \"5,000 צעדים\"), do not silently drop that number - include the literal step count in that exerciseItems[].name (e.g. \"Walking - 5,000 steps\") so what they actually entered is preserved and visible, and estimate minutes and estimatedBurnKcal yourself from the step count (a typical walking pace is roughly 100 steps per minute) rather than guessing an unrelated duration.",
+    `- SUPPLEMENTS: when daily_report_text says the user took a dietary supplement today (e.g. a calcium tablet, vitamin D drops, a B12 pill, an iron capsule, fish oil/omega-3, a multivitamin), include it as its own foodItems[] entry. Write its name and unit in ${languageName}, like every other name. quantity is the number of doses. Fill ONLY the nutrient fields the supplement actually provides, using the dose the user stated (e.g. "calcium 600mg" -> calciumMg 600), or a typical single dose for that product when no dose is stated. Every other nutrient field, including caloriesKcal, waterMl and addedSugarG, stays 0 unless the product genuinely contains it. The "never leave estimates at 0" rule above does not apply to nutrients a supplement doesn't contain. Only log a supplement the text says was taken, never one merely mentioned as owned or planned.`,
+  ];
+}
+
 export async function parseDailyReportWithAi({
   config,
   reportText,
@@ -348,11 +359,8 @@ export async function parseDailyReportWithAi({
           "- Plain carbonated/sparkling water (soda water, seltzer, club soda, or Hebrew \"סודה\"/\"מי סודה\") is 0 calories and 0 sugar, and counts entirely as water intake (waterMl), exactly like still water - it is NOT a sugary soft drink by default. Only estimate calories/sugar for it when the text explicitly says it's sweetened, flavored, or a specific sugary-drink brand (e.g. cola, Sprite, \"sweet soda\").",
           "- ADDED SUGAR (addedSugarG): count ONLY sugar or syrup added during processing or preparation - white/brown/cane sugar, high-fructose corn syrup, honey, maple/agave/corn syrup, malt syrup, or a fruit-juice concentrate used as a sweetener. Natural sugar already in a whole, unsweetened food is NOT added sugar - lactose in plain milk/yogurt/cheese, fructose in a piece of fruit or vegetable (even a fruit juice with no added sweetener) - set addedSugarG to 0 for those regardless of how much natural sugar they contain, even though the \"never leave estimates at 0\" rule above applies to every other nutrient field on that same item. Only the sweetener itself counts when a food IS sweetened/flavored (flavored yogurt, chocolate milk, sweetened applesauce, a sweetened fruit juice) - not the food's own natural sugar underneath it. Zero-calorie sweeteners (stevia, erythritol, sucralose, monk fruit, and similar) are not sugar at all and contribute 0.",
           "- WATER FIELD SCOPE: waterMl means free liquid actually drunk (water, tea, coffee, soda, juice, milk, a soup's broth, etc.) - it feeds the user's fluid-intake tracker specifically, not general food moisture. For a solid or semi-solid food item (yogurt, fruit, vegetables, meat, bread, and similar - anything eaten rather than drunk), waterMl must be 0 regardless of how much water that food actually contains, even though the \"never leave estimates at 0\" rule above applies to every other nutrient field on that same item.",
-          `- DRINK UNITS: for EVERY drink (water, coffee, tea, juice, milk, soda, alcohol, a shake, anything liquid), always report the amount in milliliters (unit "ml") - never a serving word like "cup"/"glass"/"can"/"bottle"/"mug"/"unit" as the unit itself. Convert whatever serving size the user mentioned yourself (a cup ≈ 250ml, a glass ≈ 200-250ml, a can ≈ 330ml, a bottle ≈ 500ml, a mug ≈ 300ml, a shot ≈ 30ml) rather than passing the serving word through as the unit. For plain drinking water specifically (still or sparkling, nothing else added), also always use exactly one foodItems[] name, "${languageName === "Hebrew" ? "מים" : "Water"}" - never a more specific name like "Cup of water"/"Glass of water"/"Bottle of water" - so the identical drink logged in different words always comes out as the identical name+unit, not a new variant each time; other drinks keep their own descriptive name (e.g. "Coffee", "Orange juice", "Cola") with only their unit standardized to ml.`,
           "- SAFETY CHECK: set isDangerous to true only when daily_report_text describes consuming something that is not actually food/drink and would be dangerous or harmful (e.g. fuel, gasoline, cleaning products, poison, batteries, or other inedible/hazardous items). If so, set dangerReason to a short plain-language explanation telling the user to seek medical attention if they actually consumed it. Do NOT set isDangerous for an implausible-but-harmless amount of real food (e.g. \"I ate 50 eggs\") - estimate those literally instead; isDangerous is only for genuinely non-food/hazardous substances.",
-          `- Write dangerReason and every foodItems[].name / exerciseItems[].name entirely in ${languageName}, regardless of what language daily_report_text is written in. Do not mix languages within a single name.`,
-          "- STEPS: there is no separate steps field in this schema. If the user reports exercise as a step count instead of a duration (e.g. \"5000 steps\", \"5,000 צעדים\"), do not silently drop that number - include the literal step count in that exerciseItems[].name (e.g. \"Walking - 5,000 steps\") so what they actually entered is preserved and visible, and estimate minutes and estimatedBurnKcal yourself from the step count (a typical walking pace is roughly 100 steps per minute) rather than guessing an unrelated duration.",
-          `- SUPPLEMENTS: when daily_report_text says the user took a dietary supplement today (e.g. a calcium tablet, vitamin D drops, a B12 pill, an iron capsule, fish oil/omega-3, a multivitamin), include it as its own foodItems[] entry. Write its name and unit in ${languageName}, like every other name. quantity is the number of doses. Fill ONLY the nutrient fields the supplement actually provides, using the dose the user stated (e.g. "calcium 600mg" -> calciumMg 600), or a typical single dose for that product when no dose is stated. Every other nutrient field, including caloriesKcal, waterMl and addedSugarG, stays 0 unless the product genuinely contains it. The "never leave estimates at 0" rule above does not apply to nutrients a supplement doesn't contain. Only log a supplement the text says was taken, never one merely mentioned as owned or planned.`,
+          ...itemNamingRules(languageName),
           `weightKg:${Number.isFinite(weightKg) ? weightKg : 0}`,
           "daily_report_text:",
           clippedText,
@@ -360,6 +368,54 @@ export async function parseDailyReportWithAi({
       },
     ],
   });
+}
+
+
+const aiBreakdownSchema = z.object({
+  foodItems: z.array(z.object({ name: z.string().trim().max(200), quantity: z.coerce.number().nonnegative().catch(0), unit: z.string().trim().max(40).catch("") })).optional(),
+  exerciseItems: z.array(z.object({ name: z.string().trim().max(200) })).optional(),
+});
+
+/**
+ * The Daily report chat's breakdown card under a reply needs only each item's name and amount. The full reader above
+ * also writes every nutrient of every item (most of its cost), which the card threw away - this asks for the items only,
+ * with the same item and naming rules, so the card matches what the save (which still uses the full reader) logs.
+ */
+export async function extractDailyReportBreakdownWithAi({
+  config,
+  reportText,
+  locale = "en",
+}: {
+  config: AiExtractionConfig;
+  reportText: string;
+  locale?: AppLocale;
+}): Promise<{ foodItems: { name: string; quantity: number; unit: string }[]; exerciseCount: number }> {
+  const languageName = locale === "he" ? "Hebrew" : "English";
+  const contentText = await callAiChatCompletion({
+    config,
+    jsonMode: true,
+    usage: { feature: "report_breakdown" },
+    messages: [
+      { role: "system", content: "You list the food, drink and exercise items in a daily log as structured JSON only. Never include markdown." },
+      {
+        role: "user",
+        content: [
+          "Return strict JSON with this shape:",
+          '{"foodItems":[{"name":"string","quantity":number,"unit":"string"}],"exerciseItems":[{"name":"string"}]}',
+          "Rules:",
+          "- List every distinct food, drink, supplement and exercise item the log reports, with the quantity and unit as stated or a reasonable typical portion when it is not. No nutrition values.",
+          ...itemNamingRules(languageName),
+          "daily_report_text:",
+          reportText.slice(0, 8000),
+        ].join("\n"),
+      },
+    ],
+  });
+  const parsed = aiBreakdownSchema.parse(parseJsonPayload(contentText));
+  return {
+    foodItems: (parsed.foodItems ?? []).filter((item) => item.name).map((item) => ({ name: item.name, quantity: item.quantity, unit: item.unit })),
+    exerciseCount: (parsed.exerciseItems ?? []).filter((item) => item.name).length,
+  };
 }
 
 export async function parseDailyReportPhotoWithAi({

@@ -22,6 +22,7 @@ import { logServerError } from "@/lib/server-log";
 export type AiFeature =
   | "report_parse"
   | "report_photo"
+  | "report_breakdown"
   | "report_unit_match"
   | "report_clarify_check"
   | "report_chat"

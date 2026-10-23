@@ -9,6 +9,7 @@ import {
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { createMojibakeStreamRepairer, repairHebrewMojibake } from "@/lib/ai/mojibake";
 import { resolveUserGenderForAddressing } from "@/lib/ai/persona";
+import { getRecallPhrases, refersToEarlierDay } from "@/lib/ai/recall-phrases";
 import { getRecentDaysLoggedFoodItems, getTodaysDailyReportTotals, getTodaysLoggedItems } from "@/lib/daily-report";
 import { normalizeLocale, tr } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
@@ -91,10 +92,15 @@ export async function POST(request: NextRequest) {
   const targets: DailyReportChatTargets = targetRow ?? null;
 
   const timeZone = profileRow?.timezone ?? DEFAULT_TIMEZONE;
+  // TCK-69: the earlier days go to the chat only when this conversation refers back to one (a phrase from
+  // chat_recall_phrases in any of the user's messages so far) - they stay for the rest of that conversation, so the
+  // answer to "which day did you mean?" is still understood. Every other message is sent without them.
+  const recallPhrases = await getRecallPhrases();
+  const needsEarlierDays = refersToEarlierDay([...chatHistory.filter((m) => m.role === "user").map((m) => m.content), userMessage], recallPhrases);
   const [todaysTotals, todaysLoggedItems, recentDaysLoggedItems] = await Promise.all([
     getTodaysDailyReportTotals({ supabase, userId: user.id, timeZone, excludeReportId: editingReportId }),
     getTodaysLoggedItems({ supabase, userId: user.id, timeZone, excludeReportId: editingReportId }),
-    getRecentDaysLoggedFoodItems({ supabase, userId: user.id, timeZone, excludeReportId: editingReportId }),
+    needsEarlierDays ? getRecentDaysLoggedFoodItems({ supabase, userId: user.id, timeZone, excludeReportId: editingReportId }) : Promise.resolve(undefined),
   ]);
   const todayLocalDate = getLocalDateString(timeZone);
 

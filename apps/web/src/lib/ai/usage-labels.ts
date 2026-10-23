@@ -23,6 +23,7 @@ export function aiPageLabel(locale: AppLocale, page: string | null): string {
 const FEATURES: Record<string, [string, string]> = {
   report_parse: ["Read a typed report", "קריאת דיווח מוקלד"],
   report_photo: ["Read a photo", "קריאת תמונה"],
+  report_breakdown: ["Chat breakdown card", "כרטיס פירוט בצ׳אט"],
   report_unit_match: ["Match units", "התאמת יחידות"],
   report_clarify_check: ["Clarification check", "בדיקת הבהרה"],
   report_chat: ["Report chat reply", "תשובה בצ'אט הדיווח"],

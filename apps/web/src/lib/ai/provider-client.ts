@@ -14,7 +14,13 @@ import { anthropicTokens, beginAiUsage, failureOutcome, NO_TOKENS, openAiTokens,
 export type AiChatMessage = {
   role: "system" | "user" | "assistant";
   content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
+  /** System messages only: Anthropic caches the prompt up to and including this part (prompt caching - a repeat within
+   * 5 minutes costs 10% of the input price). Mark only text that is identical between calls. Ignored by other providers. */
+  cacheBreakpoint?: boolean;
 };
+
+/** OpenAI-compatible providers get the plain {role, content} shape - never the Anthropic-only cache flag. */
+const toOpenAiMessages = (messages: AiChatMessage[]) => messages.map(({ role, content }) => ({ role, content }));
 
 export type AiChatCompletionParams = {
   config: AiExtractionConfig;
@@ -84,9 +90,14 @@ function toAnthropicContent(
  * remaining user/assistant turns' content into Claude's block format. */
 function toAnthropicRequestParts(messages: AiChatMessage[]) {
   const systemMessages = messages.filter((message) => message.role === "system");
-  const system = systemMessages
-    .map((message) => (typeof message.content === "string" ? message.content : ""))
-    .join("\n");
+  const texts = systemMessages.map((message) => (typeof message.content === "string" ? message.content : ""));
+  // With a cache marker the system prompt goes as separate blocks, the marked ones carrying cache_control; without one
+  // it stays the single joined string every other call site has always sent.
+  const system = systemMessages.some((message) => message.cacheBreakpoint)
+    ? systemMessages
+        .map((message, i) => ({ type: "text" as const, text: texts[i], ...(message.cacheBreakpoint ? { cache_control: { type: "ephemeral" as const } } : {}) }))
+        .filter((block) => block.text)
+    : texts.join("\n");
 
   const conversation = messages
     .filter((message) => message.role !== "system")
@@ -119,7 +130,7 @@ async function callOpenAiCompatibleChatCompletion({
     model: config.model,
     temperature: temperature ?? 0,
     ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
-    messages,
+    messages: toOpenAiMessages(messages),
   };
 
   const normalizedBaseUrl = config.baseUrl.replace(/\/+$/, "");
@@ -467,7 +478,7 @@ async function streamOpenAiCompatible({ config, messages, temperature }: AiChatC
       stream: true,
       // The last chunk then carries the token counts (choices: []) - the route's parser skips chunks without content.
       stream_options: { include_usage: true },
-      messages,
+      messages: toOpenAiMessages(messages),
     }),
   });
   if (!upstream.ok || !upstream.body) return recordFailedStream(upstream, config.provider, config.model, finish);
