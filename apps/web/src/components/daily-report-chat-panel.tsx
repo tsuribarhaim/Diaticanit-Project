@@ -31,6 +31,8 @@ type ChatMessage = {
    * also get folded into whatever this compose box's own Save/Conclude
    * submits next, which would duplicate it or confuse the AI parser. */
   localOnly?: boolean;
+  /** TCK-158: created by a goal-bar tap; removed when the chat is closed. UI only, always also localOnly. */
+  fromGoalBar?: boolean;
   /** TCK-94: the structured item-by-item breakdown card shown under a
    * reply once the conversation signals there's something concrete to log
    * (see getDailyReportBreakdownAction's own comment) - display only,
@@ -417,10 +419,23 @@ export function DailyReportChatPanel({
   // TCK-125: also starts open right after an "Add to log" save, which
   // remounts this panel fresh - back on the welcome screen, not closed.
   const [isOpen, setIsOpen] = useState(() => isEditing || Boolean(addedToLogNotice));
-  // TCK-161: shared by the bubble's X, a tap on the scrim and Escape. Never
-  // clears this chat's conversation, same as the X always did.
+  // TCK-161: shared by the bubble's X, a tap on the scrim and Escape.
+  // TCK-158: also removes the goal-bar explanation bubbles (never part of a
+  // report), so the next chat starts clean; the user's own conversation is kept.
   function closeChat() {
     setIsOpen(false);
+    if (!messages.some((message) => message.fromGoalBar)) return;
+    goalBarEpochRef.current += 1;
+    if (isStreaming && messages[messages.length - 1]?.fromGoalBar) {
+      abortRef.current?.abort();
+      setIsStreaming(false);
+    }
+    setMessages((previous) => previous.filter((message) => !message.fromGoalBar));
+    if (streamErrorFromGoalBarRef.current) {
+      streamErrorFromGoalBarRef.current = false;
+      setStreamError(null);
+      setRetryAction(null);
+    }
   }
   // TCK-125: the "Added to log" pill - shown from the prop on mount, then
   // hidden after SAVE_TOAST_DURATION_MS (see the effect below).
@@ -492,6 +507,11 @@ export function DailyReportChatPanel({
   // deliberately scrolled up to read earlier messages.
   const isPinnedToBottomRef = useRef(true);
   const abortRef = useRef<AbortController | null>(null);
+  // TCK-158: bumped by closeChat when it removes goal-bar bubbles, so a bar
+  // turn still in flight never writes into the thread afterward.
+  const goalBarEpochRef = useRef(0);
+  // TCK-158: true while streamError/retryAction came from a goal-bar turn.
+  const streamErrorFromGoalBarRef = useRef(false);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const photoGalleryInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -681,14 +701,19 @@ export function DailyReportChatPanel({
       if (goalBarRequest.notice) {
         setMessages((previous) => [
           ...previous,
-          { role: "user", content: goalBarRequest.askedText, localOnly: true },
-          { role: "assistant", content: goalBarRequest.notice!, localOnly: true },
-          ...(goalBarRequest.explanation ? [{ role: "assistant" as const, content: goalBarRequest.explanation, localOnly: true }] : []),
+          { role: "user", content: goalBarRequest.askedText, localOnly: true, fromGoalBar: true },
+          { role: "assistant", content: goalBarRequest.notice!, localOnly: true, fromGoalBar: true },
+          ...(goalBarRequest.explanation
+            ? [{ role: "assistant" as const, content: goalBarRequest.explanation, localOnly: true, fromGoalBar: true }]
+            : []),
         ]);
       } else if (goalBarRequest.question) {
         const explanation = goalBarRequest.explanation;
-        void sendMessage(goalBarRequest.question, undefined, { localOnly: true }).then((sent) => {
-          if (sent && explanation) setMessages((previous) => [...previous, { role: "assistant", content: explanation, localOnly: true }]);
+        const epoch = goalBarEpochRef.current;
+        void sendMessage(goalBarRequest.question, undefined, { localOnly: true, fromGoalBar: true }).then((sent) => {
+          if (sent && explanation && goalBarEpochRef.current === epoch) {
+            setMessages((previous) => [...previous, { role: "assistant", content: explanation, localOnly: true, fromGoalBar: true }]);
+          }
         });
       }
     }, 0);
@@ -805,11 +830,15 @@ export function DailyReportChatPanel({
   async function sendMessage(
     text: string,
     image?: { base64: string; mimeType: string; previewUrl: string },
-    options?: { localOnly?: boolean },
+    options?: { localOnly?: boolean; fromGoalBar?: boolean },
   ) {
     const trimmed = text.trim();
     if ((!trimmed && !image) || isStreaming) return false;
 
+    // TCK-158: closeChat bumps the epoch when it removes this bar turn.
+    const epoch = goalBarEpochRef.current;
+    const isClosedGoalBarTurn = () => Boolean(options?.fromGoalBar) && goalBarEpochRef.current !== epoch;
+    streamErrorFromGoalBarRef.current = false;
     setStreamError(null);
     setRetryAction(null);
     hasSentOnceRef.current = true;
@@ -827,8 +856,8 @@ export function DailyReportChatPanel({
     const userContent = trimmed || tr(locale, "(attached a photo)", "(תמונה מצורפת)");
     setMessages((previous) => [
       ...previous,
-      { role: "user", content: userContent, imagePreviewUrl: image?.previewUrl, localOnly: options?.localOnly },
-      { role: "assistant", content: "", localOnly: options?.localOnly },
+      { role: "user", content: userContent, imagePreviewUrl: image?.previewUrl, localOnly: options?.localOnly, fromGoalBar: options?.fromGoalBar },
+      { role: "assistant", content: "", localOnly: options?.localOnly, fromGoalBar: options?.fromGoalBar },
     ]);
     setInputValue("");
     setIsStreaming(true);
@@ -905,11 +934,13 @@ export function DailyReportChatPanel({
 
           if (event.type === "token") {
             assistantText += event.text;
-            setMessages((previous) => {
-              const next = [...previous];
-              next[next.length - 1] = { role: "assistant", content: assistantText, localOnly: options?.localOnly };
-              return next;
-            });
+            if (!isClosedGoalBarTurn()) {
+              setMessages((previous) => {
+                const next = [...previous];
+                next[next.length - 1] = { role: "assistant", content: assistantText, localOnly: options?.localOnly, fromGoalBar: options?.fromGoalBar };
+                return next;
+              });
+            }
           } else if (event.type === "actionable") {
             isActionable = event.value;
           } else if (event.type === "delete_intent") {
@@ -948,7 +979,12 @@ export function DailyReportChatPanel({
       }
     }
 
+    // TCK-158: the chat was closed mid-turn and its bubbles are gone - no
+    // error banner, no retry, and no message to remove.
+    if (isClosedGoalBarTurn()) return false;
+
     if (errorMessage) {
+      streamErrorFromGoalBarRef.current = Boolean(options?.fromGoalBar);
       setStreamError(errorMessage);
       if (!assistantText && !receivedAnything) {
         setMessages((previous) => previous.slice(0, -1));
@@ -1104,7 +1140,7 @@ export function DailyReportChatPanel({
   }
 
   /** The missing fourth option, alongside Save, New chat (clears, stays
-   * open), and the floating bubble's X (closes, keeps everything) - "forget about it and
+   * open), and the floating bubble's X (closes, keeps the conversation (goal-bar explanations are removed)) - "forget about it and
    * close", reported as absent once those other three existed. Shares the
    * exact same confirm dialog and clear logic as New chat - the only
    * difference is closeAfterClear, which tells confirmClearChat to also
@@ -1143,6 +1179,7 @@ export function DailyReportChatPanel({
     setStagedPhoto(null);
     setPhotoError(null);
     setPendingDeleteOnSave(false);
+    streamErrorFromGoalBarRef.current = false;
     setStreamError(null);
     setRetryAction(null);
     hasSentOnceRef.current = false;
@@ -1386,8 +1423,8 @@ export function DailyReportChatPanel({
             <NewChatIcon className="h-4 w-4" />
           </button>
           {/* The missing fourth option, alongside Save, New chat (clears,
-              stays open), and the floating bubble's X (closes, keeps
-              everything) - "forget about it and close". Grouped next to
+              stays open), and the floating bubble's X (closes, keeps the
+              conversation (goal-bar explanations are removed)) - "forget about it and close". Grouped next to
               New chat (both are "clear the conversation" variants, just
               with a different outcome afterward). Closing without clearing
               is done through the floating bubble's X, not a header
