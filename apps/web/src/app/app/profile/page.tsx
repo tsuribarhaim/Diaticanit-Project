@@ -14,6 +14,7 @@ import {
 import { DocumentUploadForm } from "@/components/document-upload-form";
 import {
   AllergiesFieldRow,
+  DietaryPreferencesRow,
   ExercisePreferencesRow,
   HabitsRow,
   HealthGoalsRow,
@@ -34,13 +35,11 @@ import { getEnvironmentBadgeLabel } from "@/lib/environment-badge";
 import {
   activityLevelOptions,
   biologicalSexOptions,
-  dietaryPreferenceOptions,
   nutritionalGoalOptions,
   pregnancyLactationOptions,
 } from "@/lib/profile";
 import {
   formatActivityLevel,
-  formatDietaryPreference,
   formatGender,
   formatMeasurementUnit,
   formatNutritionalGoal,
@@ -93,7 +92,7 @@ export default async function ProfilePage({
     supabase
       .from("user_profile_enriched")
       .select(
-        "first_name, last_name, date_of_birth, gender, biological_sex, calculated_age_years, bmi, height_cm, weight_kg, activity_level, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, exercise_frequency_days_per_week, exercise_duration_minutes, nutritional_goal, health_goals, health_goals_markers_details, health_goals_other_details, pregnancy_lactation_status, has_medical_conditions, medical_conditions, medical_conditions_details, has_regular_medications, regular_medications_details, hot_climate_or_heavy_sweating, habits, alcohol_consumption_level, smoking_packs_per_day, alcohol_weekly_frequency, smoking_status, smoking_cigarettes_range, caffeine_cups_per_day, dietary_preference, additional_information, allergies, updated_at",
+        "first_name, last_name, date_of_birth, gender, biological_sex, calculated_age_years, bmi, height_cm, weight_kg, activity_level, exercise_modalities, exercise_other_activities, exercise_schedule_by_modality, exercise_frequency_days_per_week, exercise_duration_minutes, nutritional_goal, health_goals, health_goals_markers_details, health_goals_other_details, pregnancy_lactation_status, has_medical_conditions, medical_conditions, medical_conditions_details, has_regular_medications, regular_medications_details, hot_climate_or_heavy_sweating, habits, alcohol_consumption_level, smoking_packs_per_day, alcohol_weekly_frequency, smoking_status, smoking_cigarettes_range, caffeine_cups_per_day, dietary_preference, dietary_preferences, additional_information, allergies, updated_at",
       )
       .eq("user_id", user.id)
       .maybeSingle(),
@@ -279,14 +278,9 @@ export default async function ProfilePage({
           {tr(locale, "Health & Target Preferences", "העדפות בריאות ויעדים")}
         </ProfileSectionTitle>
         <ProfileRowGroup>
-          <QuickScalarFieldRow
+          <DietaryPreferencesRow
             locale={locale}
-            label={tr(locale, "Dietary preference", "העדפה תזונתית")}
-            field="dietary_preference"
-            value={profile.dietary_preference ?? "standard"}
-            displayValue={profile.dietary_preference ? formatDietaryPreference(profile.dietary_preference, locale) : tr(locale, "n/a", "לא זמין")}
-            kind="select"
-            options={dietaryPreferenceOptions.map((option) => ({ value: option, label: formatDietaryPreference(option, locale) }))}
+            dietaryPreferences={profile.dietary_preferences?.length ? profile.dietary_preferences : profile.dietary_preference ? [profile.dietary_preference] : []}
           />
           <QuickScalarFieldRow
             locale={locale}

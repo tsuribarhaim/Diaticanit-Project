@@ -15,6 +15,7 @@ import { LocalizedDateInput } from "@/components/localized-date-input";
 import { useUnsavedPreview } from "@/components/unsaved-preview-context";
 import {
   activityLevelOptions,
+  type DietaryPreference,
   dietaryPreferenceOptions,
   type ExerciseOtherActivity,
   type ExerciseScheduleByModality,
@@ -22,13 +23,14 @@ import {
   exerciseModalityOptions,
   medicalConditionOptions,
   modalityRequiresSchedule,
+  normalizeDietaryPreferences,
   nutritionalGoalOptions,
   validateAllergyEntry,
   validateExerciseOtherDetails,
   validateFreeTextDetails,
 } from "@/lib/profile";
 import type { AppLocale } from "@/lib/locale";
-import { formatActivityLevel, formatMedicalCondition, formatNumberForLocale, tr } from "@/lib/locale";
+import { formatActivityLevel, formatDietaryPreference, formatMedicalCondition, formatNumberForLocale, tr } from "@/lib/locale";
 
 type ProfileEditFormProps = {
   defaults: {
@@ -56,7 +58,7 @@ type ProfileEditFormProps = {
     smoking_status: string | null;
     smoking_cigarettes_range: string | null;
     caffeine_cups_per_day: string | null;
-    dietary_preference: (typeof dietaryPreferenceOptions)[number];
+    dietary_preferences: string[];
     additional_information: string;
     preferred_language: "en" | "he";
     allergies: string[];
@@ -106,7 +108,7 @@ type ProfileEditDraft = {
   smoking_status: string;
   smoking_cigarettes_range: string;
   caffeine_cups_per_day: string;
-  dietary_preference: (typeof dietaryPreferenceOptions)[number];
+  dietary_preferences: DietaryPreference[];
   additional_information: string;
   preferred_language: "en" | "he";
   allergies: string;
@@ -308,6 +310,18 @@ function calculateBmi(weightKg: number, heightCm: number): number | null {
   return Number.isFinite(bmi) ? bmi : null;
 }
 
+// Weight is a text input (not type="number") so every keystroke can be filtered: a comma becomes a dot, only digits and the
+// first dot stay, and at most one digit after the dot - the extra digit never appears, whatever the keyboard.
+function sanitizeWeightInput(raw: string): string {
+  const digitsAndDots = raw.replace(/,/g, ".").replace(/[^\d.]/g, "");
+  const firstDot = digitsAndDots.indexOf(".");
+  const singleDot =
+    firstDot === -1
+      ? digitsAndDots
+      : `${digitsAndDots.slice(0, firstDot + 1)}${digitsAndDots.slice(firstDot + 1).replace(/\./g, "")}`;
+  return limitToOneDecimal(singleDot);
+}
+
 function createInitialDraft(defaults: ProfileEditFormProps["defaults"]): ProfileEditDraft {
   const initialExerciseModalities = defaults.exercise_modalities
     .filter((value): value is (typeof exerciseModalityOptions)[number] =>
@@ -354,7 +368,7 @@ function createInitialDraft(defaults: ProfileEditFormProps["defaults"]): Profile
     smoking_status: defaults.smoking_status ?? "",
     smoking_cigarettes_range: defaults.smoking_cigarettes_range ?? "",
     caffeine_cups_per_day: defaults.caffeine_cups_per_day ?? "",
-    dietary_preference: defaults.dietary_preference,
+    dietary_preferences: normalizeDietaryPreferences(defaults.dietary_preferences),
     additional_information: defaults.additional_information,
     preferred_language: defaults.preferred_language,
     allergies: defaults.allergies.join(", "),
@@ -807,7 +821,9 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
     <form action={formAction} onSubmit={onSubmit} className="mt-6 space-y-4">
       <input type="hidden" name="biological_sex" value={draft.biological_sex} />
       <input type="hidden" name="nutritional_goal" value={draft.nutritional_goal} />
-      <input type="hidden" name="dietary_preference" value={draft.dietary_preference} />
+      {draft.dietary_preferences.map((value) => (
+        <input key={`dietary-preference-${value}`} type="hidden" name="dietary_preferences" value={value} />
+      ))}
       <input
         type="hidden"
         name="exercise_other_activities"
@@ -875,7 +891,28 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
           </label>
           <label className="block" data-field="weight_kg">
             <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Weight (kg)", "משקל (ק\"ג)")}</span>
-            <input type="number" name="weight_kg" required min={20} max={400} step="0.1" value={draft.weight_kg} onChange={(event) => { const limited = limitToOneDecimal(event.target.value); if (limited !== event.target.value) event.currentTarget.value = limited; updateDraft({ weight_kg: limited }); }} className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("weight_kg")}`} />
+            <input
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
+              name="weight_kg"
+              required
+              value={draft.weight_kg}
+              onChange={(event) => {
+                const el = event.currentTarget;
+                const cleaned = sanitizeWeightInput(el.value);
+                if (cleaned !== el.value) el.value = cleaned;
+                updateDraft({ weight_kg: cleaned });
+                const num = Number(cleaned);
+                if (cleaned !== "" && !Number.isFinite(num)) {
+                  el.setCustomValidity(tr(locale, "Please enter a valid number.", "יש להזין מספר תקין."));
+                } else if (cleaned !== "" && (num < 20 || num > 400)) {
+                  el.setCustomValidity(tr(locale, "Weight must be between 20 and 400 kg.", "המשקל חייב להיות בין 20 ל-400 ק\"ג."));
+                } else {
+                  el.setCustomValidity("");
+                }
+              }}
+              className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("weight_kg")}`} />
             {renderFieldError("weight_kg")}
           </label>
         </div>
@@ -1170,16 +1207,34 @@ export function ProfileEditForm({ defaults, locale, maxDateOfBirth }: ProfileEdi
         <div className="mt-3 space-y-4">
           <input type="hidden" name="preferred_language" value={draft.preferred_language} />
 
-          <div data-field="dietary_preference">
-            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Dietary preference", "העדפה תזונתית")}</span>
+          <div data-field="dietary_preferences">
+            <span className="block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(locale, "Dietary preference", "העדפה תזונתית")}</span>
+            <p className="mb-2 text-xs text-slate-500">{tr(locale, "Select all that apply", "אפשר לבחור יותר מאחת")}</p>
             <div className="grid gap-2 sm:grid-cols-2">
               {dietaryPreferenceOptions.map((value) => {
-                const label = value === "standard" ? tr(locale, "Standard Diet", "תזונה רגילה") : value === "vegetarian" ? tr(locale, "Vegetarian", "צמחוני") : value === "vegan" ? tr(locale, "Vegan", "טבעוני") : tr(locale, "Low-Carb / Keto", "דל פחמימה / קטו");
-                const selected = draft.dietary_preference === value;
-                return <button key={value} type="button" onClick={() => updateDraft({ dietary_preference: value })} className={`rounded-xl border px-3 py-2 text-sm ${selected ? "border-teal-700 bg-teal-50 text-teal-900 dark:bg-teal-950/40 dark:text-teal-300" : "border-slate-300 bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700"}`}>{label}</button>;
+                const selected = draft.dietary_preferences.includes(value);
+                return (
+                  <label
+                    key={value}
+                    className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm text-slate-900 dark:text-slate-100 ${selected ? "border-teal-700 bg-teal-50 dark:bg-teal-950/40" : "border-slate-300 bg-white hover:border-teal-400 dark:border-slate-700 dark:bg-slate-900"}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => {
+                        updateDraft({
+                          dietary_preferences: selected
+                            ? draft.dietary_preferences.filter((item) => item !== value)
+                            : dietaryPreferenceOptions.filter((item) => item === value || draft.dietary_preferences.includes(item)),
+                        });
+                      }}
+                    />
+                    <span>{formatDietaryPreference(value, locale)}</span>
+                  </label>
+                );
               })}
             </div>
-            {renderFieldError("dietary_preference")}
+            {renderFieldError("dietary_preferences")}
           </div>
 
           <label className="block" data-field="allergies">

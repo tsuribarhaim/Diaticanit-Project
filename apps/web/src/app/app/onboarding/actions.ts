@@ -11,10 +11,12 @@ import {
   deriveExerciseSummaryFromSchedule,
   deriveLegacyHabitFields,
   lifestyleHabitsColumns,
+  normalizeDietaryPreferences,
   onboardingProfileSchema,
   parseBooleanField,
   parseDelimitedList,
   parseMultiSelect,
+  primaryDietaryPreference,
   validateMedicalConditionOtherDetails,
   validateMedicationDetails,
 } from "@/lib/profile";
@@ -57,6 +59,7 @@ function isMissingOnboardingV2Columns(errorMessage: string): boolean {
     || errorMessage.includes("smoking_packs_per_day")
     || errorMessage.includes("needs_onboarding_refresh")
     || errorMessage.includes("health_goals")
+    || errorMessage.includes("dietary_preferences")
   );
 }
 
@@ -152,7 +155,7 @@ export async function saveOnboardingProfileAction(
     smoking_status: getFormString(formData, "smoking_status"),
     smoking_cigarettes_range: getFormString(formData, "smoking_cigarettes_range"),
     caffeine_cups_per_day: getFormString(formData, "caffeine_cups_per_day"),
-    dietary_preference: getFormString(formData, "dietary_preference"),
+    dietary_preferences: parseMultiSelect(formData, "dietary_preferences"),
     additional_information: getFormString(formData, "additional_information"),
     has_allergies: parseBooleanField(formData.get("has_allergies")),
     allergies: parseDelimitedList(formData.get("allergies")),
@@ -221,7 +224,8 @@ export async function saveOnboardingProfileAction(
     health_goals_other_details: parsed.data.health_goals.includes("other")
       ? parsed.data.health_goals_other_details
       : null,
-    dietary_preference: parsed.data.dietary_preference,
+    dietary_preferences: normalizeDietaryPreferences(parsed.data.dietary_preferences),
+    dietary_preference: primaryDietaryPreference(parsed.data.dietary_preferences),
     hot_climate_or_heavy_sweating: parsed.data.hot_climate_or_heavy_sweating,
     exercise_modalities: parsed.data.exercise_modalities,
     exercise_other_activities: parsed.data.exercise_modalities.includes("other")
