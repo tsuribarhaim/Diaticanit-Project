@@ -26,7 +26,7 @@ PROFILE (/app/profile) - The user's personal/biometric info: name, date of birth
 
 NOTIFICATIONS (/app/notifications) - A combined list of (a) concerns the AI coach flagged about the user's targets, and (b) info updates, including support-ticket status changes. Reached via the bell icon in the nav. By default only unread notifications are shown; a small Unread / All toggle at the top shows read ones too.
 
-SETTINGS (/app/settings) - Language (English/Hebrew), light/dark theme, changing password, and passkey management (Face ID / Touch ID / Windows Hello / security key as a password alternative).
+SETTINGS (/app/settings) - "Settings & Support", opened from the gear icon at the top of the Profile page (or Settings in the desktop nav). Grouped into: Display (language English/Hebrew, light/dark theme, measurement units - coming soon); Connections (connected apps & devices - coming soon, passkeys - Face ID / Touch ID / Windows Hello / security key as a password alternative); Privacy (data & privacy, and the "Let AI use my data" switch); Account & Support (change password, notifications, support tickets); About (environment/version).
 
 SUPPORT TICKETS (/app/tickets, and "New Ticket" at /app/tickets/new) - Where the user reports a bug or requests a new feature. "My Tickets" lists what they've submitted with status. The EASIEST way to file one is right here in this chat: just describe the bug or the feature you'd like, and Daffy will draft a ticket (subject, type, area, priority, description) for you to review and submit with one tap - no need to go to the ticket form unless you'd rather fill it in by hand, or want to attach a file/screenshot (chat can't attach files yet, so for that, use the ticket form directly).
 

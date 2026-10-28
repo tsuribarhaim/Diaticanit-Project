@@ -1,9 +1,16 @@
 import { redirect } from "next/navigation";
 
-import { ChangePasswordForm } from "@/components/change-password-form";
-import { EnvironmentBadge } from "@/components/environment-badge";
+import { hasAiTargetsConsent } from "@/app/app/targets/actions";
 import { LanguageToggle } from "@/components/language-toggle";
-import { PasskeyManager } from "@/components/passkey-manager";
+import { NavLink } from "@/components/nav-link";
+import {
+  AiConsentToggleRow,
+  ComingSoonRow,
+  DataPrivacyRow,
+  PasskeysRow,
+  PasswordRow,
+} from "@/components/profile-app-settings-rows";
+import { ProfileRow, ProfileRowGroup, ProfileSectionTitle } from "@/components/profile-quick-edit";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { getEnvironmentBadgeLabel } from "@/lib/environment-badge";
 import { normalizeLocale, tr } from "@/lib/locale";
@@ -13,10 +20,10 @@ import { normalizeTheme } from "@/lib/theme";
 export const dynamic = "force-dynamic";
 
 /**
- * A simple, extensible list of setting rows - language, theme, and the
- * environment/version badge for now. More rows (measurement units, etc.)
- * are planned to land here later, so this stays a plain stacked list rather
- * than anything bespoke to today's settings.
+ * "Settings & Support" - every system setting that used to sit at the
+ * bottom of the Profile page (TCK-166), grouped as in the mockup. Opened from
+ * the gear on Profile's header card (or Settings in the desktop nav). Each row
+ * opens the same sheet/page it did on Profile; only where it lives changed.
  */
 export default async function SettingsPage() {
   const supabase = await createClient();
@@ -28,87 +35,85 @@ export default async function SettingsPage() {
     redirect("/auth/sign-in");
   }
 
-  const profileRow = (
-    await supabase.from("user_profile").select("preferred_language, theme_preference").eq("user_id", user.id).maybeSingle()
-  ).data;
+  const [{ data: profileRow }, hasAiConsent] = await Promise.all([
+    supabase.from("user_profile").select("preferred_language, theme_preference").eq("user_id", user.id).maybeSingle(),
+    hasAiTargetsConsent({ supabase, userId: user.id }),
+  ]);
   const locale = normalizeLocale(profileRow?.preferred_language);
   const theme = normalizeTheme(profileRow?.theme_preference);
 
   const environmentBadgeLabel = getEnvironmentBadgeLabel();
 
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-10">
-      <section className="divide-y divide-slate-200 rounded-2xl border border-slate-200 bg-white dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex flex-wrap items-center justify-between gap-3 p-6">
-          <div>
-            <p className="font-medium text-slate-900 dark:text-slate-100">{tr(locale, "Language", "שפה")}</p>
-            <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-              {tr(locale, "Choose the language used across the app.", "בחרו את השפה שתשמש בכל האפליקציה.")}
-            </p>
-          </div>
-          <LanguageToggle locale={locale} />
+    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-5 px-4 py-8 sm:px-6 sm:py-10">
+      <div className="flex items-center gap-2">
+        <NavLink
+          href="/app/profile"
+          aria-label={tr(locale, "Back to profile", "חזרה לפרופיל")}
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-slate-500 outline-none hover:bg-slate-100 hover:text-slate-800 focus-visible:ring-2 focus-visible:ring-teal-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+        >
+          <svg
+            className="h-5 w-5 rtl:-scale-x-100"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M15 6l-6 6 6 6" />
+          </svg>
+        </NavLink>
+        <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">{tr(locale, "Settings & Support", "הגדרות ותמיכה")}</h1>
+      </div>
+
+      <div>
+        <ProfileSectionTitle>{tr(locale, "Display", "תצוגה")}</ProfileSectionTitle>
+        <ProfileRowGroup>
+          <ProfileRow label={tr(locale, "Language", "שפה")} endSlot={<LanguageToggle locale={locale} />} />
+          <ProfileRow label={tr(locale, "Theme", "ערכת נושא")} endSlot={<ThemeToggle locale={locale} theme={theme} />} />
+          <ComingSoonRow locale={locale} label={tr(locale, "Measurement units", "יחידות מידה")} caption={tr(locale, "Metric (kg, cm)", "מטרי (ק\"ג, ס\"מ)")} />
+        </ProfileRowGroup>
+      </div>
+
+      <div>
+        <ProfileSectionTitle>{tr(locale, "Connections", "חיבורים")}</ProfileSectionTitle>
+        <ProfileRowGroup>
+          <ComingSoonRow locale={locale} label={tr(locale, "Connected apps & devices", "אפליקציות ומכשירים מחוברים")} />
+          <PasskeysRow locale={locale} />
+        </ProfileRowGroup>
+      </div>
+
+      <div>
+        <ProfileSectionTitle>{tr(locale, "Privacy", "פרטיות")}</ProfileSectionTitle>
+        <ProfileRowGroup>
+          <DataPrivacyRow locale={locale} />
+          <AiConsentToggleRow locale={locale} checked={hasAiConsent} />
+        </ProfileRowGroup>
+      </div>
+
+      <div>
+        <ProfileSectionTitle>{tr(locale, "Account & Support", "חשבון ותמיכה")}</ProfileSectionTitle>
+        <ProfileRowGroup>
+          <PasswordRow locale={locale} />
+          <ProfileRow label={tr(locale, "Notifications", "התראות")} href="/app/notifications" />
+          <ProfileRow label={tr(locale, "Support Tickets", "פניות תמיכה")} href="/app/tickets" />
+        </ProfileRowGroup>
+      </div>
+
+      {environmentBadgeLabel ? (
+        <div>
+          <ProfileSectionTitle>{tr(locale, "About", "אודות")}</ProfileSectionTitle>
+          <ProfileRowGroup>
+            {/* Plain text, not the pill/badge treatment EnvironmentBadge
+                renders elsewhere (sign-in) - a ticket (TCK-6) reported the
+                highlighted frame looked out of place next to rows that all
+                show their value as plain text via ProfileRow's `value`. */}
+            <ProfileRow label={tr(locale, "Environment", "סביבה")} value={environmentBadgeLabel} />
+          </ProfileRowGroup>
         </div>
-
-        <div className="flex flex-wrap items-center justify-between gap-3 p-6">
-          <div>
-            <p className="font-medium text-slate-900 dark:text-slate-100">{tr(locale, "Theme", "ערכת נושא")}</p>
-            <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-              {tr(locale, "Choose a bright screen, or dark throughout.", "בחרו מסך בהיר, או כהה בכל מקום.")}
-            </p>
-          </div>
-          <ThemeToggle locale={locale} theme={theme} />
-        </div>
-
-        <details className="group p-6">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
-            <div>
-              <p className="font-medium text-slate-900 dark:text-slate-100">{tr(locale, "Password", "סיסמה")}</p>
-              <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-                {tr(locale, "Change your account password.", "שינוי סיסמת החשבון שלכם.")}
-              </p>
-            </div>
-            <svg
-              className="h-4 w-4 shrink-0 text-slate-400 transition-transform group-open:rotate-90 rtl:group-open:-rotate-90"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M9 6l6 6-6 6" />
-            </svg>
-          </summary>
-          <ChangePasswordForm locale={locale} />
-        </details>
-
-        <div className="flex flex-col gap-3 p-6">
-          <div>
-            <p className="font-medium text-slate-900 dark:text-slate-100">{tr(locale, "Passkeys", "מפתחות גישה")}</p>
-            <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-              {tr(
-                locale,
-                "Sign in with Face ID, Touch ID, Windows Hello, or a security key instead of typing your password.",
-                "התחברו עם זיהוי פנים, טביעת אצבע, Windows Hello, או מפתח אבטחה במקום הקלדת הסיסמה.",
-              )}
-            </p>
-          </div>
-          <PasskeyManager locale={locale} />
-        </div>
-
-        {environmentBadgeLabel ? (
-          <div className="flex flex-wrap items-center justify-between gap-3 p-6">
-            <div>
-              <p className="font-medium text-slate-900 dark:text-slate-100">{tr(locale, "Environment", "סביבה")}</p>
-              <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-                {tr(locale, "Which environment and app version you're currently using.", "באיזו סביבה וגרסת אפליקציה אתם משתמשים כעת.")}
-              </p>
-            </div>
-            <EnvironmentBadge label={environmentBadgeLabel} />
-          </div>
-        ) : null}
-      </section>
+      ) : null}
     </main>
   );
 }
