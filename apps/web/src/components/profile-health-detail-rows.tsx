@@ -5,6 +5,7 @@ import { useFormStatus } from "react-dom";
 
 import {
   updateAllergiesAction,
+  updateDietaryPreferencesAction,
   updateExercisePreferencesAction,
   updateHabitsAction,
   updateHealthGoalsAction,
@@ -22,8 +23,16 @@ import {
   smokingStatusLabels,
 } from "@/components/lifestyle-habits-fields";
 import { ProfileRow, QuickEditSheet, SheetActions, useQuickEditSuccessEffect } from "@/components/profile-quick-edit";
-import { healthGoalOptions, medicalConditionOptions, preferredExerciseActivityKeys, type PreferredExerciseActivityKey } from "@/lib/profile";
 import {
+  dietaryPreferenceOptions,
+  healthGoalOptions,
+  medicalConditionOptions,
+  normalizeDietaryPreferences,
+  preferredExerciseActivityKeys,
+  type PreferredExerciseActivityKey,
+} from "@/lib/profile";
+import {
+  formatDietaryPreference,
   formatExerciseModality,
   formatHabit,
   formatHealthGoal,
@@ -786,6 +795,62 @@ export function HealthGoalsRow({
               />
             </label>
           ) : null}
+
+          {state.error ? <p className="text-xs text-rose-600 dark:text-rose-400">{state.error}</p> : null}
+          <SheetActions locale={locale} onCancel={() => setIsOpen(false)} />
+        </form>
+      </QuickEditSheet>
+    </>
+  );
+}
+
+/** Multi-select dietary preference (TCK-165). Any combination, or none, can be saved. */
+export function DietaryPreferencesRow({ locale, dietaryPreferences }: { locale: AppLocale; dietaryPreferences: string[] }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [selected, setSelected] = useState<string[]>(dietaryPreferences);
+  const [state, formAction] = useActionState(updateDietaryPreferencesAction, {} as QuickEditState);
+
+  useQuickEditSuccessEffect(state, isOpen, setIsOpen);
+
+  function openSheet() {
+    setSelected(dietaryPreferences);
+    setIsOpen(true);
+  }
+
+  function togglePreference(value: string) {
+    setSelected(
+      selected.includes(value)
+        ? selected.filter((entry) => entry !== value)
+        : dietaryPreferenceOptions.filter((option) => option === value || selected.includes(option)),
+    );
+  }
+
+  const ordered = normalizeDietaryPreferences(dietaryPreferences);
+  const summary = ordered.length
+    ? ordered.map((value) => formatDietaryPreference(value, locale)).join(", ")
+    : tr(locale, "Not set", "לא הוגדר");
+
+  return (
+    <>
+      <ProfileRow label={tr(locale, "Dietary preference", "העדפה תזונתית")} value={summary} onClick={openSheet} />
+      <QuickEditSheet locale={locale} isOpen={isOpen} onClose={() => setIsOpen(false)} title={tr(locale, "Dietary preference", "העדפה תזונתית")}>
+        <form action={formAction} className="space-y-3">
+          <input type="hidden" name="preferred_language" value={locale} />
+          <div className="space-y-1.5">
+            {dietaryPreferenceOptions.map((value) => (
+              <label key={value} className="flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
+                <input
+                  type="checkbox"
+                  name="dietary_preferences"
+                  value={value}
+                  checked={selected.includes(value)}
+                  onChange={() => togglePreference(value)}
+                  className="h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-600"
+                />
+                {formatDietaryPreference(value, locale)}
+              </label>
+            ))}
+          </div>
 
           {state.error ? <p className="text-xs text-rose-600 dark:text-rose-400">{state.error}</p> : null}
           <SheetActions locale={locale} onCancel={() => setIsOpen(false)} />

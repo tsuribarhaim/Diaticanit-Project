@@ -24,12 +24,14 @@ import {
   lifestyleHabitsColumns,
   medicalConditionOptions,
   modalityRequiresSchedule,
+  normalizeDietaryPreferences,
   nutritionalGoalOptions,
   onboardingProfileSchema,
   parseBooleanField,
   parseDelimitedList,
   parseMultiSelect,
   pregnancyLactationOptions,
+  primaryDietaryPreference,
   validateAllergyEntry,
   validateExerciseOtherDetails,
   validateFreeTextDetails,
@@ -228,7 +230,7 @@ export async function updateProfileAction(
     smoking_status: getFormString(formData, "smoking_status"),
     smoking_cigarettes_range: getFormString(formData, "smoking_cigarettes_range"),
     caffeine_cups_per_day: getFormString(formData, "caffeine_cups_per_day"),
-    dietary_preference: getFormString(formData, "dietary_preference"),
+    dietary_preferences: parseMultiSelect(formData, "dietary_preferences"),
     additional_information: getFormString(formData, "additional_information"),
     allergies: parseDelimitedList(formData.get("allergies")),
     medical_conditions: parseDelimitedList(formData.get("medical_conditions")),
@@ -502,7 +504,8 @@ export async function updateProfileAction(
     activity_level: parsed.data.activity_level,
     preferred_language: parsed.data.preferred_language,
     nutritional_goal: parsed.data.nutritional_goal,
-    dietary_preference: parsed.data.dietary_preference,
+    dietary_preferences: normalizeDietaryPreferences(parsed.data.dietary_preferences),
+    dietary_preference: primaryDietaryPreference(parsed.data.dietary_preferences),
     hot_climate_or_heavy_sweating: parsed.data.hot_climate_or_heavy_sweating,
     exercise_modalities: parsed.data.exercise_modalities,
     exercise_modality_other_details: null,
@@ -830,11 +833,6 @@ const SIMPLE_FIELD_CONFIG: Record<string, SimpleFieldConfig> = {
     column: "activity_level",
     schema: z.enum(activityLevelOptions),
     invalidMessage: { en: "Select a valid activity level.", he: "יש לבחור רמת פעילות תקינה." },
-  },
-  dietary_preference: {
-    column: "dietary_preference",
-    schema: z.enum(dietaryPreferenceOptions),
-    invalidMessage: { en: "Select a valid dietary preference.", he: "יש לבחור העדפה תזונתית תקינה." },
   },
   nutritional_goal: {
     column: "nutritional_goal",
@@ -1323,6 +1321,36 @@ export async function updateHealthGoalsAction(_prevState: QuickEditState, formDa
       health_goals: healthGoals,
       health_goals_markers_details: healthGoals.includes("abnormal_markers") ? markersDetails : null,
       health_goals_other_details: healthGoals.includes("other") ? otherDetails : null,
+    },
+  });
+}
+
+/** Multi-select dietary preference (TCK-165). Zero choices is allowed. The old single dietary_preference column still
+ * gets one main value, since targets and the AI prompts read it. */
+export async function updateDietaryPreferencesAction(_prevState: QuickEditState, formData: FormData): Promise<QuickEditState> {
+  const locale = requestLocale(formData);
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/sign-in");
+  }
+
+  const preferencesParsed = z.array(z.enum(dietaryPreferenceOptions)).safeParse(parseMultiSelect(formData, "dietary_preferences"));
+  if (!preferencesParsed.success) {
+    return { error: tr(locale, "Select a valid dietary preference.", "יש לבחור העדפה תזונתית תקינה.") };
+  }
+  const preferences = preferencesParsed.data;
+
+  return applyProfilePatchAndFlagTargets({
+    supabase,
+    userId: user.id,
+    locale,
+    patch: {
+      dietary_preferences: normalizeDietaryPreferences(preferences),
+      dietary_preference: primaryDietaryPreference(preferences),
     },
   });
 }

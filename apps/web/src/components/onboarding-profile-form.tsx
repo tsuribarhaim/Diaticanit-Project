@@ -15,6 +15,7 @@ import { OnboardingTargetsStep } from "@/components/onboarding-targets-step";
 import { useUnsavedPreview } from "@/components/unsaved-preview-context";
 import {
   activityLevelOptions,
+  type DietaryPreference,
   dietaryPreferenceOptions,
   type ExerciseOtherActivity,
   type ExerciseScheduleByModality,
@@ -23,6 +24,7 @@ import {
   healthGoalOptions,
   medicalConditionOptions,
   modalityRequiresSchedule,
+  normalizeDietaryPreferences,
   nutritionalGoalOptions,
   validateAllergyEntry,
   validateExerciseOtherDetails,
@@ -32,6 +34,7 @@ import type { AppLocale } from "@/lib/locale";
 import {
   directionForLocale,
   formatActivityLevel,
+  formatDietaryPreference,
   formatHealthGoal,
   formatMedicalCondition,
   formatNumberForLocale,
@@ -67,7 +70,8 @@ type OnboardingProfileFormProps = {
     smoking_status?: string | null;
     smoking_cigarettes_range?: string | null;
     caffeine_cups_per_day?: string | null;
-    dietary_preference?: (typeof dietaryPreferenceOptions)[number];
+    dietary_preferences?: string[];
+    dietary_preference?: string | null;
     additional_information?: string;
     has_allergies?: boolean;
     allergies?: string[];
@@ -144,7 +148,7 @@ const FIELD_TO_STEP: Record<string, StepKey> = {
   smoking_status: 3,
   smoking_cigarettes_range: 3,
   caffeine_cups_per_day: 3,
-  dietary_preference: 4,
+  dietary_preferences: 4,
   has_allergies: 4,
   allergies: 4,
   additional_information: 4,
@@ -186,7 +190,7 @@ type OnboardingFormDraft = {
   smoking_status: string;
   smoking_cigarettes_range: string;
   caffeine_cups_per_day: string;
-  dietary_preference: (typeof dietaryPreferenceOptions)[number] | "";
+  dietary_preferences: DietaryPreference[];
   additional_information: string;
   has_allergies: "yes" | "no" | "";
   allergies: string;
@@ -574,7 +578,13 @@ function createInitialDraft(
     smoking_status: defaults?.smoking_status ?? "",
     smoking_cigarettes_range: defaults?.smoking_cigarettes_range ?? "",
     caffeine_cups_per_day: defaults?.caffeine_cups_per_day ?? "",
-    dietary_preference: defaults?.dietary_preference ?? "",
+    dietary_preferences: normalizeDietaryPreferences(
+      defaults?.dietary_preferences?.length
+        ? defaults.dietary_preferences
+        : defaults?.dietary_preference
+          ? [defaults.dietary_preference]
+          : [],
+    ),
     additional_information: defaults?.additional_information ?? "",
     has_allergies:
       defaults?.has_allergies == null
@@ -630,8 +640,7 @@ function isValidDraft(value: unknown): value is OnboardingFormDraft {
     typeof candidate.smoking_status === "string" &&
     typeof candidate.smoking_cigarettes_range === "string" &&
     typeof candidate.caffeine_cups_per_day === "string" &&
-    (candidate.dietary_preference === ""
-      || dietaryPreferenceOptions.includes(candidate.dietary_preference as (typeof dietaryPreferenceOptions)[number])) &&
+    Array.isArray(candidate.dietary_preferences) &&
     typeof candidate.additional_information === "string" &&
     (candidate.has_allergies === "yes" || candidate.has_allergies === "no" || candidate.has_allergies === "") &&
     typeof candidate.allergies === "string" &&
@@ -1328,7 +1337,9 @@ export function OnboardingProfileForm({
         name="hot_climate_or_heavy_sweating"
         value={draft.hot_climate_or_heavy_sweating}
       />
-      <input type="hidden" name="dietary_preference" value={draft.dietary_preference} />
+      {draft.dietary_preferences.map((value) => (
+        <input key={`dietary-preference-${value}`} type="hidden" name="dietary_preferences" value={value} />
+      ))}
       <input type="hidden" name="has_allergies" value={draft.has_allergies} />
       <input type="hidden" name="allergies" value={draft.has_allergies === "yes" ? draft.allergies : ""} />
       <input
@@ -2082,37 +2093,34 @@ export function OnboardingProfileForm({
             )}
           </p>
 
-          <div data-field="dietary_preference">
-            <span className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Dietary preference", "העדפה תזונתית")}</span>
+          <div data-field="dietary_preferences">
+            <span className="block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Dietary preference", "העדפה תזונתית")}</span>
+            <p className="mb-2 text-xs text-slate-500">{tr(effectiveLocale, "Select all that apply", "אפשר לבחור יותר מאחת")}</p>
             <div className="grid gap-2 sm:grid-cols-2">
               {dietaryPreferenceOptions.map((value) => {
-                const label =
-                  value === "standard"
-                    ? tr(effectiveLocale, "Standard Diet", "תזונה רגילה")
-                    : value === "vegetarian"
-                      ? tr(effectiveLocale, "Vegetarian", "צמחוני")
-                      : value === "vegan"
-                        ? tr(effectiveLocale, "Vegan", "טבעוני")
-                        : value === "low_carb_keto"
-                          ? tr(effectiveLocale, "Low-Carb / Keto", "דל פחמימה / קטו")
-                          : value === "kosher"
-                            ? tr(effectiveLocale, "Kosher", "כשר")
-                            : tr(effectiveLocale, "Gluten-Free", "ללא גלוטן");
-                const selected = draft.dietary_preference === value;
-
+                const selected = draft.dietary_preferences.includes(value);
                 return (
-                  <button
+                  <label
                     key={value}
-                    type="button"
-                    onClick={() => updateDraft({ dietary_preference: value })}
-                    className={`rounded-xl border px-3 py-2 text-sm font-medium ${selected ? "border-teal-700 bg-teal-50 text-teal-900 dark:bg-teal-950/40 dark:text-teal-300" : "border-slate-300 bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700"}`}
+                    className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm text-slate-900 dark:text-slate-100 ${selected ? "border-teal-700 bg-teal-50 dark:bg-teal-950/40" : "border-slate-300 bg-white hover:border-teal-400 dark:border-slate-700 dark:bg-slate-900"}`}
                   >
-                    {label}
-                  </button>
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => {
+                        updateDraft({
+                          dietary_preferences: selected
+                            ? draft.dietary_preferences.filter((item) => item !== value)
+                            : dietaryPreferenceOptions.filter((item) => item === value || draft.dietary_preferences.includes(item)),
+                        });
+                      }}
+                    />
+                    <span>{formatDietaryPreference(value, effectiveLocale)}</span>
+                  </label>
                 );
               })}
             </div>
-            {renderFieldError("dietary_preference")}
+            {renderFieldError("dietary_preferences")}
           </div>
 
           <div data-field="has_allergies">

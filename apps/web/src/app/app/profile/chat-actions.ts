@@ -298,6 +298,11 @@ export async function applyProfileChatChangeAction(rawPatch: Record<string, unkn
 
   const dbPatch: Record<string, unknown> = { ...patch };
 
+  // TCK-165: the chat sets one dietary preference, so the multi-select list becomes that single value (what the diff card showed).
+  if (patch.dietary_preference) {
+    dbPatch.dietary_preferences = [patch.dietary_preference];
+  }
+
   if (patch.date_of_birth) {
     const calculatedAge = calculateAgeYears(patch.date_of_birth);
     if (calculatedAge == null) {
