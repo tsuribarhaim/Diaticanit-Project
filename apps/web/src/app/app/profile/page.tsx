@@ -3,14 +3,6 @@ import { redirect } from "next/navigation";
 
 import { signOutAction } from "@/app/app/actions";
 import { deleteDocumentAction, openOriginalDocumentAction } from "@/app/app/documents/actions";
-import { hasAiTargetsConsent } from "@/app/app/targets/actions";
-import {
-  AiConsentToggleRow,
-  ComingSoonRow,
-  DataPrivacyRow,
-  PasskeysRow,
-  PasswordRow,
-} from "@/components/profile-app-settings-rows";
 import { DocumentUploadForm } from "@/components/document-upload-form";
 import {
   AllergiesFieldRow,
@@ -25,13 +17,10 @@ import { LocalDateTime } from "@/components/local-time";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
 import { ProfileHeaderCard } from "@/components/profile-header-card";
 import { ExpandableRow, ProfileRow, ProfileRowGroup, ProfileSectionTitle, QuickBooleanFieldRow, QuickScalarFieldRow } from "@/components/profile-quick-edit";
-import { LanguageToggle } from "@/components/language-toggle";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { TargetsStaleModal } from "@/components/targets-stale-modal";
 import { resolveUserGenderForAddressing } from "@/lib/ai/persona";
 import { DEFAULT_AVATAR_COLOR, isAvatarColorId } from "@/lib/avatar-colors";
 import { formatFileSize } from "@/lib/documents";
-import { getEnvironmentBadgeLabel } from "@/lib/environment-badge";
 import {
   activityLevelOptions,
   biologicalSexOptions,
@@ -49,7 +38,6 @@ import {
 } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 import { computeProfileDiff, parseProfileSnapshot, type ProfileForTargets } from "@/lib/targets";
-import { normalizeTheme } from "@/lib/theme";
 
 export const dynamic = "force-dynamic";
 
@@ -76,10 +64,10 @@ export default async function ProfilePage({
     redirect("/auth/sign-in");
   }
 
-  // None of these six queries depend on each other's result - all six only
+  // None of these five queries depend on each other's result - all five only
   // need user.id (and, for the target-snapshot lookup, whether the
   // targetsStale query param is set, already known here) - so they're all
-  // fired together instead of paying up to six sequential round trips
+  // fired together instead of paying up to five sequential round trips
   // before this page can even start rendering.
   const [
     { data: profile, error },
@@ -87,7 +75,6 @@ export default async function ProfilePage({
     { data: activeTargetProfileForStaleCheck },
     { data: documents },
     { data: earliestWeightReport },
-    hasAiConsent,
   ] = await Promise.all([
     supabase
       .from("user_profile_enriched")
@@ -101,7 +88,7 @@ export default async function ProfilePage({
     // layout.tsx's own copy of this fallback.
     supabase
       .from("user_profile")
-      .select("preferred_language, avatar_color, theme_preference")
+      .select("preferred_language, avatar_color")
       .eq("user_id", user.id)
       .maybeSingle(),
     resolvedSearchParams.targetsStale === "1"
@@ -121,7 +108,6 @@ export default async function ProfilePage({
       .order("created_at", { ascending: true })
       .limit(1)
       .maybeSingle(),
-    hasAiTargetsConsent({ supabase, userId: user.id }),
   ]);
 
   if (error || !profile) {
@@ -140,13 +126,7 @@ export default async function ProfilePage({
   }
 
   const locale = normalizeLocale(preferredLanguage);
-  const theme = normalizeTheme(localeAndAvatarSelect.data?.theme_preference);
   const avatarColor = isAvatarColorId(avatarColorRaw) ? avatarColorRaw : DEFAULT_AVATAR_COLOR;
-  // Same badge the standalone /app/settings page already shows - duplicated
-  // here since mobile has no other path to it now that Language/Theme/
-  // Passkeys all live inline on this page too (see this redesign's own
-  // decision to leave /app/settings itself untouched rather than remove it).
-  const environmentBadgeLabel = getEnvironmentBadgeLabel();
 
   // Only computed when the profile-save action just flagged this via the
   // one-time query param (see updateProfileAction / the quick-edit actions'
@@ -408,46 +388,7 @@ export default async function ProfilePage({
               </ul>
             )}
           </ExpandableRow>
-          <AiConsentToggleRow locale={locale} checked={hasAiConsent} />
-        </ProfileRowGroup>
-      </div>
-
-      <div>
-        <ProfileSectionTitle>{tr(locale, "App & Feature Settings", "הגדרות אפליקציה ותכונות")}</ProfileSectionTitle>
-        <ProfileRowGroup>
-          <ProfileRow label={tr(locale, "Language", "שפה")} endSlot={<LanguageToggle locale={locale} />} />
-          <ProfileRow label={tr(locale, "Theme", "ערכת נושא")} endSlot={<ThemeToggle locale={locale} theme={theme} />} />
-          <ComingSoonRow locale={locale} label={tr(locale, "Measurement units", "יחידות מידה")} caption={tr(locale, "Metric (kg, cm)", "מטרי (ק\"ג, ס\"מ)")} />
-          <ComingSoonRow locale={locale} label={tr(locale, "Connected apps & devices", "אפליקציות ומכשירים מחוברים")} />
-          <PasskeysRow locale={locale} />
-          <PasswordRow locale={locale} />
           <ProfileRow label={tr(locale, "Manage saved meals list", "ניהול רשימת ארוחות שמורות")} href="/app/daily-report/defaults" />
-          <DataPrivacyRow locale={locale} />
-          {/* Plain text, not the pill/badge treatment EnvironmentBadge
-              renders elsewhere (Settings, sign-in) - a ticket (TCK-6)
-              reported the highlighted frame looked out of place next to
-              every other row on this page, which all show their value as
-              plain text via ProfileRow's own `value` prop. */}
-          {environmentBadgeLabel ? (
-            <ProfileRow label={tr(locale, "Environment", "סביבה")} value={environmentBadgeLabel} />
-          ) : null}
-        </ProfileRowGroup>
-      </div>
-
-      <div>
-        <ProfileSectionTitle>{tr(locale, "Account & Support", "חשבון ותמיכה")}</ProfileSectionTitle>
-        <ProfileRowGroup>
-          {/* Always available here regardless of whether anything's
-              pending - the nav bar's own Notifications link (see
-              app-nav.tsx) only shows up at all once there's something
-              unread/unresolved to act on, so this is the way in the rest
-              of the time. The notification-preferences row that used to
-              live under App & Feature Settings above (still not built)
-              was dropped rather than kept alongside this one. */}
-          <ProfileRow label={tr(locale, "Notifications", "התראות")} href="/app/notifications" />
-          <ProfileRow label={tr(locale, "Support Tickets", "פניות תמיכה")} href="/app/tickets" />
-          <ComingSoonRow locale={locale} label={tr(locale, "Help Center / FAQ", "מרכז עזרה / שאלות נפוצות")} />
-          <ComingSoonRow locale={locale} label={tr(locale, "Terms of Service", "תנאי שימוש")} />
         </ProfileRowGroup>
       </div>
 

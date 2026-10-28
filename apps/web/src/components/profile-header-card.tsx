@@ -6,6 +6,7 @@ import { useFormStatus } from "react-dom";
 import { setAvatarColorAction, updateIdentityAction, type AvatarActionState, type QuickEditState } from "@/app/app/profile/actions";
 import { QuickEditSheet, SheetActions, useQuickEditSuccessEffect } from "@/components/profile-quick-edit";
 import { LocalizedDateInput } from "@/components/localized-date-input";
+import { NavLink } from "@/components/nav-link";
 import { UserAvatar } from "@/components/user-avatar";
 import { AVATAR_COLOR_HEX, AVATAR_COLOR_IDS, type AvatarColorId } from "@/lib/avatar-colors";
 import { directionForLocale, tr, type AppLocale } from "@/lib/locale";
@@ -14,6 +15,15 @@ function PencilIcon({ className }: { className: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M16.862 4.487a2.06 2.06 0 1 1 2.915 2.914L7.5 19.68l-4 1 1-4L16.862 4.487Z" />
+    </svg>
+  );
+}
+
+function GearIcon({ className }: { className: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z" />
+      <circle cx="12" cy="12" r="3" />
     </svg>
   );
 }
@@ -247,7 +257,19 @@ export function ProfileHeaderCard({
   const [optimisticAvatarColor, setOptimisticAvatarColor] = useOptimistic(avatarColor);
 
   return (
-    <div dir={directionForLocale(locale)} className="flex flex-col items-center rounded-2xl border border-slate-200 bg-white px-6 py-8 text-center dark:border-slate-800 dark:bg-slate-900">
+    <div dir={directionForLocale(locale)} className="relative flex flex-col items-center rounded-2xl border border-slate-200 bg-white px-6 py-8 text-center dark:border-slate-800 dark:bg-slate-900">
+      {/* end-2 lands top-left in Hebrew and top-right in English. Positioned
+          on a wrapper since NavLink always adds its own `relative`. */}
+      <div className="absolute top-2 end-2">
+        <NavLink
+          href="/app/settings"
+          aria-label={tr(locale, "Settings & Support", "הגדרות ותמיכה")}
+          title={tr(locale, "Settings & Support", "הגדרות ותמיכה")}
+          className="flex h-11 w-11 items-center justify-center rounded-full text-slate-500 outline-none hover:bg-slate-100 hover:text-slate-800 focus-visible:ring-2 focus-visible:ring-teal-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+        >
+          <GearIcon className="h-5 w-5" />
+        </NavLink>
+      </div>
       <div className="relative">
         <UserAvatar avatarColor={optimisticAvatarColor} name={firstName} className="h-20 w-20 text-2xl" alt={tr(locale, "Profile picture", "תמונת פרופיל")} />
         <AvatarColorPopover locale={locale} currentColor={optimisticAvatarColor} onPick={setOptimisticAvatarColor} />
