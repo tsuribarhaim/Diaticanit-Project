@@ -55,7 +55,7 @@ export function ToggleSwitch({
       aria-label={ariaLabel}
       disabled={disabled}
       onClick={onClick}
-      className={`relative h-6 w-10 shrink-0 rounded-full disabled:opacity-60 ${checked ? "bg-teal-600" : "bg-slate-300 dark:bg-slate-700"}`}
+      className={`relative h-6 w-10 shrink-0 rounded-full before:absolute before:-inset-x-1 before:-inset-y-2.5 before:content-[''] disabled:opacity-60 ${checked ? "bg-teal-600" : "bg-slate-300 dark:bg-slate-700"}`}
     >
       {/* Logical start/end positioning (not a transform), so the knob lands
           on the correct physical side automatically in both LTR and RTL. */}
@@ -137,8 +137,11 @@ export function ProfileRow({
   }`;
 
   if (href && !disabled) {
+    // NavLink wraps its children in its own pending-state <span>, so the
+    // row's flex layout is repeated on that span - otherwise the chevron
+    // drops under the label instead of sitting at the row's end.
     return (
-      <Link href={href} className={className}>
+      <Link href={href} className={`${className} [&>span]:flex [&>span]:min-w-0 [&>span]:flex-1 [&>span]:items-center [&>span]:gap-3`}>
         {inner}
       </Link>
     );

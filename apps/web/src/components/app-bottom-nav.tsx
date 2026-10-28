@@ -63,7 +63,7 @@ export function AppBottomNav({
       label: tr(locale, "Profile", "פרופיל"),
       // Spoken only: the visible label stays "Profile", but a screen-reader user should know the tab leads to the unread notifications.
       ariaLabel: redirectsToNotifications ? tr(locale, "Profile, unread notifications", "פרופיל, יש התראות שלא נקראו") : undefined,
-      isActive: (pathname?.startsWith("/app/profile") || pathname?.startsWith("/app/notifications")) ?? false,
+      isActive: (pathname?.startsWith("/app/profile") || pathname?.startsWith("/app/notifications") || pathname?.startsWith("/app/settings")) ?? false,
       // The user's own picture/initial doubles as this tab's icon - "which
       // account is this" and "go to your profile" are the same destination
       // here, so there's no need for a separate persistent avatar element

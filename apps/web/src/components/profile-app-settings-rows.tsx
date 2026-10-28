@@ -1,10 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 
 import { updateAiConsentAction } from "@/app/app/profile/actions";
 import { ChangePasswordForm } from "@/components/change-password-form";
+import { DailyReportSuccessToast } from "@/components/daily-report-success-toast";
 import { PasskeyManager } from "@/components/passkey-manager";
 import { ExpandableRow, ProfileRow, QuickEditSheet, ToggleSwitch } from "@/components/profile-quick-edit";
 import { tr, type AppLocale } from "@/lib/locale";
@@ -74,35 +75,80 @@ export function PasswordRow({ locale }: { locale: AppLocale }) {
  * updateSimpleProfileFieldAction's whitelist since it writes to
  * ai_extraction_consents, a different table, via its own action
  * (updateAiConsentAction). */
-function AiConsentToggleRowImpl({ locale, checked }: { locale: AppLocale; checked: boolean }) {
+function AiConsentToggleRowImpl({
+  locale,
+  checked,
+  onToggleStart,
+  onSaved,
+}: {
+  locale: AppLocale;
+  checked: boolean;
+  onToggleStart: () => void;
+  onSaved: (next: boolean) => void;
+}) {
   const [optimistic, setOptimistic] = useState(checked);
+  const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
   function toggle() {
     const next = !optimistic;
     setOptimistic(next);
+    setError(null);
+    onToggleStart();
     startTransition(async () => {
       const result = await updateAiConsentAction(next);
       if (result.error) {
         setOptimistic(!next);
+        setError(result.error);
         return;
       }
+      onSaved(next);
       router.refresh();
     });
   }
 
   return (
-    <ProfileRow
-      label={tr(locale, "Let AI use my data", "לאפשר ל-AI להשתמש בנתונים שלי")}
-      caption={tr(locale, "Required for AI-generated targets & coaching", "נדרש ליעדים ולהדרכה שנוצרים באמצעות AI")}
-      endSlot={<ToggleSwitch checked={optimistic} disabled={isPending} onClick={toggle} ariaLabel={tr(locale, "Let AI use my data", "לאפשר ל-AI להשתמש בנתונים שלי")} />}
-    />
+    <div>
+      <ProfileRow
+        label={tr(locale, "Let AI use my data", "לאפשר ל-AI להשתמש בנתונים שלי")}
+        caption={tr(locale, "Information that helps AI-generated recommendations and coaching", "מידע שיעזור להמלצות ולהדרכה שנוצרות באמצעות AI")}
+        endSlot={<ToggleSwitch checked={optimistic} disabled={isPending} onClick={toggle} ariaLabel={tr(locale, "Let AI use my data", "לאפשר ל-AI להשתמש בנתונים שלי")} />}
+      />
+      {error ? <p role="alert" className="px-4 pb-3 text-xs text-rose-600 dark:text-rose-400">{error}</p> : null}
+    </div>
   );
 }
 
 /** Keyed by `checked` - see QuickBooleanFieldRow's own comment in
- * profile-quick-edit.tsx for why this replaces a props-sync effect. */
-export function AiConsentToggleRow(props: { locale: AppLocale; checked: boolean }) {
-  return <AiConsentToggleRowImpl key={String(props.checked)} {...props} />;
+ * profile-quick-edit.tsx for why this replaces a props-sync effect. The
+ * saved toast lives out here, not in the keyed row, since the row remounts
+ * as soon as router.refresh() lands the new `checked` and would drop it. */
+export function AiConsentToggleRow({ locale, checked }: { locale: AppLocale; checked: boolean }) {
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
+  }, []);
+
+  function clearToast() {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast(null);
+  }
+
+  function showSavedToast(next: boolean) {
+    clearToast();
+    setToast(next ? tr(locale, "AI data use turned on", "השימוש בנתונים עם AI הופעל") : tr(locale, "AI data use turned off", "השימוש בנתונים עם AI כובה"));
+    toastTimerRef.current = setTimeout(() => setToast(null), 2500);
+  }
+
+  return (
+    <>
+      <AiConsentToggleRowImpl key={String(checked)} locale={locale} checked={checked} onToggleStart={clearToast} onSaved={showSavedToast} />
+      <DailyReportSuccessToast locale={locale} message={toast} />
+    </>
+  );
 }
