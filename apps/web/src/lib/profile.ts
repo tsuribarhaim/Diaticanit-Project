@@ -61,6 +61,29 @@ export const dietaryPreferenceOptions = [
   "kosher",
   "gluten_free",
 ] as const;
+export type DietaryPreference = (typeof dietaryPreferenceOptions)[number];
+
+/** TCK-165: dietary preference is multi-select (dietary_preferences, migration 085). Returns the valid values, without
+ * duplicates, in dietaryPreferenceOptions order. */
+export function normalizeDietaryPreferences(values: readonly string[]): DietaryPreference[] {
+  return dietaryPreferenceOptions.filter((option) => values.includes(option));
+}
+
+const DIETARY_PREFERENCE_PRIORITY: readonly DietaryPreference[] = [
+  "low_carb_keto",
+  "vegan",
+  "vegetarian",
+  "gluten_free",
+  "kosher",
+  "standard",
+];
+
+/** The one main value still written to the old single dietary_preference column, which keeps feeding targets and the AI
+ * prompts. Only keto/vegan/vegetarian change the macro bands (lib/targets.ts macroRangesFromCalories), so they win. */
+export function primaryDietaryPreference(values: readonly string[]): DietaryPreference | null {
+  return DIETARY_PREFERENCE_PRIORITY.find((option) => values.includes(option)) ?? null;
+}
+
 export const medicalConditionOptions = [
   "celiac_disease",
   "hypertension",
@@ -996,19 +1019,9 @@ export const onboardingProfileSchema = z.object({
     (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
     z.enum(caffeineCupsOptions, { error: "Select a valid caffeine amount." }).optional(),
   ),
-  dietary_preference: z.preprocess(
-    (value) => {
-      if (typeof value === "string" && value.trim() === "") {
-        return undefined;
-      }
-      return value;
-    },
-    z
-      .enum(dietaryPreferenceOptions, {
-        error: "Select a valid dietary preference.",
-      })
-      .optional(),
-  ),
+  dietary_preferences: z
+    .array(z.enum(dietaryPreferenceOptions, { error: "Select a valid dietary preference." }))
+    .default([]),
   additional_information: z
     .string()
     .trim()
