@@ -17,7 +17,7 @@ export type ExerciseModalityOption = (typeof exerciseModalityOptions)[number];
  * shape this type represents. */
 export type ExerciseScheduleModalityOption = Exclude<ExerciseModalityOption, "none" | "other">;
 
-/** The default activities the profile's "Preferred exercise types" sheet
+/** The default activities the profile's "Regular workouts" sheet
  * offers (TCK-150). Purely a UI list, not a stored enum: "strength" is
  * stored as the existing resistance_hypertrophy modality, and the other 7
  * are stored as named exercise_other_activities (modality "other"). */
