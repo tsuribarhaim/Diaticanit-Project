@@ -370,8 +370,8 @@ export function ExercisePreferencesRow({
 
   return (
     <>
-      <ProfileRow label={tr(locale, "Preferred exercise types", "סוגי אימון מועדפים")} value={summaryValue} onClick={openSheet} />
-      <QuickEditSheet locale={locale} isOpen={isOpen} onClose={() => setIsOpen(false)} title={tr(locale, "Preferred exercise types", "סוגי אימון מועדפים")}>
+      <ProfileRow label={tr(locale, "Regular workouts", "אימונים קבועים")} value={summaryValue} onClick={openSheet} />
+      <QuickEditSheet locale={locale} isOpen={isOpen} onClose={() => setIsOpen(false)} title={tr(locale, "Regular workouts", "אימונים קבועים")}>
         <form action={formAction} className="space-y-4">
           <input type="hidden" name="preferred_language" value={locale} />
           {submittedModalities.map((modality) => (
