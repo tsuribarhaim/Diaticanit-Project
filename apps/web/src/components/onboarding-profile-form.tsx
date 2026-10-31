@@ -5,6 +5,7 @@ import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 
 import {
+  previewOnboardingProfileAction,
   saveOnboardingProfileAction,
   type OnboardingActionState,
 } from "@/app/app/onboarding/actions";
@@ -86,10 +87,14 @@ type OnboardingProfileFormProps = {
    * defaults instead of re-running steps 1-4 the user already completed.
    * See onboarding/page.tsx for how this is computed. */
   startAtTargetsStep?: boolean;
+  /** Admin test run of the wizard (TCK-168, /app/onboarding/preview):
+   * validates like a real sign-up but saves nothing. */
+  previewMode?: boolean;
 };
 
 const initialState: OnboardingActionState = {};
 const ONBOARDING_DRAFT_KEY = "phc_onboarding_profile_draft";
+const PREVIEW_DRAFT_KEY = "phc_onboarding_preview_draft";
 
 const EXERCISE_MODALITY_LABELS: Record<ExerciseScheduleModalityOption, { en: string; he: string }> = {
   resistance_hypertrophy: { en: "Resistance / Hypertrophy", he: "התנגדות / היפרטרופיה" },
@@ -671,11 +676,13 @@ export function OnboardingProfileForm({
   defaults,
   locale = "en",
   startAtTargetsStep = false,
+  previewMode = false,
 }: OnboardingProfileFormProps) {
   const [state, formAction] = useActionState(
-    saveOnboardingProfileAction,
+    previewMode ? previewOnboardingProfileAction : saveOnboardingProfileAction,
     initialState,
   );
+  const draftKey = previewMode ? PREVIEW_DRAFT_KEY : ONBOARDING_DRAFT_KEY;
   const [draft, setDraft] = useState<OnboardingFormDraft>(() => {
     const initialDraft = createInitialDraft(defaults, locale);
 
@@ -684,7 +691,7 @@ export function OnboardingProfileForm({
     }
 
     try {
-      const raw = window.sessionStorage.getItem(ONBOARDING_DRAFT_KEY);
+      const raw = window.sessionStorage.getItem(draftKey);
       if (!raw) return initialDraft;
       const parsed = JSON.parse(raw);
 
@@ -772,11 +779,11 @@ export function OnboardingProfileForm({
 
   useEffect(() => {
     try {
-      window.sessionStorage.setItem(ONBOARDING_DRAFT_KEY, JSON.stringify(draft));
+      window.sessionStorage.setItem(draftKey, JSON.stringify(draft));
     } catch {
       // Ignore blocked storage writes.
     }
-  }, [draft]);
+  }, [draft, draftKey]);
 
   useEffect(() => {
     if (!state.fieldErrors || state.fieldErrors.length === 0) {
@@ -817,7 +824,7 @@ export function OnboardingProfileForm({
   const persistDraft = (next: OnboardingFormDraft) => {
     setDraft(next);
     try {
-      window.sessionStorage.setItem(ONBOARDING_DRAFT_KEY, JSON.stringify(next));
+      window.sessionStorage.setItem(draftKey, JSON.stringify(next));
     } catch {
       // Ignore blocked storage writes.
     }
@@ -1196,7 +1203,7 @@ export function OnboardingProfileForm({
     }
 
     try {
-      window.sessionStorage.removeItem(ONBOARDING_DRAFT_KEY);
+      window.sessionStorage.removeItem(draftKey);
     } catch {
       // Ignore blocked storage writes.
     }
@@ -2199,7 +2206,12 @@ export function OnboardingProfileForm({
 
       {step === 5 ? (
         <section>
-          <OnboardingTargetsStep locale={effectiveLocale} firstName={draft.first_name} userGender={draft.biological_sex || null} />
+          <OnboardingTargetsStep
+            locale={effectiveLocale}
+            firstName={draft.first_name}
+            userGender={draft.biological_sex || null}
+            previewProfile={previewMode ? state.previewProfile : undefined}
+          />
         </section>
       ) : null}
 
@@ -2270,7 +2282,13 @@ export function OnboardingProfileForm({
               "תוצאת בדיקת מעבדה או דוח רפואי עדכני עוזרים למאמנת ה-AI שלכם לקחת בחשבון דברים כמו סמנים בדם. ההעלאה והעיבוד מתבצעים באופן עצמאי - אפשר להמשיך הלאה בלי להמתין.",
             )}
           </p>
-          <DocumentUploadForm locale={effectiveLocale} />
+          {previewMode ? (
+            <p className="text-xs italic text-slate-500 dark:text-slate-400">
+              {tr(effectiveLocale, "Document upload is turned off in test mode.", "העלאת מסמכים מושבתת במצב בדיקה.")}
+            </p>
+          ) : (
+            <DocumentUploadForm locale={effectiveLocale} />
+          )}
         </div>
       </div>
     ) : null}

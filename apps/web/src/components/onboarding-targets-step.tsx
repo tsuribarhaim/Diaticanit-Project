@@ -5,12 +5,16 @@ import { unstable_rethrow } from "next/navigation";
 
 import {
   generateOnboardingTargetsAction,
+  generateOnboardingTargetsPreviewAction,
   lockOnboardingTargetsAction,
   negotiateOnboardingTargetsAction,
+  negotiateOnboardingTargetsPreviewAction,
 } from "@/app/app/onboarding/targets-actions";
 import { tr, trGendered, type AppLocale } from "@/lib/locale";
 import type { TargetGenerationPayload } from "@/lib/targets";
+import { NavLink as Link } from "@/components/nav-link";
 import { TargetsPlanView } from "@/components/targets-plan-view";
+import { useUnsavedPreview } from "@/components/unsaved-preview-context";
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
 
@@ -27,10 +31,14 @@ export function OnboardingTargetsStep({
   locale,
   firstName,
   userGender,
+  previewProfile,
 }: {
   locale: AppLocale;
   firstName?: string | null;
   userGender?: "male" | "female" | null;
+  /** Set only in the admin test run (TCK-168): the unsaved profile to
+   * generate from. Nothing is locked or saved when it's set. */
+  previewProfile?: Record<string, unknown>;
 }) {
   const [phase, setPhase] = useState<"generating" | "ready" | "error">("generating");
   const [payload, setPayload] = useState<TargetGenerationPayload | null>(null);
@@ -42,13 +50,17 @@ export function OnboardingTargetsStep({
   const [isSending, setIsSending] = useState(false);
   const [isLocking, setIsLocking] = useState(false);
   const [lockError, setLockError] = useState<string | null>(null);
+  const [previewDone, setPreviewDone] = useState(false);
   const hasTriggeredRef = useRef(false);
+  const { setHasUnsavedPreview } = useUnsavedPreview();
 
   useEffect(() => {
     if (hasTriggeredRef.current) return;
     hasTriggeredRef.current = true;
     void (async () => {
-      const result = await generateOnboardingTargetsAction();
+      const result = previewProfile
+        ? await generateOnboardingTargetsPreviewAction({ profile: previewProfile })
+        : await generateOnboardingTargetsAction();
       if ("error" in result) {
         setGenerateError(result.error);
         setPhase("error");
@@ -59,13 +71,15 @@ export function OnboardingTargetsStep({
       setGoalText(result.goalText);
       setPhase("ready");
     })();
-  }, []);
+  }, [previewProfile]);
 
   async function handleRetryGenerate() {
     setPhase("generating");
     setGenerateError(null);
     hasTriggeredRef.current = false;
-    const result = await generateOnboardingTargetsAction();
+    const result = previewProfile
+      ? await generateOnboardingTargetsPreviewAction({ profile: previewProfile })
+      : await generateOnboardingTargetsAction();
     hasTriggeredRef.current = true;
     if ("error" in result) {
       setGenerateError(result.error);
@@ -86,7 +100,9 @@ export function OnboardingTargetsStep({
     setChatInput("");
     setIsSending(true);
 
-    const result = await negotiateOnboardingTargetsAction({ currentPayload: payload, message: trimmed });
+    const result = previewProfile
+      ? await negotiateOnboardingTargetsPreviewAction({ profile: previewProfile, currentPayload: payload, message: trimmed })
+      : await negotiateOnboardingTargetsAction({ currentPayload: payload, message: trimmed });
 
     setIsSending(false);
 
@@ -102,6 +118,19 @@ export function OnboardingTargetsStep({
 
   async function handleComplete() {
     if (!payload || isLocking) return;
+    if (previewProfile) {
+      // Admin test run: nothing to lock. The form never unmounts here (no
+      // redirect), so its unsaved-changes guard is switched off by hand -
+      // otherwise "Run again" would trigger the browser's leave-site prompt.
+      setPreviewDone(true);
+      setHasUnsavedPreview(false);
+      try {
+        window.sessionStorage.removeItem("phc_onboarding_preview_draft");
+      } catch {
+        // Ignore blocked storage writes.
+      }
+      return;
+    }
     setIsLocking(true);
     setLockError(null);
     try {
@@ -126,6 +155,49 @@ export function OnboardingTargetsStep({
     } finally {
       setIsLocking(false);
     }
+  }
+
+  if (previewDone) {
+    return (
+      <div className="mx-auto max-w-md py-16 text-center">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 dark:bg-emerald-950/40">
+          <svg className="h-6 w-6 text-emerald-700 dark:text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M20 6 9 17l-5-5" />
+          </svg>
+        </div>
+        <h2 className="mt-5 text-lg font-bold text-slate-900 dark:text-slate-100">
+          {tr(locale, "Test run complete", "הרצת הבדיקה הסתיימה")}
+        </h2>
+        <p className="mt-1.5 text-sm text-slate-600 dark:text-slate-400">
+          {tr(
+            locale,
+            "This is where a new user would be taken to the Daily Report. Nothing was saved.",
+            "בשלב הזה משתמש חדש היה מועבר לדיווח היומי. שום דבר לא נשמר.",
+          )}
+        </p>
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+          {/* A plain <a> on purpose: a full reload starts the form blank. */}
+          <a
+            href="/app/onboarding/preview"
+            className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+          >
+            {tr(locale, "Run again", "הרצה נוספת")}
+          </a>
+          <Link
+            href="/app/tickets/new"
+            className="inline-flex items-center justify-center rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            {tr(locale, "Report an issue", "דיווח על תקלה")}
+          </Link>
+          <Link
+            href="/app/tickets"
+            className="inline-flex items-center justify-center rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            {tr(locale, "Back to support tickets", "חזרה לפניות התמיכה")}
+          </Link>
+        </div>
+      </div>
+    );
   }
 
   if (phase === "generating") {
