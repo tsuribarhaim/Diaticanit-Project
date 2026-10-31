@@ -8,6 +8,7 @@ import { getAiExtractionConfig } from "@/lib/ai/env";
 import { normalizeLocale, tr } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
+import { isCurrentUserAdmin } from "@/lib/tickets";
 import { targetGenerationPayloadSchema, toProfileForTargets, type TargetGenerationPayload } from "@/lib/targets";
 import { computeTargetsDiff } from "@/lib/targets-diff";
 
@@ -17,6 +18,100 @@ const PROFILE_COLUMNS_FOR_TARGETS =
 export type OnboardingTargetsResult =
   | { error: string }
   | { payload: TargetGenerationPayload; source: "ai" | "heuristic"; goalText: string };
+
+// No free-text ask the way the standalone Targets page's "Adjust" flow
+// needs one - the profile (nutritional_goal included) already fully
+// describes what's wanted. This text only needs to carry the goal
+// direction for the AI/heuristic to act on.
+function buildOnboardingGoalText(profileRow: {
+  nutritional_goal?: unknown;
+  health_goals?: unknown;
+  health_goals_markers_details?: unknown;
+  health_goals_other_details?: unknown;
+}): string {
+  let goalText = `Generate my initial daily targets. My goal is: ${profileRow.nutritional_goal ?? "maintain"}.`;
+  const healthGoals: string[] = Array.isArray(profileRow.health_goals) ? profileRow.health_goals : [];
+  if (healthGoals.length > 0) {
+    const healthGoalNames = healthGoals.map((goal) => {
+      if (goal === "maintain_health") return "maintain overall health";
+      if (goal === "muscle_gain") return "build muscle mass";
+      if (goal === "abnormal_markers") return `improve out-of-range markers (${profileRow.health_goals_markers_details ?? ""})`;
+      if (goal === "other") return `other (${profileRow.health_goals_other_details ?? ""})`;
+      return goal;
+    });
+    goalText += ` Additional nutritional goals: ${healthGoalNames.join(", ")}.`;
+  }
+  return goalText;
+}
+
+async function getPreviewAdminError(locale: "en" | "he"): Promise<string | null> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/sign-in");
+  }
+
+  if (!(await isCurrentUserAdmin(supabase, user.id))) {
+    return tr(locale, "Only admins can run a test sign-up.", "רק מנהלים יכולים להריץ הרשמת בדיקה.");
+  }
+  return null;
+}
+
+/**
+ * Admin test run of the sign-up wizard (TCK-168): the same generation as
+ * generateOnboardingTargetsAction, but from the unsaved profile the client
+ * holds. No supabase/userId goes to generateTargetsPayload, so the admin's
+ * own medical documents are never read, and nothing is written.
+ */
+export async function generateOnboardingTargetsPreviewAction({
+  profile,
+}: {
+  profile: Record<string, unknown>;
+}): Promise<OnboardingTargetsResult> {
+  const locale = normalizeLocale(profile.preferred_language);
+  const adminError = await getPreviewAdminError(locale);
+  if (adminError) {
+    return { error: adminError };
+  }
+
+  const aiConfig = getAiExtractionConfig();
+  // Step 4 can't be submitted without ticking AI consent.
+  const hasConsent = Boolean(aiConfig);
+  const goalText = buildOnboardingGoalText(profile);
+
+  const { payload, source, safetyRejectionMessage, notActionableMessage } = await generateTargetsPayload({
+    goalText,
+    profile: toProfileForTargets(profile),
+    locale,
+    aiConfig,
+    hasConsent,
+  });
+
+  if (safetyRejectionMessage || notActionableMessage) {
+    logServerError("onboarding.generateTargetsPreview", "generation_rejected", {
+      error: safetyRejectionMessage ?? notActionableMessage ?? "unknown",
+    });
+    return {
+      error:
+        safetyRejectionMessage ??
+        notActionableMessage ??
+        "Something went wrong generating your targets. Please try again.",
+    };
+  }
+
+  const validated = targetGenerationPayloadSchema.safeParse(payload);
+  if (!validated.success) {
+    logServerError("onboarding.generateTargetsPreview", "invalid_payload", {
+      error: validated.error.message,
+    });
+    return { error: "Something went wrong generating your targets. Please try again." };
+  }
+
+  return { payload: validated.data, source, goalText };
+}
 
 /**
  * Generates the user's first target plan right after onboarding's step 4
@@ -52,22 +147,7 @@ export async function generateOnboardingTargetsAction(): Promise<OnboardingTarge
   const aiConfig = getAiExtractionConfig();
   const hasConsent = aiConfig ? await hasAiTargetsConsent({ supabase, userId: user.id }) : false;
 
-  // No free-text ask the way the standalone Targets page's "Adjust" flow
-  // needs one - the profile (nutritional_goal included) already fully
-  // describes what's wanted. This text only needs to carry the goal
-  // direction for the AI/heuristic to act on.
-  let goalText = `Generate my initial daily targets. My goal is: ${profileRow.nutritional_goal ?? "maintain"}.`;
-  const healthGoals: string[] = Array.isArray(profileRow.health_goals) ? profileRow.health_goals : [];
-  if (healthGoals.length > 0) {
-    const healthGoalNames = healthGoals.map((goal) => {
-      if (goal === "maintain_health") return "maintain overall health";
-      if (goal === "muscle_gain") return "build muscle mass";
-      if (goal === "abnormal_markers") return `improve out-of-range markers (${profileRow.health_goals_markers_details ?? ""})`;
-      if (goal === "other") return `other (${profileRow.health_goals_other_details ?? ""})`;
-      return goal;
-    });
-    goalText += ` Additional nutritional goals: ${healthGoalNames.join(", ")}.`;
-  }
+  const goalText = buildOnboardingGoalText(profileRow);
 
   const { payload, source, safetyRejectionMessage, notActionableMessage } = await generateTargetsPayload({
     goalText,
@@ -271,6 +351,90 @@ export async function negotiateOnboardingTargetsAction({
   // The AI's own explanation leads, same reasoning as the standalone
   // Targets page's negotiate action (see its own comment) - a mechanical
   // diff alone can't convey *why* something was or wasn't changed.
+  const changeSummary = diffRows
+    .slice(0, 6)
+    .map((row) => `${tr(locale, row.labelEn, row.labelHe)}: ${row.before} → ${row.after}`)
+    .join("\n");
+  const updatedLabel = tr(locale, "Updated:", "עודכן:");
+  const reply = validated.data.aiRationaleExplanation
+    ? `${validated.data.aiRationaleExplanation}\n\n${updatedLabel}\n${changeSummary}`
+    : tr(locale, `Here's what I updated:\n${changeSummary}`, `הנה מה שעדכנתי:\n${changeSummary}`);
+
+  return { payload: validated.data, source, reply, changed: true };
+}
+
+/**
+ * Admin test run counterpart of negotiateOnboardingTargetsAction (TCK-168):
+ * the profile comes from the client instead of user_profile, and no
+ * supabase/userId goes to generateTargetsPayload. Nothing is written.
+ */
+export async function negotiateOnboardingTargetsPreviewAction({
+  profile,
+  currentPayload,
+  message,
+}: {
+  profile: Record<string, unknown>;
+  currentPayload: TargetGenerationPayload;
+  message: string;
+}): Promise<NegotiateOnboardingTargetsResult> {
+  const locale = normalizeLocale(profile.preferred_language);
+  const adminError = await getPreviewAdminError(locale);
+  if (adminError) {
+    return { error: adminError };
+  }
+
+  const trimmedMessage = message.trim();
+  if (!trimmedMessage) {
+    return { error: "Nothing to send yet." };
+  }
+
+  const currentValidated = targetGenerationPayloadSchema.safeParse(currentPayload);
+  if (!currentValidated.success) {
+    return { error: "The current plan could not be validated. Please go back and regenerate it." };
+  }
+
+  const aiConfig = getAiExtractionConfig();
+  const hasConsent = Boolean(aiConfig);
+
+  const { payload, source, safetyRejectionMessage, notActionableMessage } = await generateTargetsPayload({
+    goalText: trimmedMessage,
+    profile: toProfileForTargets(profile),
+    locale,
+    aiConfig,
+    hasConsent,
+    currentTargets: currentValidated.data,
+  });
+
+  if (safetyRejectionMessage) {
+    return { error: safetyRejectionMessage };
+  }
+
+  if (notActionableMessage) {
+    return { payload: currentValidated.data, source, reply: notActionableMessage, changed: false };
+  }
+
+  const validated = targetGenerationPayloadSchema.safeParse(payload);
+  if (!validated.success) {
+    logServerError("onboarding.negotiateTargetsPreview", "invalid_payload", {
+      error: validated.error.message,
+    });
+    return {
+      error: tr(locale, "Something went wrong applying that change. Please try again.", "משהו השתבש בהחלת השינוי. יש לנסות שוב."),
+    };
+  }
+
+  const diffRows = computeTargetsDiff(currentValidated.data, validated.data, locale);
+  if (diffRows.length === 0) {
+    return {
+      payload: validated.data,
+      source,
+      reply:
+        validated.data.aiRationaleExplanation ||
+        tr(locale, "I reviewed this and nothing needs to change.", "בדקתי את זה ואין צורך בשינוי."),
+      changed: false,
+    };
+  }
+
   const changeSummary = diffRows
     .slice(0, 6)
     .map((row) => `${tr(locale, row.labelEn, row.labelHe)}: ${row.before} → ${row.after}`)

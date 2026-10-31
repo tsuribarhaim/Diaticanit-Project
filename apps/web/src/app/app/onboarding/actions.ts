@@ -23,6 +23,7 @@ import {
 import { normalizeLocale, tr } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
+import { isCurrentUserAdmin } from "@/lib/tickets";
 
 export type OnboardingActionState = {
   error?: string;
@@ -39,6 +40,10 @@ export type OnboardingActionState = {
    * up next, that's entirely the Targets step's own completion action
    * (lockOnboardingTargetsAction, which redirects to /app/daily-report). */
   success?: boolean;
+  /** Only set by previewOnboardingProfileAction (admin test run, TCK-168):
+   * the validated profile that would have been saved, handed back so the
+   * Targets step can generate from it without any user_profile row. */
+  previewProfile?: Record<string, unknown>;
 };
 
 const LOCALE_COOKIE = "phc_locale";
@@ -113,19 +118,11 @@ function buildAiFieldMessage({
   return parts.join(" ");
 }
 
-export async function saveOnboardingProfileAction(
-  _prevState: OnboardingActionState,
-  formData: FormData,
-): Promise<OnboardingActionState> {
-  const locale = requestLocale(formData);
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/auth/sign-in");
-  }
+/** The validation half of saveOnboardingProfileAction, shared with
+ * previewOnboardingProfileAction (TCK-168) so the admin test run checks
+ * exactly what a real sign-up checks, without saving anything. */
+async function validateOnboardingSubmission(formData: FormData, locale: "en" | "he", userId: string) {
+  const fail = (state: OnboardingActionState) => ({ ok: false as const, state });
 
   const parsed = onboardingProfileSchema.safeParse({
     first_name: getFormString(formData, "first_name"),
@@ -169,25 +166,25 @@ export async function saveOnboardingProfileAction(
     }));
 
     logServerError("onboarding.saveProfile", "validation_failed", {
-      userId: user.id,
+      userId,
       issues: parsed.error.issues,
     });
 
-    return {
+    return fail({
       error: tr(locale, "Please correct the highlighted fields and try again.", "יש לתקן את השדות המסומנים ולנסות שוב."),
       fieldErrors,
-    };
+    });
   }
 
   const calculatedAge = calculateAgeYears(parsed.data.date_of_birth);
   if (calculatedAge == null) {
-    return {
+    return fail({
       error: tr(
         locale,
         "Date of birth must produce a valid age between 0 and 120.",
         "תאריך הלידה חייב להפיק גיל תקין בין 0 ל-120.",
       ),
-    };
+    });
   }
 
   const legacyMedicalConditions = parsed.data.has_medical_conditions
@@ -205,7 +202,7 @@ export async function saveOnboardingProfileAction(
   );
 
   const payload = {
-    user_id: user.id,
+    user_id: userId,
     age: calculatedAge,
     first_name: parsed.data.first_name,
     last_name: parsed.data.last_name,
@@ -281,14 +278,14 @@ export async function saveOnboardingProfileAction(
       try {
         const aiValidation = await evaluateProfileTextWithAi({
           config: aiConfig,
-          userId: user.id,
+          userId,
           field: "medical_condition",
           text: medicalText,
           locale,
         });
 
         if (!aiValidation.isRelevant) {
-          return {
+          return fail({
             error: tr(locale, "Please clarify your medical condition text.", "יש לדייק בתיאור המצב הרפואי."),
             fieldErrors: [
               {
@@ -309,16 +306,16 @@ export async function saveOnboardingProfileAction(
                 }),
               },
             ],
-          };
+          });
         }
       } catch (error) {
         logServerError("onboarding.saveProfile", "ai_medical_validation_failed", {
-          userId: user.id,
+          userId,
           error: error instanceof Error ? error.message : String(error),
         });
 
         if (!deterministicValidation.isMeaningful) {
-          return {
+          return fail({
             error: tr(locale, "Please refine the medical condition text and try again.", "יש לדייק את תיאור המצב הרפואי ולנסות שוב."),
             fieldErrors: [
               {
@@ -330,11 +327,11 @@ export async function saveOnboardingProfileAction(
                 ),
               },
             ],
-          };
+          });
         }
       }
     } else if (!deterministicValidation.isMeaningful) {
-      return {
+      return fail({
         error: tr(locale, "Please refine the medical condition text.", "יש לדייק את תיאור המצב הרפואי."),
         fieldErrors: [
           {
@@ -346,7 +343,7 @@ export async function saveOnboardingProfileAction(
             ),
           },
         ],
-      };
+      });
     }
   }
 
@@ -358,14 +355,14 @@ export async function saveOnboardingProfileAction(
       try {
         const aiValidation = await evaluateProfileTextWithAi({
           config: aiConfig,
-          userId: user.id,
+          userId,
           field: "medication",
           text: medicationText,
           locale,
         });
 
         if (!aiValidation.isRelevant) {
-          return {
+          return fail({
             error: tr(locale, "Please clarify your medication details.", "יש לדייק את פרטי התרופות."),
             fieldErrors: [
               {
@@ -386,16 +383,16 @@ export async function saveOnboardingProfileAction(
                 }),
               },
             ],
-          };
+          });
         }
       } catch (error) {
         logServerError("onboarding.saveProfile", "ai_medication_validation_failed", {
-          userId: user.id,
+          userId,
           error: error instanceof Error ? error.message : String(error),
         });
 
         if (!deterministicValidation.isMeaningful) {
-          return {
+          return fail({
             error: tr(locale, "Please refine medication details and try again.", "יש לדייק את פרטי התרופות ולנסות שוב."),
             fieldErrors: [
               {
@@ -407,11 +404,11 @@ export async function saveOnboardingProfileAction(
                 ),
               },
             ],
-          };
+          });
         }
       }
     } else if (!deterministicValidation.isMeaningful) {
-      return {
+      return fail({
         error: tr(locale, "Please refine medication details.", "יש לדייק את פרטי התרופות."),
         fieldErrors: [
           {
@@ -423,12 +420,12 @@ export async function saveOnboardingProfileAction(
             ),
           },
         ],
-      };
+      });
     }
   }
 
   if (!acceptedAiExtraction) {
-    return {
+    return fail({
       error: tr(
         locale,
         "Consent is required before saving your profile.",
@@ -444,8 +441,31 @@ export async function saveOnboardingProfileAction(
           ),
         },
       ],
-    };
+    });
   }
+
+  return { ok: true as const, parsed, payload, aiConfig, acceptedAiExtraction };
+}
+
+export async function saveOnboardingProfileAction(
+  _prevState: OnboardingActionState,
+  formData: FormData,
+): Promise<OnboardingActionState> {
+  const locale = requestLocale(formData);
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/sign-in");
+  }
+
+  const result = await validateOnboardingSubmission(formData, locale, user.id);
+  if (!result.ok) {
+    return result.state;
+  }
+  const { parsed, payload, aiConfig, acceptedAiExtraction } = result;
 
   const { error } = await supabase
     .from("user_profile")
@@ -535,4 +555,35 @@ export async function saveOnboardingProfileAction(
   // just-entered name.
   revalidateNavChrome();
   return { success: true };
+}
+
+/** Admin-only test run of the sign-up wizard (TCK-168): runs the exact
+ * same validation as saveOnboardingProfileAction, but saves nothing - no
+ * profile/consent rows, no locale cookie, no revalidation. */
+export async function previewOnboardingProfileAction(
+  _prevState: OnboardingActionState,
+  formData: FormData,
+): Promise<OnboardingActionState> {
+  const locale = requestLocale(formData);
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/sign-in");
+  }
+
+  if (!(await isCurrentUserAdmin(supabase, user.id))) {
+    return { error: tr(locale, "Only admins can run a test sign-up.", "רק מנהלים יכולים להריץ הרשמת בדיקה.") };
+  }
+
+  const result = await validateOnboardingSubmission(formData, locale, user.id);
+  if (!result.ok) {
+    return result.state;
+  }
+
+  const previewProfile: Record<string, unknown> = { ...result.payload };
+  delete previewProfile.user_id;
+  return { success: true, previewProfile };
 }

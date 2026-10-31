@@ -432,6 +432,13 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
               change, just a way in. */}
           {/* Admin view only (this table is only rendered for admins; addPilotUserAction checks again on the server). */}
           <AddUserDialog locale={locale} />
+          {/* TCK-168: admin test run of the sign-up wizard; saves nothing. */}
+          <Link
+            href="/app/onboarding/preview"
+            className="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-transparent dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            {tr(locale, "Test sign-up flow", "בדיקת תהליך ההרשמה")}
+          </Link>
           <Link
             href="/app/tickets/new"
             className="inline-flex items-center justify-center rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
