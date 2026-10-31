@@ -10,7 +10,7 @@ import { applyActiveTargetsAction, clearTargetsReviewPendingAction, negotiateAct
 import { routeChatMessageAction, type ChatRouterResult } from "@/app/app/chat/actions";
 import { submitTicketFromChatAction } from "@/app/app/tickets/chat-actions";
 import { SAVE_TOAST_DURATION_MS } from "@/components/daily-report-form";
-import { ChatOverlay } from "@/components/chat-overlay";
+import { ChatOverlay, leaveChatHistoryEntryForNavigation } from "@/components/chat-overlay";
 import { DailyReportSuccessToast } from "@/components/daily-report-success-toast";
 import { formatProfileDiffText, ProfileDiffValue } from "@/components/profile-diff-value";
 import { SavedListMatchChips } from "@/components/saved-list-match-chips";
@@ -169,6 +169,10 @@ export function GlobalChatWidget({
   const [pendingClarification, setPendingClarification] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  // TCK-170: the bubble is hidden while the chat is open and comes back only
+  // once ChatOverlay's exit animation has finished (onExited).
+  const [isOverlayExited, setIsOverlayExited] = useState(true);
+  if (isChatOpen && isOverlayExited) setIsOverlayExited(false);
   const [hasUnread, setHasUnread] = useState(Boolean(pendingReviewChanges));
   // Phase E's saved-list popover - fetched lazily (null = not loaded yet)
   // the first time it's opened, not on mount, since most chat sessions
@@ -217,6 +221,9 @@ export function GlobalChatWidget({
   }
 
   if (pathname?.startsWith("/app/daily-report") || pathname?.startsWith("/app/onboarding")) {
+    // TCK-170: the overlay unmounts here mid-exit (onExited never fires), so
+    // mark it exited or the bubble would stay hidden on the next screen.
+    if (!isChatOpen && !isOverlayExited) setIsOverlayExited(true);
     return null;
   }
 
@@ -233,7 +240,8 @@ export function GlobalChatWidget({
    * never clears out from under something still awaiting the user's own
    * answer/decision (a clarifying question, or any pending
    * profile/ticket/review card still showing its buttons). */
-  /** Shared by the bubble's X, a tap on the scrim and Escape (TCK-161).
+  /** Shared by the header X, a tap on the scrim and Escape (TCK-161), plus
+   * Back and a swipe down on the header (TCK-170).
    * TCK-93: closing (not opening) an already-finished conversation resets
    * it - see hasUnresolvedWork's own comment. */
   function closeChat() {
@@ -278,8 +286,11 @@ export function GlobalChatWidget({
       // Storage can throw (private browsing, quota) - the handoff is a
       // convenience; the full chat still works fine standalone.
     }
+    // TCK-170: replace (not push) swaps out the open chat's Back entry, so
+    // Back from Daily Report returns to the screen the chat was opened on.
+    leaveChatHistoryEntryForNavigation();
     setIsChatOpen(false);
-    router.push("/app/daily-report");
+    router.replace("/app/daily-report");
   }
 
   function updateReviewPromptStatus(index: number, status: "answered") {
@@ -638,14 +649,13 @@ export function GlobalChatWidget({
           RTL-independence as the app's other floating chat bubbles
           (daily-report-chat-panel.tsx, the old targets-page-client.tsx
           bubble this replaces) - see those files' own comments for the
-          calc() and underscore-in-calc details. */}
+          calc() and underscore-in-calc details. TCK-170: only opens, and
+          is not rendered while the chat is open or still sliding closed -
+          the X lives in the chat's header instead. */}
+      {!isChatOpen && isOverlayExited ? (
       <button
         type="button"
         onClick={() => {
-          if (isChatOpen) {
-            closeChat();
-            return;
-          }
           void loadSavedItemsOnce();
           setIsChatOpen(true);
           setHasUnread(false);
@@ -678,30 +688,44 @@ export function GlobalChatWidget({
         aria-label={tr(locale, "Chat with Daffy", "צ'אט עם דפי")}
         className="fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom)+0.75rem)] right-[calc(12.5vw_-_2rem)] z-50 flex h-14 w-14 items-center justify-center rounded-full bg-teal-700 text-white shadow-lg hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
       >
-        {isChatOpen ? (
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="M6 6l12 12" /></svg>
-        ) : (
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" /></svg>
-        )}
-        {hasUnread && !isChatOpen ? (
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" /></svg>
+        {hasUnread ? (
           <span className="absolute end-0 top-0 h-3.5 w-3.5 rounded-full border-2 border-white bg-rose-500 dark:border-slate-900" />
         ) : null}
       </button>
+      ) : null}
 
       <ChatOverlay
         isOpen={isChatOpen}
         onClose={closeChat}
+        animated
+        onExited={() => setIsOverlayExited(true)}
+        closeOnBack
+        swipeToClose
+        keyboardFirst
+        closeOnOutside={!isSavedListOpen}
         closeOnEscape={!isSavedListOpen}
         ariaLabel={tr(locale, "Chat with Daffy — your AI coach", "צ'אט עם דפי - מאמנת ה-AI שלך")}
         className="fixed bottom-[calc(8rem+env(safe-area-inset-bottom))] right-[calc(12.5vw_-_2rem)] flex max-h-[70vh] w-[calc(100vw-2rem)] max-w-sm flex-col overflow-hidden rounded-xl bg-white dark:bg-slate-900"
       >
-          <div className="chat-overlay-header flex items-center gap-2 px-4 py-2.5">
-            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-teal-700 text-white dark:bg-teal-600">
+          <div data-chat-drag-handle className="chat-overlay-header flex items-center gap-2 px-4 py-2.5">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-teal-700 text-white dark:bg-teal-600">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" /></svg>
             </span>
-            <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+            <p className="flex-1 text-sm font-semibold text-slate-900 dark:text-slate-100">
               {tr(locale, "Chat with Daffy — your AI coach", "צ'אט עם דפי - מאמנת ה-AI שלך")}
             </p>
+            {/* TCK-170: same header X as Daily Report's chat (replaces the
+                bubble's old X); after:-inset-2 makes the tap target 44px. */}
+            <button
+              type="button"
+              onClick={closeChat}
+              aria-label={tr(locale, "Close chat", "סגירת הצ'אט")}
+              title={tr(locale, "Close chat", "סגירת הצ'אט")}
+              className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-teal-700 after:absolute after:-inset-2 after:content-[''] hover:bg-teal-50 dark:text-teal-400 dark:hover:bg-teal-950/40"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 6 6 18" /><path d="M6 6l12 12" /></svg>
+            </button>
           </div>
           <div className="min-h-[6rem] flex-1 space-y-2.5 overflow-y-auto p-3">
             {messages.length === 0 ? (
@@ -808,7 +832,12 @@ export function GlobalChatWidget({
                 {message.helpLink ? (
                   <Link
                     href={message.helpLink}
-                    onClick={() => setIsChatOpen(false)}
+                    // TCK-170: replace swaps out the open chat's Back entry.
+                    replace
+                    onClick={() => {
+                      leaveChatHistoryEntryForNavigation();
+                      setIsChatOpen(false);
+                    }}
                     className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold text-teal-700 hover:underline dark:text-teal-400"
                   >
                     {tr(locale, "Go to", "מעבר אל")} {labelForHelpLink(message.helpLink, locale)} →
@@ -850,7 +879,11 @@ export function GlobalChatWidget({
                         {message.pendingTicketDraft.ticketId ? (
                           <Link
                             href={`/app/tickets/${message.pendingTicketDraft.ticketId}`}
-                            onClick={() => setIsChatOpen(false)}
+                            replace
+                            onClick={() => {
+                              leaveChatHistoryEntryForNavigation();
+                              setIsChatOpen(false);
+                            }}
                             className="text-xs font-semibold text-teal-700 hover:underline dark:text-teal-400"
                           >
                             {tr(locale, "View ticket →", "צפה בפנייה →")}
