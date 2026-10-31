@@ -1638,7 +1638,7 @@ export function OnboardingProfileForm({
           ) : null}
 
           <div data-field="exercise_modalities">
-            <span className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Exercise modality", "סוג אימון")}</span>
+            <span className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Regular workouts", "אימונים קבועים")}</span>
             <div className="flex flex-wrap gap-2">
               {exerciseModalityOptions.map((value) => {
                 const label =
