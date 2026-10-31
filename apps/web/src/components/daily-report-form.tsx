@@ -8,6 +8,7 @@ import {
   saveDailyReportAction,
   type DailyReportActionState,
 } from "@/app/app/daily-report/actions";
+import { popChatHistoryEntry } from "@/components/chat-overlay";
 import { DailyReportChatPanel, type DailyReportDefaultItem } from "@/components/daily-report-chat-panel";
 import { DailyReportDefaultsPicker, type SelectedSavedListItem } from "@/components/daily-report-defaults-picker";
 import { DailyReportGoalBars, type RingMetric } from "@/components/daily-report-goal-bars";
@@ -747,7 +748,9 @@ export function DailyReportForm({
         if (pendingEditExit.date) params.set("date", pendingEditExit.date);
         if (pendingEditExit.highlightId) params.set("highlight", pendingEditExit.highlightId);
         const query = params.toString();
-        router.replace(`/app/daily-report${query ? `?${query}` : ""}`, { scroll: false });
+        // TCK-170: if the chat is open, close it and pop its Back entry
+        // first, so this replaces the real ?edit= entry as before.
+        popChatHistoryEntry(() => router.replace(`/app/daily-report${query ? `?${query}` : ""}`, { scroll: false }));
       }
     }, SAVE_TOAST_DURATION_MS);
     return () => clearTimeout(timeoutId);

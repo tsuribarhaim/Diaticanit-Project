@@ -419,7 +419,12 @@ export function DailyReportChatPanel({
   // TCK-125: also starts open right after an "Add to log" save, which
   // remounts this panel fresh - back on the welcome screen, not closed.
   const [isOpen, setIsOpen] = useState(() => isEditing || Boolean(addedToLogNotice));
-  // TCK-161: shared by the bubble's X, a tap on the scrim and Escape.
+  // TCK-170: the bubble is hidden while the chat is open and comes back only
+  // once ChatOverlay's exit animation has finished (onExited), so the two
+  // are never shown together and never both hidden once closed.
+  const [isOverlayExited, setIsOverlayExited] = useState(!isOpen);
+  if (isOpen && isOverlayExited) setIsOverlayExited(false);
+  // TCK-161: shared by the header X, a tap on the scrim and Escape.
   // TCK-158: also removes the goal-bar explanation bubbles (never part of a
   // report), so the next chat starts clean; the user's own conversation is kept.
   function closeChat() {
@@ -1140,7 +1145,7 @@ export function DailyReportChatPanel({
   }
 
   /** The missing fourth option, alongside Save, New chat (clears, stays
-   * open), and the floating bubble's X (closes, keeps the conversation (goal-bar explanations are removed)) - "forget about it and
+   * open), and the header X (closes, keeps the conversation (goal-bar explanations are removed)) - "forget about it and
    * close", reported as absent once those other three existed. Shares the
    * exact same confirm dialog and clear logic as New chat - the only
    * difference is closeAfterClear, which tells confirmClearChat to also
@@ -1402,7 +1407,7 @@ export function DailyReportChatPanel({
           floating size everywhere (see the bottom of this file), not a
           full-width desktop card plus a separately-shaped mobile sheet
           that each needed their own header treatment. */}
-      <div className="chat-overlay-header flex items-center gap-2 px-4 py-2.5">
+      <div data-chat-drag-handle className="chat-overlay-header flex items-center gap-2 px-4 py-2.5">
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-teal-700 text-white dark:bg-teal-600">
           <ChatBubbleBadgeIcon className="h-3 w-3" />
         </span>
@@ -1413,6 +1418,22 @@ export function DailyReportChatPanel({
             actions (both clear, after confirming), so a mis-tap here is
             worth avoiding the same way. */}
         <div className="flex shrink-0 items-center gap-3.5">
+          {/* The missing fourth option, alongside Save, New chat (clears,
+              stays open), and the header X (closes, keeps the
+              conversation (goal-bar explanations are removed)) - "forget about it and close". Grouped next to
+              New chat (both are "clear the conversation" variants, just
+              with a different outcome afterward). TCK-170: DOM order is
+              trash, New chat, X, so in Hebrew it reads X, refresh, trash
+              from the left, with the X kept furthest from the trash. */}
+          <button
+            type="button"
+            onClick={handleDiscardAndCloseClick}
+            aria-label={tr(locale, "Discard and close", "התעלמות וסגירה")}
+            title={tr(locale, "Discard and close", "התעלמות וסגירה")}
+            className="flex h-7 w-7 items-center justify-center rounded-full text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/40"
+          >
+            <TrashIcon className="h-4 w-4" />
+          </button>
           <button
             type="button"
             onClick={handleNewChatClick}
@@ -1422,21 +1443,17 @@ export function DailyReportChatPanel({
           >
             <NewChatIcon className="h-4 w-4" />
           </button>
-          {/* The missing fourth option, alongside Save, New chat (clears,
-              stays open), and the floating bubble's X (closes, keeps the
-              conversation (goal-bar explanations are removed)) - "forget about it and close". Grouped next to
-              New chat (both are "clear the conversation" variants, just
-              with a different outcome afterward). Closing without clearing
-              is done through the floating bubble's X, not a header
-              button (TCK-89 removed the duplicate Minimize). */}
+          {/* TCK-170: closes without clearing (replaces the floating
+              bubble's old X). after:-inset-2 grows the tap target to 44px
+              without growing the header; gap-3.5 keeps it off New chat. */}
           <button
             type="button"
-            onClick={handleDiscardAndCloseClick}
-            aria-label={tr(locale, "Discard and close", "התעלמות וסגירה")}
-            title={tr(locale, "Discard and close", "התעלמות וסגירה")}
-            className="flex h-7 w-7 items-center justify-center rounded-full text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/40"
+            onClick={closeChat}
+            aria-label={tr(locale, "Close chat", "סגירת הצ'אט")}
+            title={tr(locale, "Close chat", "סגירת הצ'אט")}
+            className="relative flex h-7 w-7 items-center justify-center rounded-full text-teal-700 after:absolute after:-inset-2 after:content-[''] hover:bg-teal-50 dark:text-teal-400 dark:hover:bg-teal-950/40"
           >
-            <TrashIcon className="h-4 w-4" />
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 6 6 18" /><path d="M6 6l12 12" /></svg>
           </button>
         </div>
       </div>
@@ -1882,8 +1899,9 @@ export function DailyReportChatPanel({
           same small surface instead of an always-visible full-width
           desktop card or a large percentage-of-viewport mobile sheet. Like
           that widget, it sits over the shared dimming scrim
-          (chat-overlay.css, via ChatOverlay) and closes from the bubble's
-          X, a tap on the scrim, or Escape. */}
+          (chat-overlay.css, via ChatOverlay) and closes from the header
+          X, a tap on the scrim, Escape, Back, or a swipe down on the
+          header (TCK-170). */}
       {isMounted && createPortal(
         // dir set explicitly here - the app only applies dir="rtl"/"ltr"
         // on a wrapper <div> inside app/app/layout.tsx, not on
@@ -1931,25 +1949,31 @@ export function DailyReportChatPanel({
               handling as the global chat widget's own bubble (see that
               component's own comment for the calc()/underscore details) -
               deliberately NOT locale-mirrored, matching every other
-              floating chat bubble in the app. */}
-          <button
-            type="button"
-            onClick={() => (isOpen ? closeChat() : setIsOpen(true))}
-            aria-label={tr(locale, isOpen ? "Close chat" : "Open chat", isOpen ? "סגירת הצ'אט" : "פתיחת הצ'אט")}
-            className="fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom)+0.75rem)] right-[calc(12.5vw_-_2rem)] z-50 flex h-14 w-14 items-center justify-center rounded-full bg-teal-700 text-white shadow-lg hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
-          >
-            {isOpen ? (
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 6 6 18" /><path d="M6 6l12 12" /></svg>
-            ) : (
+              floating chat bubble in the app. TCK-170: only opens, and is
+              not rendered at all while the chat is open or still sliding
+              closed - the X lives in the chat's header instead. */}
+          {!isOpen && isOverlayExited ? (
+            <button
+              type="button"
+              onClick={() => setIsOpen(true)}
+              aria-label={tr(locale, "Open chat", "פתיחת הצ'אט")}
+              className="fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom)+0.75rem)] right-[calc(12.5vw_-_2rem)] z-50 flex h-14 w-14 items-center justify-center rounded-full bg-teal-700 text-white shadow-lg hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+            >
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
               </svg>
-            )}
-          </button>
+            </button>
+          ) : null}
 
           <ChatOverlay
             isOpen={isOpen}
             onClose={closeChat}
+            animated
+            onExited={() => setIsOverlayExited(true)}
+            closeOnBack
+            swipeToClose
+            keyboardFirst
+            closeOnOutside={!isSavedListOpen && !pendingClearConfirm}
             closeOnEscape={!isSavedListOpen && !pendingClearConfirm}
             ariaLabel={tr(locale, "Chat about your day", "צ'אט על היום שלך")}
             className="fixed bottom-[calc(8rem+env(safe-area-inset-bottom))] right-[calc(12.5vw_-_2rem)] flex max-h-[70vh] w-[calc(100vw-2rem)] max-w-sm flex-col overflow-hidden rounded-xl bg-white dark:bg-slate-900"
