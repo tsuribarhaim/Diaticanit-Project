@@ -22,3 +22,13 @@
 .chat-overlay-scrim { position: fixed; inset: 0; z-index: 55; background: var(--chat-scrim); }
 .chat-overlay-panel { z-index: 56; border: 1.5px solid var(--chat-border); box-shadow: 0 0 0 4px var(--chat-glow), 0 25px 50px -12px rgba(0, 0, 0, 0.25); }
 .chat-overlay-header { background: var(--chat-header-bg); border-bottom: 1.5px solid var(--chat-border); }
+/* TCK-170: opt-in slide/fade (ChatOverlay's `animated`), and the header that
+ * starts a swipe-down close (`swipeToClose`). */
+.chat-overlay-scrim--animated { opacity: 0; transition: opacity 220ms ease-out; }
+.chat-overlay-scrim--animated.is-open { opacity: 1; }
+.chat-overlay-panel--animated { opacity: 0; transform: translateY(16px); transition: transform 220ms ease-out, opacity 220ms ease-out; }
+.chat-overlay-panel--animated.is-open { opacity: 1; transform: translateY(0); }
+.chat-overlay-panel--swipe [data-chat-drag-handle] { touch-action: none; }
+@media (prefers-reduced-motion: reduce) {
+  .chat-overlay-scrim--animated, .chat-overlay-panel--animated { transition: none; opacity: 1; transform: none; }
+}
