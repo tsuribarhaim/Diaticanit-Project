@@ -265,9 +265,9 @@ export function ProfileHeaderCard({
           href="/app/settings"
           aria-label={tr(locale, "Settings & Support", "הגדרות ותמיכה")}
           title={tr(locale, "Settings & Support", "הגדרות ותמיכה")}
-          className="flex h-11 w-11 items-center justify-center rounded-full text-slate-500 outline-none hover:bg-slate-100 hover:text-slate-800 focus-visible:ring-2 focus-visible:ring-teal-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-transparent text-slate-600 outline-none transition hover:bg-slate-100 hover:text-slate-900 active:bg-slate-200 active:text-slate-900 focus-visible:ring-2 focus-visible:ring-teal-600 focus-visible:ring-offset-2 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100 dark:active:bg-slate-700 dark:focus-visible:ring-offset-slate-900"
         >
-          <GearIcon className="h-5 w-5" />
+          <GearIcon className="h-6 w-6" />
         </NavLink>
       </div>
       <div className="relative">
