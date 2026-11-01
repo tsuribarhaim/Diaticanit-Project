@@ -797,6 +797,43 @@ export async function updateIdentityAction(_prevState: QuickEditState, formData:
   });
 }
 
+/** Date of birth on its own - the Profile page's Age tile editor. Same
+ * validation as updateIdentityAction's date_of_birth. */
+export async function updateDateOfBirthAction(_prevState: QuickEditState, formData: FormData): Promise<QuickEditState> {
+  const locale = requestLocale(formData);
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/sign-in");
+  }
+
+  const dateOfBirth = getFormString(formData, "date_of_birth").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth)) {
+    return { error: tr(locale, "Enter a valid date of birth.", "יש להזין תאריך לידה תקין.") };
+  }
+
+  const calculatedAge = calculateAgeYears(dateOfBirth);
+  if (calculatedAge == null) {
+    return {
+      error: tr(
+        locale,
+        "Date of birth must produce a valid age between 0 and 120.",
+        "תאריך הלידה חייב להפיק גיל תקין בין 0 ל-120.",
+      ),
+    };
+  }
+
+  return applyProfilePatchAndFlagTargets({
+    supabase,
+    userId: user.id,
+    locale,
+    patch: { date_of_birth: dateOfBirth, age: calculatedAge },
+  });
+}
+
 type SimpleFieldConfig = {
   column: string;
   schema: z.ZodType;

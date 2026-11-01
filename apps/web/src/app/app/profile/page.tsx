@@ -15,8 +15,17 @@ import {
 } from "@/components/profile-health-detail-rows";
 import { LocalDateTime } from "@/components/local-time";
 import { PendingSubmitButton } from "@/components/pending-submit-button";
-import { ProfileHeaderCard } from "@/components/profile-header-card";
-import { ExpandableRow, ProfileRow, ProfileRowGroup, ProfileSectionTitle, QuickBooleanFieldRow, QuickScalarFieldRow } from "@/components/profile-quick-edit";
+import { DateOfBirthTile, ProfileHeaderCard } from "@/components/profile-header-card";
+import {
+  ExpandableRow,
+  ProfileRow,
+  ProfileRowGroup,
+  ProfileSectionTitle,
+  ProfileTile,
+  QuickBooleanFieldRow,
+  QuickScalarFieldRow,
+  StartingWeightTile,
+} from "@/components/profile-quick-edit";
 import { TargetsStaleModal } from "@/components/targets-stale-modal";
 import { resolveUserGenderForAddressing } from "@/lib/ai/persona";
 import { DEFAULT_AVATAR_COLOR, isAvatarColorId } from "@/lib/avatar-colors";
@@ -35,6 +44,7 @@ import {
   formatPregnancyLactationStatus,
   normalizeLocale,
   tr,
+  trGendered,
 } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 import { computeProfileDiff, parseProfileSnapshot, type ProfileForTargets } from "@/lib/targets";
@@ -174,8 +184,17 @@ export default async function ProfilePage({
     ? (profile.exercise_other_activities as Array<{ name: string; days_per_week: number; minutes_per_session: number }>)
     : [];
 
+  const addLabel = trGendered(locale, userGender, "+ Add", "+ הוסף", "+ הוסיפי");
+  const bmiValue = profile.bmi != null ? profile.bmi.toFixed(1) : tr(locale, "n/a", "לא זמין");
+  const documentCount = documents?.length ?? 0;
+  const bloodTestsValue =
+    documentCount === 0 ? addLabel : documentCount === 1 ? tr(locale, "1 test", "בדיקה אחת") : tr(locale, `${documentCount} tests`, `${documentCount} בדיקות`);
+
+  // Bottom padding clears the floating chat button (0.75rem offset + 3.5rem
+  // height + 1rem) so the last row scrolls above it - the layout already
+  // reserves the bottom nav's height on mobile, nav-desktop reserves nothing.
   return (
-    <main dir="auto" className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-5 px-4 py-8 sm:px-6 sm:py-10">
+    <main dir="auto" className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-5 px-4 py-8 pb-[5.25rem] sm:px-6 sm:py-10 sm:pb-[5.25rem] nav-desktop:pb-[8.5rem]">
       {targetsStaleChanges ? <TargetsStaleModal locale={locale} changes={targetsStaleChanges} dismissHref="/app/profile" userGender={userGender} /> : null}
 
       <ProfileHeaderCard
@@ -189,14 +208,11 @@ export default async function ProfilePage({
       />
 
       <div>
-        <ProfileSectionTitle>{tr(locale, "Personal Attributes & Biometrics", "מדדים אישיים וביומטריים")}</ProfileSectionTitle>
-        <ProfileRowGroup>
-          <ProfileRow
-            label={tr(locale, "Age", "גיל")}
-            value={profile.calculated_age_years != null ? String(profile.calculated_age_years) : tr(locale, "n/a", "לא זמין")}
-            caption={tr(locale, "From your date of birth - edit it above", "מתאריך הלידה שלך - ניתן לערוך למעלה")}
-          />
+        <ProfileSectionTitle>{tr(locale, "Personal metrics", "מדדים אישיים")}</ProfileSectionTitle>
+        <div className="grid grid-cols-4 gap-2">
+          <DateOfBirthTile locale={locale} ageYears={profile.calculated_age_years ?? null} dateOfBirth={profile.date_of_birth ?? ""} />
           <QuickScalarFieldRow
+            display="tile"
             locale={locale}
             label={tr(locale, "Sex", "מין")}
             field="biological_sex"
@@ -206,62 +222,70 @@ export default async function ProfilePage({
             options={biologicalSexOptions.map((option) => ({ value: option, label: formatGender(option, locale) }))}
           />
           <QuickScalarFieldRow
+            display="tile"
             locale={locale}
             label={tr(locale, "Height", "גובה")}
             field="height_cm"
             value={String(profile.height_cm ?? "")}
             unit={formatMeasurementUnit("cm", locale)}
+            ariaValue={profile.height_cm != null ? tr(locale, `${profile.height_cm} centimeters`, `${profile.height_cm} סנטימטר`) : undefined}
             kind="number"
             min={80}
             max={250}
           />
           <QuickScalarFieldRow
+            display="tile"
             locale={locale}
             label={tr(locale, "Current weight", "משקל נוכחי")}
             field="weight_kg"
             value={String(profile.weight_kg ?? "")}
             unit={formatMeasurementUnit("kg", locale)}
-            caption={profile.bmi != null ? `${tr(locale, "BMI", "BMI")} ${profile.bmi.toFixed(1)}` : undefined}
+            ariaValue={profile.weight_kg != null ? tr(locale, `${profile.weight_kg} kilograms`, `${profile.weight_kg} קילוגרם`) : undefined}
             kind="number"
             min={20}
             max={400}
             step={0.1}
           />
-          <ProfileRow
-            label={tr(locale, "Starting weight", "משקל התחלתי")}
-            value={earliestWeightReport?.reported_weight_kg != null ? `${earliestWeightReport.reported_weight_kg} ${formatMeasurementUnit("kg", locale)}` : tr(locale, "n/a", "לא זמין")}
-            caption={
-              earliestWeightReport?.report_at ? (
-                <>
-                  {tr(locale, "From your first Daily Report entry, ", "מהדיווח היומי הראשון שלך, ")}
-                  <LocalDateTime value={earliestWeightReport.report_at} locale={locale} />
-                </>
-              ) : (
-                tr(locale, "Log a weight in Daily Report to set this", "רשמו משקל בדיווח היומי כדי להגדיר זאת")
-              )
-            }
-          />
-          <QuickScalarFieldRow
+        </div>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <StartingWeightTile
             locale={locale}
-            label={tr(locale, "Activity level", "רמת פעילות")}
-            field="activity_level"
-            value={profile.activity_level}
-            displayValue={formatActivityLevel(profile.activity_level, locale)}
-            kind="select"
-            options={activityLevelOptions.map((option) => ({ value: option, label: formatActivityLevel(option, locale) }))}
+            value={earliestWeightReport?.reported_weight_kg != null ? `${earliestWeightReport.reported_weight_kg} ${formatMeasurementUnit("kg", locale)}` : null}
+            reportAt={earliestWeightReport?.report_at ?? null}
           />
-        </ProfileRowGroup>
+          <ProfileTile
+            label="BMI"
+            value={bmiValue}
+            sublabel={tr(locale, "Calculated automatically", "מחושב אוטומטית")}
+            ariaLabel={tr(locale, `BMI, ${bmiValue}, calculated automatically`, `BMI, ${bmiValue}, מחושב אוטומטית`)}
+          />
+        </div>
+        <div className="mt-2">
+          <ProfileRowGroup>
+            <QuickScalarFieldRow
+              locale={locale}
+              label={tr(locale, "Activity level", "רמת פעילות")}
+              field="activity_level"
+              value={profile.activity_level}
+              displayValue={formatActivityLevel(profile.activity_level, locale)}
+              kind="select"
+              options={activityLevelOptions.map((option) => ({ value: option, label: formatActivityLevel(option, locale) }))}
+            />
+            <QuickBooleanFieldRow
+              locale={locale}
+              label={tr(locale, "Hot climate / heavy sweating", "אקלים חם / הזעה מרובה")}
+              field="hot_climate_or_heavy_sweating"
+              checked={Boolean(profile.hot_climate_or_heavy_sweating)}
+            />
+          </ProfileRowGroup>
+        </div>
       </div>
 
       <div>
         <ProfileSectionTitle subtitle={tr(locale, "Feeds directly into how the AI generates and adjusts your daily targets.", "משפיע ישירות על האופן שבו ה-AI יוצר ומעדכן את היעדים היומיים שלך.")}>
-          {tr(locale, "Health & Target Preferences", "העדפות בריאות ויעדים")}
+          {tr(locale, "Goals & activity", "מטרות ופעילות")}
         </ProfileSectionTitle>
         <ProfileRowGroup>
-          <DietaryPreferencesRow
-            locale={locale}
-            dietaryPreferences={profile.dietary_preferences?.length ? profile.dietary_preferences : profile.dietary_preference ? [profile.dietary_preference] : []}
-          />
           <QuickScalarFieldRow
             locale={locale}
             label={tr(locale, "Weight goal", "מטרה משקלית")}
@@ -277,23 +301,42 @@ export default async function ProfilePage({
             markersDetails={profile.health_goals_markers_details ?? ""}
             otherDetails={profile.health_goals_other_details ?? ""}
           />
-          <AllergiesFieldRow locale={locale} allergies={profile.allergies ?? []} />
           <ExercisePreferencesRow
             locale={locale}
             modalities={profile.exercise_modalities ?? []}
             otherActivities={otherActivities}
             scheduleByModality={scheduleByModality}
           />
+        </ProfileRowGroup>
+      </div>
+
+      <div>
+        <ProfileSectionTitle>{tr(locale, "Food & preferences", "אוכל והעדפות")}</ProfileSectionTitle>
+        <ProfileRowGroup>
+          <DietaryPreferencesRow
+            locale={locale}
+            dietaryPreferences={profile.dietary_preferences?.length ? profile.dietary_preferences : profile.dietary_preference ? [profile.dietary_preference] : []}
+          />
+          <AllergiesFieldRow locale={locale} allergies={profile.allergies ?? []} userGender={userGender} />
+          <ProfileRow label={tr(locale, "Saved meals", "ארוחות שמורות")} href="/app/daily-report/defaults" />
+        </ProfileRowGroup>
+      </div>
+
+      <div>
+        <ProfileSectionTitle>{tr(locale, "Health", "בריאות")}</ProfileSectionTitle>
+        <ProfileRowGroup>
           <MedicalConditionsRow
             locale={locale}
             hasMedicalConditions={Boolean(profile.has_medical_conditions)}
             medicalConditions={profile.medical_conditions ?? []}
             medicalConditionsDetails={profile.medical_conditions_details ?? ""}
+            userGender={userGender}
           />
           <MedicationsRow
             locale={locale}
             hasRegularMedications={Boolean(profile.has_regular_medications)}
             regularMedicationsDetails={profile.regular_medications_details ?? ""}
+            userGender={userGender}
           />
           {profile.biological_sex === "female" ? (
             <QuickScalarFieldRow
@@ -317,25 +360,7 @@ export default async function ProfilePage({
               caffeine_cups_per_day: profile.caffeine_cups_per_day ?? "",
             }}
           />
-          <QuickBooleanFieldRow
-            locale={locale}
-            label={tr(locale, "Hot climate / heavy sweating", "אקלים חם / הזעה מרובה")}
-            field="hot_climate_or_heavy_sweating"
-            checked={Boolean(profile.hot_climate_or_heavy_sweating)}
-          />
-          <QuickScalarFieldRow
-            locale={locale}
-            label={tr(locale, "Additional information", "מידע נוסף")}
-            field="additional_information"
-            value={profile.additional_information ?? ""}
-            displayValue={profile.additional_information || tr(locale, "No", "לא")}
-            kind="textarea"
-            maxLength={1000}
-          />
-          <ExpandableRow
-            label={tr(locale, "Medical documents", "מסמכים רפואיים")}
-            value={documents?.length ? String(documents.length) : tr(locale, "None", "ללא")}
-          >
+          <ExpandableRow label={tr(locale, "Blood tests", "בדיקות דם")} value={bloodTestsValue}>
             <p className="mb-3 text-xs text-slate-600 dark:text-slate-400">
               {tr(
                 locale,
@@ -388,9 +413,21 @@ export default async function ProfilePage({
               </ul>
             )}
           </ExpandableRow>
-          <ProfileRow label={tr(locale, "Manage saved meals list", "ניהול רשימת ארוחות שמורות")} href="/app/daily-report/defaults" />
         </ProfileRowGroup>
       </div>
+
+      {/* Free-text note - shown and saved as-is, never parsed or moved. */}
+      <ProfileRowGroup>
+        <QuickScalarFieldRow
+          locale={locale}
+          label={tr(locale, "Additional information", "מידע נוסף")}
+          field="additional_information"
+          value={profile.additional_information ?? ""}
+          emptyValue={addLabel}
+          kind="textarea"
+          maxLength={1000}
+        />
+      </ProfileRowGroup>
 
       <form action={signOutAction}>
         <PendingSubmitButton

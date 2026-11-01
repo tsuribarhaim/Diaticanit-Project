@@ -22,7 +22,7 @@ import {
   smokingCigarettesRangeLabels,
   smokingStatusLabels,
 } from "@/components/lifestyle-habits-fields";
-import { ProfileRow, QuickEditSheet, SheetActions, useQuickEditSuccessEffect } from "@/components/profile-quick-edit";
+import { ProfileChipField, ProfileRow, QuickEditSheet, SheetActions, useQuickEditSuccessEffect } from "@/components/profile-quick-edit";
 import {
   dietaryPreferenceOptions,
   healthGoalOptions,
@@ -40,6 +40,7 @@ import {
   formatPreferredExerciseActivity,
   matchPreferredExerciseActivity,
   tr,
+  trGendered,
   type AppLocale,
 } from "@/lib/locale";
 
@@ -158,7 +159,13 @@ function pillButtonClass(active: boolean): string {
   }`;
 }
 
-export function AllergiesFieldRow({ locale, allergies }: { locale: AppLocale; allergies: string[] }) {
+type AddressedGender = "male" | "female" | null;
+
+function addLabelFor(locale: AppLocale, userGender: AddressedGender): string {
+  return trGendered(locale, userGender, "+ Add", "+ הוסף", "+ הוסיפי");
+}
+
+export function AllergiesFieldRow({ locale, allergies, userGender }: { locale: AppLocale; allergies: string[]; userGender: AddressedGender }) {
   const [isOpen, setIsOpen] = useState(false);
   const [draft, setDraft] = useState(allergies.join(", "));
   const [state, formAction] = useActionState(updateAllergiesAction, {} as QuickEditState);
@@ -167,10 +174,16 @@ export function AllergiesFieldRow({ locale, allergies }: { locale: AppLocale; al
 
   return (
     <>
-      <ProfileRow
+      <ProfileChipField
         label={tr(locale, "Allergies", "אלרגיות")}
-        value={allergies.length ? allergies.join(", ") : tr(locale, "No", "לא")}
-        onClick={() => {
+        safety
+        locale={locale}
+        tone="warning"
+        items={allergies}
+        chipAriaPrefix={tr(locale, "Allergy", "אלרגיה")}
+        emptyLabel={tr(locale, "No reported allergies", "אין אלרגיות מדווחות")}
+        addLabel={addLabelFor(locale, userGender)}
+        onOpen={() => {
           setDraft(allergies.join(", "));
           setIsOpen(true);
         }}
@@ -370,7 +383,7 @@ export function ExercisePreferencesRow({
 
   return (
     <>
-      <ProfileRow label={tr(locale, "Regular workouts", "אימונים קבועים")} value={summaryValue} onClick={openSheet} />
+      <ProfileRow label={tr(locale, "Preferred workout types", "סוגי אימון מועדפים")} value={summaryValue} onClick={openSheet} />
       <QuickEditSheet locale={locale} isOpen={isOpen} onClose={() => setIsOpen(false)} title={tr(locale, "Regular workouts", "אימונים קבועים")}>
         <form action={formAction} className="space-y-4">
           <input type="hidden" name="preferred_language" value={locale} />
@@ -493,11 +506,13 @@ export function MedicalConditionsRow({
   hasMedicalConditions,
   medicalConditions,
   medicalConditionsDetails,
+  userGender,
 }: {
   locale: AppLocale;
   hasMedicalConditions: boolean;
   medicalConditions: string[];
   medicalConditionsDetails: string;
+  userGender: AddressedGender;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [hasConditions, setHasConditions] = useState(hasMedicalConditions);
@@ -522,15 +537,24 @@ export function MedicalConditionsRow({
     });
   }
 
-  const summary = !hasMedicalConditions
-    ? tr(locale, "No", "לא")
-    : medicalConditions.includes("other") && medicalConditionsDetails
-      ? medicalConditionsDetails
-      : medicalConditions.map((condition) => formatMedicalCondition(condition, locale)).join(", ") || tr(locale, "Yes", "כן");
+  const conditionChips = medicalConditions.map((condition) =>
+    condition === "other" && medicalConditionsDetails.trim() ? medicalConditionsDetails.trim() : formatMedicalCondition(condition, locale),
+  );
+  const items = !hasMedicalConditions ? [] : conditionChips.length ? conditionChips : [tr(locale, "Yes", "כן")];
 
   return (
     <>
-      <ProfileRow label={tr(locale, "Medical conditions", "מצבים רפואיים")} value={summary} onClick={openSheet} />
+      <ProfileChipField
+        label={tr(locale, "Medical conditions", "מצבים רפואיים")}
+        safety
+        locale={locale}
+        tone="warning"
+        items={items}
+        chipAriaPrefix={tr(locale, "Medical condition", "מצב רפואי")}
+        emptyLabel={tr(locale, "No reported medical conditions", "אין מצבים רפואיים מדווחים")}
+        addLabel={addLabelFor(locale, userGender)}
+        onOpen={openSheet}
+      />
       <QuickEditSheet locale={locale} isOpen={isOpen} onClose={() => setIsOpen(false)} title={tr(locale, "Medical conditions", "מצבים רפואיים")}>
         <form action={formAction} className="space-y-3">
           <input type="hidden" name="preferred_language" value={locale} />
@@ -587,10 +611,12 @@ export function MedicationsRow({
   locale,
   hasRegularMedications,
   regularMedicationsDetails,
+  userGender,
 }: {
   locale: AppLocale;
   hasRegularMedications: boolean;
   regularMedicationsDetails: string;
+  userGender: AddressedGender;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [hasMeds, setHasMeds] = useState(hasRegularMedications);
@@ -599,18 +625,33 @@ export function MedicationsRow({
 
   useQuickEditSuccessEffect(state, isOpen, setIsOpen);
 
+  const title = tr(locale, "Regular medications & supplements", "תרופות ותוספות קבועות");
+  // Display-only split of the one free-text field - the editor below stays
+  // the same free-text box.
+  const splitDetails = regularMedicationsDetails
+    .split(/[,;\n،]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const items = !hasRegularMedications ? [] : splitDetails.length ? splitDetails : [tr(locale, "Yes, no details", "כן, ללא פירוט")];
+
   return (
     <>
-      <ProfileRow
-        label={tr(locale, "Regular medications", "תרופות קבועות")}
-        value={hasRegularMedications ? regularMedicationsDetails || tr(locale, "Yes", "כן") : tr(locale, "No", "לא")}
-        onClick={() => {
+      <ProfileChipField
+        label={title}
+        safety
+        locale={locale}
+        tone="warning"
+        items={items}
+        chipAriaPrefix={tr(locale, "Medication or supplement", "תרופה או תוסף")}
+        emptyLabel={tr(locale, "No reported medications or supplements", "אין תרופות או תוספות מדווחות")}
+        addLabel={addLabelFor(locale, userGender)}
+        onOpen={() => {
           setHasMeds(hasRegularMedications);
           setDetails(regularMedicationsDetails);
           setIsOpen(true);
         }}
       />
-      <QuickEditSheet locale={locale} isOpen={isOpen} onClose={() => setIsOpen(false)} title={tr(locale, "Regular medications", "תרופות קבועות")}>
+      <QuickEditSheet locale={locale} isOpen={isOpen} onClose={() => setIsOpen(false)} title={title}>
         <form action={formAction} className="space-y-3">
           <input type="hidden" name="preferred_language" value={locale} />
           <input type="hidden" name="has_regular_medications" value={hasMeds ? "yes" : "no"} />
@@ -629,7 +670,7 @@ export function MedicationsRow({
               onChange={(event) => setDetails(event.target.value)}
               rows={3}
               maxLength={2000}
-              placeholder={tr(locale, "Medication name, dosage, frequency", "שם התרופה, מינון, תדירות")}
+              placeholder={tr(locale, "Name of medication or supplement, dosage, frequency", "שם התרופה או התוסף, מינון, תדירות")}
               className={`${fieldInputClass} resize-none`}
             />
           ) : null}
