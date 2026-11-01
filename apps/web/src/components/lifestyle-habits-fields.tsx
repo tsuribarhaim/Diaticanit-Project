@@ -28,7 +28,7 @@ function pick(locale: AppLocale, fem: boolean, text: Gendered) {
 
 export const alcoholWeeklyFrequencyLabels: Record<(typeof alcoholWeeklyFrequencyOptions)[number], Gendered> = {
   none: { en: "Not at all", heF: "בכלל לא" },
-  rare: { en: "Rarely (less than once a month)", heF: "לעיתים רחוקות (פחות מפעם בחודש)" },
+  rare: { en: "Rarely", heF: "לעיתים רחוקות" },
   "1_3": { en: "1–3 drinks a week", heF: "1–3 משקאות בשבוע" },
   "4_7": { en: "4–7 drinks a week", heF: "4–7 משקאות בשבוע" },
   over_7: { en: "More than 7 drinks a week", heF: "יותר מ-7 משקאות בשבוע" },
