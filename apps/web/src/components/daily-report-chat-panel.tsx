@@ -40,8 +40,8 @@ type ChatMessage = {
    * as before off the free-text transcript. */
   breakdown?: DailyReportBreakdownItem[];
   /** TCK-125: this reply has items to save, so it gets the in-bubble "Add to
-   * log" button (only on the latest such reply). count = food + exercise
-   * items from the same breakdown call, or null when the reply had items but
+   * log" button (only on the latest such reply). count = number of breakdown
+   * items (food + exercise, TCK-174), or null when the reply had items but
    * the count couldn't be fetched (the button then shows without a count). */
   addToLog?: { count: number | null };
   /** TCK-160: true while getDailyReportBreakdownAction is still building this reply's item table - shows TypingDots under the bubble. UI only, never part of the transcript. */
@@ -1030,9 +1030,10 @@ export function DailyReportChatPanel({
       });
       void getDailyReportBreakdownAction(transcriptSoFar).then((result) => {
         // TCK-125: the same call also counts the items for "Add to log" -
-        // food + exercise. A failed call or a zero total still shows the
-        // button, just without a count, so the user can always save.
-        const total = "items" in result ? result.items.length + result.exerciseCount : 0;
+        // the items now include exercise too (TCK-174), so the count always
+        // equals the card's rows. A failed call or a zero total still shows
+        // the button, just without a count, so the user can always save.
+        const total = "items" in result ? result.items.length : 0;
         setMessages((previous) => {
           const next = [...previous];
           const lastIndex = next.length - 1;
@@ -1504,9 +1505,11 @@ export function DailyReportChatPanel({
                         }`}
                       >
                         <span className="font-semibold text-slate-800 dark:text-slate-200">{formatDefaultItemName(item.name, locale)}</span>
-                        <span className="text-slate-500 dark:text-slate-400">
-                          {item.quantity} {formatDefaultUnit(item.unit, locale, Number(item.quantity))}
-                        </span>
+                        {Number(item.quantity) > 0 ? (
+                          <span className="text-slate-500 dark:text-slate-400">
+                            {item.quantity} {formatDefaultUnit(item.unit, locale, Number(item.quantity))}
+                          </span>
+                        ) : null}
                       </div>
                     ))}
                   </div>

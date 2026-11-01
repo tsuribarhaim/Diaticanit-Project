@@ -470,7 +470,7 @@ export type DailyReportBreakdownItem = { name: string; quantity: number; unit: s
  */
 export async function getDailyReportBreakdownAction(
   transcriptText: string,
-): Promise<{ items: DailyReportBreakdownItem[]; exerciseCount: number } | { error: string }> {
+): Promise<{ items: DailyReportBreakdownItem[] } | { error: string }> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -495,7 +495,8 @@ export async function getDailyReportBreakdownAction(
   try {
     // Names and amounts only (lib/ai/daily-report.ts): the card never showed the nutrients the full reader wrote.
     const parsed = await extractDailyReportBreakdownWithAi({ config: aiConfig, reportText: transcriptText, locale });
-    return { items: parsed.foodItems, exerciseCount: parsed.exerciseCount };
+    // TCK-174: food first, then exercise - the card lists every item the "Add to log" button counts.
+    return { items: [...parsed.foodItems, ...parsed.exerciseItems] };
   } catch (error) {
     logServerError("dailyReport.getBreakdown", "parse_failed", {
       userId: user.id,
