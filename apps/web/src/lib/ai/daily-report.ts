@@ -374,13 +374,15 @@ export async function parseDailyReportWithAi({
 
 const aiBreakdownSchema = z.object({
   foodItems: z.array(z.object({ name: z.string().trim().max(200), quantity: z.coerce.number().nonnegative().catch(0), unit: z.string().trim().max(40).catch("") })).optional(),
-  exerciseItems: z.array(z.object({ name: z.string().trim().max(200) })).optional(),
+  // .catch(0) also covers a missing minutes (an older-style reply), which coerces to NaN.
+  exerciseItems: z.array(z.object({ name: z.string().trim().max(200), minutes: z.coerce.number().nonnegative().catch(0) })).optional(),
 });
 
 /**
  * The Daily report chat's breakdown card under a reply needs only each item's name and amount. The full reader above
  * also writes every nutrient of every item (most of its cost), which the card threw away - this asks for the items only,
  * with the same item and naming rules, so the card matches what the save (which still uses the full reader) logs.
+ * TCK-174: exercise items are returned too (name + minutes as unit "min"), so the card lists them alongside the food.
  */
 export async function extractDailyReportBreakdownWithAi({
   config,
@@ -390,7 +392,7 @@ export async function extractDailyReportBreakdownWithAi({
   config: AiExtractionConfig;
   reportText: string;
   locale?: AppLocale;
-}): Promise<{ foodItems: { name: string; quantity: number; unit: string }[]; exerciseCount: number }> {
+}): Promise<{ foodItems: { name: string; quantity: number; unit: string }[]; exerciseItems: { name: string; quantity: number; unit: string }[] }> {
   const languageName = locale === "he" ? "Hebrew" : "English";
   const contentText = await callAiChatCompletion({
     config,
@@ -402,7 +404,7 @@ export async function extractDailyReportBreakdownWithAi({
         role: "user",
         content: [
           "Return strict JSON with this shape:",
-          '{"foodItems":[{"name":"string","quantity":number,"unit":"string"}],"exerciseItems":[{"name":"string"}]}',
+          '{"foodItems":[{"name":"string","quantity":number,"unit":"string"}],"exerciseItems":[{"name":"string","minutes":number}]}',
           "Rules:",
           "- List every distinct food, drink, supplement and exercise item the log reports, with the quantity and unit as stated or a reasonable typical portion when it is not. No nutrition values.",
           ...itemNamingRules(languageName),
@@ -415,7 +417,7 @@ export async function extractDailyReportBreakdownWithAi({
   const parsed = aiBreakdownSchema.parse(parseJsonPayload(contentText));
   return {
     foodItems: (parsed.foodItems ?? []).filter((item) => item.name).map((item) => ({ name: item.name, quantity: item.quantity, unit: item.unit })),
-    exerciseCount: (parsed.exerciseItems ?? []).filter((item) => item.name).length,
+    exerciseItems: (parsed.exerciseItems ?? []).filter((item) => item.name).map((item) => ({ name: item.name, quantity: item.minutes, unit: "min" })),
   };
 }
 
