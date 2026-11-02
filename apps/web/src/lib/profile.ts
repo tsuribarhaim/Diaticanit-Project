@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+// locale.ts only imports a type back from this file, so there's no runtime cycle.
+import { matchPreferredExerciseActivity } from "@/lib/locale";
+
 export const activityLevelOptions = ["sedentary", "moderate", "active"] as const;
 export const preferredLanguageOptions = ["en", "he"] as const;
 export const biologicalSexOptions = ["male", "female"] as const;
@@ -1091,6 +1094,8 @@ export const onboardingProfileSchema = z.object({
     }
 
     data.exercise_other_activities.forEach((activity, index) => {
+      // The "Regular workouts" default activities are always meaningful (same as the profile action).
+      if (matchPreferredExerciseActivity(activity.name) !== null) return;
       const validationResult = validateExerciseOtherDetails(activity.name);
       if (!validationResult.isMeaningful) {
         ctx.addIssue({
