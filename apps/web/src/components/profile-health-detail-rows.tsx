@@ -317,7 +317,7 @@ export function MedicalConditionsRow({
         label={tr(locale, "Medical conditions", "מצבים רפואיים")}
         safety
         locale={locale}
-        tone="warning"
+        tone="neutral"
         items={items}
         chipAriaPrefix={tr(locale, "Medical condition", "מצב רפואי")}
         emptyLabel={tr(locale, "No reported medical conditions", "אין מצבים רפואיים מדווחים")}
@@ -409,7 +409,7 @@ export function MedicationsRow({
         label={title}
         safety
         locale={locale}
-        tone="warning"
+        tone="neutral"
         items={items}
         chipAriaPrefix={tr(locale, "Medication or supplement", "תרופה או תוסף")}
         emptyLabel={tr(locale, "No reported medications or supplements", "אין תרופות או תוספות מדווחות")}

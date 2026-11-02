@@ -556,7 +556,6 @@ function WarningIcon({ className }: { className: string }) {
 export function SafetyTag({ locale }: { locale: AppLocale }) {
   return (
     <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[11px] font-bold text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300">
-      <WarningIcon className="h-3 w-3" />
       <span aria-hidden="true">{tr(locale, "Safety", "בטיחות")}</span>
       <span className="sr-only">{tr(locale, "safety field", "שדה בטיחות")}</span>
     </span>
@@ -629,7 +628,7 @@ export function ProfileChipField({
           <button
             type="button"
             onClick={onOpen}
-            className="inline-flex min-h-11 items-center px-2 text-sm font-semibold text-teal-700 hover:underline dark:text-teal-400"
+            className={`${chipBase} border-teal-700 bg-white font-semibold text-teal-700 hover:bg-teal-50 dark:border-teal-400 dark:bg-slate-900 dark:text-teal-400 dark:hover:bg-teal-950/40`}
           >
             {addLabel}
           </button>
