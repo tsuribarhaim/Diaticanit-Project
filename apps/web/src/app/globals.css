@@ -1,18 +1,27 @@
 @import "tailwindcss";
 
 /*
- * Explicit, user-chosen light/dark theme (see the Theme row on Settings) -
- * not the OS's prefers-color-scheme, which used to drive this file's colors
- * automatically. Scoped to [data-theme="dark"] set on ProtectedAppLayout's
- * own wrapper div (see its own comment), the same element that already
- * carries lang/dir for locale - everything outside /app/* (sign-in, the
- * marketing page, this file's own `body`/footer in the root layout) stays
- * on the light palette below, matching how locale/RTL are already scoped.
- * `&:where(...)` is Tailwind v4's documented pattern for an attribute-driven
- * dark variant: the first branch matches the element carrying the attribute
- * itself, the second matches every descendant.
+ * User-chosen display mode (see the Display mode row on Settings, TCK-175):
+ * data-theme is "light", "dark" or "auto", set on ProtectedAppLayout's own
+ * wrapper div (see its own comment), the same element that already carries
+ * lang/dir for locale - everything outside /app/* (sign-in, the marketing
+ * page, this file's own `body`/footer in the root layout) stays on the light
+ * palette below, matching how locale/RTL are already scoped. The OS's
+ * prefers-color-scheme is used only for "auto"; an explicit light/dark choice
+ * always wins over it. `&:where(...)` is Tailwind v4's documented pattern for
+ * an attribute-driven dark variant: the first branch matches the element
+ * carrying the attribute itself, the second matches every descendant.
  */
-@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where([data-theme="auto"], [data-theme="auto"] *) {
+      @slot;
+    }
+  }
+}
 
 /*
  * Decides desktop top nav (AppNav) vs the mobile bottom tab bar
@@ -29,11 +38,42 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  /* TCK-175 display-mode switch tokens (dark values below). */
+  --brand: #0d9488;
+  --brand-soft: rgba(13, 148, 136, 0.13);
+  --icon-muted: #64748b;
+  --hairline: #cbd5e1;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --brand: #2dd4bf;
+  --brand-soft: rgba(45, 212, 191, 0.13);
+  --icon-muted: #94a3b8;
+  --hairline: #475569;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-theme="auto"] {
+    color-scheme: dark;
+    --brand: #2dd4bf;
+    --brand-soft: rgba(45, 212, 191, 0.13);
+    --icon-muted: #94a3b8;
+    --hairline: #475569;
+  }
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-brand: var(--brand);
+  --color-brand-soft: var(--brand-soft);
+  --color-icon-muted: var(--icon-muted);
+  --color-hairline: var(--hairline);
   --font-sans: "Segoe UI", "Noto Sans Hebrew", Arial, sans-serif;
   --font-mono: "Cascadia Mono", "Consolas", "Courier New", monospace;
 }
@@ -72,4 +112,16 @@ textarea::placeholder {
 :where([data-theme="dark"] input::placeholder, [data-theme="dark"] textarea::placeholder) {
   color: #94a3b8;
   opacity: 1;
+}
+
+@media (prefers-color-scheme: dark) {
+  :where([data-theme="auto"] input, [data-theme="auto"] textarea, [data-theme="auto"] select) {
+    color: #f1f5f9;
+    background-color: #1e293b;
+  }
+
+  :where([data-theme="auto"] input::placeholder, [data-theme="auto"] textarea::placeholder) {
+    color: #94a3b8;
+    opacity: 1;
+  }
 }

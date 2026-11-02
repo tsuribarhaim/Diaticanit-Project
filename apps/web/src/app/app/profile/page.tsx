@@ -244,7 +244,7 @@ export default async function ProfilePage({
             kind="number"
             min={20}
             max={400}
-            step={0.1}
+            oneDecimal
           />
         </div>
         <div className="mt-2 grid grid-cols-2 gap-2">

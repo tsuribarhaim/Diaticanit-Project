@@ -1808,7 +1808,7 @@ export function DailyReportChatPanel({
             // than leaving the compose box the one visibly broken
             // element after everything else in the panel is already
             // properly dark.
-            style={mirroredTheme === "dark" ? { backgroundColor: "#0f172a", color: "#f1f5f9" } : undefined}
+            style={mirroredTheme === "dark" || (mirroredTheme === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches) ? { backgroundColor: "#0f172a", color: "#f1f5f9" } : undefined}
           />
           <button
             type="button"

@@ -3,8 +3,9 @@
  * and Daily Report's own chat) - a full-screen dimming scrim, a turquoise
  * frame with a glow, and a tinted header, so the chat stands out from the
  * screen behind it. Used through components/chat-overlay.tsx; no screen
- * defines these styles itself. Dark values follow the same explicit
- * [data-theme="dark"] attribute as globals.css, not prefers-color-scheme.
+ * defines these styles itself. Dark values follow the same data-theme
+ * attribute as globals.css: always for "dark", and for "auto" only when the
+ * OS prefers dark (TCK-175).
  */
 :root {
   --chat-border: #0d9488;
@@ -17,6 +18,14 @@
   --chat-glow: rgba(20, 184, 166, 0.22);
   --chat-header-bg: rgba(20, 184, 166, 0.16);
   --chat-scrim: rgba(0, 0, 0, 0.6);
+}
+@media (prefers-color-scheme: dark) {
+  [data-theme="auto"] {
+    --chat-border: #2dd4bf;
+    --chat-glow: rgba(20, 184, 166, 0.22);
+    --chat-header-bg: rgba(20, 184, 166, 0.16);
+    --chat-scrim: rgba(0, 0, 0, 0.6);
+  }
 }
 /* Between the floating bubbles/bottom nav (z-30..50) and the dialogs that must stay above an open chat: saved-list picker, range confirm, TargetsStaleModal (z-60), clear-chat confirm (z-70), toasts (z-80). */
 .chat-overlay-scrim { position: fixed; inset: 0; z-index: 55; background: var(--chat-scrim); }

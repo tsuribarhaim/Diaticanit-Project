@@ -96,8 +96,11 @@ export function ProfileRow({
   rightIcon = "chevron",
   variant = "default",
   ariaValue,
+  labelWeight = "semibold",
 }: {
   label: string;
+  /** "normal" only for the Language and Display mode rows on Settings (TCK-175). */
+  labelWeight?: "semibold" | "normal";
   value?: string;
   /** Overrides `value` in the row's combined aria-label (e.g. a spelled-out
    * unit, "160 centimeters", where the visible value says "160 cm"). */
@@ -128,7 +131,7 @@ export function ProfileRow({
     <>
       <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-3 gap-y-0.5">
         <div className="min-w-0">
-          <p className={`text-sm font-semibold ${labelClass}`}>{label}</p>
+          <p className={`text-sm ${labelWeight === "normal" ? "font-normal" : "font-semibold"} ${labelClass}`}>{label}</p>
           {caption ? <p className="mt-0.5 text-[13px] text-slate-600 dark:text-slate-400">{caption}</p> : null}
         </div>
         {value ? <span className="break-words text-sm text-slate-600 dark:text-slate-400">{value}</span> : null}
@@ -304,6 +307,14 @@ export function useQuickEditSuccessEffect(
  * preference, nutritional goal, pregnancy/lactation status, additional
  * information...) without a bespoke component for each one.
  */
+// Mirrors sanitizeWeightInput in profile-edit-form.tsx (TCK-155).
+function sanitizeOneDecimalInput(raw: string): string {
+  const digitsAndDots = raw.replace(/,/g, ".").replace(/[^\d.]/g, "");
+  const firstDot = digitsAndDots.indexOf(".");
+  const singleDot = firstDot === -1 ? digitsAndDots : digitsAndDots.slice(0, firstDot + 1) + digitsAndDots.slice(firstDot + 1).replace(/\./g, "");
+  return singleDot.replace(/^(\d*\.\d)\d+$/, "$1");
+}
+
 export function QuickScalarFieldRow({
   locale,
   label,
@@ -323,6 +334,7 @@ export function QuickScalarFieldRow({
   display = "row",
   ariaValue,
   emptyValue,
+  oneDecimal,
 }: {
   locale: AppLocale;
   label: string;
@@ -343,6 +355,8 @@ export function QuickScalarFieldRow({
   maxLength?: number;
   placeholder?: string;
   helpText?: string;
+  /** Text input that only accepts digits and one decimal digit (comma becomes a dot) - TCK-155. */
+  oneDecimal?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [draft, setDraft] = useState(value);
@@ -392,13 +406,24 @@ export function QuickScalarFieldRow({
           ) : (
             <div className="flex items-center gap-2">
               <input
-                type={kind === "number" ? "number" : "text"}
+                type={!oneDecimal && kind === "number" ? "number" : "text"}
+                inputMode={oneDecimal ? "decimal" : undefined}
+                autoComplete={oneDecimal ? "off" : undefined}
                 name="value"
                 value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                min={min}
-                max={max}
-                step={step}
+                onChange={(event) => {
+                  if (!oneDecimal) {
+                    setDraft(event.target.value);
+                    return;
+                  }
+                  const el = event.currentTarget;
+                  const cleaned = sanitizeOneDecimalInput(el.value);
+                  if (cleaned !== el.value) el.value = cleaned;
+                  setDraft(cleaned);
+                }}
+                min={oneDecimal ? undefined : min}
+                max={oneDecimal ? undefined : max}
+                step={oneDecimal ? undefined : step}
                 maxLength={maxLength}
                 placeholder={placeholder}
                 className={fieldInputClass}

@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { hasAiTargetsConsent } from "@/app/app/targets/actions";
-import { LanguageToggle } from "@/components/language-toggle";
+import { LanguageRow } from "@/components/language-toggle";
 import { NavLink } from "@/components/nav-link";
 import {
   AiConsentToggleRow,
@@ -11,11 +11,11 @@ import {
   PasswordRow,
 } from "@/components/profile-app-settings-rows";
 import { ProfileRow, ProfileRowGroup, ProfileSectionTitle } from "@/components/profile-quick-edit";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { DisplayModeRow } from "@/components/theme-toggle";
 import { getEnvironmentBadgeLabel } from "@/lib/environment-badge";
 import { normalizeLocale, tr } from "@/lib/locale";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
-import { normalizeTheme } from "@/lib/theme";
+import { normalizeThemePreference } from "@/lib/theme";
 
 export const dynamic = "force-dynamic";
 
@@ -40,7 +40,7 @@ export default async function SettingsPage() {
     hasAiTargetsConsent({ supabase, userId: user.id }),
   ]);
   const locale = normalizeLocale(profileRow?.preferred_language);
-  const theme = normalizeTheme(profileRow?.theme_preference);
+  const themePreference = normalizeThemePreference(profileRow?.theme_preference);
 
   const environmentBadgeLabel = getEnvironmentBadgeLabel();
 
@@ -71,8 +71,8 @@ export default async function SettingsPage() {
       <div>
         <ProfileSectionTitle>{tr(locale, "Display", "תצוגה")}</ProfileSectionTitle>
         <ProfileRowGroup>
-          <ProfileRow label={tr(locale, "Language", "שפה")} endSlot={<LanguageToggle locale={locale} />} />
-          <ProfileRow label={tr(locale, "Theme", "ערכת נושא")} endSlot={<ThemeToggle locale={locale} theme={theme} />} />
+          <LanguageRow locale={locale} />
+          <DisplayModeRow locale={locale} preference={themePreference} />
           <ComingSoonRow locale={locale} label={tr(locale, "Measurement units", "יחידות מידה")} caption={tr(locale, "Metric (kg, cm)", "מטרי (ק\"ג, ס\"מ)")} />
         </ProfileRowGroup>
       </div>

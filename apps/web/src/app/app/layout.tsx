@@ -7,6 +7,7 @@ import { GlobalChatWidget } from "@/components/global-chat-widget";
 import { InstallAppPrompt } from "@/components/install-app-prompt";
 import { NavChromeRefresher } from "@/components/nav-chrome-refresher";
 import { ServiceWorkerRegister } from "@/components/service-worker-register";
+import { ThemeChromeSync } from "@/components/theme-chrome-sync";
 import { TimezoneSync } from "@/components/timezone-sync";
 import { UnsavedPreviewProvider } from "@/components/unsaved-preview-context";
 import { resolveUserGenderForAddressing } from "@/lib/ai/persona";
@@ -14,7 +15,7 @@ import { directionForLocale, normalizeLocale } from "@/lib/locale";
 import { getNavChrome, type NavChromeData } from "@/lib/nav-chrome";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 import type { ProfileDiffRow } from "@/lib/targets";
-import { normalizeTheme } from "@/lib/theme";
+import { normalizeThemePreference } from "@/lib/theme";
 
 // Was implied but never actually declared - every child page under /app is
 // force-dynamic, and this layout's own comment already assumed that forces
@@ -75,18 +76,20 @@ export default async function ProtectedAppLayout({
   const unresolvedNotificationCount = navChrome?.unresolvedNotificationCount ?? 0;
 
   const locale = normalizeLocale(profileRow?.preferred_language);
-  const theme = normalizeTheme(profileRow?.theme_preference);
+  const themePreference = normalizeThemePreference(profileRow?.theme_preference);
 
   return (
-    // data-theme drives every dark: utility class within /app/* (see
-    // globals.css's own comment on the custom variant) - the same wrapper
+    // data-theme ("light", "dark" or "auto" - follow the phone, TCK-175)
+    // drives every dark: utility class within /app/* (see globals.css's own
+    // comment on the custom variant) - the same wrapper
     // that already carries lang/dir for locale, so a user's theme choice
     // applies everywhere inside the authenticated app the same way their
     // language choice already does, and stops at the same boundary (the
     // sign-in page, the marketing page, and this file's own root-layout
     // chrome stay on the light palette, matching locale/RTL precedent).
-    <div lang={locale} dir={directionForLocale(locale)} data-theme={theme} className="min-h-screen bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+    <div lang={locale} dir={directionForLocale(locale)} data-theme={themePreference} className="min-h-screen bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <ServiceWorkerRegister />
+      <ThemeChromeSync preference={themePreference} />
       <AppUpdateBanner locale={locale} />
       <InstallAppPrompt locale={locale} />
       {user ? <NavChromeRefresher /> : null}
