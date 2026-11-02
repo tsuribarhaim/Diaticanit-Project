@@ -10,21 +10,29 @@ import {
   type OnboardingActionState,
 } from "@/app/app/onboarding/actions";
 import { DocumentUploadForm } from "@/components/document-upload-form";
+import {
+  buildExerciseRows,
+  buildExerciseSubmission,
+  computeExerciseTotals,
+  ExerciseActivitiesEditor,
+  type ExerciseActivityRow,
+  ExerciseTotalsLine,
+} from "@/components/exercise-activities-editor";
 import { LifestyleHabitsFields } from "@/components/lifestyle-habits-fields";
 import { LocalizedDateInput } from "@/components/localized-date-input";
 import { OnboardingTargetsStep } from "@/components/onboarding-targets-step";
 import { useUnsavedPreview } from "@/components/unsaved-preview-context";
 import {
   activityLevelOptions,
+  deriveExerciseSummaryFromSchedule,
   type DietaryPreference,
   dietaryPreferenceOptions,
+  type ExerciseModalityOption,
   type ExerciseOtherActivity,
   type ExerciseScheduleByModality,
-  type ExerciseScheduleModalityOption,
   exerciseModalityOptions,
   healthGoalOptions,
   medicalConditionOptions,
-  modalityRequiresSchedule,
   normalizeDietaryPreferences,
   nutritionalGoalOptions,
   validateAllergyEntry,
@@ -39,6 +47,7 @@ import {
   formatHealthGoal,
   formatMedicalCondition,
   formatNumberForLocale,
+  matchPreferredExerciseActivity,
   tr,
 } from "@/lib/locale";
 
@@ -95,12 +104,6 @@ type OnboardingProfileFormProps = {
 const initialState: OnboardingActionState = {};
 const ONBOARDING_DRAFT_KEY = "phc_onboarding_profile_draft";
 const PREVIEW_DRAFT_KEY = "phc_onboarding_preview_draft";
-
-const EXERCISE_MODALITY_LABELS: Record<ExerciseScheduleModalityOption, { en: string; he: string }> = {
-  resistance_hypertrophy: { en: "Resistance / Hypertrophy", he: "התנגדות / היפרטרופיה" },
-  endurance_cardio: { en: "Endurance / Cardio", he: "סבולת / אירובי" },
-  martial_arts: { en: "Martial Arts", he: "אומנויות לחימה" },
-};
 
 type MedicalConditionOption = (typeof medicalConditionOptions)[number];
 
@@ -173,13 +176,7 @@ type OnboardingFormDraft = {
   height_ft_value: string;
   height_in_value: string;
   activity_level: (typeof activityLevelOptions)[number];
-  exercise_modalities: Array<(typeof exerciseModalityOptions)[number]>;
-  exercise_other_activities: Array<{ id: string; name: string; days_per_week: string; minutes_per_session: string }>;
-  exercise_schedule_by_modality: Partial<
-    Record<ExerciseScheduleModalityOption, { days_per_week: string; minutes_per_session: string }>
-  >;
-  exercise_frequency_days_per_week: string;
-  exercise_duration_minutes: string;
+  exercise_rows: ExerciseActivityRow[];
   nutritional_goal: (typeof nutritionalGoalOptions)[number] | "";
   health_goals: Array<(typeof healthGoalOptions)[number]>;
   health_goals_markers_details: string;
@@ -202,11 +199,6 @@ type OnboardingFormDraft = {
   preferred_language: "en" | "he";
   accept_ai_extraction: boolean;
 };
-
-function exerciseModalityLabel(modality: ExerciseScheduleModalityOption, locale: AppLocale): string {
-  const labels = EXERCISE_MODALITY_LABELS[modality];
-  return locale === "he" ? labels.he : labels.en;
-}
 
 function parseMedicalConditionOption(value: string): MedicalConditionOption | null {
   const normalized = value.trim().toLowerCase();
@@ -278,103 +270,6 @@ function parseInitialMedicalConditionState(defaults: OnboardingProfileFormProps[
   return {
     selected: Array.from(selectedSet),
     otherDetails,
-  };
-}
-
-function getScheduledModalities(
-  modalities: Array<(typeof exerciseModalityOptions)[number]>,
-): ExerciseScheduleModalityOption[] {
-  return modalities.filter(modalityRequiresSchedule);
-}
-
-function parseScheduleNumber(value: string): number | null {
-  if (value.trim() === "") return null;
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : null;
-}
-
-function normalizeExerciseScheduleByModality(
-  schedule: OnboardingFormDraft["exercise_schedule_by_modality"],
-  selectedModalities: ExerciseScheduleModalityOption[],
-): OnboardingFormDraft["exercise_schedule_by_modality"] {
-  const next: OnboardingFormDraft["exercise_schedule_by_modality"] = {};
-
-  selectedModalities.forEach((modality) => {
-    const existing = schedule[modality];
-    next[modality] = {
-      days_per_week: existing?.days_per_week ?? "",
-      minutes_per_session: existing?.minutes_per_session ?? "",
-    };
-  });
-
-  return next;
-}
-
-function buildInitialExerciseSchedule(
-  defaults: OnboardingProfileFormProps["defaults"],
-  modalities: ExerciseScheduleModalityOption[],
-): OnboardingFormDraft["exercise_schedule_by_modality"] {
-  const next: OnboardingFormDraft["exercise_schedule_by_modality"] = {};
-  const scheduleDefaults = defaults?.exercise_schedule_by_modality ?? {};
-  const fallbackDays =
-    defaults?.exercise_frequency_days_per_week != null
-      ? String(defaults.exercise_frequency_days_per_week)
-      : "";
-  const fallbackMinutes =
-    defaults?.exercise_duration_minutes != null
-      ? String(defaults.exercise_duration_minutes)
-      : "";
-
-  modalities.forEach((modality) => {
-    const fromSchedule = scheduleDefaults[modality];
-    next[modality] = {
-      days_per_week:
-        fromSchedule?.days_per_week != null
-          ? String(fromSchedule.days_per_week)
-          : fallbackDays,
-      minutes_per_session:
-        fromSchedule?.minutes_per_session != null
-          ? String(fromSchedule.minutes_per_session)
-          : fallbackMinutes,
-    };
-  });
-
-  return next;
-}
-
-function computeExerciseSummaryFromDraft(
-  selectedModalities: ExerciseScheduleModalityOption[],
-  schedule: OnboardingFormDraft["exercise_schedule_by_modality"],
-  otherActivities: OnboardingFormDraft["exercise_other_activities"] = [],
-): { frequency: string; duration: string } {
-  if (selectedModalities.length === 0 && otherActivities.length === 0) {
-    return { frequency: "0", duration: "0" };
-  }
-
-  const rows = [
-    ...selectedModalities.map((modality) => schedule[modality]),
-    ...otherActivities,
-  ]
-    .filter((entry) => {
-      const days = parseScheduleNumber(entry?.days_per_week ?? "");
-      const minutes = parseScheduleNumber(entry?.minutes_per_session ?? "");
-      return days != null && minutes != null && days > 0 && minutes > 0;
-    })
-    .map((entry) => ({
-      days: Number(entry?.days_per_week ?? "0"),
-      minutes: Number(entry?.minutes_per_session ?? "0"),
-    }));
-
-  if (rows.length === 0) {
-    return { frequency: "", duration: "" };
-  }
-
-  const totalDays = rows.reduce((sum, row) => sum + row.days, 0);
-  const weightedMinutes = rows.reduce((sum, row) => sum + (row.days * row.minutes), 0);
-
-  return {
-    frequency: String(Math.min(14, Math.round(totalDays))),
-    duration: String(Math.round(weightedMinutes / totalDays)),
   };
 }
 
@@ -508,7 +403,8 @@ function goalProteinRange(goal: (typeof nutritionalGoalOptions)[number]): string
 function normalizeServerField(field: string): string {
   if (field === "weight_kg") return "weight";
   if (field === "height_cm") return "height";
-  if (field.startsWith("exercise_schedule_by_modality")) return "exercise_schedule_by_modality";
+  // Every exercise_* field is edited by the one "Regular workouts" editor.
+  if (field.startsWith("exercise_")) return "exercise_modalities";
   return field;
 }
 
@@ -524,19 +420,14 @@ function createInitialDraft(
       : (defaultWeightUnit === "kg"
         ? String(defaultsWeightKg)
         : String((defaultsWeightKg / 0.45359237).toFixed(1)));
-  const initialExerciseModalities = (defaults?.exercise_modalities ?? [])
-    .filter((value): value is (typeof exerciseModalityOptions)[number] =>
-      exerciseModalityOptions.includes(value as (typeof exerciseModalityOptions)[number]),
-    );
-  const scheduledModalities = getScheduledModalities(initialExerciseModalities);
-  const exerciseScheduleByModality = buildInitialExerciseSchedule(defaults, scheduledModalities);
-  const initialOtherActivities = (defaults?.exercise_other_activities ?? []).map((activity, index) => ({
-    id: `initial-${index}`,
-    name: activity.name,
-    days_per_week: String(activity.days_per_week),
-    minutes_per_session: String(activity.minutes_per_session),
-  }));
-  const summaryFromSchedule = computeExerciseSummaryFromDraft(scheduledModalities, exerciseScheduleByModality, initialOtherActivities);
+  let initialExerciseRowIndex = 0;
+  const initialExerciseRows = buildExerciseRows(
+    defaults?.exercise_modalities ?? [],
+    defaults?.exercise_other_activities ?? [],
+    defaults?.exercise_schedule_by_modality ?? {},
+    locale,
+    () => `initial-${initialExerciseRowIndex++}`,
+  );
   const initialMedicalConditions = parseInitialMedicalConditionState(defaults);
 
   return {
@@ -552,11 +443,7 @@ function createInitialDraft(
     height_ft_value: "",
     height_in_value: "",
     activity_level: defaults?.activity_level ?? "moderate",
-    exercise_modalities: initialExerciseModalities,
-    exercise_other_activities: initialOtherActivities,
-    exercise_schedule_by_modality: exerciseScheduleByModality,
-    exercise_frequency_days_per_week: summaryFromSchedule.frequency,
-    exercise_duration_minutes: summaryFromSchedule.duration,
+    exercise_rows: initialExerciseRows,
     nutritional_goal: defaults?.nutritional_goal ?? "",
     health_goals: (defaults?.health_goals ?? []).filter((goal): goal is (typeof healthGoalOptions)[number] =>
       (healthGoalOptions as readonly string[]).includes(goal),
@@ -618,13 +505,7 @@ function isValidDraft(value: unknown): value is OnboardingFormDraft {
     typeof candidate.height_in_value === "string" &&
     typeof candidate.activity_level === "string" &&
     activityLevelOptions.includes(candidate.activity_level as (typeof activityLevelOptions)[number]) &&
-    Array.isArray(candidate.exercise_modalities) &&
-    Array.isArray(candidate.exercise_other_activities) &&
-    !!candidate.exercise_schedule_by_modality &&
-    !Array.isArray(candidate.exercise_schedule_by_modality) &&
-    typeof candidate.exercise_schedule_by_modality === "object" &&
-    typeof candidate.exercise_frequency_days_per_week === "string" &&
-    typeof candidate.exercise_duration_minutes === "string" &&
+    Array.isArray(candidate.exercise_rows) &&
     (candidate.nutritional_goal === ""
       || nutritionalGoalOptions.includes(candidate.nutritional_goal as (typeof nutritionalGoalOptions)[number])) &&
     Array.isArray(candidate.health_goals) &&
@@ -728,7 +609,7 @@ export function OnboardingProfileForm({
   // client state, so there's no "success" flag to also check; the unmount
   // cleanup clears the flag once that redirect happens.
   const initialDraftRef = useRef(draft);
-  // Monotonic counter for new other-activity row keys - Date.now()/Math.random()
+  // Monotonic counter for new exercise row keys - Date.now()/Math.random()
   // are impure and disallowed during render by the react-hooks/purity rule,
   // even though these calls only ever happen from an event handler.
   const nextOtherActivityIdRef = useRef(0);
@@ -768,11 +649,16 @@ export function OnboardingProfileForm({
     draft.activity_level,
   );
   const bmiPercent = bmi != null ? bmiPositionPercent(bmi) : null;
-  const selectedExerciseModalities = getScheduledModalities(draft.exercise_modalities);
-  const exerciseSummary = computeExerciseSummaryFromDraft(
-    selectedExerciseModalities,
-    draft.exercise_schedule_by_modality,
-    draft.exercise_other_activities,
+  const exerciseTotals = computeExerciseTotals(draft.exercise_rows);
+  const exerciseSubmission = buildExerciseSubmission(draft.exercise_rows, effectiveLocale);
+  const exerciseSummary = deriveExerciseSummaryFromSchedule(
+    exerciseSubmission.modalities.filter((modality): modality is ExerciseModalityOption =>
+      exerciseModalityOptions.includes(modality as ExerciseModalityOption),
+    ),
+    exerciseSubmission.scheduleByModality,
+    exerciseSubmission.otherActivities,
+    0,
+    0,
   );
 
   const selectedGoal = draft.nutritional_goal || null;
@@ -831,84 +717,17 @@ export function OnboardingProfileForm({
   };
 
   const updateDraft = (patch: Partial<OnboardingFormDraft>) => {
-    const next = { ...draft, ...patch };
-    const normalizedSchedule = normalizeExerciseScheduleByModality(
-      next.exercise_schedule_by_modality,
-      getScheduledModalities(next.exercise_modalities),
-    );
-    const summary = computeExerciseSummaryFromDraft(
-      getScheduledModalities(next.exercise_modalities),
-      normalizedSchedule,
-      next.exercise_other_activities,
-    );
-
-    persistDraft({
-      ...next,
-      exercise_schedule_by_modality: normalizedSchedule,
-      exercise_frequency_days_per_week: summary.frequency,
-      exercise_duration_minutes: summary.duration,
-    });
+    persistDraft({ ...draft, ...patch });
     setErrors((current) => (Object.keys(current).length > 0 ? {} : current));
   };
 
-  const toggleListValue = (
-    key: "exercise_modalities",
-    value: (typeof exerciseModalityOptions)[number],
-  ) => {
-    const set = new Set(draft[key]);
-    if (set.has(value)) {
-      set.delete(value);
-    } else {
-      if (key === "exercise_modalities" && value === "none") {
-        set.clear();
-      }
-      if (key === "exercise_modalities" && value !== "none") {
-        set.delete("none");
-      }
-      set.add(value);
+  // Skips ids a restored sessionStorage draft already uses.
+  const newExerciseRowId = () => {
+    let id = `other-${nextOtherActivityIdRef.current++}`;
+    while (draft.exercise_rows.some((row) => row.id === id)) {
+      id = `other-${nextOtherActivityIdRef.current++}`;
     }
-
-    const nextValues = Array.from(set);
-    const patch: Partial<OnboardingFormDraft> = { [key]: nextValues } as Partial<OnboardingFormDraft>;
-
-    if (key === "exercise_modalities" && !nextValues.includes("other")) {
-      patch.exercise_other_activities = [];
-    }
-    if (key === "exercise_modalities" && nextValues.includes("other") && draft.exercise_other_activities.length === 0) {
-      patch.exercise_other_activities = [{ id: `other-${nextOtherActivityIdRef.current++}`, name: "", days_per_week: "", minutes_per_session: "" }];
-    }
-
-    if (key === "exercise_modalities") {
-      patch.exercise_schedule_by_modality = normalizeExerciseScheduleByModality(
-        draft.exercise_schedule_by_modality,
-        getScheduledModalities(nextValues as Array<(typeof exerciseModalityOptions)[number]>),
-      );
-    }
-
-    updateDraft(patch);
-  };
-
-  const addOtherActivity = () => {
-    updateDraft({
-      exercise_other_activities: [
-        ...draft.exercise_other_activities,
-        { id: `other-${nextOtherActivityIdRef.current++}`, name: "", days_per_week: "", minutes_per_session: "" },
-      ],
-    });
-  };
-
-  const updateOtherActivity = (id: string, patch: Partial<OnboardingFormDraft["exercise_other_activities"][number]>) => {
-    updateDraft({
-      exercise_other_activities: draft.exercise_other_activities.map((activity) =>
-        activity.id === id ? { ...activity, ...patch } : activity,
-      ),
-    });
-  };
-
-  const removeOtherActivity = (id: string) => {
-    updateDraft({
-      exercise_other_activities: draft.exercise_other_activities.filter((activity) => activity.id !== id),
-    });
+    return id;
   };
 
   const setYesNo = (
@@ -978,70 +797,34 @@ export function OnboardingProfileForm({
       if (!draft.activity_level) {
         nextErrors.activity_level = tr(effectiveLocale, "Activity level is required.", "רמת פעילות חובה.");
       }
-      if (draft.exercise_modalities.length === 0) {
-        nextErrors.exercise_modalities = tr(effectiveLocale, "Select at least one exercise modality.", "יש לבחור לפחות סוג אימון אחד.");
-      }
-      if (draft.exercise_modalities.includes("other")) {
-        if (draft.exercise_other_activities.length === 0) {
-          nextErrors.exercise_other_activities = tr(
-            effectiveLocale,
-            "Add at least one other activity type.",
-            "יש להוסיף לפחות פעילות אחת מסוג 'אחר'.",
-          );
-        }
-
-        draft.exercise_other_activities.forEach((activity) => {
-          if (nextErrors.exercise_other_activities) return;
-
-          const validationResult = validateExerciseOtherDetails(activity.name);
-          if (!validationResult.isMeaningful) {
-            const suggestionText = validationResult.suggestions.join(", ");
-            nextErrors.exercise_other_activities = suggestionText
-              ? tr(
-                effectiveLocale,
-                `Please enter a meaningful exercise type. Maybe: ${suggestionText}`,
-                `יש להזין סוג אימון משמעותי. אולי התכוונת ל: ${suggestionText}`,
-              )
-              : tr(
-                effectiveLocale,
-                "Please enter a meaningful exercise type related to training.",
-                "יש להזין סוג אימון משמעותי שקשור לאימון.",
-              );
-            return;
-          }
-
-          const days = parseScheduleNumber(activity.days_per_week);
-          const minutes = parseScheduleNumber(activity.minutes_per_session);
-          if (days == null || !Number.isInteger(days) || days < 1 || days > 14 || minutes == null || !Number.isInteger(minutes) || minutes < 1 || minutes > 600) {
-            nextErrors.exercise_other_activities = tr(
+      // An empty list is valid - it's sent as 'none', same as the profile sheet.
+      if (!exerciseTotals.canSave) {
+        nextErrors.exercise_modalities = tr(
+          effectiveLocale,
+          "Fill in times per week and minutes for every activity",
+          "יש למלא מספר פעמים בשבוע ודקות לכל פעילות",
+        );
+      } else {
+        for (const row of draft.exercise_rows) {
+          // The default activities are always meaningful (same as the profile action).
+          if (row.kind !== "custom" || matchPreferredExerciseActivity(row.name) !== null) continue;
+          const validationResult = validateExerciseOtherDetails(row.name);
+          if (validationResult.isMeaningful) continue;
+          const suggestionText = validationResult.suggestions.join(", ");
+          nextErrors.exercise_modalities = suggestionText
+            ? tr(
               effectiveLocale,
-              "Set valid frequency (1-14 days/week) and duration (1-600 minutes) for each other activity.",
-              "יש להגדיר תדירות תקינה (1-14 ימים בשבוע) ומשך תקין (1-600 דקות) לכל פעילות מסוג 'אחר'.",
+              `Please enter a meaningful exercise type. Maybe: ${suggestionText}`,
+              `יש להזין סוג אימון משמעותי. אולי התכוונת ל: ${suggestionText}`,
+            )
+            : tr(
+              effectiveLocale,
+              "Please enter a meaningful exercise type related to training.",
+              "יש להזין סוג אימון משמעותי שקשור לאימון.",
             );
-          }
-        });
+          break;
+        }
       }
-      selectedExerciseModalities.forEach((modality) => {
-        const schedule = draft.exercise_schedule_by_modality[modality];
-        const days = parseScheduleNumber(schedule?.days_per_week ?? "");
-        const minutes = parseScheduleNumber(schedule?.minutes_per_session ?? "");
-
-        if (days == null || !Number.isInteger(days) || days < 1 || days > 14) {
-          nextErrors.exercise_schedule_by_modality = tr(
-            effectiveLocale,
-            "Set valid frequency (1-14 days/week) for each selected exercise type.",
-            "יש להגדיר תדירות תקינה (1-14 ימים בשבוע) לכל סוג אימון שנבחר.",
-          );
-        }
-
-        if (minutes == null || !Number.isInteger(minutes) || minutes < 1 || minutes > 600) {
-          nextErrors.exercise_schedule_by_modality = tr(
-            effectiveLocale,
-            "Set valid duration (1-600 minutes) for each selected exercise type.",
-            "יש להגדיר משך תקין (1-600 דקות) לכל סוג אימון שנבחר.",
-          );
-        }
-      });
       if (!draft.nutritional_goal) {
         nextErrors.nutritional_goal = tr(effectiveLocale, "Select a weight goal.", "יש לבחור מטרה משקלית.");
       }
@@ -1295,22 +1078,22 @@ export function OnboardingProfileForm({
       <input
         type="hidden"
         name="exercise_other_activities"
-        value={JSON.stringify(draft.exercise_other_activities.map(({ name, days_per_week, minutes_per_session }) => ({ name, days_per_week, minutes_per_session })))}
+        value={JSON.stringify(exerciseSubmission.otherActivities)}
       />
       <input
         type="hidden"
         name="exercise_schedule_by_modality"
-        value={JSON.stringify(draft.exercise_schedule_by_modality)}
+        value={JSON.stringify(exerciseSubmission.scheduleByModality)}
       />
       <input
         type="hidden"
         name="exercise_frequency_days_per_week"
-        value={exerciseSummary.frequency}
+        value={String(exerciseSummary.frequencyDaysPerWeek)}
       />
       <input
         type="hidden"
         name="exercise_duration_minutes"
-        value={exerciseSummary.duration}
+        value={String(exerciseSummary.durationMinutes)}
       />
       <input type="hidden" name="nutritional_goal" value={draft.nutritional_goal} />
       {draft.health_goals.map((goal) => (
@@ -1359,7 +1142,7 @@ export function OnboardingProfileForm({
         name="medical_conditions"
         value={draft.has_medical_conditions === "yes" ? draft.medical_conditions.join(",") : ""}
       />
-      {draft.exercise_modalities.map((value) => (
+      {exerciseSubmission.modalities.map((value) => (
         <input key={`hidden-exercise-${value}`} type="hidden" name="exercise_modalities" value={value} />
       ))}
 
@@ -1646,176 +1429,22 @@ export function OnboardingProfileForm({
 
           <div data-field="exercise_modalities">
             <span className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Regular workouts", "אימונים קבועים")}</span>
-            <div className="flex flex-wrap gap-2">
-              {exerciseModalityOptions.map((value) => {
-                const label =
-                  value === "resistance_hypertrophy"
-                    ? tr(effectiveLocale, "Resistance / Hypertrophy", "התנגדות / היפרטרופיה")
-                    : value === "endurance_cardio"
-                      ? tr(effectiveLocale, "Endurance / Cardio", "סבולת / אירובי")
-                      : value === "martial_arts"
-                        ? tr(effectiveLocale, "Martial Arts", "אומנויות לחימה")
-                        : value === "none"
-                          ? tr(effectiveLocale, "None", "ללא")
-                        : tr(effectiveLocale, "Other", "אחר");
-                const active = draft.exercise_modalities.includes(value);
-
-                return (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => toggleListValue("exercise_modalities", value)}
-                    className={`rounded-full border px-3 py-1.5 text-xs font-medium ${active ? "border-teal-700 bg-teal-700 text-white" : "border-slate-300 bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700"}`}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
+            <div className="space-y-4">
+              <ExerciseActivitiesEditor
+                locale={effectiveLocale}
+                rows={draft.exercise_rows}
+                onChange={(rows) => updateDraft({ exercise_rows: rows })}
+                newRowId={newExerciseRowId}
+              />
+              <ExerciseTotalsLine
+                locale={effectiveLocale}
+                hasRows={draft.exercise_rows.length > 0}
+                totalDays={exerciseTotals.totalDays}
+                totalMinutes={exerciseTotals.totalMinutes}
+              />
             </div>
             {renderFieldError("exercise_modalities")}
-
-            {draft.exercise_modalities.includes("other") ? (
-              <div className="mt-3 space-y-3" data-field="exercise_other_activities">
-                <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Other exercise activities", "פעילויות גופניות אחרות")}</span>
-                <div className="grid gap-3">
-                  {draft.exercise_other_activities.map((activity) => (
-                    <div key={activity.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/60">
-                      <div className="flex items-start gap-2">
-                        <input
-                          type="text"
-                          maxLength={80}
-                          value={activity.name}
-                          onChange={(event) => updateOtherActivity(activity.id, { name: event.target.value })}
-                          placeholder={tr(effectiveLocale, "e.g. Pilates, spinning, climbing", "לדוגמה: פילאטיס, ספינינג, טיפוס")}
-                          className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("exercise_other_activities")}`}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => removeOtherActivity(activity.id)}
-                          aria-label={tr(effectiveLocale, "Remove activity", "הסרת פעילות")}
-                          className="shrink-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                      <div className="mt-2 grid gap-3 sm:grid-cols-2">
-                        <label className="block">
-                          <span className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Frequency (days/week)", "תדירות (ימים/שבוע)")}</span>
-                          <input
-                            type="number"
-                            min={1}
-                            max={14}
-                            value={activity.days_per_week}
-                            onChange={(event) => updateOtherActivity(activity.id, { days_per_week: event.target.value })}
-                            className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("exercise_other_activities")}`}
-                          />
-                        </label>
-                        <label className="block">
-                          <span className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Duration (minutes/session)", "משך (דקות לאימון)")}</span>
-                          <input
-                            type="number"
-                            min={1}
-                            max={600}
-                            value={activity.minutes_per_session}
-                            onChange={(event) => updateOtherActivity(activity.id, { minutes_per_session: event.target.value })}
-                            className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("exercise_other_activities")}`}
-                          />
-                        </label>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  onClick={addOtherActivity}
-                  className="rounded-lg border border-teal-300 px-3 py-1.5 text-xs font-semibold text-teal-700 hover:bg-teal-50 dark:border-teal-800 dark:text-teal-400 dark:hover:bg-teal-950/40"
-                >
-                  {tr(effectiveLocale, "+ Add another activity", "+ הוספת פעילות נוספת")}
-                </button>
-                <p className="text-xs text-slate-500">
-                  {tr(
-                    effectiveLocale,
-                    "Use a real exercise term. Typos are okay, random text is not.",
-                    "יש להזין שם אמיתי של פעילות גופנית. שגיאות כתיב נסבלות, טקסט אקראי לא.",
-                  )}
-                </p>
-                {renderFieldError("exercise_other_activities")}
-              </div>
-            ) : null}
           </div>
-
-          {selectedExerciseModalities.length > 0 ? (
-            <div className="space-y-3" data-field="exercise_schedule_by_modality">
-              <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                {tr(
-                  effectiveLocale,
-                  "Set frequency and duration for each selected exercise type",
-                  "יש להגדיר תדירות ומשך לכל סוג אימון שנבחר",
-                )}
-              </p>
-
-              <div className="grid gap-3">
-                {selectedExerciseModalities.map((modality) => {
-                  const schedule = draft.exercise_schedule_by_modality[modality] ?? {
-                    days_per_week: "",
-                    minutes_per_session: "",
-                  };
-
-                  return (
-                    <div key={modality} className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/60">
-                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{exerciseModalityLabel(modality, effectiveLocale)}</p>
-                      <div className="mt-2 grid gap-3 sm:grid-cols-2">
-                        <label className="block">
-                          <span className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Frequency (days/week)", "תדירות (ימים/שבוע)")}</span>
-                          <input
-                            type="number"
-                            min={1}
-                            max={14}
-                            value={schedule.days_per_week}
-                            onChange={(event) => {
-                              updateDraft({
-                                exercise_schedule_by_modality: {
-                                  ...draft.exercise_schedule_by_modality,
-                                  [modality]: {
-                                    ...schedule,
-                                    days_per_week: event.target.value,
-                                  },
-                                },
-                              });
-                            }}
-                            className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("exercise_schedule_by_modality")}`}
-                          />
-                        </label>
-                        <label className="block">
-                          <span className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">{tr(effectiveLocale, "Duration (minutes/session)", "משך (דקות לאימון)")}</span>
-                          <input
-                            type="number"
-                            min={1}
-                            max={600}
-                            value={schedule.minutes_per_session}
-                            onChange={(event) => {
-                              updateDraft({
-                                exercise_schedule_by_modality: {
-                                  ...draft.exercise_schedule_by_modality,
-                                  [modality]: {
-                                    ...schedule,
-                                    minutes_per_session: event.target.value,
-                                  },
-                                },
-                              });
-                            }}
-                            className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-teal-600 focus:ring-2 ${inputErrorClass("exercise_schedule_by_modality")}`}
-                          />
-                        </label>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {renderFieldError("exercise_schedule_by_modality")}
-            </div>
-          ) : null}
 
           <div data-field="nutritional_goal">
             <span className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300 dark:text-slate-300">{tr(effectiveLocale, "Weight goal", "מטרה משקלית")}</span>
