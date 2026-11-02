@@ -1,7 +1,6 @@
 import { NavLink as Link } from "@/components/nav-link";
 import { redirect } from "next/navigation";
 
-import { signOutAction } from "@/app/app/actions";
 import { deleteDocumentAction, openOriginalDocumentAction } from "@/app/app/documents/actions";
 import { DocumentUploadForm } from "@/components/document-upload-form";
 import {
@@ -428,15 +427,6 @@ export default async function ProfilePage({
           maxLength={1000}
         />
       </ProfileRowGroup>
-
-      <form action={signOutAction}>
-        <PendingSubmitButton
-          className="w-full rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3.5 text-center text-sm font-bold text-rose-700 hover:bg-rose-100 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-400 dark:hover:bg-rose-950/50"
-          spinnerClassName="h-4 w-4"
-        >
-          {tr(locale, "Log Out", "התנתקות")}
-        </PendingSubmitButton>
-      </form>
     </main>
   );
 }

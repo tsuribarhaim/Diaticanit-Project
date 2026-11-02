@@ -11,6 +11,7 @@ import {
   PasswordRow,
 } from "@/components/profile-app-settings-rows";
 import { ProfileRow, ProfileRowGroup, ProfileSectionTitle } from "@/components/profile-quick-edit";
+import { SignOutButton } from "@/components/sign-out-button";
 import { DisplayModeRow } from "@/components/theme-toggle";
 import { getEnvironmentBadgeLabel } from "@/lib/environment-badge";
 import { normalizeLocale, tr } from "@/lib/locale";
@@ -114,6 +115,10 @@ export default async function SettingsPage() {
           </ProfileRowGroup>
         </div>
       ) : null}
+
+      <div className="mt-2">
+        <SignOutButton locale={locale} />
+      </div>
     </main>
   );
 }

@@ -52,8 +52,9 @@ export function AppNav({
   return (
     // Hidden outside `nav-desktop` (width >= 40rem and height >= 30rem, see
     // globals.css): AppBottomNav takes over there with just the 3
-    // daily-use destinations - Manage Saved List/Settings/Sign out (kept
-    // here unchanged for desktop) live inside the Profile page on mobile.
+    // daily-use destinations - Manage Saved List (kept here unchanged for
+    // desktop) lives inside the Profile page on mobile, and Settings (with
+    // Sign out at the bottom of Settings & Support) behind Profile's gear.
     <nav className="hidden border-b border-slate-200 bg-white nav-desktop:block dark:border-slate-800 dark:bg-slate-900">
       <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-1 px-6 py-2">
         {navItems.map((item) => (
