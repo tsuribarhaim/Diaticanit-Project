@@ -246,12 +246,13 @@ export function AdminTicketsTable({ locale, tickets, notice }: { locale: AppLoca
   // "dark" - confirmed live via computed-style check, not theorized. An
   // inline style is the same proven workaround, so this reads the
   // ancestor's data-theme (set once, server-side, in app/app/layout.tsx -
-  // see normalizeTheme) directly rather than guessing from the OS's
-  // prefers-color-scheme, which this app deliberately doesn't use.
+  // see normalizeThemePreference) directly; the OS's prefers-color-scheme
+  // only counts when that preference is "auto" (TCK-175).
   const [isDarkTheme, setIsDarkTheme] = useState(false);
   useEffect(() => {
     const timeoutId = setTimeout(() => {
-      setIsDarkTheme(document.querySelector("[data-theme]")?.getAttribute("data-theme") === "dark");
+      const attr = document.querySelector("[data-theme]")?.getAttribute("data-theme");
+      setIsDarkTheme(attr === "dark" || (attr === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches));
     }, 0);
     return () => clearTimeout(timeoutId);
   }, []);

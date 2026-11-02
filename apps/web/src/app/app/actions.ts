@@ -10,6 +10,7 @@ import { revalidateNavChrome } from "@/lib/nav-chrome";
 import { queuePasswordReset } from "@/lib/password-reset";
 import { logServerError } from "@/lib/server-log";
 import { createClient } from "@/lib/supabase/server";
+import type { AppThemePreference } from "@/lib/theme";
 
 const LOCALE_COOKIE = "phc_locale";
 
@@ -85,7 +86,10 @@ export async function setUserTimezoneAction(timezone: string) {
 // applies within /app/* (see ProtectedAppLayout's own comment on why), which
 // already does one authenticated user_profile read per page load regardless
 // - there's no pre-auth screen that needs a faster, DB-free signal here.
-export async function updateThemeAction(theme: "light" | "dark") {
+// TCK-175: "auto" (follow the phone) is a third stored value alongside
+// "light"/"dark" (allowed by migration 086's CHECK); anything else is ignored.
+export async function updateThemeAction(theme: AppThemePreference) {
+  if (theme !== "auto" && theme !== "light" && theme !== "dark") return;
   const supabase = await createClient();
   const {
     data: { user },
