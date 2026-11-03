@@ -22,16 +22,27 @@ export type { RingMetric };
  * exceedingIsPositive flag says that's actually fine (or a neverOverLimit
  * metric, which can't truly be "exceeded" at all) doesn't count. */
 function isOverLimit(metric: RingMetric): boolean {
-  return !metric.neverOverLimit && !metric.exceedingIsPositive && metric.max > 0 && metric.total > metric.max;
+  const toned = toneMetric(metric);
+  return !toned.neverOverLimit && !toned.exceedingIsPositive && toned.max > 0 && toned.total > toned.max;
+}
+
+/** TCK-180: limit metrics (lowerIsBetter nutrients and calories) are judged
+ * against the displayed target, not the hidden range max. */
+function toneMetric(metric: RingMetric): RingMetric {
+  const limit = metric.target ?? metric.max;
+  if ((metric.lowerIsBetter || metric.id === "calories") && limit > 0) {
+    return { ...metric, max: limit };
+  }
+  return metric;
 }
 
 /** TCK-104: same color decision as the rings - see lib/metric-tone.ts. */
 function barColorClass(metric: RingMetric): string {
-  return BAR_BG_CLASS[getMetricTone(metric)];
+  return BAR_BG_CLASS[getMetricTone(toneMetric(metric))];
 }
 
 function valueColorClass(metric: RingMetric): string {
-  return BAR_TEXT_CLASS[getMetricTone(metric)];
+  return BAR_TEXT_CLASS[getMetricTone(toneMetric(metric))];
 }
 
 function clampPercent(value: number): number {
