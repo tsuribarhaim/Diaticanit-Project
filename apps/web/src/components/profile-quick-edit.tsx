@@ -589,7 +589,7 @@ export function ProfileChipField({
 }) {
   const visible = items.slice(0, MAX_VISIBLE_CHIPS);
   const hiddenCount = items.length - visible.length;
-  const chipBase = "inline-flex min-h-11 items-center gap-1 rounded-full border px-3 text-sm";
+  const chipBase = "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-sm leading-tight";
   const toneClass =
     tone === "warning"
       ? "border-rose-200 bg-rose-50 font-semibold text-rose-800 hover:bg-rose-100 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300"
@@ -624,15 +624,13 @@ export function ProfileChipField({
             {emptyLabel}
           </button>
         ) : null}
-        {items.length === 0 ? (
-          <button
-            type="button"
-            onClick={onOpen}
-            className={`${chipBase} border-teal-700 bg-white font-semibold text-teal-700 hover:bg-teal-50 dark:border-teal-400 dark:bg-slate-900 dark:text-teal-400 dark:hover:bg-teal-950/40`}
-          >
-            {addLabel}
-          </button>
-        ) : null}
+        <button
+          type="button"
+          onClick={onOpen}
+          className={`${chipBase} border-teal-700 bg-white font-semibold text-teal-700 hover:bg-teal-50 dark:border-teal-400 dark:bg-slate-900 dark:text-teal-400 dark:hover:bg-teal-950/40`}
+        >
+          {addLabel}
+        </button>
       </div>
     </div>
   );
