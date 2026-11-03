@@ -116,7 +116,7 @@ export function SavedItemRowActions({
   }
 
   return (
-    <span className="flex shrink-0 items-center gap-2.5">
+    <span className="ms-auto flex shrink-0 items-center gap-2.5">
       <button
         type="button"
         onClick={(event) => {
