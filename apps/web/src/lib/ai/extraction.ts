@@ -100,30 +100,74 @@ export async function extractComponentsWithAi({
   const clippedText = documentText.slice(0, 24000);
 
   const contentText = await callAiChatCompletion({
-      usage: { feature: "doc_extract" },
+    usage: { feature: "doc_extract" },
     config,
     jsonMode: true,
     messages: [
-      {
-        role: "system",
-        content:
-          "You extract structured lab results from medical text. Return strict JSON with key components only. Never include markdown.",
-      },
+      { role: "system", content: EXTRACTION_SYSTEM_PROMPT },
+      { role: "user", content: [...extractionRules(defaultCategory), "document_text:", clippedText].join("\n") },
+    ],
+  });
+
+  const parsed = aiResponseSchema.parse(parseJsonPayload(contentText));
+  return { components: mapAiComponents(parsed.components), reportDate: parseReportDate(parsed.report_date) };
+}
+
+const EXTRACTION_SYSTEM_PROMPT =
+  "You extract structured lab results from medical documents. Return strict JSON with key components only. Never include markdown.";
+
+function extractionRules(defaultCategory: string): string[] {
+  return [
+    "Return JSON with this shape:",
+    '{"report_date":"string","components":[{"category":"string","component_name":"string","measured_value":number,"unit":"string","reference_min":number,"reference_max":number,"confidence":number}]}',
+    "Rules:",
+    "- report_date: the date this report/test was actually performed or issued, as stated in the document itself (e.g. a \"collection date\", \"report date\", or similar) in YYYY-MM-DD format. Omit it entirely if no such date appears in the text - never guess or use today's date.",
+    "- Use numeric measured_value only.",
+    "- If category is unclear, use the default category provided.",
+    "- reference_min/reference_max can be omitted when unknown.",
+    "- confidence is between 0 and 1.",
+    `default_category: ${defaultCategory || "General"}`,
+  ];
+}
+
+/** Lab documents the model reads directly: PDFs (text or scanned) and photos. */
+export const AI_READABLE_DOCUMENT_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/webp"];
+
+/**
+ * Sends the document itself (PDF or photo) to the model, which reads it directly - scanned pages and Hebrew included.
+ * Replaces reading the text on the server first (pdf.js / Tesseract OCR), which never worked on Vercel: those libraries
+ * were left out of the deployment bundle, so every upload there produced no text and failed. Anthropic provider only.
+ */
+export async function extractComponentsFromFileWithAi({
+  config,
+  fileBase64,
+  mimeType,
+  defaultCategory,
+}: {
+  config: AiExtractionConfig;
+  fileBase64: string;
+  mimeType: string;
+  defaultCategory: string;
+}): Promise<{ components: AiExtractedComponent[]; reportDate: string | null }> {
+  const filePart =
+    mimeType === "application/pdf"
+      ? { type: "file", file: { data: fileBase64, media_type: mimeType } }
+      : { type: "image_url", image_url: { url: `data:${mimeType};base64,${fileBase64}` } };
+
+  const contentText = await callAiChatCompletion({
+    usage: { feature: "doc_extract" },
+    config,
+    jsonMode: true,
+    // A long multi-page report is a large reply; the default 45s is not enough.
+    timeoutMs: 110_000,
+    messages: [
+      { role: "system", content: EXTRACTION_SYSTEM_PROMPT },
       {
         role: "user",
         content: [
-          "Return JSON with this shape:",
-          '{"report_date":"string","components":[{"category":"string","component_name":"string","measured_value":number,"unit":"string","reference_min":number,"reference_max":number,"confidence":number}]}',
-          "Rules:",
-          "- report_date: the date this report/test was actually performed or issued, as stated in the document itself (e.g. a \"collection date\", \"report date\", or similar) in YYYY-MM-DD format. Omit it entirely if no such date appears in the text - never guess or use today's date.",
-          "- Use numeric measured_value only.",
-          "- If category is unclear, use the default category provided.",
-          "- reference_min/reference_max can be omitted when unknown.",
-          "- confidence is between 0 and 1.",
-          `default_category: ${defaultCategory || "General"}`,
-          "document_text:",
-          clippedText,
-        ].join("\n"),
+          filePart,
+          { type: "text", text: [...extractionRules(defaultCategory), "The document is attached above. Extract every lab result in it, on every page."].join("\n") },
+        ],
       },
     ],
   });

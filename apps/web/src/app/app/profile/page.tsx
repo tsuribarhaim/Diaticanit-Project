@@ -49,6 +49,8 @@ import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 import { computeProfileDiff, parseProfileSnapshot, type ProfileForTargets } from "@/lib/targets";
 
 export const dynamic = "force-dynamic";
+// Uploading a lab document reads it with AI in the same request (up to ~2 minutes for a long report).
+export const maxDuration = 180;
 
 function formatMemberSince(createdAt: string | undefined, locale: "en" | "he"): string {
   if (!createdAt) return tr(locale, "Member", "חבר/ה");

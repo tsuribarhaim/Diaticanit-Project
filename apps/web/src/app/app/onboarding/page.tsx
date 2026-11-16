@@ -4,6 +4,8 @@ import { OnboardingProfileForm } from "@/components/onboarding-profile-form";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
+// Uploading a lab document reads it with AI in the same request (up to ~2 minutes for a long report).
+export const maxDuration = 180;
 
 export default async function OnboardingPage() {
   const supabase = await createClient();

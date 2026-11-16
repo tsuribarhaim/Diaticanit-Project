@@ -14,6 +14,8 @@ import { logServerError } from "@/lib/server-log";
 import { createClient, getAuthenticatedUser } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
+// Uploading a lab document reads it with AI in the same request (up to ~2 minutes for a long report).
+export const maxDuration = 180;
 
 function statusBadgeClasses(status: string): string {
   if (status === "green") {

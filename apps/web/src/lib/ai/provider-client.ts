@@ -13,7 +13,8 @@ import { anthropicTokens, beginAiUsage, failureOutcome, NO_TOKENS, openAiTokens,
  */
 export type AiChatMessage = {
   role: "system" | "user" | "assistant";
-  content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
+  /** Parts: text, image_url (a data URL), or file (a base64 PDF - Anthropic only, sent as a document block). */
+  content: string | Array<{ type: string; text?: string; image_url?: { url: string }; file?: { data: string; media_type: string } }>;
   /** System messages only: Anthropic caches the prompt up to and including this part (prompt caching - a repeat within
    * 5 minutes costs 10% of the input price). Mark only text that is identical between calls. Ignored by other providers. */
   cacheBreakpoint?: boolean;
@@ -64,13 +65,20 @@ function parseDataUrl(url: string): { mediaType: string; data: string } | null {
 
 function toAnthropicContent(
   content: AiChatMessage["content"],
-): string | Array<{ type: "text"; text: string } | { type: "image"; source: { type: "base64"; media_type: string; data: string } }> {
+): string | Array<
+  | { type: "text"; text: string }
+  | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
+  | { type: "document"; source: { type: "base64"; media_type: string; data: string } }
+> {
   if (typeof content === "string") return content;
 
   return content
     .map((part) => {
       if (part.type === "text") {
         return { type: "text" as const, text: part.text ?? "" };
+      }
+      if (part.type === "file" && part.file?.data) {
+        return { type: "document" as const, source: { type: "base64" as const, media_type: part.file.media_type, data: part.file.data } };
       }
       if (part.type === "image_url" && part.image_url?.url) {
         const parsed = parseDataUrl(part.image_url.url);
