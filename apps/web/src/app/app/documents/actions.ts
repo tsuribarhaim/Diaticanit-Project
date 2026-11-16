@@ -1833,7 +1833,7 @@ export async function runDocumentExtraction({
   }): Promise<{ ok: boolean; reportId: string | null; error?: string }> => {
     const { data: existingReports, error: existingReportsError } = await supabase
       .from("extracted_reports")
-      .select("id, parser_version")
+      .select("id, parser_version, status")
       .eq("user_id", userId)
       .eq("document_id", documentId)
       .order("created_at", { ascending: false });
@@ -1851,7 +1851,9 @@ export async function runDocumentExtraction({
     const latestExistingReport = existingReports?.[0] ?? null;
     const previousParserVersion = latestExistingReport?.parser_version ?? null;
 
-    if (hasModeBeenRun(previousParserVersion, mode)) {
+    // A failed extraction can always be retried - otherwise a failure labelled "...|ai-..." (e.g. the old
+    // "ai-not-configured") counted as "AI already ran" and the retry silently did nothing.
+    if (latestExistingReport?.status !== "failed" && hasModeBeenRun(previousParserVersion, mode)) {
       return { ok: true, reportId: latestExistingReport?.id ?? null };
     }
 
