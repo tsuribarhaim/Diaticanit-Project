@@ -64,10 +64,11 @@ export const NO_TOKENS: AiTokens = { input: 0, output: 0, cacheRead: 0, cacheWri
  * (1.25x input). input_tokens from the API is the uncached part only, so the four counts add up to the whole prompt.
  * A model missing here is recorded with its tokens and no cost; add it and bump the version to reprice from tokens.
  */
-export const AI_PRICE_VERSION = "2026-10-19";
+export const AI_PRICE_VERSION = "2026-11-16";
 const PRICES: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number }> = {
   "claude-sonnet-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
-  "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+  "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
+  "gpt-4.1-mini": { input: 0.4, output: 1.6, cacheRead: 0.1, cacheWrite: 0 },
   "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
   "claude-opus-5": { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
   "claude-haiku-5-5": { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },

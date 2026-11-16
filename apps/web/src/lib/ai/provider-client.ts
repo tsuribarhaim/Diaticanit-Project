@@ -247,6 +247,34 @@ function withDefaultTimeout(signal: AbortSignal | undefined, timeoutMs: number):
   return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 }
 
+/**
+ * Per-feature model: AI_MODEL_<FEATURE> (e.g. AI_MODEL_REPORT_PARSE=claude-haiku-5-5) runs that one feature on another
+ * model, so cheap extraction calls need not use the model the chat uses. "openai:gpt-4.1-mini" switches provider too,
+ * using the AI_EXTRACTION_API_KEY / AI_EXTRACTION_BASE_URL credentials. Unset or blank = the configured default model.
+ */
+export function withFeatureModel<T extends AiChatCompletionParams>(params: T): T {
+  const raw = process.env[`AI_MODEL_${params.usage.feature.toUpperCase()}`]?.trim();
+  if (!raw) return params;
+  const [maybeProvider, ...rest] = raw.split(":");
+  if (rest.length === 0) return { ...params, config: { ...params.config, model: raw } };
+  const provider = maybeProvider.toLowerCase();
+  const model = rest.join(":");
+  if (provider === params.config.provider) return { ...params, config: { ...params.config, model } };
+  if (provider === "anthropic") {
+    const apiKey = process.env.AI_EXTRACTION_ANTHROPIC_API_KEY?.trim();
+    if (!apiKey) return params;
+    const baseUrl = process.env.AI_EXTRACTION_ANTHROPIC_BASE_URL?.trim() || ANTHROPIC_DEFAULT_BASE_URL;
+    return { ...params, config: { provider: "anthropic", apiKey, baseUrl, model } };
+  }
+  if (provider === "openai") {
+    const apiKey = process.env.AI_EXTRACTION_API_KEY?.trim();
+    if (!apiKey) return params;
+    const baseUrl = process.env.AI_EXTRACTION_BASE_URL?.trim() || "https://api.openai.com/v1";
+    return { ...params, config: { provider: "openai", apiKey, baseUrl, model } };
+  }
+  return params;
+}
+
 /** Runs one provider call and records it (lib/ai/usage.ts) - success or failure - then hands back exactly what the
  * call returned or threw, so recording never changes what a caller sees. */
 async function recorded(params: AiChatCompletionParams, streamed: boolean, run: () => Promise<ProviderResult>): Promise<string> {
@@ -264,7 +292,8 @@ async function recorded(params: AiChatCompletionParams, streamed: boolean, run: 
 /** Single entry point for every non-streaming "give me back JSON" AI call
  * in this app - branches to the right provider's request/response shape
  * internally so call sites never need to know the difference. */
-export async function callAiChatCompletion(params: AiChatCompletionParams): Promise<string> {
+export async function callAiChatCompletion(input: AiChatCompletionParams): Promise<string> {
+  const params = withFeatureModel(input);
   const boundedParams = { ...params, signal: withDefaultTimeout(params.signal, params.timeoutMs ?? DEFAULT_AI_REQUEST_TIMEOUT_MS) };
   return recorded(params, false, () =>
     params.config.provider === "anthropic" ? callAnthropicChatCompletion(boundedParams) : callOpenAiCompatibleChatCompletion(boundedParams),
@@ -379,7 +408,8 @@ async function callAnthropicChatCompletionStreaming({
  * (bounded by the same default/override timeout, returns the full
  * accumulated response text) but streams from the provider when possible so
  * onProgress can fire as real output arrives. */
-export async function callAiChatCompletionWithProgress(params: AiChatCompletionProgressParams): Promise<string> {
+export async function callAiChatCompletionWithProgress(input: AiChatCompletionProgressParams): Promise<string> {
+  const params = withFeatureModel(input);
   const boundedParams = { ...params, signal: withDefaultTimeout(params.signal, params.timeoutMs ?? DEFAULT_AI_REQUEST_TIMEOUT_MS) };
   return recorded(params, params.config.provider === "anthropic", () =>
     params.config.provider === "anthropic" ? callAnthropicChatCompletionStreaming(boundedParams) : callOpenAiCompatibleChatCompletion(boundedParams),
@@ -427,7 +457,8 @@ class AnthropicStreamUsage {
  * parsing logic (which already expects exactly this OpenAI shape) never
  * needs to know which provider is active.
  */
-export async function streamAiChatCompletion(params: AiChatCompletionParams): Promise<Response> {
+export async function streamAiChatCompletion(input: AiChatCompletionParams): Promise<Response> {
+  const params = withFeatureModel(input);
   const finish = beginAiUsage(params.usage);
   try {
     return params.config.provider === "anthropic" ? await streamAnthropicAsOpenAiSse(params, finish) : await streamOpenAiCompatible(params, finish);
