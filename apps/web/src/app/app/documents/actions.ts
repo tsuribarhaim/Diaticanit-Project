@@ -16,7 +16,7 @@ import {
 import { classifyComponentStatus } from "@/lib/extraction-insights";
 import { transitionDocumentExtractionStatus } from "@/lib/extraction-status";
 import { isPhase2DemoEnabled } from "@/lib/feature-flags";
-import { extractComponentsWithAi } from "@/lib/ai/extraction";
+import { AI_READABLE_DOCUMENT_TYPES, extractComponentsFromFileWithAi, extractComponentsWithAi } from "@/lib/ai/extraction";
 import { getAiExtractionConfig } from "@/lib/ai/env";
 import { normalizeLocale, tr, type AppLocale } from "@/lib/locale";
 import { logServerError } from "@/lib/server-log";
@@ -1363,23 +1363,74 @@ async function processQueuedExtraction({
   let extractedComponents: SeedComponent[] = [];
   let usedDemoFallback = false;
   let reportDate: string | null = null;
-
-  const extractedTextResult = await extractTextFromDocument({
-    supabase,
-    storagePath: documentRow.storage_path,
-    mimeType: documentRow.mime_type,
-    userId,
-    documentId,
-    reportId,
-  });
-
-  let selectedParserVersion =
-    strategy === "heuristic-only"
-      ? `${extractedTextResult.parserVersion}|heuristic-only-v1`
-      : `${extractedTextResult.parserVersion}|ai-not-configured`;
   let aiAttemptErrorMessage: string | null = null;
 
-  if (extractedTextResult.text.trim()) {
+  // First choice: the model reads the PDF/photo itself (see extractComponentsFromFileWithAi). Reading text on the server
+  // (below) stays as the fallback for providers without file input, users without AI consent, and plain-text files.
+  const fileAiConfig = strategy === "heuristic-only" ? null : getAiExtractionConfig();
+  let fileAiParserVersion: string | null = null;
+  if (
+    fileAiConfig?.provider === "anthropic" &&
+    documentRow.mime_type &&
+    AI_READABLE_DOCUMENT_TYPES.includes(documentRow.mime_type) &&
+    (await hasAiExtractionConsent({ supabase, userId }))
+  ) {
+    const { data: fileBlob, error: downloadError } = await supabase.storage.from("user-documents").download(documentRow.storage_path);
+    if (downloadError || !fileBlob) {
+      fileAiParserVersion = "ai-file-download-failed";
+      aiAttemptErrorMessage = downloadError?.message ?? "The file could not be downloaded.";
+    } else {
+      try {
+        const aiExtraction = await extractComponentsFromFileWithAi({
+          config: fileAiConfig,
+          fileBase64: Buffer.from(await fileBlob.arrayBuffer()).toString("base64"),
+          mimeType: documentRow.mime_type,
+          defaultCategory: documentRow.category,
+        });
+        if (aiExtraction.components.length) {
+          extractedComponents = aiExtraction.components;
+          reportDate = aiExtraction.reportDate;
+          fileAiParserVersion = `ai-${fileAiConfig.provider}-file-v1`;
+        } else {
+          fileAiParserVersion = "ai-file-empty";
+        }
+      } catch (error) {
+        fileAiParserVersion = "ai-file-error";
+        aiAttemptErrorMessage = summarizeAiError(error);
+        logServerError("documents.requestExtraction", "ai_file_extract_failed", {
+          userId,
+          documentId,
+          reportId,
+          error: error instanceof Error ? error.message : "Unknown AI file extraction error",
+        });
+      }
+    }
+  }
+
+  const extractedTextResult = extractedComponents.length
+    ? { text: "", parserVersion: fileAiParserVersion ?? "ai-file-v1", defaultConfidence: 0.9, sourceLine: "ai-file" }
+    : await extractTextFromDocument({
+        supabase,
+        storagePath: documentRow.storage_path,
+        mimeType: documentRow.mime_type,
+        userId,
+        documentId,
+        reportId,
+      });
+
+  // When no text could be read the AI step below never runs - say that, not "ai-not-configured", which was misleading.
+  let selectedParserVersion = extractedComponents.length
+    ? (fileAiParserVersion ?? "ai-file-v1")
+    : [
+        fileAiParserVersion,
+        strategy === "heuristic-only"
+          ? `${extractedTextResult.parserVersion}|heuristic-only-v1`
+          : `${extractedTextResult.parserVersion}|${extractedTextResult.text.trim() ? "ai-not-configured" : "no-text-extracted"}`,
+      ]
+        .filter(Boolean)
+        .join("|");
+
+  if (!extractedComponents.length && extractedTextResult.text.trim()) {
     const aiConfig = strategy === "heuristic-only" ? null : getAiExtractionConfig();
     let aiAttempted = false;
     let aiUsedOutput = false;
@@ -1462,7 +1513,7 @@ async function processQueuedExtraction({
 
       return {
         ok: false,
-        error: `No parsable lab values were found. Parser=${selectedParserVersion}; extractedTextLength=${extractedTextResult.text.length}.`,
+        error: `No parsable lab values were found. Parser=${selectedParserVersion}; extractedTextLength=${extractedTextResult.text.length}.${aiAttemptErrorMessage ? ` AI error: ${aiAttemptErrorMessage}` : ""}`,
       };
     }
   }
