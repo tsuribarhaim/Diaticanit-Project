@@ -27,7 +27,7 @@ const BASE = `${n8nEnv.N8N_BASE_URL || "http://localhost:5678"}/api/v1`;
 const H = { "X-N8N-API-KEY": n8nEnv.N8N_API_KEY, "Content-Type": "application/json" };
 const NAME = "Daffy - Batch Mail";
 const HOOK_PATH = "daffy-batch-mail";
-const RECIPIENTS = ["tsuri.barhaim@gmail.com"];
+const RECIPIENTS = ["shenhar.orit@gmail.com"]; // daily automation mail goes to Orit only (Tsuri asked to be taken off, 2026-10-29)
 const uuid = () => crypto.randomUUID();
 
 async function api(method, p, body) {
