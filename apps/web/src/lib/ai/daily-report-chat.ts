@@ -1,6 +1,6 @@
 import type { AiExtractionConfig } from "@/lib/ai/env";
 import { ASSISTANT_PERSONA_INSTRUCTIONS } from "@/lib/ai/persona";
-import { streamAiChatCompletion } from "@/lib/ai/provider-client";
+import { effectiveFeatureModel, streamAiChatCompletion } from "@/lib/ai/provider-client";
 import type { DailyReportMetrics, RecentDaysLoggedFoodItems, TodaysLoggedItems } from "@/lib/daily-report";
 import type { AppLocale } from "@/lib/locale";
 import { addDaysToDateString } from "@/lib/timezone";
@@ -196,6 +196,28 @@ function buildRecentDaysLoggedItemsSummary(items: RecentDaysLoggedFoodItems, tod
  * provider is actually configured, so the caller's parsing never needs to
  * know the difference.
  */
+/** Haiku-class models: cheaper, but they follow the long rules above less reliably. */
+function isCompactModel(model: string): boolean {
+  return /haiku/i.test(model);
+}
+
+/**
+ * Sent only to a compact model (see isCompactModel), as the last fixed rule so it stays cached. It restates, as short
+ * checks, the rules a 2026-11-16 comparison showed Haiku 5.5 breaking where Sonnet did not: the INFO marker on a
+ * loggable item (no save button), replies without numbers, a bare question with no "save now" option, asking about a
+ * single whole fruit, masculine/feminine mix-ups in Hebrew, guessed details, and an uncertain emergency number.
+ */
+const COMPACT_MODEL_CHECKLIST = [
+  "FINAL CHECKLIST - check every point before you write. These restate rules above; they never change them.",
+  "1. MARKER: if the conversation names any food, drink, exercise or weight that the user had, even with no amount (e.g. \"persimmon\", \"5 grapes\", \"a pita with cheese\" / \"אפרסמון\", \"5 ענבים\", \"פיתה עם גבינה\"), start with 'ACTIONABLE '. Use 'INFO ' only when nothing loggable has been named yet, for a safety warning about a non-food, a planning or information question with nothing new to log, an off-topic redirect, or small talk. If unsure, use 'ACTIONABLE '.",
+  "2. NUMBERS: every reply that logs something states your estimated amount and calories for each new item (e.g. \"about 120g, roughly 70 kcal\" / \"כ-120 גרם, בערך 70 קלוריות\"), and the main nutrients when relevant. Never ask whether you should calculate or estimate - always do it yourself in this reply.",
+  "3. ESTIMATE FIRST: when an amount is missing, first give your estimate with numbers, then at most one short question about it, and in that same reply say they can skip it and save now with your estimate. Never end a reply with only a question.",
+  "4. SINGLE WHOLE FRUIT: never ask how many or what size - log one medium fruit with its calories.",
+  "5. HEBREW GRAMMAR (Hebrew replies only): read user_gender in user_profile_summary. If female, every word addressed to the user is feminine (את, אכלת, שתית, הלכת, ספרי, כתבי, תוכלי, תרצי). If male, masculine (אתה, ספר, כתוב, תוכל, תרצה). Never mix both in one reply. Your own voice is always feminine (אני רושמת, אני מעריכה).",
+  "6. NO GUESSED DETAILS: never add a detail the user didn't say. \"נינג'ה\"/\"Ninja\" is a kitchen appliance (an air fryer/multicooker) - it means cooked without added oil unless they say otherwise. If you don't know a word, ignore it rather than guess what it is.",
+  "7. EMERGENCY NUMBERS: for a non-food hazardous substance, in Hebrew give only Magen David Adom 101 and the Poison Information Center 04-7771900, and say not to induce vomiting; in English, say to call local emergency services or poison control. Never give any other phone number.",
+];
+
 export async function openDailyReportChatReplyStream({
   config,
   locale,
@@ -315,6 +337,7 @@ export async function openDailyReportChatReplyStream({
           "SAFETY CHECK: if the user describes or the photo shows consuming something that is not actually food/drink and would be dangerous or harmful (e.g. fuel, cleaning products, poison, batteries, or other inedible/hazardous items), do not treat it as a loggable item - tell them plainly it is not food and, if they actually consumed it, to seek medical attention or contact a poison control center right away. Also take medical_conditions and allergies into account: flag plainly if a food they mention or you suggest conflicts with a listed allergy or condition.",
           "MARKER (required): your response must start with exactly one of the two literal tokens 'ACTIONABLE ' or 'INFO ' (the word, then a single space), before anything else - no exceptions, this is machine-parsed and stripped before the user ever sees it. Use 'ACTIONABLE ' when the conversation so far (this message plus prior turns, including any photo) describes at least one concrete food, drink, exercise item, or a reported weight that could be logged right now - with its stated quantity/duration, a clear photo, a weight number, or otherwise a reasonable typical-portion estimate - even if you're also asking an optional follow-up question. Whenever this reply tells the user they can save now with a reasonable estimate (see CLARIFYING QUESTIONS and PHOTO CHECK above), it MUST be 'ACTIONABLE ', because the save button only appears on ACTIONABLE replies. Use 'INFO ' for everything else: an unclear/unreadable photo, a clarifying question about something not yet named as a specific food/drink/exercise (e.g. 'what did you have for lunch?'), a planning/suggestion answer with nothing new to log, an off-topic redirect, a safety warning, or small talk. Never write the word ACTIONABLE or INFO anywhere else in your reply.",
           "Reply in 1-3 short sentences, conversationally - not a list, not JSON, no markdown - except a nutrition-info/comparison reply (see NUTRITION INFO & COMPARISON FORMAT above), which may run longer with one line per item. Address the user directly in second person (\"you\"/\"your\"), never third person.",
+          ...(isCompactModel(effectiveFeatureModel(config, "report_chat")) ? COMPACT_MODEL_CHECKLIST : []),
         ].join(" "),
       },
       { role: "system" as const, cacheBreakpoint: true, content: userContextText },

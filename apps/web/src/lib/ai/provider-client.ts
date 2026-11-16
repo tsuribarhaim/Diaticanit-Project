@@ -275,6 +275,11 @@ export function withFeatureModel<T extends AiChatCompletionParams>(params: T): T
   return params;
 }
 
+/** The model a feature will actually run on (after AI_MODEL_<FEATURE>), for prompts that adapt to the model. */
+export function effectiveFeatureModel(config: AiExtractionConfig, feature: AiUsageTag["feature"]): string {
+  return withFeatureModel({ config, messages: [], usage: { feature } }).config.model;
+}
+
 /** Runs one provider call and records it (lib/ai/usage.ts) - success or failure - then hands back exactly what the
  * call returned or threw, so recording never changes what a caller sees. */
 async function recorded(params: AiChatCompletionParams, streamed: boolean, run: () => Promise<ProviderResult>): Promise<string> {
