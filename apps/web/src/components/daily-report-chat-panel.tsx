@@ -1009,10 +1009,12 @@ export function DailyReportChatPanel({
     // finished). historyForRequest + this turn's own two messages is the
     // exact same transcript shape "Conclude & Report" itself builds
     // (see handleQuickSave below) - just computed one turn earlier.
-    if (isActionable && assistantText && !errorMessage && !options?.localOnly) {
-      const transcriptSoFar = [...historyForRequest, { role: "user" as const, content: userContent }, { role: "assistant" as const, content: assistantText }]
+    const buildTranscriptSoFar = () =>
+      [...historyForRequest, { role: "user" as const, content: userContent }, { role: "assistant" as const, content: assistantText }]
         .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`)
         .join("\n");
+    if (isActionable && assistantText && !errorMessage && !options?.localOnly) {
+      const transcriptSoFar = buildTranscriptSoFar();
       // TCK-160: the reply text is in, but its item table and "Add to log"
       // button are still coming - flag it so the bubble shows TypingDots.
       // Cleared again however the call ends (result, {error}, rejection),
@@ -1053,6 +1055,23 @@ export function DailyReportChatPanel({
       }).catch(() => {
         setMessages(clearBreakdownPending);
       });
+    }
+
+    // TCK-183: the model sometimes forgets the ACTIONABLE marker even though
+    // the reply logs something - silently run the same item listing and show
+    // the card + "Add to log" only if it finds items. No TypingDots and no
+    // photo clearing here, so small-talk replies look exactly as before.
+    if (!isActionable && assistantText && !errorMessage && !options?.localOnly && !isEditing) {
+      void getDailyReportBreakdownAction(buildTranscriptSoFar(), { markerMissed: true }).then((result) => {
+        if (!("items" in result) || result.items.length === 0) return;
+        setMessages((previous) => {
+          const lastIndex = previous.length - 1;
+          if (previous[lastIndex]?.role !== "assistant" || previous[lastIndex].content !== assistantText) return previous;
+          const next = [...previous];
+          next[lastIndex] = { ...next[lastIndex], breakdown: result.items, addToLog: { count: result.items.length } };
+          return next;
+        });
+      }).catch(() => {});
     }
 
     return !errorMessage && assistantText.length > 0;

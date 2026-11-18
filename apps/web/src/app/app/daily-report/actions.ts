@@ -470,6 +470,7 @@ export type DailyReportBreakdownItem = { name: string; quantity: number; unit: s
  */
 export async function getDailyReportBreakdownAction(
   transcriptText: string,
+  options?: { markerMissed?: boolean },
 ): Promise<{ items: DailyReportBreakdownItem[] } | { error: string }> {
   const supabase = await createClient();
   const {
@@ -496,7 +497,12 @@ export async function getDailyReportBreakdownAction(
     // Names and amounts only (lib/ai/daily-report.ts): the card never showed the nutrients the full reader wrote.
     const parsed = await extractDailyReportBreakdownWithAi({ config: aiConfig, reportText: transcriptText, locale });
     // TCK-174: food first, then exercise - the card lists every item the "Add to log" button counts.
-    return { items: [...parsed.foodItems, ...parsed.exerciseItems] };
+    const items = [...parsed.foodItems, ...parsed.exerciseItems];
+    // TCK-183: the chat reply lacked the ACTIONABLE marker but still had items to log.
+    if (options?.markerMissed && items.length > 0) {
+      logServerError("dailyReport.chat", "save_button_recovered", { userId: user.id, model: aiConfig.model, itemCount: items.length });
+    }
+    return { items };
   } catch (error) {
     logServerError("dailyReport.getBreakdown", "parse_failed", {
       userId: user.id,

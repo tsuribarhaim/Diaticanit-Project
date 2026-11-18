@@ -163,6 +163,18 @@ export async function POST(request: NextRequest) {
         let deleteMarkerResolved = !isEditingExistingEntry;
         let markerPending = "";
         const mojibakeRepairer = createMojibakeStreamRepairer();
+        // TCK-183: the reply had neither ACTIONABLE nor INFO - logged once per
+        // request (no message text) so missing "Add to log" buttons can be traced.
+        let markerMissingLogged = false;
+        const logMarkerMissing = () => {
+          if (markerMissingLogged) return;
+          markerMissingLogged = true;
+          logServerError("dailyReport.chat", "marker_missing", {
+            userId: user.id,
+            model: aiConfig.model,
+            provider: aiConfig.provider,
+          });
+        };
 
         function emitToken(text: string) {
           const repaired = mojibakeRepairer.push(text);
@@ -220,6 +232,7 @@ export async function POST(request: NextRequest) {
               if (!stillPossible || markerPending.length >= MAX_MARKER_BUFFER) {
                 controller.enqueue(sseEvent({ type: "actionable", value: false }));
                 actionableResolved = true;
+                logMarkerMissing();
               } else {
                 return;
               }
@@ -267,6 +280,7 @@ export async function POST(request: NextRequest) {
 
         if (!actionableResolved) {
           controller.enqueue(sseEvent({ type: "actionable", value: false }));
+          logMarkerMissing();
           if (isEditingExistingEntry) controller.enqueue(sseEvent({ type: "delete_intent", value: false }));
           emitToken(markerPending);
         } else if (!deleteMarkerResolved) {
